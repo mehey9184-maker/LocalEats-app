@@ -64,6 +64,7 @@ import {
   Check,
   Smartphone,
   Map,
+  List,
   Tag,
   ShoppingBasket,
   Ban,
@@ -78,7 +79,9 @@ import {
   XCircle,
   CheckCircle2,
   Hourglass,
-  CheckSquare
+  CheckSquare,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { supabase, supabaseUrl } from './lib/supabase';
 
@@ -129,6 +132,7 @@ type Shop = {
   menu: MenuItem[];
   category: string;
   distance?: number;
+  owner_id?: string;
 };
 
 type UserProfile = {
@@ -229,7 +233,7 @@ export default function App() {
           lat: position.coords.latitude,
           lng: position.coords.longitude
         });
-        setNotification({ message: "Location updated successfully", type: 'success' });
+        // Notification removed to keep it in the background as requested
       },
       (error) => {
         console.warn("Error getting location:", error);
@@ -261,6 +265,12 @@ export default function App() {
       requestLocation();
     }
   }, [currentScreen, requestLocation]);
+  useEffect(() => {
+    if (!userLocation) {
+      requestLocation();
+    }
+  }, [requestLocation, userLocation]);
+
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('favorites');
     return saved ? JSON.parse(saved) : [];
@@ -274,7 +284,22 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('favorites', JSON.stringify(favorites));
-  }, [favorites]);
+    
+    // Sync favorites to profiles table if session exists
+    if (session?.user?.id) {
+      const syncFavorites = async () => {
+        try {
+          await supabase
+            .from('profiles')
+            .update({ favorites })
+            .eq('user_id', session.user.id);
+        } catch (err) {
+          console.error('Error syncing favorites:', err);
+        }
+      };
+      syncFavorites();
+    }
+  }, [favorites, session]);
 
   useEffect(() => {
     console.log('Applying theme. Dark mode:', isDarkMode);
@@ -292,13 +317,32 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  const toggleFavorite = (shopId: string) => {
+  const toggleFavorite = async (shopId: string) => {
+    const isFollowing = favorites.includes(shopId);
     setFavorites(prev => 
-      prev.includes(shopId) 
+      isFollowing 
         ? prev.filter(id => id !== shopId) 
         : [...prev, shopId]
     );
     triggerHaptic();
+
+    if (!isFollowing && session?.user?.id) {
+      // Send notification to shop owner
+      const shop = shops.find(s => s.id === shopId);
+      if (shop && (shop as any).owner_id) {
+        try {
+          await supabase.from('notifications').insert({
+            user_id: (shop as any).owner_id,
+            title: 'New Follower!',
+            message: `${userProfile.fullName || 'Someone'} started following your shop ${shop.name}!`,
+            type: 'follow',
+            data: { follower_id: session.user.id, shop_id: shopId }
+          });
+        } catch (err) {
+          console.error('Error sending follow notification:', err);
+        }
+      }
+    }
   };
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(() => {
     const saved = localStorage.getItem('pending_review');
@@ -1441,6 +1485,7 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
 function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { onNext: () => void, onBack: () => void, signupData: any, setNotification: (n: any) => void }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
@@ -1459,7 +1504,7 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: signupData.email,
         password,
         options: {
@@ -1470,6 +1515,18 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
         }
       });
       if (error) throw error;
+
+      // Manually sync to profiles table in case trigger isn't set up
+      if (data.user) {
+        await supabase.from('profiles').upsert({
+          user_id: data.user.id,
+          fullName: signupData.fullName,
+          email: signupData.email,
+          phone: signupData.phone,
+          updated_at: new Date().toISOString()
+        });
+      }
+
       onNext();
     } catch (error: any) {
       setNotification({ message: error.message, type: 'error' });
@@ -1501,10 +1558,16 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
                 <input 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-12 text-base font-normal leading-normal transition-all" 
                   placeholder="••••••••" 
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                 />
+                <button 
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </label>
 
@@ -1515,9 +1578,9 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
                 <input 
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-12 text-base font-normal leading-normal transition-all" 
                   placeholder="••••••••" 
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                 />
               </div>
             </label>
@@ -1736,6 +1799,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
   const [identifier, setIdentifier] = useState(() => localStorage.getItem('remembered_identifier') || '');
   const [password, setPassword] = useState('');
   const [loginType, setLoginType] = useState<'email' | 'phone'>('email');
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_identifier'));
   const [loading, setLoading] = useState(false);
 
@@ -1746,14 +1810,27 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
     }
     setLoading(true);
     try {
-      const loginParams: any = { password };
-      if (loginType === 'email') {
-        loginParams.email = identifier;
-      } else {
-        loginParams.phone = identifier;
+      let loginEmail = identifier;
+      if (loginType === 'phone') {
+        // Look up email by phone in profiles table
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('phone', identifier)
+          .maybeSingle();
+        
+        if (profileError) throw profileError;
+        if (profile) {
+          loginEmail = profile.email;
+        } else {
+          // Fallback: try to see if identifier itself is an email even if type is phone
+          if (!identifier.includes('@')) {
+            throw new Error('No account found with this phone number. Please use email.');
+          }
+        }
       }
       
-      const { error } = await supabase.auth.signInWithPassword(loginParams);
+      const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
       if (error) throw error;
       
       if (rememberMe) {
@@ -1840,10 +1917,16 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               <input 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-12 text-base font-normal leading-normal transition-all" 
                 placeholder="••••••••" 
-                type="password"
+                type={showPassword ? "text" : "password"}
               />
+              <button 
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors cursor-pointer"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
           </label>
           <div className="flex items-center justify-between px-1">
@@ -1956,6 +2039,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [minRating, setMinRating] = useState(0);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
 
   const toggleExpand = (itemId: string) => {
@@ -1988,7 +2072,9 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
       matchesCategory = shop.category === selectedCategory;
     }
     
-    return matchesSearch && matchesCategory;
+    const matchesRating = shop.rating >= minRating;
+    
+    return matchesSearch && matchesCategory && matchesRating;
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
@@ -2158,7 +2244,10 @@ CREATE TABLE IF NOT EXISTS shops (
   logo_url text DEFAULT 'https://picsum.photos/seed/shop/200/200'
 );
 
--- 2. Create menu_items table
+-- 2. Ensure profiles table has favorites
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS favorites text[];
+
+-- 3. Create menu_items table
 CREATE TABLE IF NOT EXISTS menu_items (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   shop_id uuid REFERENCES shops(id) ON DELETE CASCADE,
@@ -2261,16 +2350,35 @@ VALUES
             </section>
 
             {/* Category Filters */}
-            <section className="mb-4 overflow-x-auto no-scrollbar flex gap-2 pb-2">
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? 'bg-orange-500 text-white shadow-md shadow-orange-200 dark:shadow-none' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
-                >
-                  {cat}
-                </button>
-              ))}
+            <section className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2">
+              <div className="flex gap-2">
+                {categories.map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? 'bg-orange-500 text-white shadow-md shadow-orange-200 dark:shadow-none' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              
+              <div className="flex gap-2">
+                {[0, 3, 4, 4.5].map(rating => (
+                  <button 
+                    key={rating}
+                    onClick={() => setMinRating(rating)}
+                    className={`whitespace-nowrap px-3 py-1.5 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 border ${
+                      minRating === rating 
+                        ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/30' 
+                        : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800'
+                    }`}
+                  >
+                    <Star className={`w-2.5 h-2.5 ${minRating === rating ? 'fill-current' : ''}`} />
+                    {rating === 0 ? 'All Ratings' : `${rating}+ Stars`}
+                  </button>
+                ))}
+              </div>
             </section>
 
             {/* Quick Start Guide for New Users */}
@@ -2369,144 +2477,165 @@ VALUES
             </section>
 
             {/* Menu Section */}
-            <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg flex-grow flex flex-col overflow-hidden mb-4 relative">
-              <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center">
-                    <img alt={selectedShop.name} className="w-8 h-8 rounded-full object-cover" src={selectedShop.logo} loading="lazy" referrerPolicy="no-referrer"/>
+            {favorites.length > 0 ? (
+              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg flex-grow flex flex-col overflow-hidden mb-4 relative">
+                <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center">
+                      <img alt={selectedShop.name} className="w-8 h-8 rounded-full object-cover" src={selectedShop.logo} loading="lazy" referrerPolicy="no-referrer"/>
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">{selectedShop.name} Menu</h2>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">{selectedShop.description}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">{selectedShop.name} Menu</h2>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">{selectedShop.description}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2 flex-col items-end justify-center">
-                  <div className="flex items-center gap-2 relative">
-                    <span className="bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">Open Now</span>
-                    <button 
-                      onClick={() => setIsStoreSettingsOpen(!isStoreSettingsOpen)}
-                      aria-label="Store settings" 
-                      className={`text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center p-1 rounded-full cursor-pointer ${isStoreSettingsOpen ? 'bg-gray-100 dark:bg-slate-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                    >
-                      <MoreVertical className="w-5 h-5" />
-                    </button>
+                  <div className="flex gap-2 flex-col items-end justify-center">
+                    <div className="flex items-center gap-2 relative">
+                      <span className="bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">Open Now</span>
+                      <button 
+                        onClick={() => setIsStoreSettingsOpen(!isStoreSettingsOpen)}
+                        aria-label="Store settings" 
+                        className={`text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center p-1 rounded-full cursor-pointer ${isStoreSettingsOpen ? 'bg-gray-100 dark:bg-slate-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                      >
+                        <MoreVertical className="w-5 h-5" />
+                      </button>
 
-                    {isStoreSettingsOpen && (
-                      <>
-                        <div className="fixed inset-0 z-[50]" onClick={() => setIsStoreSettingsOpen(false)}></div>
-                        <div className="absolute top-full right-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-xl z-[60] py-1 animate-in fade-in zoom-in duration-200 origin-top-right">
-                          <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer">
-                            <UserMinus className="w-4 h-4" />
-                            Unfollow
-                          </button>
-                          <button 
-                            onClick={() => { setIsStoreSettingsOpen(false); onStoreInfo(selectedShopId); }}
-                            className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
-                          >
-                            <Info className="w-4 h-4" />
-                            Store Info
-                          </button>
-                          <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 cursor-pointer">
-                            <AlertTriangle className="w-4 h-4" />
-                            Report Store
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-0.5 mt-1">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <Star 
-                        key={i} 
-                        className={`w-3 h-3 ${i < Math.floor(selectedShop.rating) ? 'text-orange-500 fill-orange-500' : 'text-gray-300 dark:text-slate-600'}`} 
-                      />
-                    ))}
-                    <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 ml-1">{selectedShop.rating}</span>
-                  </div>
-                </div>
-              </div>
-                  <div className="flex-grow overflow-y-auto p-4 space-y-3 pb-24">
-                    {selectedShop.menu.map((item) => {
-                      const cartItem = cart.find(i => i.id === item.id && i.shopId === selectedShopId);
-                      const quantity = cartItem?.quantity || 0;
-                      const isExpanded = expandedItems.includes(item.id);
-                      const hasDescription = item.description && item.description.length > 0;
-                      const isLongDescription = item.description && item.description.length > 40;
-
-                      return (
-                        <div key={item.id} className={`flex flex-col p-3 rounded-2xl border transition-all ${quantity > 0 ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/30 shadow-sm' : 'bg-gray-50 dark:bg-slate-800/50 border-gray-100 dark:border-slate-700'}`}>
-                          <div className="flex items-center justify-between w-full">
-                            <div className="flex flex-col flex-1 mr-2">
-                              <span className="text-sm font-bold text-gray-800 dark:text-white">{item.name}</span>
-                              <span className="text-xs text-orange-600 dark:text-orange-400 font-bold mt-1">{item.displayPrice}</span>
-                            </div>
-                            
-                            {quantity > 0 ? (
-                              <div className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-xl border border-orange-200 dark:border-orange-500/30 p-1 shadow-sm">
-                                <button 
-                                  onClick={() => removeFromCart(item.id, selectedShopId)}
-                                  className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
-                                >
-                                  <Minus className="w-4 h-4" />
-                                </button>
-                                <span className="text-sm font-bold w-4 text-center dark:text-white">{quantity}</span>
-                                <button 
-                                  onClick={() => addToCart(item, selectedShopId)}
-                                  className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
-                                >
-                                  <Plus className="w-4 h-4" />
-                                </button>
-                              </div>
-                            ) : (
-                              <button 
-                                onClick={() => addToCart(item, selectedShopId)} 
-                                className="text-xs font-bold px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-md shadow-orange-200 dark:shadow-none transition-all cursor-pointer"
-                              >
-                                Buy
-                              </button>
-                            )}
+                      {isStoreSettingsOpen && (
+                        <>
+                          <div className="fixed inset-0 z-[50]" onClick={() => setIsStoreSettingsOpen(false)}></div>
+                          <div className="absolute top-full right-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-xl z-[60] py-1 animate-in fade-in zoom-in duration-200 origin-top-right">
+                            <button 
+                              onClick={() => { setIsStoreSettingsOpen(false); toggleFavorite(selectedShopId || ''); }}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
+                            >
+                              <UserMinus className="w-4 h-4" />
+                              Unfollow
+                            </button>
+                            <button 
+                              onClick={() => { setIsStoreSettingsOpen(false); onStoreInfo(selectedShopId); }}
+                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
+                            >
+                              <Info className="w-4 h-4" />
+                              Store Info
+                            </button>
+                            <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 cursor-pointer">
+                              <AlertTriangle className="w-4 h-4" />
+                              Report Store
+                            </button>
                           </div>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-0.5 mt-1">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star 
+                          key={i} 
+                          className={`w-3 h-3 ${i < Math.floor(selectedShop.rating) ? 'text-orange-500 fill-orange-500' : 'text-gray-300 dark:text-slate-600'}`} 
+                        />
+                      ))}
+                      <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 ml-1">{selectedShop.rating}</span>
+                    </div>
+                  </div>
+                </div>
+                    <div className="flex-grow overflow-y-auto p-4 space-y-3 pb-24">
+                      {selectedShop.menu.map((item) => {
+                        const cartItem = cart.find(i => i.id === item.id && i.shopId === selectedShopId);
+                        const quantity = cartItem?.quantity || 0;
+                        const isExpanded = expandedItems.includes(item.id);
+                        const hasDescription = item.description && item.description.length > 0;
+                        const isLongDescription = item.description && item.description.length > 40;
 
-                          {hasDescription && (
-                            <div className="mt-2">
-                              <p className={`text-[10px] text-gray-500 dark:text-slate-400 leading-relaxed ${!isExpanded && isLongDescription ? 'line-clamp-1' : ''}`}>
-                                {item.description}
-                              </p>
-                              {isLongDescription && (
+                        return (
+                          <div key={item.id} className={`flex flex-col p-3 rounded-2xl border transition-all ${quantity > 0 ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/30 shadow-sm' : 'bg-gray-50 dark:bg-slate-800/50 border-gray-100 dark:border-slate-700'}`}>
+                            <div className="flex items-center justify-between w-full">
+                              <div className="flex flex-col flex-1 mr-2">
+                                <span className="text-sm font-bold text-gray-800 dark:text-white">{item.name}</span>
+                                <span className="text-xs text-orange-600 dark:text-orange-400 font-bold mt-1">{item.displayPrice}</span>
+                              </div>
+                              
+                              {quantity > 0 ? (
+                                <div className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-xl border border-orange-200 dark:border-orange-500/30 p-1 shadow-sm">
+                                  <button 
+                                    onClick={() => removeFromCart(item.id, selectedShopId)}
+                                    className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <Minus className="w-4 h-4" />
+                                  </button>
+                                  <span className="text-sm font-bold w-4 text-center dark:text-white">{quantity}</span>
+                                  <button 
+                                    onClick={() => addToCart(item, selectedShopId)}
+                                    className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              ) : (
                                 <button 
-                                  onClick={() => toggleExpand(item.id)}
-                                  className="flex items-center gap-1 text-[10px] font-bold text-primary mt-1 hover:underline cursor-pointer"
+                                  onClick={() => addToCart(item, selectedShopId)} 
+                                  className="text-xs font-bold px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-md shadow-orange-200 dark:shadow-none transition-all cursor-pointer"
                                 >
-                                  <span>{isExpanded ? 'Show Less' : 'Read More'}</span>
-                                  <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                  Buy
                                 </button>
                               )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                            {hasDescription && (
+                              <div className="mt-2">
+                                <p className={`text-[10px] text-gray-500 dark:text-slate-400 leading-relaxed ${!isExpanded && isLongDescription ? 'line-clamp-1' : ''}`}>
+                                  {item.description}
+                                </p>
+                                {isLongDescription && (
+                                  <button 
+                                    onClick={() => toggleExpand(item.id)}
+                                    className="flex items-center gap-1 text-[10px] font-bold text-primary mt-1 hover:underline cursor-pointer"
+                                  >
+                                    <span>{isExpanded ? 'Show Less' : 'Read More'}</span>
+                                    <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                
+                {/* Submit Order Button Container */}
+                {cartCount > 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-slate-900 via-white dark:via-slate-900 to-transparent pt-8 animate-in slide-in-from-bottom-4 duration-300">
+                    <div className="flex gap-2">
+                      <button onClick={onCheckout} className="flex-grow bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer">
+                        <span>Submit order ({cartCount})</span>
+                        <ArrowRight className="w-5 h-5" />
+                      </button>
+                      <button 
+                        onClick={clearCart}
+                        title="Clear Cart"
+                        className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-500/30 p-4 rounded-2xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                      >
+                        <Trash2 className="w-6 h-6" />
+                      </button>
+                    </div>
                   </div>
-              
-              {/* Submit Order Button Container */}
-              {cartCount > 0 && (
-                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-slate-900 via-white dark:via-slate-900 to-transparent pt-8 animate-in slide-in-from-bottom-4 duration-300">
-                  <div className="flex gap-2">
-                    <button onClick={onCheckout} className="flex-grow bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer">
-                      <span>Submit order ({cartCount})</span>
-                      <ArrowRight className="w-5 h-5" />
-                    </button>
-                    <button 
-                      onClick={clearCart}
-                      title="Clear Cart"
-                      className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-500/30 p-4 rounded-2xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
-                    >
-                      <Trash2 className="w-6 h-6" />
-                    </button>
-                  </div>
+                )}
+              </section>
+            ) : (
+              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg flex-grow flex flex-col items-center justify-center p-8 text-center mb-4 border border-gray-100 dark:border-slate-800">
+                <div className="w-20 h-20 bg-orange-50 dark:bg-orange-500/10 rounded-full flex items-center justify-center mb-4">
+                  <ShoppingBasket className="w-10 h-10 text-orange-500" />
                 </div>
-              )}
-            </section>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No Followed Shops</h3>
+                <p className="text-sm text-gray-500 dark:text-slate-400 max-w-[240px] mb-6">
+                  Follow a shop to see their delicious menu items right here on your homepage.
+                </p>
+                <button 
+                  onClick={onDiscover}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer"
+                >
+                  Discover Shops
+                </button>
+              </section>
+            )}
       </main>
 
       {/* Floating Cart Button */}
@@ -2801,6 +2930,8 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
 function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation }: { shops: Shop[], onHome: () => void, onExplore: () => void, favorites: string[], toggleFavorite: (shopId: string) => void, onSelectShop: (shopId: string) => void, userLocation: { lat: number, lng: number } | null }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [minRating, setMinRating] = useState(0);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   
   const categories = ['All', 'Nearby', ...new Set(shops.map(s => s.category))];
   
@@ -2809,7 +2940,8 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
     const shopText = `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
     const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
     const matchesCategory = selectedCategory === 'All' || selectedCategory === 'Nearby' || shop.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesRating = shop.rating >= minRating;
+    return matchesSearch && matchesCategory && matchesRating;
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
@@ -2837,8 +2969,16 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             </button>
             <h1 className="font-['Plus_Jakarta_Sans'] font-bold tracking-tight text-xl text-[#FF6B00]">DISCOVER</h1>
           </div>
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-[#ff7a2f] shadow-sm">
-            <img className="w-full h-full object-cover" alt="User profile photo avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjDviWscgS5U3EHdflVMH2lw438ZIVTcAGpl49HTuhtYnGnSfmj-j2T7UXu5rn0URgx6WUnkNAvuzKIgfhWSpQOch5ABihBoWNM3z-RPXHqaA24O9y0NFMKiMIoU9TFnGbS4tbMulbBnjouRLsmXb3kMzUopz3ng_f-1m3X7yAo1Fb3Hebd-UF2Y7b8ZpwTWzv38qWzFP3dBBKbJr5gf6vK6XlqxSL_RJLfyxvBFqEHeF6XjLFdIGLeqWj_gft_DIt4zi87H4PEQ"/>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setViewMode(viewMode === 'list' ? 'map' : 'list')}
+              className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
+            >
+              {viewMode === 'list' ? <Map className="w-5 h-5" /> : <List className="w-5 h-5" />}
+            </button>
+            <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-[#ff7a2f] shadow-sm">
+              <img className="w-full h-full object-cover" alt="User profile photo avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjDviWscgS5U3EHdflVMH2lw438ZIVTcAGpl49HTuhtYnGnSfmj-j2T7UXu5rn0URgx6WUnkNAvuzKIgfhWSpQOch5ABihBoWNM3z-RPXHqaA24O9y0NFMKiMIoU9TFnGbS4tbMulbBnjouRLsmXb3kMzUopz3ng_f-1m3X7yAo1Fb3Hebd-UF2Y7b8ZpwTWzv38qWzFP3dBBKbJr5gf6vK6XlqxSL_RJLfyxvBFqEHeF6XjLFdIGLeqWj_gft_DIt4zi87H4PEQ"/>
+            </div>
           </div>
         </div>
       </header>
@@ -2866,76 +3006,113 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         
         {/* Category Chips */}
         <section className="mb-10">
-          <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {categories.map(category => (
-              <button 
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                className={`whitespace-nowrap px-6 py-3 rounded-full font-semibold text-sm transition-all cursor-pointer ${
-                  selectedCategory === category 
-                    ? 'bg-[#9c3f00] text-[#fff0ea] shadow-md' 
-                    : 'bg-[#e1e2e6] dark:bg-slate-800 text-[#2d2f31] dark:text-slate-300 hover:bg-[#dbdde0] dark:hover:bg-slate-700'
-                }`}
-              >
-                {category === 'Nearby' && <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />}
-                {category}
-              </button>
-            ))}
+          <div className="flex flex-col gap-4">
+            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {categories.map(category => (
+                <button 
+                  key={category}
+                  onClick={() => setSelectedCategory(category)}
+                  className={`whitespace-nowrap px-6 py-3 rounded-full font-semibold text-sm transition-all cursor-pointer ${
+                    selectedCategory === category 
+                      ? 'bg-[#9c3f00] text-[#fff0ea] shadow-md' 
+                      : 'bg-[#e1e2e6] dark:bg-slate-800 text-[#2d2f31] dark:text-slate-300 hover:bg-[#dbdde0] dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {category === 'Nearby' && <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />}
+                  {category}
+                </button>
+              ))}
+            </div>
+            
+            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {[0, 3, 4, 4.5].map(rating => (
+                <button 
+                  key={rating}
+                  onClick={() => setMinRating(rating)}
+                  className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+                    minRating === rating 
+                      ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/30' 
+                      : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800'
+                  }`}
+                >
+                  <Star className={`w-3 h-3 ${minRating === rating ? 'fill-current' : ''}`} />
+                  {rating === 0 ? 'All Ratings' : `${rating}+ Stars`}
+                </button>
+              ))}
+            </div>
           </div>
         </section>
         
-        {/* Store Grid */}
-        <section className="px-6 grid grid-cols-1 gap-8">
-          {sortedShops.map(shop => {
-            const isFollowing = favorites.includes(shop.id);
-            return (
-              <div 
-                key={shop.id} 
-                onClick={() => onSelectShop(shop.id)}
-                className="group bg-[#ffffff] dark:bg-slate-900 rounded-lg overflow-hidden shadow-[0_8px_32px_rgba(45,47,49,0.06)] transition-all duration-300 hover:-translate-y-1 border border-transparent dark:border-slate-800 cursor-pointer"
-              >
-                <div className="h-48 relative">
-                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo}/>
-                  <div className="absolute top-4 right-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                    <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                    <span className="text-sm font-bold text-[#2d2f31] dark:text-white">{shop.rating}</span>
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex gap-4">
-                      <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl">
-                        {shop.name.charAt(0)}
-                      </div>
-                      <div>
-                        <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
-                        <p className="text-[#5a5c5e] dark:text-slate-400 text-sm">{shop.address}</p>
-                      </div>
+        {/* Store Grid or Map */}
+        {viewMode === 'list' ? (
+          <section className="px-6 grid grid-cols-1 gap-8">
+            {sortedShops.map(shop => {
+              const isFollowing = favorites.includes(shop.id);
+              return (
+                <div 
+                  key={shop.id} 
+                  onClick={() => onSelectShop(shop.id)}
+                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-lg overflow-hidden shadow-[0_8px_32px_rgba(45,47,49,0.06)] transition-all duration-300 hover:-translate-y-1 border border-transparent dark:border-slate-800 cursor-pointer"
+                >
+                  <div className="h-48 relative">
+                    <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo}/>
+                    <div className="absolute top-4 right-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
+                      <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
+                      <span className="text-sm font-bold text-[#2d2f31] dark:text-white">{shop.rating}</span>
                     </div>
                   </div>
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleFavorite(shop.id);
-                    }}
-                    className={`w-full py-3 font-bold rounded-full shadow-lg transition-all active:scale-95 cursor-pointer ${
-                      isFollowing 
-                        ? 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300' 
-                        : 'bg-gradient-to-br from-[#9c3f00] to-[#ff7a2f] text-white hover:shadow-[#9c3f00]/20'
-                    }`}
-                  >
-                    {isFollowing ? 'Following' : 'Follow Store'}
-                  </button>
+                  <div className="p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex gap-4">
+                        <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl">
+                          {shop.name.charAt(0)}
+                        </div>
+                        <div>
+                          <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
+                          <p className="text-[#5a5c5e] dark:text-slate-400 text-sm">{shop.address}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFavorite(shop.id);
+                      }}
+                      className={`w-full py-3 font-bold rounded-full shadow-lg transition-all active:scale-95 cursor-pointer ${
+                        isFollowing 
+                          ? 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300' 
+                          : 'bg-gradient-to-br from-[#9c3f00] to-[#ff7a2f] text-white hover:shadow-[#9c3f00]/20'
+                      }`}
+                    >
+                      {isFollowing ? 'Following' : 'Follow Store'}
+                    </button>
+                  </div>
                 </div>
+              );
+            })}
+            {filteredShops.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-slate-500 dark:text-slate-400">No shops found matching your search.</p>
               </div>
-            );
-          })}
-          {filteredShops.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-slate-500 dark:text-slate-400">No shops found matching your search.</p>
+            )}
+          </section>
+        ) : (
+          <section className="px-6 h-[500px] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 relative">
+            <iframe
+              width="100%"
+              height="100%"
+              style={{ border: 0 }}
+              loading="lazy"
+              allowFullScreen
+              referrerPolicy="no-referrer-when-downgrade"
+              src={`https://www.google.com/maps/embed/v1/search?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyA-fake-key'}&q=Kota+shops+in+Tembisa+South+Africa&center=${userLocation?.lat || -25.9964},${userLocation?.lng || 28.2268}&zoom=14`}
+            ></iframe>
+            <div className="absolute bottom-6 left-6 right-6 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
+              <p className="text-xs font-bold text-slate-900 dark:text-white mb-1">Interactive Map</p>
+              <p className="text-[10px] text-slate-500">Showing top rated Kota spots near you in Tembisa.</p>
             </div>
-          )}
-        </section>
+          </section>
+        )}
         
         {/* Chef's Selection Carousel */}
         <section className="mt-16 overflow-hidden">
@@ -3316,6 +3493,18 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
           </div>
           <div className="text-center">
             <h2 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">{shop.name}</h2>
+            <p className="text-slate-500 text-sm font-medium mb-4">{shop.address}</p>
+            
+            <button 
+              onClick={() => {
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
+                window.open(url, '_blank');
+              }}
+              className="flex items-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all cursor-pointer mb-6"
+            >
+              <Navigation className="w-4 h-4" />
+              Get Directions
+            </button>
             <p className="text-gray-500 dark:text-slate-400 font-medium mt-1">{shop.category} • Tembisa</p>
           </div>
         </section>
@@ -5268,11 +5457,13 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
                       order.status === 'pending' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                       order.status === 'confirmed' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
                       order.status === 'ready' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                      order.status === 'out_for_delivery' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' :
+                      order.status === 'delivered' ? 'bg-green-100 text-green-700 border border-green-200' :
                       order.status === 'completed' ? 'bg-slate-100 text-slate-700 border border-slate-200' :
                       order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                       'bg-slate-100 text-slate-700 border border-slate-200'
                     }`}>
-                      {order.status}
+                      {order.status.replace('_', ' ')}
                     </span>
                   </div>
                 </div>
