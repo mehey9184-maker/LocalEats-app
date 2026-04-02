@@ -82,7 +82,7 @@ import {
 } from 'lucide-react';
 import { supabase, supabaseUrl } from './lib/supabase';
 
-type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review';
+type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review';
 
 type PendingReview = {
   orderId: string;
@@ -244,6 +244,17 @@ export default function App() {
       { timeout: 15000, enableHighAccuracy: false }
     );
   }, []);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const shopId = urlParams.get('shopId');
+    if (shopId) {
+      setSelectedStoreId(shopId);
+      setCurrentScreen('store-info');
+      // Remove shopId from URL to prevent re-triggering on refresh if user navigates away
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
 
   useEffect(() => {
     if (currentScreen === 'home' || currentScreen === 'explore') {
@@ -814,7 +825,7 @@ export default function App() {
           <SignUpScreen 
             onNext={(data) => {
               setUserProfile(prev => ({ ...prev, ...data }));
-              setCurrentScreen('setup-pin');
+              setCurrentScreen('setup-password');
             }} 
             onLogin={() => setCurrentScreen('login')} 
             setNotification={setNotification}
@@ -828,8 +839,13 @@ export default function App() {
           />
         )}
         {/* Verify screen skipped for now */}
-        {currentScreen === 'setup-pin' && (
-          <SetupPinScreen onNext={() => setCurrentScreen('success')} onBack={() => setCurrentScreen('signup')} />
+        {currentScreen === 'setup-password' && (
+          <SetupPasswordScreen 
+            signupData={userProfile}
+            onNext={() => setCurrentScreen('success')} 
+            onBack={() => setCurrentScreen('signup')} 
+            setNotification={setNotification}
+          />
         )}
         {currentScreen === 'success' && (
           <SuccessScreen onCompleteProfile={() => setCurrentScreen('complete-profile')} onExplore={() => setCurrentScreen('home')} />
@@ -942,8 +958,27 @@ export default function App() {
             onBack={() => setCurrentScreen(previousScreen === 'discover' ? 'discover' : 'home')} 
             shop={shops.find(s => s.id === selectedStoreId) || shops[0]} 
             isFavorite={favorites.includes(selectedStoreId || '')}
-            onToggleFavorite={() => toggleFavorite(selectedStoreId || '')}
+            onToggleFavorite={() => {
+              if (!session) {
+                setNotification({ 
+                  message: "Please sign up to follow your favorite shops!", 
+                  type: 'info',
+                  actions: [{ label: 'Sign Up', onClick: () => setCurrentScreen('signup') }]
+                });
+                return;
+              }
+              toggleFavorite(selectedStoreId || '');
+            }}
             userProfile={userProfile}
+            session={session}
+            onSignUp={() => setCurrentScreen('signup')}
+            addToCart={(item, shopId) => {
+              if (!session) {
+                setCurrentScreen('signup');
+                return;
+              }
+              addToCart(item, shopId);
+            }}
           />
         )}
         {currentScreen === 'settings' && (
@@ -1157,37 +1192,18 @@ function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => 
   );
 }
 
-function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Partial<UserProfile>) => void, onLogin: () => void, setNotification: (n: any) => void }) {
+function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: any) => void, onLogin: () => void, setNotification: (n: any) => void }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
-    if (!fullName || !email || !password || !phone) {
+    if (!fullName || !email || !phone) {
       setNotification({ message: 'Please fill in all fields', type: 'error' });
       return;
     }
-    setLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
-            phone: phone
-          }
-        }
-      });
-      if (error) throw error;
-      onNext({ fullName, email, phone });
-    } catch (error: any) {
-      setNotification({ message: error.message, type: 'error' });
-    } finally {
-      setLoading(false);
-    }
+    onNext({ fullName, email, phone });
   };
 
   return (
@@ -1240,19 +1256,6 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
             </div>
           </label>
           <label className="flex flex-col w-full">
-            <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Password</p>
-            <div className="relative">
-              <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                placeholder="••••••••" 
-                type="password"
-              />
-            </div>
-          </label>
-          <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Phone Number</p>
             <div className="flex w-full items-stretch">
               <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 rounded-l-xl border-r-0">
@@ -1275,7 +1278,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
             disabled={loading}
             className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
-            <span>{loading ? 'Signing up...' : 'Sign Up'}</span>
+            <span>{loading ? 'Processing...' : 'Continue'}</span>
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
           </button>
         </div>
@@ -1435,148 +1438,100 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
   );
 }
 
-function SetupPinScreen({ onNext, onBack }: { onNext: () => void, onBack: () => void }) {
-  const [pin, setPin] = useState(['', '', '', '']);
-  const [confirmPin, setConfirmPin] = useState(['', '', '', '']);
-  const [activeSection, setActiveSection] = useState<'create' | 'confirm'>('create');
+function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { onNext: () => void, onBack: () => void, signupData: any, setNotification: (n: any) => void }) {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handlePinChange = (index: number, value: string, type: 'create' | 'confirm') => {
-    if (value.length > 1) value = value.slice(-1);
-    const target = type === 'create' ? pin : confirmPin;
-    const setter = type === 'create' ? setPin : setConfirmPin;
-    
-    const newPin = [...target];
-    newPin[index] = value;
-    setter(newPin);
+  const handleSignUp = async () => {
+    if (!password || !confirmPassword) {
+      setNotification({ message: 'Please fill in both password fields', type: 'error' });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setNotification({ message: 'Passwords do not match', type: 'error' });
+      return;
+    }
+    if (password.length < 6) {
+      setNotification({ message: 'Password must be at least 6 characters', type: 'error' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: signupData.email,
+        password,
+        options: {
+          data: {
+            full_name: signupData.fullName,
+            phone: signupData.phone
+          }
+        }
+      });
+      if (error) throw error;
+      onNext();
+    } catch (error: any) {
+      setNotification({ message: error.message, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
   };
-
-  const isPinComplete = pin.every(d => d);
-  const isConfirmComplete = confirmPin.every(d => d);
-  const pinsMatch = pin.join('') === confirmPin.join('');
-  const canSave = isPinComplete && isConfirmComplete && pinsMatch;
 
   return (
     <div className="font-display bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
-        {/* Top App Bar */}
         <header className="flex items-center p-4 bg-white dark:bg-[#221610] border-b border-primary/10">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 ml-2 text-center mr-10">Set Up Your PIN</h1>
+          <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 ml-2 text-center mr-10">Set Password</h1>
         </header>
-        <main className="flex-1 flex flex-col items-center justify-center px-6 w-full space-y-12 py-8">
-          {/* Create PIN Section */}
-          <section className={`w-full text-center space-y-4 transition-opacity ${activeSection === 'confirm' ? 'opacity-50' : 'opacity-100'}`} onClick={() => setActiveSection('create')}>
-            <div className="space-y-1">
-              <h2 className="text-2xl font-bold tracking-tight">Create your PIN</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm">Enter a 4-digit PIN to secure your account</p>
-            </div>
-            <div className="flex justify-center gap-4">
-              {pin.map((digit, index) => (
-                <input
-                  key={index}
-                  id={`create-pin-input-${index}`}
-                  className={`w-12 h-14 text-center text-2xl font-bold bg-white dark:bg-slate-800 border-2 rounded-xl focus:ring-0 transition-all ${activeSection === 'create' ? 'border-primary' : 'border-slate-200 dark:border-slate-700'}`}
-                  maxLength={1}
-                  type="password"
-                  value={digit}
-                  readOnly
-                />
-              ))}
-            </div>
-          </section>
-          {/* Divider */}
-          <div className="w-full flex items-center gap-4">
-            <div className="h-[1px] flex-1 bg-primary/20"></div>
-            <Lock className="w-5 h-5 text-primary/40" />
-            <div className="h-[1px] flex-1 bg-primary/20"></div>
+        <main className="flex-1 flex flex-col px-6 py-12 space-y-8">
+          <div className="space-y-2">
+            <h2 className="text-3xl font-bold tracking-tight">Create a password</h2>
+            <p className="text-slate-600 dark:text-slate-400 text-base">This will be your main login credential along with your email.</p>
           </div>
-          {/* Confirm PIN Section */}
-          <section className={`w-full text-center space-y-4 transition-opacity ${activeSection === 'create' ? 'opacity-50' : 'opacity-100'}`} onClick={() => isPinComplete && setActiveSection('confirm')}>
-            <div className="space-y-1">
-              <h2 className="text-2xl font-bold tracking-tight">Confirm your PIN</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm">Please re-enter your PIN to confirm</p>
-            </div>
-            <div className="flex justify-center gap-4">
-              {confirmPin.map((digit, index) => (
-                <input
-                  key={index}
-                  id={`confirm-pin-input-${index}`}
-                  className={`w-12 h-14 text-center text-2xl font-bold bg-white dark:bg-slate-800 border-2 rounded-xl focus:ring-0 transition-all ${activeSection === 'confirm' ? 'border-primary' : 'border-slate-200 dark:border-slate-700'}`}
-                  maxLength={1}
+          
+          <div className="space-y-6">
+            <label className="flex flex-col w-full">
+              <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Password</p>
+              <div className="relative">
+                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                  placeholder="••••••••" 
                   type="password"
-                  value={digit}
-                  readOnly
                 />
-              ))}
-            </div>
-            {isConfirmComplete && !pinsMatch && (
-              <p className="text-red-500 text-xs font-bold animate-bounce">PINs do not match!</p>
-            )}
-          </section>
-        </main>
-        {/* Numeric Keypad */}
-        <footer className="mt-auto w-full px-6 pb-8">
-          <div className="grid grid-cols-3 gap-3">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-              <button 
-                key={num} 
-                onClick={() => {
-                  const target = activeSection === 'create' ? pin : confirmPin;
-                  const emptyIndex = target.findIndex(d => !d);
-                  if (emptyIndex !== -1) {
-                    handlePinChange(emptyIndex, num.toString(), activeSection);
-                    if (activeSection === 'create' && emptyIndex === 3) {
-                      setTimeout(() => setActiveSection('confirm'), 300);
-                    }
-                  }
-                }}
-                className="h-16 flex items-center justify-center text-2xl font-semibold bg-white dark:bg-slate-800 rounded-xl hover:bg-primary/10 active:scale-95 transition-all shadow-sm cursor-pointer"
-              >
-                {num}
-              </button>
-            ))}
-            <button className="h-16 flex items-center justify-center text-2xl font-semibold rounded-xl"></button>
-            <button 
-              onClick={() => {
-                const target = activeSection === 'create' ? pin : confirmPin;
-                const emptyIndex = target.findIndex(d => !d);
-                if (emptyIndex !== -1) {
-                  handlePinChange(emptyIndex, '0', activeSection);
-                  if (activeSection === 'create' && emptyIndex === 3) {
-                    setTimeout(() => setActiveSection('confirm'), 300);
-                  }
-                }
-              }}
-              className="h-16 flex items-center justify-center text-2xl font-semibold bg-white dark:bg-slate-800 rounded-xl hover:bg-primary/10 active:scale-95 transition-all shadow-sm cursor-pointer"
-            >
-              0
-            </button>
-            <button 
-              onClick={() => {
-                const target = activeSection === 'create' ? pin : confirmPin;
-                const lastFilledIndex = [...target].reverse().findIndex(d => d);
-                if (lastFilledIndex !== -1) {
-                  const index = 3 - lastFilledIndex;
-                  handlePinChange(index, '', activeSection);
-                } else if (activeSection === 'confirm') {
-                  setActiveSection('create');
-                }
-              }}
-              className="h-16 flex items-center justify-center text-2xl font-semibold bg-white dark:bg-slate-800 rounded-xl hover:bg-primary/10 active:scale-95 transition-all shadow-sm cursor-pointer"
-            >
-              <Delete className="w-6 h-6" />
-            </button>
+              </div>
+            </label>
+
+            <label className="flex flex-col w-full">
+              <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Confirm Password</p>
+              <div className="relative">
+                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                  placeholder="••••••••" 
+                  type="password"
+                />
+              </div>
+            </label>
           </div>
+
           <button 
-            onClick={onNext} 
-            disabled={!canSave}
-            className="w-full mt-8 py-4 bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold rounded-xl active:scale-[0.98] transition-all shadow-lg shadow-primary/20 cursor-pointer"
+            onClick={handleSignUp}
+            disabled={loading || !password || !confirmPassword}
+            className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer mt-8"
           >
-            Confirm & Save
+            <span>{loading ? 'Creating Account...' : 'Create Account'}</span>
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
           </button>
-        </footer>
+        </main>
       </div>
     </div>
   );
@@ -1778,25 +1733,33 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
 }
 
 function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: any) => void }) {
-  const [email, setEmail] = useState(() => localStorage.getItem('remembered_email') || '');
+  const [identifier, setIdentifier] = useState(() => localStorage.getItem('remembered_identifier') || '');
   const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_email'));
+  const [loginType, setLoginType] = useState<'email' | 'phone'>('email');
+  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_identifier'));
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setNotification({ message: 'Please enter both email and password', type: 'error' });
+    if (!identifier || !password) {
+      setNotification({ message: `Please enter both ${loginType} and password`, type: 'error' });
       return;
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const loginParams: any = { password };
+      if (loginType === 'email') {
+        loginParams.email = identifier;
+      } else {
+        loginParams.phone = identifier;
+      }
+      
+      const { error } = await supabase.auth.signInWithPassword(loginParams);
       if (error) throw error;
       
       if (rememberMe) {
-        localStorage.setItem('remembered_email', email);
+        localStorage.setItem('remembered_identifier', identifier);
       } else {
-        localStorage.removeItem('remembered_email');
+        localStorage.removeItem('remembered_identifier');
       }
       
       onLogin();
@@ -1832,18 +1795,39 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
             </button>
           </div>
         </div>
+        {/* Login Type Toggle */}
+        <div className="px-6 py-2">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <button 
+              onClick={() => setLoginType('email')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'email' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
+            >
+              Email
+            </button>
+            <button 
+              onClick={() => setLoginType('phone')}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'phone' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
+            >
+              Phone
+            </button>
+          </div>
+        </div>
         {/* Form Fields */}
         <div className="flex flex-col gap-4 px-6 py-2">
           <label className="flex flex-col w-full">
-            <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Email</p>
+            <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">{loginType === 'email' ? 'Email' : 'Phone Number'}</p>
             <div className="relative">
-              <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              {loginType === 'email' ? (
+                <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              ) : (
+                <Smartphone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              )}
               <input 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                placeholder="Enter your email" 
-                type="email"
+                placeholder={loginType === 'email' ? "Enter your email" : "Enter your phone number"} 
+                type={loginType === 'email' ? "email" : "tel"}
               />
             </div>
           </label>
@@ -2288,6 +2272,30 @@ VALUES
                 </button>
               ))}
             </section>
+
+            {/* Quick Start Guide for New Users */}
+            {favorites.length === 0 && (
+              <section className="mb-6 px-1 animate-in fade-in slide-in-from-left-4 duration-700">
+                <div className="bg-gradient-to-br from-orange-500 to-orange-600 p-6 rounded-[32px] shadow-xl shadow-orange-200 dark:shadow-none relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
+                  <div className="relative z-10">
+                    <h3 className="text-white text-xl font-black tracking-tight mb-2">Welcome to LocalEats! 🇿🇦</h3>
+                    <p className="text-white/90 text-xs font-medium leading-relaxed mb-4">
+                      Start your journey by following your favorite Tembisa shops to see their menus instantly.
+                    </p>
+                    <button 
+                      onClick={onDiscover}
+                      className="bg-white text-orange-600 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer"
+                    >
+                      Find Shops to Follow
+                    </button>
+                  </div>
+                  <div className="absolute bottom-0 right-4 opacity-20 group-hover:scale-110 transition-transform duration-700">
+                    <Store className="w-24 h-24 text-white" />
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Restaurants Near You */}
             <section className="mb-6">
@@ -3157,7 +3165,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
   );
 }
 
-function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile }: { onBack: () => void, shop: Shop, isFavorite: boolean, onToggleFavorite: () => void, userProfile: UserProfile | null }) {
+function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart }: { onBack: () => void, shop: Shop, isFavorite: boolean, onToggleFavorite: () => void, userProfile: UserProfile | null, session: any, onSignUp: () => void, addToCart: (item: MenuItem, shopId: string) => void }) {
   const [activeTab, setActiveTab] = useState<'menu' | 'reviews' | 'info'>('menu');
   const [searchQuery, setSearchQuery] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
@@ -3255,15 +3263,16 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
             </button>
             <button 
               onClick={() => {
+                const shareUrl = `${window.location.origin}${window.location.pathname}?shopId=${shop.id}`;
                 if (navigator.share) {
                   navigator.share({
                     title: shop.name,
                     text: `Check out ${shop.name} on LocalEats!`,
-                    url: window.location.href,
+                    url: shareUrl,
                   }).catch(console.error);
                 } else {
-                  navigator.clipboard.writeText(window.location.href);
-                  alert('Link copied to clipboard!');
+                  navigator.clipboard.writeText(shareUrl);
+                  alert('Link copied to clipboard! You can now share this with others.');
                 }
               }}
               className="text-gray-700 dark:text-slate-300 cursor-pointer hover:text-orange-600 transition-colors"
@@ -3277,6 +3286,25 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
       <main className="pt-20 pb-12 px-4 flex-grow overflow-y-auto">
         {/* Hero Section: Logo and Rating */}
         <section className="mb-8 flex flex-col items-center">
+          {!session && (
+            <div className="w-full mb-6 p-4 bg-orange-50 dark:bg-orange-900/20 rounded-2xl border border-orange-100 dark:border-orange-800/50 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500">
+              <div className="flex items-center gap-3">
+                <div className="size-10 bg-orange-100 dark:bg-orange-800 rounded-full flex items-center justify-center text-orange-600">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">New here?</p>
+                  <p className="text-[10px] text-slate-500">Sign up to follow {shop.name}</p>
+                </div>
+              </div>
+              <button 
+                onClick={onSignUp}
+                className="px-4 py-2 bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-orange-600/10 active:scale-95 transition-all cursor-pointer"
+              >
+                Sign Up
+              </button>
+            </div>
+          )}
           <div className="relative mb-6">
             <div className="w-32 h-32 rounded-full bg-white dark:bg-slate-800 shadow-lg flex items-center justify-center p-2 border-4 border-orange-100 dark:border-orange-500/20">
               <img alt={shop.name} className="w-full h-full rounded-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
@@ -3339,7 +3367,10 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         </div>
                         <div className="flex items-center justify-between">
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
-                          <button className="size-8 bg-orange-600 text-white rounded-lg flex items-center justify-center shadow-lg shadow-orange-600/20 active:scale-90 transition-all cursor-pointer">
+                          <button 
+                            onClick={() => addToCart(item, shop.id)}
+                            className="size-8 bg-orange-600 text-white rounded-lg flex items-center justify-center shadow-lg shadow-orange-600/20 active:scale-90 transition-all cursor-pointer"
+                          >
                             <Plus className="w-5 h-5" />
                           </button>
                         </div>
