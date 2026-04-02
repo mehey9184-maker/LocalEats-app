@@ -1,4 +1,5 @@
 import React, { ErrorInfo, ReactNode } from 'react';
+import { AlertCircle } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -29,7 +30,7 @@ class ErrorBoundary extends React.Component<any, any> {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center bg-gray-50">
           <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 mb-6">
-            <span className="material-symbols-outlined text-4xl">error</span>
+            <AlertCircle className="w-10 h-10" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
           <p className="text-gray-600 mb-8 max-w-xs">

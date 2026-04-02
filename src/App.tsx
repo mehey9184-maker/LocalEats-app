@@ -5,6 +5,81 @@
 
 import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Home, 
+  Store, 
+  Compass, 
+  Bell, 
+  X, 
+  CheckCircle, 
+  Info, 
+  Utensils, 
+  User, 
+  Mail, 
+  Lock, 
+  Flag, 
+  ArrowRight, 
+  ArrowLeft, 
+  Trash2, 
+  RefreshCw, 
+  Settings, 
+  History, 
+  MapPin, 
+  MoreVertical, 
+  UserMinus, 
+  AlertCircle, 
+  Star, 
+  Minus, 
+  Plus, 
+  ChevronDown, 
+  ShoppingCart, 
+  Clock, 
+  CreditCard, 
+  Loader2, 
+  Search, 
+  ShoppingBag, 
+  ChevronRight, 
+  LayoutDashboard, 
+  Phone, 
+  LogOut, 
+  Save, 
+  SearchX, 
+  Database, 
+  MessageSquare, 
+  Navigation, 
+  PhoneCall, 
+  Layers, 
+  Heart, 
+  Share2,
+  BookOpen, 
+  Camera, 
+  Moon, 
+  Sun, 
+  RotateCcw, 
+  ClipboardList, 
+  BarChart3, 
+  Copy, 
+  StickyNote, 
+  AlertTriangle,
+  Check,
+  Smartphone,
+  Map,
+  Tag,
+  ShoppingBasket,
+  Ban,
+  Delete,
+  LogIn,
+  Locate,
+  LocateFixed,
+  Banknote,
+  ChevronLeft,
+  Bug,
+  Package,
+  XCircle,
+  CheckCircle2,
+  Hourglass,
+  CheckSquare
+} from 'lucide-react';
 import { supabase, supabaseUrl } from './lib/supabase';
 
 type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review';
@@ -640,21 +715,19 @@ export default function App() {
               className={`fixed ${notification.persistent ? 'inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm' : 'top-0 left-0 right-0'} z-[100] px-4 pointer-events-none`}
             >
               <div className={`${notification.persistent ? 'w-full max-w-xs' : 'max-w-md mx-auto'} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-2xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto`}>
-                <div className="flex items-center gap-3">
-                  <div className={`${notification.type === 'ready' ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400' : 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400'} p-3 rounded-2xl`}>
-                    <span className="material-symbols-outlined text-2xl">
-                      {notification.type === 'ready' ? 'restaurant' : 'notifications_active'}
-                    </span>
+                <div className="flex items-start gap-3">
+                  <div className={`${notification.type === 'ready' ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400' : 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400'} p-3 rounded-2xl shrink-0`}>
+                    {notification.type === 'ready' ? <Utensils className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
                   </div>
-                  <div className="flex-1">
-                    <h3 className="font-bold text-lg leading-tight">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-lg leading-tight truncate">
                       {notification.type === 'ready' ? 'Order Ready!' : 'Notification'}
                     </h3>
                     <p className="text-gray-600 dark:text-slate-400 text-sm mt-1">{notification.message}</p>
                   </div>
                   {!notification.persistent && (
-                    <button onClick={() => setNotification(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg self-start">
-                      <span className="material-symbols-outlined text-gray-500 dark:text-slate-400">close</span>
+                    <button onClick={() => setNotification(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0">
+                      <X className="w-5 h-5 text-gray-500 dark:text-slate-400" />
                     </button>
                   )}
                 </div>
@@ -703,7 +776,7 @@ export default function App() {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-teal-500"></div>
                 
                 <div className="mb-6 inline-flex items-center justify-center w-20 h-20 bg-emerald-100 dark:bg-emerald-500/20 rounded-full text-emerald-600 dark:text-emerald-400">
-                  <span className="material-symbols-outlined text-5xl">check_circle</span>
+                  <CheckCircle className="w-12 h-12" />
                 </div>
                 
                 <h2 className="text-2xl font-black text-slate-900 dark:text-white mb-2 leading-tight">Order Accepted!</h2>
@@ -1122,7 +1195,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
       <div className="relative flex h-auto min-h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <div className="flex items-center p-4 pb-2 justify-center mt-8">
           <div className="text-primary flex size-16 shrink-0 items-center justify-center bg-primary/10 rounded-full">
-            <span className="material-symbols-outlined !text-4xl">restaurant_menu</span>
+            <Utensils className="w-8 h-8" />
           </div>
         </div>
         <div className="px-6">
@@ -1143,7 +1216,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Full Name</p>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">person</span>
+              <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -1156,7 +1229,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Email</p>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">mail</span>
+              <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -1169,7 +1242,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Password</p>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">lock</span>
+              <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -1183,7 +1256,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Phone Number</p>
             <div className="flex w-full items-stretch">
               <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 rounded-l-xl border-r-0">
-                <span className="material-symbols-outlined text-primary !text-xl">flag</span>
+                <Flag className="w-5 h-5 text-primary" />
                 <span className="text-slate-600 dark:text-slate-400 font-medium text-sm">+27</span>
               </div>
               <input 
@@ -1203,7 +1276,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
             className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <span>{loading ? 'Signing up...' : 'Sign Up'}</span>
-            <span className="material-symbols-outlined">arrow_forward</span>
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
           </button>
         </div>
         <div className="px-6 pb-6">
@@ -1224,7 +1297,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Par
               onClick={() => setNotification({ message: "Apple login coming soon!", type: 'info' })}
               className="flex items-center justify-center gap-2 h-12 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <span className="material-symbols-outlined !text-xl">ios</span>
+              <Smartphone className="w-5 h-5" />
               <span className="text-sm font-semibold">Apple</span>
             </button>
           </div>
@@ -1276,7 +1349,7 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
         <header className="flex items-center p-4">
           <button onClick={onBack} className="size-10 flex items-center justify-center rounded-full hover:bg-primary/10 transition-colors cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
         </header>
         <main className="flex-1 px-6 pt-4 pb-12 flex flex-col">
@@ -1350,7 +1423,7 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
               }}
               className="h-14 flex items-center justify-center rounded-lg hover:bg-primary/10 cursor-pointer"
             >
-              <span className="material-symbols-outlined text-2xl">backspace</span>
+              <Delete className="w-6 h-6" />
             </button>
           </div>
         </main>
@@ -1388,7 +1461,7 @@ function SetupPinScreen({ onNext, onBack }: { onNext: () => void, onBack: () => 
         {/* Top App Bar */}
         <header className="flex items-center p-4 bg-white dark:bg-[#221610] border-b border-primary/10">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 ml-2 text-center mr-10">Set Up Your PIN</h1>
         </header>
@@ -1416,7 +1489,7 @@ function SetupPinScreen({ onNext, onBack }: { onNext: () => void, onBack: () => 
           {/* Divider */}
           <div className="w-full flex items-center gap-4">
             <div className="h-[1px] flex-1 bg-primary/20"></div>
-            <span className="material-symbols-outlined text-primary/40">lock</span>
+            <Lock className="w-5 h-5 text-primary/40" />
             <div className="h-[1px] flex-1 bg-primary/20"></div>
           </div>
           {/* Confirm PIN Section */}
@@ -1493,7 +1566,7 @@ function SetupPinScreen({ onNext, onBack }: { onNext: () => void, onBack: () => 
               }}
               className="h-16 flex items-center justify-center text-2xl font-semibold bg-white dark:bg-slate-800 rounded-xl hover:bg-primary/10 active:scale-95 transition-all shadow-sm cursor-pointer"
             >
-              <span className="material-symbols-outlined">backspace</span>
+              <Delete className="w-6 h-6" />
             </button>
           </div>
           <button 
@@ -1515,8 +1588,8 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
       <div className="relative flex h-screen w-full flex-col overflow-x-hidden">
         {/* Top Navigation */}
         <header className="flex items-center justify-between p-4 bg-white dark:bg-[#221610]">
-          <button className="flex items-center justify-center h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 cursor-pointer">
-            <span className="material-symbols-outlined">close</span>
+          <button onClick={onExplore} className="flex items-center justify-center h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 cursor-pointer">
+            <X className="w-6 h-6" />
           </button>
           <h2 className="text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">Success</h2>
           <div className="w-10"></div> {/* Spacer for symmetry */}
@@ -1529,7 +1602,7 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
             <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
             <div className="relative h-48 w-48 rounded-full bg-primary/10 flex items-center justify-center">
               <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
-                <span className="material-symbols-outlined text-white text-7xl" style={{ fontVariationSettings: "'wght' 700" }}>check</span>
+                <Check className="w-16 h-16 text-white" />
               </div>
             </div>
           </div>
@@ -1602,7 +1675,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
         {/* Top App Bar */}
         <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10">
           <div onClick={onBack} className="text-primary flex size-12 shrink-0 items-center cursor-pointer">
-            <span className="material-symbols-outlined text-2xl">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </div>
           <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-12">Complete Your Profile</h2>
         </div>
@@ -1621,16 +1694,16 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
               <div className="relative">
                 <div className="bg-primary/10 dark:bg-primary/20 bg-center bg-no-repeat aspect-square bg-cover rounded-full min-h-32 w-32 border-2 border-dashed border-primary/40 flex items-center justify-center overflow-hidden" style={{ backgroundImage: `url("${userProfile.photoURL || DEFAULT_AVATAR_URL}")` }}>
                   {uploading ? (
-                    <span className="material-symbols-outlined text-primary text-4xl animate-spin">sync</span>
+                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
                   ) : (
-                    !userProfile.photoURL && <span className="material-symbols-outlined text-primary text-4xl">account_circle</span>
+                    !userProfile.photoURL && <User className="w-12 h-12 text-slate-300" />
                   )}
                 </div>
                 <div 
                   onClick={() => fileInputRef.current?.click()}
                   className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 border-4 border-background-light dark:border-background-dark shadow-lg cursor-pointer hover:scale-110 transition-transform"
                 >
-                  <span className="material-symbols-outlined text-sm font-bold">add_a_photo</span>
+                  <Camera className="w-4 h-4 text-white" />
                 </div>
               </div>
               <div className="flex flex-col items-center justify-center space-y-1">
@@ -1646,7 +1719,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
             <label className="flex flex-col min-w-40 flex-1">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">Email Address</p>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">mail</span>
+                <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -1661,7 +1734,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
             <label className="flex flex-col min-w-40 flex-1">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">City</p>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">location_city</span>
+                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
@@ -1676,7 +1749,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
             <label className="flex flex-col min-w-40 flex-1">
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">Home Address</p>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xl">location_on</span>
+                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
@@ -1740,7 +1813,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
         {/* Logo Section */}
         <div className="flex items-center p-4 pb-2 justify-center mt-8">
           <div className="text-primary flex size-16 shrink-0 items-center justify-center bg-primary/10 rounded-full">
-            <span className="material-symbols-outlined !text-4xl">restaurant_menu</span>
+            <Utensils className="w-8 h-8" />
           </div>
         </div>
         {/* Welcome Header */}
@@ -1764,7 +1837,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Email</p>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">mail</span>
+              <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -1779,7 +1852,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal">Password</p>
             </div>
             <div className="relative">
-              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">lock</span>
+              <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -1792,7 +1865,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
           <div className="flex items-center justify-between px-1">
             <label className="flex items-center gap-2 cursor-pointer group">
               <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${rememberMe ? 'bg-primary border-primary' : 'border-slate-300 dark:border-slate-700'}`}>
-                {rememberMe && <span className="material-symbols-outlined text-white text-sm">check</span>}
+                {rememberMe && <Check className="w-3 h-3 text-white" />}
                 <input 
                   type="checkbox" 
                   className="hidden" 
@@ -1813,7 +1886,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
             className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <span>{loading ? 'Logging in...' : 'Login'}</span>
-            <span className="material-symbols-outlined">login</span>
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
           </button>
         </div>
         {/* Social Login Section */}
@@ -1835,7 +1908,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               onClick={() => setNotification({ message: "Apple signup coming soon!", type: 'info' })}
               className="flex items-center justify-center gap-2 h-12 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <span className="material-symbols-outlined !text-xl">ios</span>
+              <Smartphone className="w-5 h-5" />
               <span className="text-sm font-semibold">Apple</span>
             </button>
           </div>
@@ -1862,7 +1935,7 @@ function LoginSuccessScreen({ onHome, onViewProfile, onBack }: { onHome: () => v
       <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <div className="flex items-center p-4 justify-between">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/10 transition-colors cursor-pointer">
-            <span className="material-symbols-outlined text-2xl">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-12">Login Success</h2>
         </div>
@@ -1870,9 +1943,7 @@ function LoginSuccessScreen({ onHome, onViewProfile, onBack }: { onHome: () => v
           <div className="relative">
             <div className="absolute inset-0 bg-primary/20 rounded-full blur-2xl transform scale-150"></div>
             <div className="relative bg-white dark:bg-slate-800 p-8 rounded-full shadow-xl border-4 border-primary/10">
-              <span className="material-symbols-outlined text-primary text-[120px] leading-none select-none" style={{ fontVariationSettings: "'FILL' 1, 'wght' 600" }}>
-                check_circle
-              </span>
+              <CheckCircle className="w-[120px] h-[120px] text-primary" />
             </div>
           </div>
           <div className="text-center space-y-4 max-w-sm">
@@ -1988,7 +2059,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
       <div className="bg-white dark:bg-[#221610] h-screen flex flex-col items-center justify-center p-6 text-center">
         <div className="relative mb-8">
           <div className="absolute inset-0 bg-orange-50 dark:bg-orange-900/20 rounded-full scale-150 blur-3xl opacity-50"></div>
-          <span className="material-symbols-outlined text-orange-500 text-[120px] relative z-10">storefront</span>
+          <Store className="w-24 h-24 text-orange-500 relative z-10" />
         </div>
         <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">No Shops Found</h2>
         <p className="text-gray-500 dark:text-slate-400 max-w-xs mb-6 leading-relaxed">
@@ -1998,7 +2069,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
         {fetchError && fetchError.includes('Network Error') && (
           <div className="bg-orange-50 dark:bg-orange-900/10 p-4 rounded-2xl mb-6 text-left max-w-xs border border-orange-100 dark:border-orange-900/30">
             <h4 className="text-[10px] font-bold text-orange-800 dark:text-orange-400 uppercase mb-2 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs">info</span>
+              <Info className="w-3 h-3" />
               Troubleshooting
             </h4>
             <ul className="text-[10px] text-orange-700 dark:text-orange-300 space-y-1.5 list-disc pl-3">
@@ -2023,7 +2094,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
             onClick={onRetry} 
             className="w-full bg-orange-600 text-white font-bold py-4 px-8 rounded-2xl shadow-xl shadow-orange-200 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
           >
-            <span className="material-symbols-outlined text-xl">refresh</span>
+            <RefreshCw className="w-5 h-5" />
             Retry Loading
           </button>
 
@@ -2170,15 +2241,15 @@ VALUES
                 <div className="fixed inset-0 z-[50]" onClick={() => setIsSettingsOpen(false)}></div>
                 <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                   <button onClick={() => { setIsSettingsOpen(false); onSettings(); }} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer">
-                    <span className="material-symbols-outlined text-gray-500 dark:text-slate-400 group-hover:text-orange-600">settings</span>
+                    <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
                     <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Settings</span>
                   </button>
                   <button onClick={() => { setIsSettingsOpen(false); onProfile(); }} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer">
-                    <span className="material-symbols-outlined text-gray-500 dark:text-slate-400 group-hover:text-orange-600">person</span>
+                    <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
                     <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Profile</span>
                   </button>
                   <button onClick={() => { setIsSettingsOpen(false); onOrderHistory(); }} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer">
-                    <span className="material-symbols-outlined text-gray-500 dark:text-slate-400 group-hover:text-orange-600">history</span>
+                    <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
                     <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">Order History</span>
                   </button>
                 </div>
@@ -2193,9 +2264,7 @@ VALUES
         <section className="mb-4">
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="h-5 w-5 text-gray-400 dark:text-slate-500" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                    <path clipRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" fillRule="evenodd"></path>
-                  </svg>
+                  <Search className="h-5 w-5 text-gray-400 dark:text-slate-500" />
                 </div>
                 <input 
                   className="block w-full pl-10 pr-3 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500" 
@@ -2228,7 +2297,7 @@ VALUES
                   onClick={onRequestLocation}
                   className="flex items-center gap-1 text-[10px] font-bold text-orange-600 dark:text-orange-400"
                 >
-                  <span className="material-symbols-outlined text-[14px]">{userLocation ? 'my_location' : 'location_searching'}</span>
+                  {userLocation ? <MapPin className="w-3.5 h-3.5" /> : <Locate className="w-3.5 h-3.5" />}
                   {userLocation ? 'Update Location' : 'Get Location'}
                 </button>
               </div>
@@ -2242,14 +2311,14 @@ VALUES
                     <div className="h-24 w-full rounded-xl overflow-hidden relative">
                       <img alt={shop.name} className="w-full h-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
                       <div className="absolute top-2 right-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm px-1.5 py-0.5 rounded-lg flex items-center gap-0.5 shadow-sm">
-                        <span className="material-symbols-outlined text-yellow-500 text-[10px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                        <Star className="w-2.5 h-2.5 text-yellow-500 fill-yellow-500" />
                         <span className="text-[10px] font-bold text-slate-900 dark:text-white">{shop.rating}</span>
                       </div>
                     </div>
                     <div>
                       <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{shop.name}</h4>
                       <div className="flex items-center gap-1 mt-0.5">
-                        <span className="material-symbols-outlined text-[10px] text-gray-400">location_on</span>
+                        <MapPin className="w-2.5 h-2.5 text-gray-400" />
                         <span className="text-[10px] text-gray-500 dark:text-slate-400 truncate">{shop.address || 'Tembisa'}</span>
                       </div>
                     </div>
@@ -2257,7 +2326,7 @@ VALUES
                 ))}
                 {sortedShops.length === 0 && (
                   <div className="flex flex-col items-center justify-center w-full py-8 bg-gray-50 dark:bg-slate-800/50 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-                    <span className="material-symbols-outlined text-gray-300 dark:text-slate-600 text-4xl mb-2">near_me</span>
+                    <Navigation className="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" />
                     <p className="text-[10px] text-gray-400 dark:text-slate-500 italic">No restaurants found nearby.</p>
                   </div>
                 )}
@@ -2311,7 +2380,7 @@ VALUES
                       aria-label="Store settings" 
                       className={`text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center p-1 rounded-full cursor-pointer ${isStoreSettingsOpen ? 'bg-gray-100 dark:bg-slate-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`}
                     >
-                      <span className="material-symbols-outlined text-[18px]">more_vert</span>
+                      <MoreVertical className="w-5 h-5" />
                     </button>
 
                     {isStoreSettingsOpen && (
@@ -2319,18 +2388,18 @@ VALUES
                         <div className="fixed inset-0 z-[50]" onClick={() => setIsStoreSettingsOpen(false)}></div>
                         <div className="absolute top-full right-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-xl z-[60] py-1 animate-in fade-in zoom-in duration-200 origin-top-right">
                           <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer">
-                            <span className="material-symbols-outlined !text-[16px]">person_remove</span>
+                            <UserMinus className="w-4 h-4" />
                             Unfollow
                           </button>
                           <button 
                             onClick={() => { setIsStoreSettingsOpen(false); onStoreInfo(selectedShopId); }}
                             className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
                           >
-                            <span className="material-symbols-outlined !text-[16px]">info</span>
+                            <Info className="w-4 h-4" />
                             Store Info
                           </button>
                           <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 cursor-pointer">
-                            <span className="material-symbols-outlined !text-[16px]">report</span>
+                            <AlertTriangle className="w-4 h-4" />
                             Report Store
                           </button>
                         </div>
@@ -2339,9 +2408,10 @@ VALUES
                   </div>
                   <div className="flex items-center gap-0.5 mt-1">
                     {Array.from({ length: 5 }).map((_, i) => (
-                      <span key={i} className="material-symbols-outlined text-[14px] text-orange-500" style={{ fontVariationSettings: `'FILL' ${i < Math.floor(selectedShop.rating) ? 1 : 0}` }}>
-                        {i < Math.floor(selectedShop.rating) ? 'star' : (i < selectedShop.rating ? 'star_half' : 'star')}
-                      </span>
+                      <Star 
+                        key={i} 
+                        className={`w-3 h-3 ${i < Math.floor(selectedShop.rating) ? 'text-orange-500 fill-orange-500' : 'text-gray-300 dark:text-slate-600'}`} 
+                      />
                     ))}
                     <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 ml-1">{selectedShop.rating}</span>
                   </div>
@@ -2369,14 +2439,14 @@ VALUES
                                   onClick={() => removeFromCart(item.id, selectedShopId)}
                                   className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
                                 >
-                                  <span className="material-symbols-outlined text-lg">remove</span>
+                                  <Minus className="w-4 h-4" />
                                 </button>
                                 <span className="text-sm font-bold w-4 text-center dark:text-white">{quantity}</span>
                                 <button 
                                   onClick={() => addToCart(item, selectedShopId)}
                                   className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
                                 >
-                                  <span className="material-symbols-outlined text-lg">add</span>
+                                  <Plus className="w-4 h-4" />
                                 </button>
                               </div>
                             ) : (
@@ -2400,7 +2470,7 @@ VALUES
                                   className="flex items-center gap-1 text-[10px] font-bold text-primary mt-1 hover:underline cursor-pointer"
                                 >
                                   <span>{isExpanded ? 'Show Less' : 'Read More'}</span>
-                                  <span className={`material-symbols-outlined text-[12px] transition-transform ${isExpanded ? 'rotate-180' : ''}`}>expand_more</span>
+                                  <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                                 </button>
                               )}
                             </div>
@@ -2416,16 +2486,14 @@ VALUES
                   <div className="flex gap-2">
                     <button onClick={onCheckout} className="flex-grow bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer">
                       <span>Submit order ({cartCount})</span>
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-                      </svg>
+                      <ArrowRight className="w-5 h-5" />
                     </button>
                     <button 
                       onClick={clearCart}
                       title="Clear Cart"
                       className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-500/30 p-4 rounded-2xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
                     >
-                      <span className="material-symbols-outlined">delete_sweep</span>
+                      <Trash2 className="w-6 h-6" />
                     </button>
                   </div>
                 </div>
@@ -2444,7 +2512,7 @@ VALUES
             className="fixed bottom-24 right-6 z-50 bg-orange-600 text-white p-4 rounded-full shadow-2xl flex items-center gap-2 active:scale-95 transition-transform cursor-pointer"
           >
             <div className="relative">
-              <span className="material-symbols-outlined">shopping_cart</span>
+              <ShoppingCart className="w-6 h-6" />
               <span className="absolute -top-2 -right-2 bg-white text-orange-600 text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-sm border border-orange-100">
                 {cartCount}
               </span>
@@ -2488,19 +2556,19 @@ VALUES
       <nav className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 px-6 py-2 pb-6 flex justify-around items-center sticky bottom-0 z-40">
         <button className="flex flex-col items-center gap-1 text-orange-600 cursor-pointer">
           <div className="p-1 rounded-xl bg-orange-50 dark:bg-orange-500/10">
-            <span className="material-symbols-outlined">home</span>
+            <Home className="w-6 h-6" />
           </div>
           <span className="text-xs font-bold">Home</span>
         </button>
         <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-gray-400 dark:text-slate-500 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
-            <span className="material-symbols-outlined">storefront</span>
+            <Store className="w-6 h-6" />
           </div>
           <span className="text-xs font-semibold">Discover</span>
         </button>
         <button onClick={onExplore} className="flex flex-col items-center gap-1 text-gray-400 dark:text-slate-500 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
-            <span className="material-symbols-outlined">explore</span>
+            <Compass className="w-6 h-6" />
           </div>
           <span className="text-xs font-semibold">Explore</span>
         </button>
@@ -2568,7 +2636,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
         {/* Header */}
         <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
           <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer">
-            <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </div>
           <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1">Checkout</h2>
           <button 
@@ -2581,7 +2649,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
             }}
             className="text-red-500 text-xs font-bold flex items-center gap-1 p-2 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
           >
-            <span className="material-symbols-outlined text-sm">delete_sweep</span>
+            <Trash2 className="w-4 h-4" />
             Clear
           </button>
         </div>
@@ -2614,7 +2682,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
               <div className="flex items-stretch justify-between gap-4">
                 <div className="flex flex-col gap-2 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-sm">schedule</span>
+                    <Clock className="w-4 h-4 text-primary" />
                     <p className="text-primary text-sm font-bold uppercase tracking-wider">Ready in 15-20 mins</p>
                   </div>
                   <p className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight">{primaryShop.name}</p>
@@ -2629,7 +2697,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
           <section>
             <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Payment Info</h3>
             <div className="bg-primary/10 border border-primary/20 p-4 rounded-xl flex items-center gap-3">
-              <span className="material-symbols-outlined text-primary">payments</span>
+              <Banknote className="w-5 h-5 text-primary" />
               <p className="text-slate-900 dark:text-slate-100 text-base font-medium">Pay at store upon pickup</p>
             </div>
           </section>
@@ -2649,11 +2717,11 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
               className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl shadow-xl shadow-primary/20 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:scale-100 cursor-pointer"
             >
               {loading ? (
-                <span className="material-symbols-outlined animate-spin">progress_activity</span>
+                <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
                   <span>Confirm Order</span>
-                  <span className="material-symbols-outlined">check_circle</span>
+                  <CheckCircle className="w-5 h-5" />
                 </>
               )}
             </button>
@@ -2681,7 +2749,7 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
         <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
         <div className="relative h-48 w-48 rounded-full bg-primary/10 flex items-center justify-center">
           <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
-            <span className="material-symbols-outlined text-white text-7xl" style={{ fontVariationSettings: "'wght' 700" }}>check</span>
+            <Check className="w-16 h-16 text-white" />
           </div>
         </div>
       </div>
@@ -2694,7 +2762,7 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
       <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 mb-10">
         <div className="flex items-center gap-4 mb-4">
           <div className="size-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-            <span className="material-symbols-outlined">schedule</span>
+            <Clock className="w-5 h-5" />
           </div>
           <div className="text-left">
             <p className="text-sm font-bold text-primary uppercase tracking-wider">Ready in 15-20 mins</p>
@@ -2703,7 +2771,7 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
         </div>
         <div className="flex items-center gap-4">
           <div className="size-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-            <span className="material-symbols-outlined">payments</span>
+            <Banknote className="w-5 h-5" />
           </div>
           <div className="text-left">
             <p className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Pay at Store</p>
@@ -2757,7 +2825,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         <div className="flex justify-between items-center px-6 py-4 w-full">
           <div className="flex items-center gap-4">
             <button onClick={onHome} className="text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer">
-              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>arrow_back</span>
+              <ArrowLeft className="w-6 h-6" />
             </button>
             <h1 className="font-['Plus_Jakarta_Sans'] font-bold tracking-tight text-xl text-[#FF6B00]">DISCOVER</h1>
           </div>
@@ -2776,7 +2844,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
           </div>
           <div className="relative group">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
-              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>search</span>
+              <Search className="w-5 h-5" />
             </div>
             <input 
               className="w-full h-14 pl-12 pr-4 bg-[#ffffff] dark:bg-slate-900 rounded-lg border-none focus:ring-2 focus:ring-[#9c3f00] shadow-[0_8px_32px_rgba(45,47,49,0.06)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none" 
@@ -2801,7 +2869,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                     : 'bg-[#e1e2e6] dark:bg-slate-800 text-[#2d2f31] dark:text-slate-300 hover:bg-[#dbdde0] dark:hover:bg-slate-700'
                 }`}
               >
-                {category === 'Nearby' && <span className="material-symbols-outlined text-[14px] mr-1 align-middle">near_me</span>}
+                {category === 'Nearby' && <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />}
                 {category}
               </button>
             ))}
@@ -2821,7 +2889,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                 <div className="h-48 relative">
                   <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo}/>
                   <div className="absolute top-4 right-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
-                    <span className="material-symbols-outlined text-yellow-500 text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                    <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
                     <span className="text-sm font-bold text-[#2d2f31] dark:text-white">{shop.rating}</span>
                   </div>
                 </div>
@@ -2886,15 +2954,15 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
       <nav className="fixed bottom-0 w-full max-w-md rounded-t-[2rem] z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-[0_-8px_32px_rgba(45,47,49,0.06)]">
         <div className="flex justify-around items-center px-6 pb-8 pt-4">
           <button onClick={onHome} className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer">
-            <span className="material-symbols-outlined mb-1" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>home</span>
+            <Home className="w-6 h-6 mb-1" />
             <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Home</span>
           </button>
           <button className="flex flex-col items-center justify-center text-[#FF6B00] dark:text-[#ff7a2f] bg-[#FF6B00]/10 rounded-full px-5 py-2 transition-transform duration-150 active:scale-96 cursor-pointer">
-            <span className="material-symbols-outlined mb-1" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>storefront</span>
+            <Store className="w-6 h-6 mb-1" />
             <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Discover</span>
           </button>
           <button onClick={onExplore} className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer">
-            <span className="material-symbols-outlined mb-1" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24" }}>explore</span>
+            <Compass className="w-6 h-6 mb-1" />
             <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Explore</span>
           </button>
         </div>
@@ -2937,7 +3005,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
         {/* Header */}
         <div className="flex items-center p-4 justify-between sticky top-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md z-10 border-b border-slate-200 dark:border-slate-800">
           <button onClick={onBack} className="flex size-10 items-center justify-center rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer">
-            <span className="material-symbols-outlined text-slate-900 dark:text-slate-100">arrow_back</span>
+            <ArrowLeft className="w-6 h-6 text-slate-900 dark:text-slate-100" />
           </button>
           <h2 className="text-xl font-bold leading-tight tracking-tight flex-1 text-center pr-10">Profile</h2>
         </div>
@@ -2955,13 +3023,13 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
           <div className="flex w-full flex-col gap-4 items-center">
             <div className="relative group">
               <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-full border-4 border-white dark:border-slate-800 shadow-lg h-32 w-32 flex items-center justify-center overflow-hidden" style={{ backgroundImage: `url("${userProfile.photoURL || DEFAULT_AVATAR_URL}")` }}>
-                {uploading && <span className="material-symbols-outlined text-primary text-4xl animate-spin">sync</span>}
+                {uploading && <Loader2 className="w-10 h-10 text-primary animate-spin" />}
               </div>
               <button 
                 onClick={() => fileInputRef.current?.click()}
                 className="absolute bottom-0 right-0 bg-primary text-white p-2 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform cursor-pointer"
               >
-                <span className="material-symbols-outlined text-sm">edit</span>
+                <Camera className="w-4 h-4" />
               </button>
             </div>
             <div className="flex flex-col items-center justify-center">
@@ -2978,13 +3046,13 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
             className="flex items-center gap-4 p-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
           >
             <div className="size-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined">shopping_bag</span>
+              <ShoppingBag className="w-6 h-6" />
             </div>
             <div className="flex-1 text-left">
               <p className="font-bold text-slate-900 dark:text-white">My Orders</p>
               <p className="text-slate-500 text-xs">View your order history</p>
             </div>
-            <span className="material-symbols-outlined text-slate-400">chevron_right</span>
+            <ChevronRight className="w-5 h-5 text-slate-400" />
           </button>
 
           {userProfile.role === 'admin' && (
@@ -2993,13 +3061,13 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
               className="flex items-center gap-4 p-4 bg-primary/5 rounded-2xl border border-primary/10 shadow-sm hover:bg-primary/10 transition-all cursor-pointer"
             >
               <div className="size-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
-                <span className="material-symbols-outlined">dashboard</span>
+                <LayoutDashboard className="w-6 h-6" />
               </div>
               <div className="flex-1 text-left">
                 <p className="font-bold text-primary">Admin Dashboard</p>
                 <p className="text-slate-500 text-xs">Manage store orders</p>
               </div>
-              <span className="material-symbols-outlined text-primary">chevron_right</span>
+              <ChevronRight className="w-5 h-5 text-primary" />
             </button>
           )}
 
@@ -3009,13 +3077,13 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
               className="flex items-center gap-4 p-4 bg-orange-50 dark:bg-orange-500/10 rounded-2xl border border-orange-100 dark:border-orange-500/20 shadow-sm hover:bg-orange-100 dark:hover:bg-orange-500/20 transition-all cursor-pointer"
             >
               <div className="size-10 bg-orange-100 dark:bg-orange-500/20 rounded-xl flex items-center justify-center text-orange-600 dark:text-orange-400">
-                <span className="material-symbols-outlined">storefront</span>
+                <Store className="w-6 h-6" />
               </div>
               <div className="flex-1 text-left">
                 <p className="font-bold text-orange-600 dark:text-orange-400">Shop Dashboard</p>
                 <p className="text-slate-500 dark:text-slate-400 text-xs">Manage your shop orders</p>
               </div>
-              <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">chevron_right</span>
+              <ChevronRight className="w-5 h-5 text-orange-600 dark:text-orange-400" />
             </button>
           )}
         </div>
@@ -3033,7 +3101,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
                 className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium" 
                 type="text"
               />
-              <span className="material-symbols-outlined absolute right-4 text-slate-400 group-focus-within:text-primary">edit</span>
+              <Search className="w-5 h-5 absolute right-4 text-slate-400 group-focus-within:text-primary" />
             </div>
           </div>
           
@@ -3046,7 +3114,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
                 className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium" 
                 type="tel"
               />
-              <span className="material-symbols-outlined absolute right-4 text-slate-400 group-focus-within:text-primary">call</span>
+              <Phone className="w-5 h-5 absolute right-4 text-slate-400 group-focus-within:text-primary" />
             </div>
           </div>
           
@@ -3059,7 +3127,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
                 className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium resize-none" 
                 rows={2}
               ></textarea>
-              <span className="material-symbols-outlined absolute right-4 top-4 text-slate-400 group-focus-within:text-primary">location_on</span>
+              <MapPin className="w-5 h-5 absolute right-4 top-4 text-slate-400 group-focus-within:text-primary" />
             </div>
           </div>
         </div>
@@ -3069,7 +3137,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
             onClick={onLogout}
             className="w-full flex items-center justify-center gap-2 py-4 text-red-500 font-bold bg-red-50 dark:bg-red-500/10 rounded-xl hover:bg-red-100 dark:hover:bg-red-500/20 transition-all cursor-pointer"
           >
-            <span className="material-symbols-outlined">logout</span>
+            <LogOut className="w-5 h-5" />
             Logout
           </button>
         </div>
@@ -3080,7 +3148,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
             onClick={() => onSave({ fullName, phone, address })} 
             className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
           >
-            <span className="material-symbols-outlined">save</span>
+            <Save className="w-5 h-5" />
             Save Changes
           </button>
         </div>
@@ -3175,16 +3243,15 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center px-4 h-16 bg-white dark:bg-[#221610] max-w-md mx-auto">
         <div className="flex items-center w-full">
           <button onClick={onBack} className="mr-4 active:scale-95 duration-200 ease-in-out transition-opacity hover:opacity-80 text-orange-600 cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="font-bold text-lg tracking-tight text-gray-900 dark:text-white flex-grow">Store Info</h1>
           <div className="flex items-center space-x-4">
             <button 
               onClick={onToggleFavorite}
-              className={`material-symbols-outlined cursor-pointer transition-all active:scale-90 ${isFavorite ? 'text-red-500' : 'text-gray-400 hover:text-red-400'}`}
-              style={{ fontVariationSettings: isFavorite ? "'FILL' 1" : "'FILL' 0" }}
+              className={`cursor-pointer transition-all active:scale-90 ${isFavorite ? 'text-red-500' : 'text-gray-400 hover:text-red-400'}`}
             >
-              favorite
+              <Heart className={`w-6 h-6 ${isFavorite ? 'fill-current' : ''}`} />
             </button>
             <button 
               onClick={() => {
@@ -3199,9 +3266,9 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   alert('Link copied to clipboard!');
                 }
               }}
-              className="material-symbols-outlined text-gray-700 cursor-pointer hover:text-orange-600 transition-colors"
+              className="text-gray-700 dark:text-slate-300 cursor-pointer hover:text-orange-600 transition-colors"
             >
-              share
+              <Share2 className="w-6 h-6" />
             </button>
           </div>
         </div>
@@ -3215,7 +3282,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
               <img alt={shop.name} className="w-full h-full rounded-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
             </div>
             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-md flex items-center space-x-1 border border-gray-100 dark:border-slate-700">
-              <span className="material-symbols-outlined text-orange-500 text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+              <Star className="w-4 h-4 text-orange-500 fill-current" />
               <span className="text-sm font-bold text-gray-900 dark:text-white">{shop.rating}</span>
             </div>
           </div>
@@ -3248,7 +3315,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* Menu Search Bar */}
               <div className="relative group px-1">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 !text-xl group-focus-within:text-orange-600 transition-colors">search</span>
+                <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
                 <input 
                   type="text" 
                   placeholder={`Search in ${shop.name}'s menu...`}
@@ -3273,7 +3340,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         <div className="flex items-center justify-between">
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
                           <button className="size-8 bg-orange-600 text-white rounded-lg flex items-center justify-center shadow-lg shadow-orange-600/20 active:scale-90 transition-all cursor-pointer">
-                            <span className="material-symbols-outlined !text-lg">add</span>
+                            <Plus className="w-5 h-5" />
                           </button>
                         </div>
                       </div>
@@ -3282,7 +3349,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 ) : (
                   <div className="py-12 text-center">
                     <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                      <span className="material-symbols-outlined text-3xl">search_off</span>
+                      <SearchX className="w-8 h-8" />
                     </div>
                     <p className="text-sm font-bold text-slate-900 dark:text-white">No items found</p>
                     <p className="text-xs text-slate-500 mt-1">Try searching for something else</p>
@@ -3300,7 +3367,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   <p className="text-4xl font-black text-slate-900 dark:text-white">{shop.rating}</p>
                   <div className="flex text-orange-500 mt-1">
                     {[...Array(5)].map((_, i) => (
-                      <span key={i} className="material-symbols-outlined !text-sm" style={{ fontVariationSettings: `'FILL' ${i < Math.floor(shop.rating) ? 1 : 0}` }}>star</span>
+                      <Star key={i} className={`w-3 h-3 ${i < Math.floor(shop.rating) ? 'fill-current' : ''}`} />
                     ))}
                   </div>
                   <p className="text-[10px] text-slate-500 font-bold mt-1 uppercase tracking-wider">{reviews.length} Reviews</p>
@@ -3327,7 +3394,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   <div className="flex items-center justify-between">
                     <h4 className="font-bold text-sm">Write a Review</h4>
                     <button onClick={() => setShowReviewForm(false)} className="text-slate-400 hover:text-slate-600">
-                      <span className="material-symbols-outlined !text-lg">close</span>
+                      <X className="w-5 h-5" />
                     </button>
                   </div>
                   
@@ -3338,9 +3405,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         onClick={() => setNewRating(star)}
                         className={`transition-transform active:scale-90 ${newRating >= star ? 'text-orange-600' : 'text-slate-300'}`}
                       >
-                        <span className="material-symbols-outlined text-3xl" style={{ fontVariationSettings: `'FILL' ${newRating >= star ? 1 : 0}` }}>
-                          star
-                        </span>
+                        <Star className={`w-8 h-8 ${newRating >= star ? 'fill-current' : ''}`} />
                       </button>
                     ))}
                   </div>
@@ -3379,7 +3444,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 {tableMissing ? (
                   <div className="py-12 text-center bg-red-50 dark:bg-red-900/10 rounded-3xl border border-red-200 dark:border-red-800 p-6">
                     <div className="size-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
-                      <span className="material-symbols-outlined text-3xl">database_off</span>
+                      <Database className="w-8 h-8" />
                     </div>
                     <p className="text-sm font-bold text-red-900 dark:text-red-400">Reviews Table Missing</p>
                     <p className="text-xs text-red-700 dark:text-red-500 mt-2 leading-relaxed">
@@ -3403,7 +3468,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                             <p className="text-xs font-bold">{review.userName}</p>
                             <div className="flex text-orange-600">
                               {[...Array(5)].map((_, i) => (
-                                <span key={i} className="material-symbols-outlined !text-[10px]" style={{ fontVariationSettings: `'FILL' ${i < review.rating ? 1 : 0}` }}>star</span>
+                                <Star key={i} className={`w-2 h-2 ${i < review.rating ? 'fill-current' : ''}`} />
                               ))}
                             </div>
                           </div>
@@ -3418,7 +3483,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 ) : (
                   <div className="py-12 text-center">
                     <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                      <span className="material-symbols-outlined text-3xl">rate_review</span>
+                      <MessageSquare className="w-8 h-8" />
                     </div>
                     <p className="text-sm font-bold text-slate-900 dark:text-white">No reviews yet</p>
                     <p className="text-xs text-slate-500 mt-1">Be the first to review this store!</p>
@@ -3435,7 +3500,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-800">
                   <div className="flex items-start space-x-4 mb-4">
                     <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center shrink-0">
-                      <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">location_on</span>
+                      <MapPin className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                     </div>
                     <div>
                       <h3 className="font-bold text-gray-900 dark:text-white text-lg">Location</h3>
@@ -3446,7 +3511,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`, '_blank')}
                     className="w-full mt-2 py-4 px-6 bg-gray-100 dark:bg-slate-800 rounded-xl text-gray-900 dark:text-white font-bold hover:bg-gray-200 dark:hover:bg-slate-700 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer"
                   >
-                    <span className="material-symbols-outlined text-lg">directions</span>
+                    <Navigation className="w-5 h-5" />
                     <span>Get Directions</span>
                   </button>
                 </div>
@@ -3456,7 +3521,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-800">
                     <div className="flex items-start space-x-4 mb-4">
                       <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center shrink-0">
-                        <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">schedule</span>
+                        <Clock className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                       </div>
                       <div>
                         <h3 className="font-bold text-gray-900 dark:text-white text-lg">Opening Hours</h3>
@@ -3473,7 +3538,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-800">
                     <div className="flex items-start space-x-4 mb-4">
                       <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center shrink-0">
-                        <span className="material-symbols-outlined text-orange-600 dark:text-orange-400">call</span>
+                        <Phone className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                       </div>
                       <div>
                         <h3 className="font-bold text-gray-900 dark:text-white text-lg">Contact</h3>
@@ -3484,7 +3549,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                       onClick={() => window.open('tel:+27123456789')}
                       className="w-full mt-2 py-4 px-6 bg-orange-600 rounded-xl text-white font-bold hover:bg-orange-700 active:scale-[0.96] transition-all shadow-lg shadow-orange-900/20 flex items-center justify-center space-x-2 cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-lg">phone_enabled</span>
+                      <PhoneCall className="w-5 h-5" />
                       <span>Call Store</span>
                     </button>
                   </div>
@@ -3516,7 +3581,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       {/* Search Overlay */}
       <div className="absolute top-6 left-4 right-4 z-30">
         <div className="bg-white dark:bg-slate-900/90 backdrop-blur-md rounded-full shadow-xl flex items-center px-4 py-3 border border-gray-100 dark:border-slate-800">
-          <span className="material-symbols-outlined text-gray-400 mr-3">search</span>
+          <Search className="w-5 h-5 text-gray-400 mr-3" />
           <input 
             type="text" 
             placeholder="Search for food spots..." 
@@ -3524,7 +3589,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
           />
           <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-3"></div>
           <button className="text-orange-500" onClick={onRequestLocation}>
-            <span className="material-symbols-outlined">{userLocation ? 'my_location' : 'location_searching'}</span>
+            {userLocation ? <LocateFixed className="w-5 h-5" /> : <Locate className="w-5 h-5" />}
           </button>
         </div>
         
@@ -3573,7 +3638,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
                 <div className="animate-pulse-orange absolute -inset-2 bg-orange-500 rounded-full opacity-20"></div>
               )}
               <div className={`${selectedShopId === shop.id ? 'bg-orange-500 text-white' : 'bg-white dark:bg-slate-800 text-orange-500'} p-2 rounded-full shadow-lg border-2 border-white dark:border-slate-700 transition-colors`}>
-                <span className="material-symbols-outlined text-sm">restaurant</span>
+                <Utensils className="w-4 h-4" />
               </div>
             </div>
           </div>
@@ -3590,10 +3655,10 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
         {/* Floating Action Buttons */}
         <div className="absolute bottom-24 right-4 z-20 flex flex-col gap-3">
           <button className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors">
-            <span className="material-symbols-outlined">my_location</span>
+            <LocateFixed className="w-6 h-6" />
           </button>
           <button className="bg-orange-500 p-3 rounded-full shadow-lg text-white hover:bg-orange-600 transition-colors">
-            <span className="material-symbols-outlined">layers</span>
+            <Layers className="w-6 h-6" />
           </button>
         </div>
       </div>
@@ -3614,7 +3679,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
                 onClick={() => setSelectedShopId(null)}
                 className="absolute -top-2 -right-2 p-2 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors cursor-pointer"
               >
-                <span className="material-symbols-outlined text-lg">close</span>
+                <X className="w-5 h-5" />
               </button>
             </div>
             
@@ -3623,13 +3688,13 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white">{activeShop.name}</h3>
                 <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">{activeShop.category} • 1.2 km away</p>
                 <div className="flex items-center mt-1">
-                  <span className="material-symbols-outlined text-orange-500 text-sm">star</span>
+                  <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
                   <span className="text-sm font-bold ml-1 dark:text-white">{activeShop.rating}</span>
                   <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">(120+ reviews)</span>
                 </div>
               </div>
               <button className="bg-gray-100 dark:bg-slate-800 p-2 rounded-full text-gray-400 dark:text-slate-500">
-                <span className="material-symbols-outlined">favorite</span>
+                <Heart className="w-5 h-5" />
               </button>
             </div>
 
@@ -3638,14 +3703,14 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
                 onClick={() => onStoreInfo(activeShop.id)}
                 className="bg-orange-500 text-white py-3 rounded-2xl font-bold shadow-lg shadow-orange-900/20 flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
               >
-                <span className="material-symbols-outlined text-lg">menu_book</span>
+                <BookOpen className="w-5 h-5" />
                 View Menu
               </button>
               <button 
                 onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activeShop.address)}`, '_blank')}
                 className="bg-gray-900 dark:bg-slate-800 text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
               >
-                <span className="material-symbols-outlined text-lg">directions</span>
+                <Navigation className="w-5 h-5" />
                 Directions
               </button>
             </div>
@@ -3669,19 +3734,19 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-gray-100 px-6 py-3 flex justify-around items-center max-w-md mx-auto z-50">
         <button onClick={onHome} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
-            <span className="material-symbols-outlined">home</span>
+            <Home className="w-6 h-6" />
           </div>
           <span className="text-xs font-semibold">Home</span>
         </button>
         <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
-            <span className="material-symbols-outlined">storefront</span>
+            <Store className="w-6 h-6" />
           </div>
           <span className="text-xs font-semibold">Discover</span>
         </button>
         <button className="flex flex-col items-center gap-1 text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>explore</span>
+            <Compass className="w-6 h-6" />
           </div>
           <span className="text-xs font-semibold">Explore</span>
         </button>
@@ -3735,7 +3800,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
         <div className="px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back_ios</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="text-xl font-bold tracking-tight">Settings</h1>
           <div className="w-10"></div> {/* Spacer for centering */}
@@ -3749,7 +3814,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <div className="relative w-16 h-16">
               {uploading ? (
                 <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center animate-pulse">
-                  <span className="material-symbols-outlined text-primary animate-spin">sync</span>
+                  <Loader2 className="w-6 h-6 text-primary animate-spin" />
                 </div>
               ) : (
                 <img 
@@ -3762,7 +3827,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 onClick={() => fileInputRef.current?.click()}
                 className="absolute bottom-0 right-0 bg-primary w-6 h-6 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-lg active:scale-90 transition-transform cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[12px] text-white">photo_camera</span>
+                <Camera className="w-3 h-3 text-white" />
               </button>
             </div>
           </div>
@@ -3779,7 +3844,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                  <span className="material-symbols-outlined text-xl">{isDarkMode ? 'dark_mode' : 'light_mode'}</span>
+                  {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                 </div>
                 <span className="font-medium">Dark Mode</span>
               </div>
@@ -3804,7 +3869,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 }}
                 className="text-[10px] text-slate-400 hover:text-primary transition-colors flex items-center space-x-1"
               >
-                <span className="material-symbols-outlined text-xs">restart_alt</span>
+                <RotateCcw className="w-3 h-3" />
                 <span>Reset Theme Preference</span>
               </button>
             </div>
@@ -3819,11 +3884,11 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
               <button onClick={onAdminOrders} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined text-xl">orders</span>
+                    <ShoppingBag className="w-5 h-5" />
                   </div>
                   <span className="font-medium">Manage Orders</span>
                 </div>
-                <span className="material-symbols-outlined text-slate-400">chevron_right</span>
+                <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
             </div>
           </section>
@@ -3837,11 +3902,11 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
               <button onClick={onShopDashboard} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600">
-                    <span className="material-symbols-outlined text-xl">storefront</span>
+                    <Store className="w-5 h-5" />
                   </div>
                   <span className="font-medium">Shop Dashboard</span>
                 </div>
-                <span className="material-symbols-outlined text-slate-400">chevron_right</span>
+                <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
             </div>
           </section>
@@ -3854,20 +3919,20 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <button onClick={onProfile} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">person</span>
+                  <User className="w-5 h-5" />
                 </div>
                 <span className="font-medium">Profile Information</span>
               </div>
-              <span className="material-symbols-outlined text-slate-400">chevron_right</span>
+              <ChevronRight className="w-5 h-5 text-slate-400" />
             </button>
             <button onClick={onOrderHistory} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors cursor-pointer">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">history</span>
+                  <History className="w-5 h-5" />
                 </div>
                 <span className="font-medium">Order History</span>
               </div>
-              <span className="material-symbols-outlined text-slate-400">chevron_right</span>
+              <ChevronRight className="w-5 h-5 text-slate-400" />
             </button>
           </div>
         </section>
@@ -3879,7 +3944,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <div className="flex items-center justify-between p-4 border-b border-primary/5">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">notifications_active</span>
+                  <Bell className="w-5 h-5" />
                 </div>
                 <div className="text-left">
                   <p className="font-medium">Push Notifications</p>
@@ -3894,7 +3959,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">local_offer</span>
+                  <Tag className="w-5 h-5" />
                 </div>
                 <div className="text-left">
                   <p className="font-medium">Promotions</p>
@@ -3919,19 +3984,19 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             >
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">language</span>
+                  <Map className="w-5 h-5" />
                 </div>
                 <span className="font-medium">Language</span>
               </div>
               <div className="flex items-center space-x-1 text-slate-500">
                 <span className="text-sm">English</span>
-                <span className="material-symbols-outlined">chevron_right</span>
+                <ChevronRight className="w-4 h-4" />
               </div>
             </button>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-xl">info</span>
+                  <Info className="w-5 h-5" />
                 </div>
                 <span className="font-medium">About App</span>
               </div>
@@ -3943,7 +4008,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
         {/* Logout Button */}
         <div className="pt-4">
           <button onClick={onLogout} className="w-full py-4 rounded-xl border-2 border-primary/20 text-primary font-bold hover:bg-primary/5 transition-colors flex items-center justify-center space-x-2 cursor-pointer">
-            <span className="material-symbols-outlined">logout</span>
+            <LogOut className="w-5 h-5" />
             <span>Logout</span>
           </button>
           <p className="text-center text-xs text-slate-400 mt-6">LocalEats Version 2.4.1 (1024)</p>
@@ -4168,7 +4233,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
         <div className="px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back_ios</span>
+            <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="text-center relative">
             {loading && !shop ? (
@@ -4185,7 +4250,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             onClick={() => setShowDebug(!showDebug)}
             className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${showDebug ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-orange-500'}`}
           >
-            <span className="material-symbols-outlined text-xl">bug_report</span>
+            <Bug className="w-5 h-5" />
           </button>
         </div>
       </header>
@@ -4256,7 +4321,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         {error ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-4 px-6">
             <div className="w-20 h-20 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center text-red-500">
-              <span className="material-symbols-outlined text-4xl">error</span>
+              <AlertCircle className="w-10 h-10" />
             </div>
             <div>
               <p className="font-bold text-lg text-slate-900 dark:text-white">Dashboard Unavailable</p>
@@ -4332,7 +4397,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             <div className="flex items-center justify-between px-1">
               <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Menu Items</h3>
               <button className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1">
-                <span className="material-symbols-outlined text-sm">add</span> Add Item
+                <Plus className="w-3.5 h-3.5" /> Add Item
               </button>
             </div>
             {shop?.menu_items?.length > 0 ? (
@@ -4364,7 +4429,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                               className="flex items-center gap-1 text-[10px] font-bold text-primary mt-1 hover:underline cursor-pointer"
                             >
                               <span>{isExpanded ? 'Show Less' : 'Read More'}</span>
-                              <span className={`material-symbols-outlined text-[12px] transition-transform ${isExpanded ? 'rotate-180' : ''}`}>expand_more</span>
+                              <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                             </button>
                           )}
                         </div>
@@ -4376,7 +4441,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             ) : (
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-4">
                 <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
-                  <span className="material-symbols-outlined text-3xl">inventory_2</span>
+                  <Package className="w-8 h-8" />
                 </div>
                 <p className="font-bold text-slate-900 dark:text-white">No Menu Items Found</p>
                 <p className="text-xs text-slate-500 px-12">Your shop's menu items will appear here once they are added to the database.</p>
@@ -4415,7 +4480,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-6">
             <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
-              <span className="material-symbols-outlined text-4xl">restaurant</span>
+              <Utensils className="w-10 h-10" />
             </div>
             <div>
               <p className="font-bold text-lg text-slate-900 dark:text-white">No active orders</p>
@@ -4481,7 +4546,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   </div>
                   <h3 className="font-bold text-lg">{order.customer_name}</h3>
                   <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                    <span className="material-symbols-outlined text-sm">schedule</span>
+                    <Clock className="w-3.5 h-3.5" />
                     <span>{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     <span className="text-slate-300">•</span>
                     <span>{Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000)}m ago</span>
@@ -4558,7 +4623,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   href={`tel:${order.phone}`}
                   className="px-4 bg-white dark:bg-slate-800 border border-primary/10 text-slate-600 dark:text-slate-300 text-xs font-bold py-3 rounded-xl hover:bg-slate-50 transition-all cursor-pointer flex items-center justify-center"
                 >
-                  <span className="material-symbols-outlined text-sm">call</span>
+                  <Phone className="w-4 h-4" />
                 </a>
               </div>
             </div>
@@ -4571,21 +4636,21 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           onClick={() => setActiveTab('orders')}
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'orders' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <span className="material-symbols-outlined">list_alt</span>
+          <ClipboardList className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-wider">Orders</span>
         </button>
         <button 
           onClick={() => setActiveTab('inventory')}
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'inventory' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <span className="material-symbols-outlined">inventory_2</span>
+          <Package className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-wider">Inventory</span>
         </button>
         <button 
           onClick={() => setActiveTab('stats')}
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'stats' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <span className="material-symbols-outlined">insights</span>
+          <BarChart3 className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-wider">Stats</span>
         </button>
       </nav>
@@ -4711,7 +4776,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
       <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <header className="flex items-center p-4 bg-white dark:bg-[#221610] sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
-            <span className="material-symbols-outlined">arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 text-center mr-10">Admin Dashboard</h1>
         </header>
@@ -4719,7 +4784,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* Search Bar */}
           <div className="relative group">
-            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 !text-xl group-focus-within:text-primary transition-colors">search</span>
+            <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
             <input 
               type="text" 
               placeholder="Search customer or product..."
@@ -4751,7 +4816,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
               {statusFilter === 'all' ? 'Recent Orders' : `${statusFilter} Orders`} ({filteredOrders.length})
             </h2>
             <button onClick={fetchOrders} className="text-primary text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <span className="material-symbols-outlined !text-sm">refresh</span>
+              <RefreshCw className="w-4 h-4" />
               Refresh
             </button>
           </div>
@@ -4777,7 +4842,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
             </div>
           ) : filteredOrders.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50">
-              <span className="material-symbols-outlined !text-6xl">inventory_2</span>
+              <Package className="w-12 h-12" />
               <p className="text-slate-500 font-medium">No orders found</p>
             </div>
           ) : (
@@ -4809,7 +4874,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                 {/* Collapsed View: Address */}
                 {expandedOrderId !== order.id && (
                   <div className="flex items-center gap-2 text-xs text-slate-400 mt-2">
-                    <span className="material-symbols-outlined !text-sm">location_on</span>
+                    <MapPin className="w-3.5 h-3.5" />
                     <p className="truncate">{order.address}, {order.city}</p>
                   </div>
                 )}
@@ -4821,7 +4886,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                       {/* Customer Info */}
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-primary !text-lg">person</span>
+                          <User className="w-4 h-4 text-primary" />
                           <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">Customer Details</p>
                         </div>
                         <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -4832,7 +4897,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                               className="flex items-center gap-2 text-xs text-primary hover:underline font-medium"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <span className="material-symbols-outlined !text-sm">call</span>
+                              <Phone className="w-3.5 h-3.5" />
                               {order.phone}
                             </a>
                             <a 
@@ -4840,7 +4905,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                               className="flex items-center gap-2 text-xs text-primary hover:underline font-medium"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <span className="material-symbols-outlined !text-sm">mail</span>
+                              <Mail className="w-3.5 h-3.5" />
                               {order.email}
                             </a>
                           </div>
@@ -4850,7 +4915,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                       {/* Order Info */}
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-primary !text-lg">shopping_basket</span>
+                          <ShoppingBag className="w-4 h-4 text-primary" />
                           <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">Order Particulars</p>
                         </div>
                         <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
@@ -4862,7 +4927,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                             <p className="text-xs text-slate-500 mb-1">Variant: {order.product_variant}</p>
                           )}
                           <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <span className="material-symbols-outlined !text-sm">layers</span>
+                            <Layers className="w-3.5 h-3.5" />
                             Quantity: {order.quantity}
                           </div>
                         </div>
@@ -4873,7 +4938,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-primary !text-lg">location_on</span>
+                          <MapPin className="w-4 h-4 text-primary" />
                           <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">Delivery Destination</p>
                         </div>
                         <button 
@@ -4884,7 +4949,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                           }}
                           className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
                         >
-                          <span className="material-symbols-outlined !text-xs">content_copy</span>
+                          <Copy className="w-3 h-3" />
                           Copy
                         </button>
                       </div>
@@ -4897,7 +4962,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                     {order.notes && (
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-primary !text-lg">sticky_note_2</span>
+                          <StickyNote className="w-4 h-4 text-primary" />
                           <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">Special Instructions</p>
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-400 bg-amber-50/50 dark:bg-amber-900/10 p-3 rounded-xl border border-amber-100/50 dark:border-amber-800/30 italic">
@@ -4961,7 +5026,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white dark:bg-[#221610] w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-full flex items-center justify-center mb-4 mx-auto">
-                <span className="material-symbols-outlined !text-2xl">cancel</span>
+                <XCircle className="w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-center mb-2">Cancel Order?</h3>
               <p className="text-sm text-slate-500 dark:text-slate-400 text-center mb-6">
@@ -4993,7 +5058,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white dark:bg-[#221610] w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-4 mx-auto">
-                <span className="material-symbols-outlined !text-2xl">check_circle</span>
+                <CheckCircle2 className="w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-center mb-2">Confirm Order</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 text-center mb-4">
@@ -5116,7 +5181,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
       <div className="relative flex h-auto min-h-screen w-full max-w-md mx-auto flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
         <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
           <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer">
-            <span className="material-symbols-outlined" style={{ fontSize: '24px' }}>arrow_back</span>
+            <ArrowLeft className="w-6 h-6" />
           </div>
           {loading ? (
             <div className="h-6 w-32 bg-slate-200 dark:bg-slate-700 rounded animate-pulse"></div>
@@ -5147,7 +5212,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
           ) : orders.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
               <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
-                <span className="material-symbols-outlined text-4xl">shopping_bag</span>
+                <ShoppingBag className="w-10 h-10" />
               </div>
               <h3 className="text-lg font-bold mb-2">No orders yet</h3>
               <p className="text-slate-500 text-sm mb-8">Your order history will appear here once you place an order.</p>
@@ -5187,7 +5252,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
                       onClick={() => setCancellingOrderId(order.id)}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-[10px] font-bold uppercase tracking-widest rounded-lg border border-rose-100 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer"
                     >
-                      <span className="material-symbols-outlined !text-xs">cancel</span>
+                      <XCircle className="w-3 h-3" />
                       Cancel Order
                     </button>
                   </div>
@@ -5214,24 +5279,23 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
 
                       {/* Steps */}
                       {[
-                        { id: 'pending', icon: 'hourglass_empty', label: 'Pending' },
-                        { id: 'confirmed', icon: 'check_circle', label: 'Confirmed' },
-                        { id: 'ready', icon: 'restaurant', label: 'Ready' },
-                        { id: 'completed', icon: 'task_alt', label: 'Done' }
+                        { id: 'pending', icon: Hourglass, label: 'Pending' },
+                        { id: 'confirmed', icon: CheckCircle2, label: 'Confirmed' },
+                        { id: 'ready', icon: Utensils, label: 'Ready' },
+                        { id: 'completed', icon: CheckSquare, label: 'Done' }
                       ].map((step, idx, arr) => {
                         const statuses = arr.map(s => s.id);
                         const currentIdx = statuses.indexOf(order.status);
                         const isCompleted = currentIdx >= idx || order.status === 'completed';
                         const isActive = order.status === step.id;
+                        const StepIcon = step.icon;
 
                         return (
                           <div key={step.id} className="relative z-10 flex flex-col items-center gap-1.5">
                             <div className={`size-7 rounded-full flex items-center justify-center transition-all duration-300 ${
                               isCompleted ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-white dark:bg-slate-900 border-2 border-slate-100 dark:border-slate-800 text-slate-300'
                             }`}>
-                              <span className="material-symbols-outlined !text-sm" style={{ fontVariationSettings: `'FILL' ${isCompleted ? 1 : 0}` }}>
-                                {step.icon}
-                              </span>
+                              <StepIcon className="w-3.5 h-3.5" />
                             </div>
                             <span className={`text-[9px] font-bold uppercase tracking-tighter transition-colors ${
                               isCompleted ? 'text-primary' : 'text-slate-400'
@@ -5254,7 +5318,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
                 {order.status_history && order.status_history.length > 0 && (
                   <div className="mt-2 pt-3 border-t border-slate-50 dark:border-slate-800">
                     <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5">
-                      <span className="material-symbols-outlined !text-xs">history</span>
+                      <History className="w-3 h-3" />
                       Status Journey
                     </p>
                     <div className="space-y-3 pl-1">
@@ -5298,7 +5362,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
               <div className="size-16 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center text-rose-600 mx-auto mb-4">
-                <span className="material-symbols-outlined text-3xl">warning</span>
+                <AlertTriangle className="w-8 h-8" />
               </div>
               <h3 className="text-lg font-bold text-center mb-2">Cancel Order?</h3>
               <p className="text-xs text-slate-500 text-center mb-6 leading-relaxed">
@@ -5353,7 +5417,7 @@ function ReviewScreen({
       <div className="flex-grow flex flex-col justify-center space-y-8">
         <div className="text-center space-y-2">
           <div className="bg-orange-100 dark:bg-orange-900/20 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="material-symbols-outlined text-orange-600 text-4xl">rate_review</span>
+            <MessageSquare className="w-10 h-10 text-orange-600" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white leading-tight">How was your {pendingReview.productName}?</h1>
           <p className="text-gray-500 dark:text-slate-400">Your feedback helps us improve!</p>
@@ -5366,9 +5430,7 @@ function ReviewScreen({
               onClick={() => setRating(star)}
               className={`p-2 transition-transform active:scale-90 ${rating >= star ? 'text-orange-500' : 'text-gray-300'}`}
             >
-              <span className="material-symbols-outlined text-4xl" style={{ fontVariationSettings: `'FILL' ${rating >= star ? 1 : 0}` }}>
-                star
-              </span>
+              <Star className={`w-10 h-10 ${rating >= star ? 'fill-current' : ''}`} />
             </button>
           ))}
         </div>
