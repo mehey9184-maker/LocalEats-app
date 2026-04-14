@@ -86,11 +86,16 @@ import {
   EyeOff,
   MessageCircle,
   FileText,
-  Shield
+  Shield,
+  QrCode,
+  Download,
+  Megaphone
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { LocalEatsLogo } from './components/LocalEatsLogo';
+import jsPDF from 'jspdf';
+import QRCode from 'qrcode';
 
 type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications';
 
@@ -820,6 +825,13 @@ export default function App() {
   }, [isDarkMode]);
 
   const toggleFavorite = async (shopId: string) => {
+    if (!session) {
+      showAlert('Login Required', 'Please sign in or create an account to follow stores.');
+      setPreviousScreen(currentScreen);
+      setCurrentScreen('login');
+      return;
+    }
+
     const isFollowing = favorites.includes(shopId);
     setFavorites(prev => 
       isFollowing 
@@ -1106,7 +1118,7 @@ export default function App() {
         className="h-full w-full"
       >
         {currentScreen === 'splash' && (
-          <SplashScreen onNext={() => setCurrentScreen('signup')} onLogin={() => setCurrentScreen('login')} />
+          <SplashScreen onNext={() => setCurrentScreen('signup')} onLogin={() => setCurrentScreen('login')} onGuestBrowse={() => setCurrentScreen('home')} />
         )}
         {currentScreen === 'signup' && (
           <SignUpScreen 
@@ -1414,6 +1426,12 @@ export default function App() {
             animate={{ scale: 1, y: 0, opacity: 1 }}
             exit={{ scale: 0, y: 20, opacity: 0 }}
             onClick={() => {
+              if (!session) {
+                showAlert('Login Required', 'Please sign in or create an account to place your order.');
+                setPreviousScreen(currentScreen);
+                setCurrentScreen('login');
+                return;
+              }
               setPreviousScreen(currentScreen);
               setCurrentScreen('checkout');
             }}
@@ -1441,7 +1459,7 @@ export default function App() {
   );
 }
 
-function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => void }) {
+function SplashScreen({ onNext, onLogin, onGuestBrowse }: { onNext: () => void, onLogin: () => void, onGuestBrowse: () => void }) {
   useEffect(() => {
     // Professional welcome chime on launch
     const jingle = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
@@ -1534,11 +1552,15 @@ function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => 
           >
             Sign In
           </button>
-          <div className="flex space-x-1">
-            <span className="h-1.5 w-6 bg-brand-orange rounded-full"></span>
-            <span className="h-1.5 w-1.5 bg-white/40 rounded-full"></span>
-            <span className="h-1.5 w-1.5 bg-white/40 rounded-full"></span>
-          </div>
+          <button
+            className="text-white/80 text-sm font-semibold hover:text-white transition-colors cursor-pointer"
+            onClick={() => {
+              playClick();
+              onGuestBrowse();
+            }}
+          >
+            Browse as Guest
+          </button>
         </div>
       </section>
     </main>
@@ -3445,7 +3467,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
           </div>
           <div className="flex gap-6 overflow-x-auto px-6 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden snap-x">
             {shops.slice(0, 2).map(shop => (
-              <div key={shop.id} className="flex-none w-80 snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center">
+              <div key={shop.id} className="flex-none w-[85vw] max-w-[320px] snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center">
                 <div className="w-32 h-32 rounded-full overflow-hidden mb-4 border-4 border-white dark:border-slate-700 shadow-lg">
                   <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo} referrerPolicy="no-referrer"/>
                 </div>
@@ -3943,7 +3965,9 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         <div className="flex items-center justify-between">
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
                           <button 
-                            onClick={() => setSelectedItemForQuantity(item)}
+                            onClick={() => {
+                              setSelectedItemForQuantity(item);
+                            }}
                             className="px-4 py-2 bg-orange-600 text-white rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer text-[10px] font-black uppercase tracking-widest"
                           >
                             <span>Buy</span>
@@ -4887,7 +4911,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   const [shop, setShop] = useState<Shop | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing'>('orders');
   const [showDebug, setShowDebug] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
 
@@ -5119,6 +5143,44 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   };
 
   const weeklyStats = getWeeklyStats();
+
+  const generateFlyer = async () => {
+    if (!shop) return;
+    try {
+      const doc = new jsPDF();
+      
+      // Add LocalEats branding
+      doc.setFontSize(24);
+      doc.setTextColor(234, 88, 12); // orange-600
+      doc.text("LocalEats", 105, 20, { align: "center" });
+      
+      // Add Shop Name
+      doc.setFontSize(36);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`Order from`, 105, 40, { align: "center" });
+      doc.setFontSize(48);
+      doc.text(shop.name, 105, 60, { align: "center" });
+      
+      // Generate QR Code
+      const url = `https://www.localeatssa.co.za/?shopId=${shop.id}`;
+      const qrDataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2 });
+      
+      // Add QR Code to PDF
+      doc.addImage(qrDataUrl, 'PNG', 55, 80, 100, 100);
+      
+      // Add Call to Action
+      doc.setFontSize(24);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Skip the queue. Order ahead.", 105, 200, { align: "center" });
+      
+      // Save PDF
+      doc.save(`${shop.name.replace(/\s+/g, '_')}_Flyer.pdf`);
+      showAlert('Success', 'Flyer downloaded successfully!');
+    } catch (err) {
+      console.error('Error generating flyer:', err);
+      showAlert('Error', 'Failed to generate flyer. Please try again.');
+    }
+  };
 
   return (
     <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
@@ -5369,6 +5431,30 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               </div>
             </div>
           </div>
+        ) : activeTab === 'marketing' ? (
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-orange-100 dark:bg-orange-500/20 rounded-2xl flex items-center justify-center text-orange-600">
+                  <QrCode className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">Printable Flyer</h3>
+                  <p className="text-xs text-slate-500">Generate a PDF flyer with a QR code</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+                Print this flyer and stick it on your shop window. Customers can scan the QR code to order directly from your LocalEats menu.
+              </p>
+              <button 
+                onClick={generateFlyer}
+                className="w-full py-4 bg-orange-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-orange-600/20 hover:bg-orange-700 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download className="w-5 h-5" />
+                Generate PDF
+              </button>
+            </div>
+          </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-6">
             <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
@@ -5544,6 +5630,13 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         >
           <BarChart3 className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-wider">Stats</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('marketing')}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'marketing' ? 'text-primary' : 'text-slate-400'}`}
+        >
+          <Megaphone className="w-6 h-6" />
+          <span className="text-[10px] font-bold uppercase tracking-wider">Marketing</span>
         </button>
       </nav>
     </div>

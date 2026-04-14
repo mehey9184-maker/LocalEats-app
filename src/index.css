@@ -16,10 +16,18 @@
 /* Configure Tailwind v4 to use the .dark class for the dark variant */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Global text wrapping to prevent overflow on small screens */
+* {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
 body {
   background-color: var(--color-background-light);
   min-height: max(884px, 100dvh);
   transition: background-color 0.3s ease, color 0.3s ease;
+  overflow-x: hidden; /* Prevent horizontal scrolling at body level */
 }
 
 .dark body {
