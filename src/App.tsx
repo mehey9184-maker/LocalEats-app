@@ -5,6 +5,8 @@
 
 import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import L from 'leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { 
   Home, 
   Store, 
@@ -81,11 +83,53 @@ import {
   Hourglass,
   CheckSquare,
   Eye,
-  EyeOff
+  EyeOff,
+  MessageCircle,
+  FileText,
+  Shield
 } from 'lucide-react';
-import { supabase, supabaseUrl } from './lib/supabase';
+import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
+import { Session } from '@supabase/supabase-js';
+import { LocalEatsLogo } from './components/LocalEatsLogo';
 
-type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review';
+type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications';
+
+type AppNotification = {
+  id: string;
+  title: string;
+  message: string;
+  type: 'order' | 'promo' | 'system' | 'follow';
+  timestamp: number;
+  read: boolean;
+  orderId?: string;
+  data?: any;
+};
+
+type StatusHistoryItem = {
+  status: string;
+  timestamp: string;
+};
+
+type Order = {
+  id: string;
+  user_id: string;
+  shop_id: string;
+  customer_name: string;
+  phone: string;
+  email: string;
+  city: string;
+  address: string;
+  country: string;
+  product_name: string;
+  product_variant: string;
+  quantity: number;
+  price: number;
+  notes: string;
+  status: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  created_at: string;
+  status_history?: StatusHistoryItem[];
+  owner_message?: string;
+};
 
 type PendingReview = {
   orderId: string;
@@ -133,6 +177,119 @@ type Shop = {
   category: string;
   distance?: number;
   owner_id?: string;
+  opening_time?: string;
+  closing_time?: string;
+  latitude?: number;
+  longitude?: number;
+  delivery_eta?: string;
+  is_special?: boolean;
+  phone?: string;
+};
+
+const APP_VERSION = "2.4.1 (1024)";
+const TEMBISA_COORDS = { lat: -25.9964, lng: 28.2268 };
+
+const hashString = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash);
+};
+
+const getShopStatus = (shop: Shop) => {
+  if (!shop.opening_time || !shop.closing_time) return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
+  
+  const now = new Date();
+  const currentTime = now.getHours() * 60 + now.getMinutes();
+  
+  const [openHours, openMinutes] = shop.opening_time.split(':').map(Number);
+  const [closeHours, closeMinutes] = shop.closing_time.split(':').map(Number);
+  
+  const openTime = openHours * 60 + openMinutes;
+  const closeTime = closeHours * 60 + closeMinutes;
+  
+  let isOpen = false;
+  if (closeTime > openTime) {
+    isOpen = currentTime >= openTime && currentTime <= closeTime;
+  } else {
+    isOpen = currentTime >= openTime || currentTime <= closeTime;
+  }
+
+  if (!isOpen) return { isOpen: false, message: 'Closed', nextOpeningTime: shop.opening_time };
+
+  // Calculate time until closing
+  let minutesUntilClose = 0;
+  if (closeTime > currentTime) {
+    minutesUntilClose = closeTime - currentTime;
+  } else if (closeTime < openTime) {
+    // Overnight case
+    minutesUntilClose = (1440 - currentTime) + closeTime;
+  }
+
+  if (minutesUntilClose > 0 && minutesUntilClose <= 60) {
+    return { isOpen: true, message: `Closing in ${minutesUntilClose}m`, warning: true, nextOpeningTime: undefined };
+  }
+
+  return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
+};
+
+const BlurUpImage = ({ src, alt, className, blurHash = "https://picsum.photos/seed/blur/10/10" }: { src: string, alt: string, className?: string, blurHash?: string }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  
+  // Proxy through weserv for WebP conversion and optimization
+  const webpSrc = src.startsWith('data:') || error
+    ? src 
+    : `https://images.weserv.nl/?url=${encodeURIComponent(src)}&output=webp&q=80&w=800`;
+  
+  return (
+    <div className={`relative overflow-hidden ${className}`}>
+      {!isLoaded && (
+        <img 
+          src={blurHash} 
+          alt={alt} 
+          className={`w-full h-full object-cover transition-opacity duration-500 opacity-100`}
+          referrerPolicy="no-referrer"
+        />
+      )}
+      <img 
+        src={webpSrc} 
+        alt={alt} 
+        onLoad={() => setIsLoaded(true)}
+        onError={() => {
+          if (!error) setError(true);
+        }}
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    </div>
+  );
+};
+
+const TrustBadge = ({ shop }: { shop: Shop }) => {
+  const status = getShopStatus(shop);
+  const eta = shop.delivery_eta || "25-35 min";
+  
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      <div className={`px-2 py-0.5 rounded-md flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider ${status.isOpen ? (status.warning ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600') : 'bg-gray-100 text-gray-500'}`}>
+        <div className={`w-1 h-1 rounded-full ${status.isOpen ? (status.warning ? 'bg-orange-500 animate-pulse' : 'bg-green-500') : 'bg-gray-400'}`}></div>
+        {status.message}
+      </div>
+      <div className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider">
+        <Clock className="w-2.5 h-2.5" />
+        {eta}
+      </div>
+      <div className="px-2 py-0.5 rounded-md bg-yellow-50 text-yellow-700 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider">
+        <Star className="w-2.5 h-2.5 fill-yellow-500 text-yellow-500" />
+        {shop.rating} Verified
+      </div>
+    </div>
+  );
 };
 
 type UserProfile = {
@@ -167,10 +324,92 @@ const uploadAvatar = async (file: File, userId?: string) => {
   return publicUrl;
 };
 
+type ModalState = {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  type: 'alert' | 'confirm' | 'prompt';
+  onConfirm?: (value?: string) => void;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  defaultValue?: string;
+};
+
+const ModalContent = ({ modal, onClose }: { modal: ModalState, onClose: () => void }) => {
+  const [value, setValue] = useState(modal.defaultValue || '');
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0, y: 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 20 }}
+        className="w-full max-w-xs bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-2xl border border-slate-100 dark:border-slate-800 text-center relative overflow-hidden"
+      >
+        <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2 leading-tight">{modal.title}</h2>
+        <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">{modal.message}</p>
+        
+        {modal.type === 'prompt' && (
+          <div className="mb-6">
+            <input 
+              type="text"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              autoFocus
+              className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+            />
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => {
+              if (modal.onConfirm) {
+                modal.onConfirm(modal.type === 'prompt' ? value : undefined);
+              }
+              onClose();
+            }}
+            className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-2xl shadow-lg shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer"
+          >
+            {modal.confirmLabel || (modal.type === 'alert' ? 'OK' : 'Confirm')}
+          </button>
+          
+          {(modal.type === 'confirm' || modal.type === 'prompt') && (
+            <button
+              onClick={onClose}
+              className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl transition-all active:scale-95 cursor-pointer"
+            >
+              {modal.cancelLabel || 'Cancel'}
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+type NotificationState = { 
+  message: string, 
+  type: 'success' | 'info' | 'ready' | 'error', 
+  actions?: { label: string, onClick: () => void }[],
+  persistent?: boolean
+} | null;
+
+type SignUpData = {
+  email: string;
+  phone: string;
+  fullName: string;
+};
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
   const [previousScreen, setPreviousScreen] = useState<Screen | null>(null);
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [shops, setShops] = useState<Shop[]>(() => {
     const saved = localStorage.getItem('cached_shops');
@@ -182,6 +421,25 @@ export default function App() {
     const saved = localStorage.getItem('cart');
     return saved ? JSON.parse(saved) : [];
   });
+  const [modal, setModal] = useState<ModalState>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'alert'
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setModal({ isOpen: true, title, message, type: 'alert' });
+  };
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void, confirmLabel = "Confirm", cancelLabel = "Cancel") => {
+    setModal({ isOpen: true, title, message, type: 'confirm', onConfirm: () => onConfirm(), confirmLabel, cancelLabel });
+  };
+
+  const showPrompt = (title: string, message: string, onConfirm: (value: string) => void, defaultValue = "") => {
+    setModal({ isOpen: true, title, message, type: 'prompt', onConfirm: (val) => onConfirm(val || ""), defaultValue });
+  };
+
   const [orderAcceptedModal, setOrderAcceptedModal] = useState<{
     isOpen: boolean;
     productName: string;
@@ -192,33 +450,121 @@ export default function App() {
     ownerMessage: ''
   });
 
-  const [notification, setNotification] = useState<{ 
-    message: string, 
-    type: 'success' | 'info' | 'ready', 
-    actions?: { label: string, onClick: () => void }[],
-    persistent?: boolean
-  } | null>(null);
+  const [notification, setNotification] = useState<NotificationState>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    const saved = localStorage.getItem('app_notifications');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [orders, setOrders] = useState<Order[]>([]);
 
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      setNotification({ message: "You're back online!", type: 'success' });
-      fetchShopsData();
-    };
-    const handleOffline = () => {
-      setIsOnline(false);
-      setNotification({ message: "You're offline. Browsing cached menu.", type: 'info' });
-    };
+  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+  const triggerHaptic = useCallback(() => {
+    if ("vibrate" in navigator) {
+      navigator.vibrate(10);
+    }
+  }, []);
 
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
+  const fetchShopsData = useCallback(async (retries = 3) => {
+    setLoadingShops(true);
+    setFetchError(null);
+    try {
+      console.log('Fetching shops data...');
+      
+      // Fetch all shops (removed strict is_active filter for demo stability)
+      const { data: shopsData, error: shopsError } = await supabase
+        .from('shops')
+        .select('*');
+
+      if (shopsError) {
+        console.error('Shops fetch error:', shopsError);
+        // If table doesn't exist, we'll handle it gracefully
+        if (shopsError.code === '42P01') {
+          setFetchError("Database tables not found. Please run the SQL setup script.");
+        } else {
+          setFetchError(shopsError.message);
+        }
+        setLoadingShops(false);
+        return;
+      }
+
+      console.log(`Total shops found: ${shopsData?.length || 0}`);
+
+      console.log('Fetching menu items...');
+      const { data: menuData, error: menuError } = await supabase
+        .from('menu_items')
+        .select('*')
+        .eq('is_available', true);
+
+      if (menuError) {
+        console.error('Menu items fetch error:', menuError);
+        throw menuError;
+      }
+
+      const formattedShops: Shop[] = (shopsData || []).map(s => {
+        // Generate deterministic mock coordinates if missing for Tembisa area
+        const shopHash = hashString(String(s.id));
+        const deterministicLat = -25.9964 + (shopHash % 100) * 0.0002 - 0.01;
+        const deterministicLng = 28.2268 + (shopHash % 100) * 0.0003 - 0.015;
+
+        return {
+          id: String(s.id),
+          name: s.name,
+          logo: s.logo_url || `https://picsum.photos/seed/${s.id}/200/200`,
+          rating: Number(s.rating) || 4.5,
+          description: s.description || "Local Tembisa Flavours",
+          address: s.location || "Tembisa",
+          category: s.category || "Kota",
+          owner_id: s.owner_id,
+          opening_time: s.opening_time,
+          closing_time: s.closing_time,
+          phone: s.phone || "+27 12 345 6789",
+          latitude: s.latitude || deterministicLat,
+          longitude: s.longitude || deterministicLng,
+          menu: (menuData || [])
+            .filter(m => String(m.shop_id) === String(s.id))
+            .map(m => ({
+              id: String(m.id),
+              name: m.name,
+              price: Number(m.price),
+              displayPrice: `R${Number(m.price).toFixed(2)}`,
+              image: m.image_url || `https://picsum.photos/seed/${m.id}/200/200`
+            }))
+        };
+      }).sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
+
+      console.log(`Successfully fetched ${formattedShops.length} shops.`);
+      setShops(formattedShops);
+      localStorage.setItem('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
+      setLoadingShops(false);
+    } catch (err: any) {
+      console.error('Error fetching shops:', err);
+      
+      // Detailed error diagnostics
+      let errorMessage = err.message || 'Failed to connect to the server';
+      
+      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+        errorMessage = 'Network Error: The connection to Supabase was blocked or timed out. This often happens due to ad-blockers (uBlock/AdBlock), corporate firewalls, or being offline. Please check your internet and disable ad-blockers for this site.';
+      } else if (err.status === 401 || err.status === 403) {
+        errorMessage = 'Authentication Error: Your Supabase API key might be invalid or expired. Please verify your VITE_SUPABASE_ANON_KEY.';
+      } else if (err.status === 404) {
+        errorMessage = 'Configuration Error: The Supabase project or table was not found. Please check your VITE_SUPABASE_URL.';
+      } else if (err.code === 'PGRST301') {
+        errorMessage = 'Database Error: JWT expired or invalid. Try refreshing the page.';
+      }
+      
+      if (retries > 0) {
+        console.log(`Retrying fetchShopsData... (${retries} retries left)`);
+        setLoadingShops(false); // Fix Issue 7: Ensure loading spinner stops before retry
+        setTimeout(() => fetchShopsData(retries - 1), 2000);
+      } else {
+        setFetchError(errorMessage);
+        setLoadingShops(false);
+      }
+    }
   }, []);
 
   const requestLocation = useCallback(() => {
@@ -250,6 +596,173 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    localStorage.setItem('app_notifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  const authInitialized = useRef(false);
+
+  useEffect(() => {
+    if (authInitialized.current) return;
+    authInitialized.current = true;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) setCurrentScreen('home');
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) {
+        setUserProfile(prev => ({ ...prev, id: session.user.id }));
+        setCurrentScreen('home');
+      }
+      else setCurrentScreen('splash');
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    // Listen for status changes on the user's orders
+    const channel = supabase
+      .channel(`user_notifications:${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `user_id=eq.${session.user.id}`
+        },
+        (payload) => {
+          console.log('Real-time order update received:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            setOrders(prev => [payload.new as Order, ...prev]);
+            return;
+          }
+
+          if (payload.eventType === 'UPDATE') {
+            setOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new as Order : o));
+            
+            const oldStatus = payload.old?.status;
+            const newStatus = payload.new?.status;
+            
+            if (oldStatus !== newStatus) {
+              const shop = shops.find(s => s.id === payload.new.shop_id);
+              const title = `Order ${newStatus.toUpperCase()}`;
+              let message = `Your order from ${shop?.name || 'Local Shop'} is now ${newStatus}.`;
+              
+              if (newStatus === 'preparing') message = `Chef at ${shop?.name} is preparing your food! 🍳`;
+              if (newStatus === 'ready') message = `🔥 Your order from ${shop?.name} is READY for collection!`;
+              if (newStatus === 'completed') message = `Legendary! You've collected your order from ${shop?.name}. Enjoy! 😋`;
+
+              const newNotif: AppNotification = {
+                id: Math.random().toString(36).substr(2, 9),
+                title,
+                message,
+                type: 'order',
+                timestamp: Date.now(),
+                read: false,
+                orderId: payload.new.id
+              };
+
+              setNotifications(prev => [newNotif, ...prev]);
+
+              if (newStatus === 'ready') {
+                // Add vibration for confirmation
+                if ("vibrate" in navigator) {
+                  navigator.vibrate([100, 50, 100]);
+                }
+                // Add sound effect
+                try {
+                  const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
+                  audio.volume = 0.4;
+                  audio.play().catch(e => console.log('Audio play failed:', e));
+                } catch (e) {}
+              }
+
+              setNotification({
+                message: `✅ ${message}`,
+                type: 'success',
+                actions: [
+                  { label: 'Track Order', onClick: () => setCurrentScreen('order-tracking') }
+                ]
+              });
+
+              if (newStatus === 'picked_up') {
+                setPendingReview({
+                  orderId: payload.new.id,
+                  shopId: payload.new.shop_id,
+                  productName: payload.new.product_name,
+                  snoozeCount: 0
+                });
+                setCurrentScreen('review');
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    // Initial orders fetch
+    const fetchOrders = async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+      if (data) setOrders(data);
+    };
+    fetchOrders();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, shops]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setNotification({ message: "You're back online!", type: 'success' });
+      fetchShopsData();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setNotification({ message: "You're offline. Browsing cached menu.", type: 'info' });
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Initial fetch and location request
+    fetchShopsData();
+    if (currentScreen === 'home' || currentScreen === 'explore') {
+      requestLocation();
+    }
+
+    // Subscribe to changes in shops and menu_items
+    const shopsChannel = supabase.channel('public:shops')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shops' }, () => fetchShopsData())
+      .subscribe();
+    
+    const menuChannel = supabase.channel('public:menu_items')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => fetchShopsData())
+      .subscribe();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      supabase.removeChannel(shopsChannel);
+      supabase.removeChannel(menuChannel);
+    };
+  }, [fetchShopsData, requestLocation, currentScreen]);
+
+  useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const shopId = urlParams.get('shopId');
     if (shopId) {
@@ -259,17 +772,6 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
-
-  useEffect(() => {
-    if (currentScreen === 'home' || currentScreen === 'explore') {
-      requestLocation();
-    }
-  }, [currentScreen, requestLocation]);
-  useEffect(() => {
-    if (!userLocation) {
-      requestLocation();
-    }
-  }, [requestLocation, userLocation]);
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('favorites');
@@ -372,280 +874,10 @@ export default function App() {
   }, [pendingReview]);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  const triggerHaptic = () => {
-    if ("vibrate" in navigator) {
-      navigator.vibrate(10);
-    }
-  };
-
-  const authInitialized = useRef(false);
-
-  useEffect(() => {
-    if (authInitialized.current) return;
-    authInitialized.current = true;
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) setCurrentScreen('home');
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        setUserProfile(prev => ({ ...prev, id: session.user.id }));
-        setCurrentScreen('home');
-      }
-      else setCurrentScreen('splash');
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!session?.user?.id) return;
-
-    // Listen for status changes on the user's orders
-    const channel = supabase
-      .channel(`user_notifications:${session.user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'orders',
-          filter: `user_id=eq.${session.user.id}`
-        },
-        (payload) => {
-          console.log('Real-time order update received:', payload);
-          const oldStatus = payload.old?.status;
-          const newStatus = payload.new?.status;
-          console.log(`Status change: ${oldStatus} -> ${newStatus}`);
-
-          if (newStatus === 'confirmed') {
-            console.log('Order confirmed! Showing modal...');
-            
-            // Add vibration for confirmation
-            if ("vibrate" in navigator) {
-              navigator.vibrate([100, 50, 100]); // Double pulse
-            }
-
-            // Add sound effect for confirmation
-            try {
-              const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-              audio.volume = 0.5;
-              audio.play().catch(e => console.log('Audio play failed (likely browser policy):', e));
-            } catch (e) {
-              console.log('Audio initialization failed:', e);
-            }
-            
-            setOrderAcceptedModal({
-              isOpen: true,
-              productName: payload.new.product_name,
-              ownerMessage: payload.new.owner_message || "Your order has been received and is being prepared with love! 🔥"
-            });
-            setNotification({
-              message: `✅ Your order for ${payload.new.product_name} has been ACCEPTED!`,
-              type: 'success',
-              actions: [
-                { label: 'View Order', onClick: () => setCurrentScreen('order-history') }
-              ]
-            });
-            // Auto-hide after 10 seconds
-            setTimeout(() => setNotification(null), 10000);
-          }
-
-          if (oldStatus !== newStatus && newStatus === 'ready') {
-            setNotification({
-              message: `🔥 Your order for ${payload.new.product_name} is READY for pickup!`,
-              type: 'success',
-              actions: [
-                { label: 'View Order', onClick: () => setCurrentScreen('order-history') }
-              ]
-            });
-            // Auto-hide after 10 seconds
-            setTimeout(() => setNotification(null), 10000);
-          }
-
-          if (oldStatus !== newStatus && newStatus === 'picked_up') {
-            setPendingReview({
-              orderId: payload.new.id,
-              shopId: payload.new.shop_id,
-              productName: payload.new.product_name,
-              snoozeCount: 0
-            });
-            setCurrentScreen('review');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session?.user?.id]);
-
-  useEffect(() => {
     localStorage.setItem('cart', JSON.stringify(cart));
   }, [cart]);
-
-  // Global Order Status Notifications
-  useEffect(() => {
-    if (!session?.user?.id) return;
-
-    const channel = supabase
-      .channel(`global_orders:${session.user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'orders',
-          filter: `user_id=eq.${session.user.id}`
-        },
-        (payload) => {
-          const oldStatus = payload.old.status;
-          const newStatus = payload.new.status;
-
-          if (oldStatus !== newStatus) {
-            let icon = 'info';
-            let message = `Order for ${payload.new.product_name} is now ${newStatus}`;
-
-            if (newStatus === 'confirmed') icon = 'check_circle';
-            if (newStatus === 'ready') icon = 'restaurant';
-            if (newStatus === 'delivered') icon = 'local_shipping';
-            if (newStatus === 'cancelled') icon = 'cancel';
-
-            setNotification({
-              message,
-              type: newStatus === 'cancelled' ? 'error' : 'success',
-              icon
-            });
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session, setNotification]);
-
-  const fetchShopsData = async (retries = 3) => {
-    setLoadingShops(true);
-    setFetchError(null);
-    try {
-      console.log('Fetching shops data...');
-      
-      // Fetch all shops (removed strict is_active filter for demo stability)
-      const { data: shopsData, error: shopsError } = await supabase
-        .from('shops')
-        .select('*');
-
-      if (shopsError) {
-        console.error('Shops fetch error:', shopsError);
-        // If table doesn't exist, we'll handle it gracefully
-        if (shopsError.code === '42P01') {
-          setFetchError("Database tables not found. Please run the SQL setup script.");
-        } else {
-          setFetchError(shopsError.message);
-        }
-        setLoadingShops(false);
-        return;
-      }
-
-      console.log(`Total shops found: ${shopsData?.length || 0}`);
-
-      console.log('Fetching menu items...');
-      const { data: menuData, error: menuError } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('is_available', true);
-
-      if (menuError) {
-        console.error('Menu items fetch error:', menuError);
-        throw menuError;
-      }
-
-      const formattedShops: Shop[] = (shopsData || []).map(s => ({
-        id: String(s.id),
-        name: s.name,
-        logo: s.logo_url || `https://picsum.photos/seed/${s.id}/200/200`,
-        rating: Number(s.rating) || 4.5,
-        description: s.description || "Local Tembisa Flavours",
-        address: s.location || "Tembisa",
-        category: s.category || "Kota",
-        menu: (menuData || [])
-          .filter(m => String(m.shop_id) === String(s.id))
-          .map(m => ({
-            id: String(m.id),
-            name: m.name,
-            price: Number(m.price),
-            displayPrice: `R${Number(m.price).toFixed(2)}`,
-            image: m.image_url || `https://picsum.photos/seed/${m.id}/200/200`
-          }))
-      })).sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
-
-      console.log(`Successfully fetched ${formattedShops.length} shops.`);
-      setShops(formattedShops);
-      localStorage.setItem('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
-      setLoadingShops(false);
-    } catch (err: any) {
-      console.error('Error fetching shops:', err);
-      
-      // Detailed error diagnostics
-      let errorMessage = err.message || 'Failed to connect to the server';
-      
-      if (err.message === 'Failed to fetch') {
-        errorMessage = 'Network Error: The connection to Supabase was blocked or timed out. This often happens due to ad-blockers, firewalls, or being offline.';
-      } else if (err.status === 401 || err.status === 403) {
-        errorMessage = 'Authentication Error: Your Supabase API key might be invalid or expired.';
-      } else if (err.status === 404) {
-        errorMessage = 'Configuration Error: The Supabase project or table was not found.';
-      }
-      
-      if (retries > 0) {
-        console.log(`Retrying fetchShopsData... (${retries} retries left)`);
-        setTimeout(() => fetchShopsData(retries - 1), 2000);
-      } else {
-        setFetchError(errorMessage);
-        setLoadingShops(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    fetchShopsData();
-
-    // Subscribe to changes in shops and menu_items
-    const shopsChannel = supabase.channel('public:shops')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shops' }, () => fetchShopsData())
-      .subscribe();
     
-    const menuChannel = supabase.channel('public:menu_items')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => fetchShopsData())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(shopsChannel);
-      supabase.removeChannel(menuChannel);
-    };
-  }, []);
-
   useEffect(() => {
-    const TEMBISA_COORDS = { lat: -25.9964, lng: 28.2268 };
-    
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -668,20 +900,16 @@ export default function App() {
     }
   }, []);
 
-  const addToCart = (item: MenuItem, shopId: string) => {
+  const addToCart = (item: MenuItem, shopId: string, quantity: number = 1) => {
     triggerHaptic();
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id && i.shopId === shopId);
-      let newCart;
       if (existing) {
-        newCart = prev.map(i => i.id === item.id && i.shopId === shopId ? { ...i, quantity: i.quantity + 1 } : i);
-      } else {
-        newCart = [...prev, { ...item, shopId, quantity: 1 }];
+        return prev.map(i => i.id === item.id && i.shopId === shopId ? { ...i, quantity: i.quantity + quantity } : i);
       }
-      localStorage.setItem('cart', JSON.stringify(newCart));
-      return newCart;
+      return [...prev, { ...item, shopId, quantity }];
     });
-    setNotification({ message: `Added ${item.name} to cart`, type: 'success' });
+    setNotification({ message: `Added ${quantity}x ${item.name} to cart`, type: 'success' });
     setTimeout(() => setNotification(null), 2000);
   };
 
@@ -697,11 +925,16 @@ export default function App() {
   };
 
   const clearCart = () => {
-    triggerHaptic();
-    setCart([]);
-    localStorage.setItem('cart', JSON.stringify([]));
-    setNotification({ message: 'Cart cleared', type: 'info' });
-    setTimeout(() => setNotification(null), 2000);
+    showConfirm(
+      "Clear Cart",
+      "Are you sure you want to remove all items from your cart?",
+      () => {
+        triggerHaptic();
+        setCart([]);
+        setNotification({ message: 'Cart cleared', type: 'info' });
+        setTimeout(() => setNotification(null), 2000);
+      }
+    );
   };
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('userProfile');
@@ -812,6 +1045,16 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* Generic Modal (Alert/Confirm/Prompt) */}
+        <AnimatePresence>
+          {modal.isOpen && (
+            <ModalContent 
+              modal={modal} 
+              onClose={() => setModal({ ...modal, isOpen: false })} 
+            />
+          )}
+        </AnimatePresence>
+
         {/* Order Accepted Modal */}
         <AnimatePresence>
           {orderAcceptedModal.isOpen && (
@@ -915,13 +1158,19 @@ export default function App() {
             shops={shops}
             loadingShops={loadingShops}
             fetchError={fetchError}
-            onSettings={() => setCurrentScreen('settings')} 
-            onProfile={() => setCurrentScreen('profile')} 
-            onCheckout={() => setCurrentScreen('checkout')} 
-            onDiscover={() => setCurrentScreen('discover')} 
-            onExplore={() => setCurrentScreen('explore')} 
-            onOrderHistory={() => setCurrentScreen('order-history')}
-            onStoreInfo={(id) => { setSelectedStoreId(id); setCurrentScreen('store-info'); }} 
+            onSettings={() => { setPreviousScreen(currentScreen); setCurrentScreen('settings'); }} 
+            onProfile={() => { setPreviousScreen(currentScreen); setCurrentScreen('profile'); }} 
+            onCheckout={() => { setPreviousScreen(currentScreen); setCurrentScreen('checkout'); }} 
+            onDiscover={() => { setPreviousScreen(currentScreen); setCurrentScreen('discover'); }} 
+            onExplore={() => { setPreviousScreen(currentScreen); setCurrentScreen('explore'); }} 
+            onOrderHistory={() => { setPreviousScreen(currentScreen); setCurrentScreen('order-history'); }}
+            onNotifications={() => { setPreviousScreen(currentScreen); setCurrentScreen('notifications'); }}
+            unreadCount={notifications.filter(n => !n.read).length}
+            onStoreInfo={(id) => { 
+              setPreviousScreen(currentScreen);
+              setSelectedStoreId(id); 
+              setCurrentScreen('store-info'); 
+            }} 
             onRetry={() => fetchShopsData()}
             cart={cart}
             addToCart={addToCart}
@@ -934,6 +1183,23 @@ export default function App() {
             toggleFavorite={toggleFavorite}
             userLocation={userLocation}
             onRequestLocation={requestLocation}
+            orders={orders}
+            showAlert={showAlert}
+          />
+        )}
+        {currentScreen === 'notifications' && (
+          <NotificationsScreen 
+            notifications={notifications}
+            onBack={() => setCurrentScreen(previousScreen || 'home')}
+            onRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+            onDelete={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+          />
+        )}
+        {currentScreen === 'order-tracking' && (
+          <OrderTrackingScreen 
+            orders={orders}
+            shops={shops}
+            onBack={() => setCurrentScreen(previousScreen || 'home')}
           />
         )}
         {currentScreen === 'review' && pendingReview && (
@@ -956,50 +1222,69 @@ export default function App() {
                 setCurrentScreen('home');
               }
             }}
-            onSubmit={(rating, comment) => {
-              // Here you would normally save to DB
-              console.log('Review submitted:', { rating, comment, orderId: pendingReview.orderId });
+            onSubmit={async (rating, comment) => {
+              // Fix Issue 19: Save review to Supabase
+              try {
+                const { error } = await supabase.from('reviews').insert({
+                  shop_id: pendingReview.shopId,
+                  user_name: userProfile.fullName || 'Anonymous',
+                  rating,
+                  comment,
+                  created_at: new Date().toISOString()
+                });
+                
+                if (error) throw error;
+                
+                showAlert('Review Submitted', 'Thank you for your review! 🔥');
+              } catch (err) {
+                console.error('Error saving review:', err);
+                setNotification({
+                  message: 'Review saved locally, but failed to sync with server.',
+                  type: 'info'
+                });
+              }
+              
               setPendingReview(null);
               setCurrentScreen('home');
-              setNotification({
-                message: 'Thank you for your review! 🔥',
-                type: 'success'
-              });
             }}
           />
         )}
         {currentScreen === 'discover' && (
           <DiscoverScreen 
             shops={shops} 
-            onHome={() => { setPreviousScreen('discover'); setCurrentScreen('home'); }} 
+            onHome={() => setCurrentScreen(previousScreen || 'home')} 
             onExplore={() => { setPreviousScreen('discover'); setCurrentScreen('explore'); }}
             favorites={favorites}
             toggleFavorite={toggleFavorite}
             onSelectShop={(shopId) => {
-              setSelectedStoreId(shopId);
               setPreviousScreen('discover');
+              setSelectedStoreId(shopId);
               setCurrentScreen('store-info');
             }}
             userLocation={userLocation}
+            showAlert={showAlert}
           />
         )}
         {currentScreen === 'explore' && (
           <ExploreScreen 
             shops={shops} 
-            onHome={() => { setPreviousScreen('explore'); setCurrentScreen('home'); }} 
+            onHome={() => setCurrentScreen(previousScreen || 'home')} 
             onDiscover={() => { setPreviousScreen('explore'); setCurrentScreen('discover'); }} 
             userLocation={userLocation}
             onRequestLocation={requestLocation}
             onStoreInfo={(shopId) => {
-              setSelectedStoreId(shopId);
               setPreviousScreen('explore');
+              setSelectedStoreId(shopId);
               setCurrentScreen('store-info');
             }}
+            favorites={favorites}
+            toggleFavorite={toggleFavorite}
+            showAlert={showAlert}
           />
         )}
         {currentScreen === 'store-info' && (
           <StoreInfoScreen 
-            onBack={() => setCurrentScreen(previousScreen === 'discover' ? 'discover' : 'home')} 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
             shop={shops.find(s => s.id === selectedStoreId) || shops[0]} 
             isFavorite={favorites.includes(selectedStoreId || '')}
             onToggleFavorite={() => {
@@ -1023,41 +1308,50 @@ export default function App() {
               }
               addToCart(item, shopId);
             }}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
           />
         )}
         {currentScreen === 'settings' && (
           <SettingsScreen 
             userProfile={userProfile}
             setUserProfile={setUserProfile}
-            onBack={() => setCurrentScreen('home')} 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onLogout={() => setCurrentScreen('splash')} 
-            onProfile={() => setCurrentScreen('profile')} 
-            onOrderHistory={() => setCurrentScreen('order-history')}
-            onAdminOrders={() => setCurrentScreen('admin-orders')}
-            onShopDashboard={() => setCurrentScreen('shop-dashboard')}
+            onProfile={() => { setPreviousScreen('settings'); setCurrentScreen('profile'); }} 
+            onOrderHistory={() => { setPreviousScreen('settings'); setCurrentScreen('order-history'); }}
+            onAdminOrders={() => { setPreviousScreen('settings'); setCurrentScreen('admin-orders'); }}
+            onShopDashboard={() => { setPreviousScreen('settings'); setCurrentScreen('shop-dashboard'); }}
             isDarkMode={isDarkMode}
             onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
             setNotification={setNotification}
           />
         )}
         {currentScreen === 'admin-orders' && (
-          <AdminOrdersScreen onBack={() => setCurrentScreen(previousScreen || 'home')} />
+          <AdminOrdersScreen 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+          />
         )}
         {currentScreen === 'shop-dashboard' && (
           <ShopDashboardScreen 
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             orderAcceptedModal={orderAcceptedModal}
             setOrderAcceptedModal={setOrderAcceptedModal}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+            showPrompt={showPrompt}
           />
         )}
         {currentScreen === 'profile' && (
           <ProfileScreen 
-            onBack={() => setCurrentScreen('home')} 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onSave={(data) => {
               setUserProfile(prev => ({ ...prev, ...data }));
-              setCurrentScreen('home');
+              setCurrentScreen(previousScreen || 'home');
             }} 
-            onOrderHistory={() => setCurrentScreen('order-history')}
+            onOrderHistory={() => { setPreviousScreen('profile'); setCurrentScreen('order-history'); }}
             onAdminOrders={() => { setPreviousScreen('profile'); setCurrentScreen('admin-orders'); }}
             onShopDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('shop-dashboard'); }}
             userProfile={userProfile}
@@ -1089,10 +1383,13 @@ export default function App() {
             userProfile={userProfile}
             session={session}
             shops={shops}
-            onBack={() => setCurrentScreen('home')} 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onConfirm={() => setCurrentScreen('order-success')} 
             cart={cart}
             setCart={setCart}
+            setNotification={setNotification}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
           />
         )}
         {currentScreen === 'order-success' && (
@@ -1101,28 +1398,61 @@ export default function App() {
         {currentScreen === 'order-history' && (
           <OrderHistoryScreen 
             session={session}
-            onBack={() => setCurrentScreen('profile')} 
+            onBack={() => setCurrentScreen(previousScreen || 'profile')} 
             userProfile={userProfile} 
+            showAlert={showAlert}
+            showConfirm={showConfirm}
           />
         )}
       </motion.div>
+
+      {/* Global Floating Checkout Button */}
+      <AnimatePresence>
+        {cartCount > 0 && currentScreen !== 'checkout' && currentScreen !== 'order-success' && (
+          <motion.button
+            initial={{ scale: 0, y: 20, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0, y: 20, opacity: 0 }}
+            onClick={() => {
+              setPreviousScreen(currentScreen);
+              setCurrentScreen('checkout');
+            }}
+            className="fixed bottom-24 right-6 z-50 bg-slate-900 dark:bg-orange-600 text-white p-5 rounded-[32px] shadow-2xl flex items-center gap-4 active:scale-95 transition-all cursor-pointer group"
+          >
+            <div className="relative">
+              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+                <ShoppingBag className="w-6 h-6" />
+              </div>
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center shadow-sm border-2 border-slate-900 dark:border-orange-600">
+                {cartCount}
+              </span>
+            </div>
+            <div className="text-left pr-2">
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-70">Checkout</p>
+              <p className="text-lg font-black">R{cartTotal.toFixed(2)}</p>
+            </div>
+            <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 transition-all" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
-  </AnimatePresence>
-  </div>
-);
+    </AnimatePresence>
+    </div>
+  );
 }
 
 function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => void }) {
   useEffect(() => {
-    // Subtle jingle on launch
-    const jingle = new Audio('https://assets.mixkit.co/active_storage/sfx/2430/2430-preview.mp3');
-    jingle.volume = 0.4;
+    // Professional welcome chime on launch
+    const jingle = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
+    jingle.volume = 0.3;
     jingle.play().catch(e => console.log("Autoplay prevented:", e));
   }, []);
 
   const playClick = () => {
-    const click = new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3');
-    click.volume = 0.6;
+    // Professional crisp click sound
+    const click = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3');
+    click.volume = 0.4;
     click.play().catch(e => console.log("Click sound failed:", e));
   };
 
@@ -1153,28 +1483,7 @@ function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => 
       {/* Header Content */}
       <header className="relative z-10 w-full px-6 pt-12 flex flex-col items-center">
         <div className="status-bar-spacer"></div>
-        <div className="flex items-center space-x-2">
-          {/* Logo Icon Placeholder */}
-          <div className="bg-brand-orange p-2 rounded-xl shadow-lg">
-            <svg
-              className="h-8 w-8 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2.5"
-              ></path>
-            </svg>
-          </div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-white drop-shadow-md">
-            Local<span className="text-brand-orange">Eats</span>
-          </h1>
-        </div>
+        <LocalEatsLogo width={220} height={60} showBackground={true} />
       </header>
 
       {/* Bottom Action Section */}
@@ -1236,7 +1545,7 @@ function SplashScreen({ onNext, onLogin }: { onNext: () => void, onLogin: () => 
   );
 }
 
-function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: any) => void, onLogin: () => void, setNotification: (n: any) => void }) {
+function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: SignUpData) => void, onLogin: () => void, setNotification: (n: NotificationState) => void }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -1254,9 +1563,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: any
     <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex h-auto min-h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <div className="flex items-center p-4 pb-2 justify-center mt-8">
-          <div className="text-primary flex size-16 shrink-0 items-center justify-center bg-primary/10 rounded-full">
-            <Utensils className="w-8 h-8" />
-          </div>
+          <LocalEatsLogo width={160} height={42} />
         </div>
         <div className="px-6">
           <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-[32px] font-bold leading-tight text-center pb-2 pt-6">Welcome</h1>
@@ -1334,10 +1641,22 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: any
           </div>
           <div className="grid grid-cols-2 gap-4">
             <button 
-              onClick={() => setNotification({ message: "Google login coming soon!", type: 'info' })}
+              onClick={async () => {
+                try {
+                  const { error } = await supabase.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                      redirectTo: APP_URL
+                    }
+                  });
+                  if (error) throw error;
+                } catch (error: any) {
+                  setNotification({ message: error.message, type: 'error' });
+                }
+              }}
               className="flex items-center justify-center gap-2 h-12 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <img alt="Google Logo" className="h-5 w-5" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5uYjQizkp0NzZOJp6gAxVIoom_EY70LzkakkWsAQaYO29sik9xD6rSvJFnoztFAIzTeXZX17vg94A_hZuYmV2_Va3hBYvZoEXVuzb6Uypat-btNCXq2M3UdT8jllg-feqnW8CKzK5T5EB9l6GU-uqjg_oOpWia8T2AYqmOudM6LiS5I7wofQv0QG0MZc_KJNHHx60c_02idR-68zHoEMZwxAGOW33qn0nylojD9egOorA99Q5_UD2H8L0LMgVA9aAoGK-TF--TQ"/>
+              <img alt="Google Logo" className="h-5 w-5" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5uYjQizkp0NzZOJp6gAxVIoom_EY70LzkakkWsAQaYO29sik9xD6rSvJFnoztFAIzTeXZX17vg94A_hZuYmV2_Va3hBYvZoEXVuzb6Uypat-btNCXq2M3UdT8jllg-feqnW8CKzK5T5EB9l6GU-uqjg_oOpWia8T2AYqmOudM6LiS5I7wofQv0QG0MZc_KJNHHx60c_02idR-68zHoEMZwxAGOW33qn0nylojD9egOorA99Q5_UD2H8L0LMgVA9aAoGK-TF--TQ" referrerPolicy="no-referrer"/>
               <span className="text-sm font-semibold">Google</span>
             </button>
             <button 
@@ -1482,7 +1801,7 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
   );
 }
 
-function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { onNext: () => void, onBack: () => void, signupData: any, setNotification: (n: any) => void }) {
+function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { onNext: () => void, onBack: () => void, signupData: SignUpData, setNotification: (n: NotificationState) => void }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -1508,6 +1827,7 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
         email: signupData.email,
         password,
         options: {
+          emailRedirectTo: APP_URL,
           data: {
             full_name: signupData.fullName,
             phone: signupData.phone
@@ -1659,7 +1979,7 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
   );
 }
 
-function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }: { userProfile: UserProfile, onBack: () => void, onSave: (data: Partial<UserProfile>) => void, setNotification: (n: any) => void }) {
+function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }: { userProfile: UserProfile, onBack: () => void, onSave: (data: Partial<UserProfile>) => void, setNotification: (n: NotificationState) => void }) {
   const [email, setEmail] = useState(userProfile.email);
   const [address, setAddress] = useState(userProfile.address);
   const [city, setCity] = useState(userProfile.city);
@@ -1795,7 +2115,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
   );
 }
 
-function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: any) => void }) {
+function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: NotificationState) => void }) {
   const [identifier, setIdentifier] = useState(() => localStorage.getItem('remembered_identifier') || '');
   const [password, setPassword] = useState('');
   const [loginType, setLoginType] = useState<'email' | 'phone'>('email');
@@ -1852,9 +2172,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
       <div className="relative flex h-auto min-h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         {/* Logo Section */}
         <div className="flex items-center p-4 pb-2 justify-center mt-8">
-          <div className="text-primary flex size-16 shrink-0 items-center justify-center bg-primary/10 rounded-full">
-            <Utensils className="w-8 h-8" />
-          </div>
+          <LocalEatsLogo width={160} height={42} />
         </div>
         {/* Welcome Header */}
         <div className="px-6">
@@ -1965,10 +2283,22 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
           </div>
           <div className="grid grid-cols-2 gap-4">
             <button 
-              onClick={() => setNotification({ message: "Google signup coming soon!", type: 'info' })}
+              onClick={async () => {
+                try {
+                  const { error } = await supabase.auth.signInWithOAuth({
+                    provider: 'google',
+                    options: {
+                      redirectTo: APP_URL
+                    }
+                  });
+                  if (error) throw error;
+                } catch (error: any) {
+                  setNotification({ message: error.message, type: 'error' });
+                }
+              }}
               className="flex items-center justify-center gap-2 h-12 border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
-              <img alt="Google Logo" className="h-5 w-5" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5uYjQizkp0NzZOJp6gAxVIoom_EY70LzkakkWsAQaYO29sik9xD6rSvJFnoztFAIzTeXZX17vg94A_hZuYmV2_Va3hBYvZoEXVuzb6Uypat-btNCXq2M3UdT8jllg-feqnW8CKzK5T5EB9l6GU-uqjg_oOpWia8T2AYqmOudM6LiS5I7wofQv0QG0MZc_KJNHHx60c_02idR-68zHoEMZwxAGOW33qn0nylojD9egOorA99Q5_UD2H8L0LMgVA9aAoGK-TF--TQ"/>
+              <img alt="Google Logo" className="h-5 w-5" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB5uYjQizkp0NzZOJp6gAxVIoom_EY70LzkakkWsAQaYO29sik9xD6rSvJFnoztFAIzTeXZX17vg94A_hZuYmV2_Va3hBYvZoEXVuzb6Uypat-btNCXq2M3UdT8jllg-feqnW8CKzK5T5EB9l6GU-uqjg_oOpWia8T2AYqmOudM6LiS5I7wofQv0QG0MZc_KJNHHx60c_02idR-68zHoEMZwxAGOW33qn0nylojD9egOorA99Q5_UD2H8L0LMgVA9aAoGK-TF--TQ" referrerPolicy="no-referrer"/>
               <span className="text-sm font-semibold">Google</span>
             </button>
             <button 
@@ -2033,26 +2363,67 @@ function LoginSuccessScreen({ onHome, onViewProfile, onBack }: { onHome: () => v
   );
 }
 
-function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, favorites, toggleFavorite, userLocation, onRequestLocation }: { userProfile: UserProfile, session: any, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void }) {
+interface ShopCardProps {
+  key?: string | number;
+  shop: Shop;
+  onClick: () => void;
+  userLocation: { lat: number; lng: number } | null;
+}
+
+const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
+  return (
+    <div 
+      onClick={onClick}
+      className="flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 cursor-pointer hover:shadow-xl transition-all group active:scale-[0.98]"
+    >
+      <div className="h-36 w-full rounded-2xl overflow-hidden relative">
+        <BlurUpImage 
+          src={shop.logo} 
+          alt={shop.name} 
+          className="w-full h-full"
+          blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
+        />
+        {shop.is_special && (
+          <div className="absolute top-3 left-3 bg-orange-600 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg">
+            Local Special
+          </div>
+        )}
+        <div className="absolute bottom-3 right-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-xl flex items-center gap-1 shadow-sm border border-white/20">
+          <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+          <span className="text-xs font-black text-slate-900 dark:text-white">{shop.rating}</span>
+        </div>
+      </div>
+      <div className="px-1">
+        <div className="flex justify-between items-start">
+          <h4 className="text-sm font-black text-slate-900 dark:text-white truncate group-hover:text-orange-600 transition-colors">{shop.name}</h4>
+        </div>
+        <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-1">{shop.description}</p>
+        
+        <TrustBadge shop={shop} />
+        
+        <div className="flex items-center gap-1 mt-3 pt-3 border-t border-gray-50 dark:border-slate-800/50">
+          <MapPin className="w-3 h-3 text-gray-400" />
+          <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate">{shop.address || 'Tembisa'}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void }) {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isStoreSettingsOpen, setIsStoreSettingsOpen] = useState(false);
-  const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [minRating, setMinRating] = useState(0);
+  const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [selectedItemForQuantity, setSelectedItemForQuantity] = useState<MenuItem | null>(null);
 
   const toggleExpand = (itemId: string) => {
     setExpandedItems(prev => 
       prev.includes(itemId) ? prev.filter(id => id !== itemId) : [...prev, itemId]
     );
   };
-
-  useEffect(() => {
-    if (shops.length > 0 && selectedShopId === null) {
-      setSelectedShopId(shops[0].id);
-    }
-  }, [shops, selectedShopId]);
 
   const categories = ['All', 'Favorites', 'Nearby', ...new Set(shops.map(s => s.category))];
 
@@ -2073,30 +2444,45 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
     }
     
     const matchesRating = shop.rating >= minRating;
+    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
     
-    return matchesSearch && matchesCategory && matchesRating;
+    return matchesSearch && matchesCategory && matchesRating && matchesOpen && favorites.includes(shop.id.toString());
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
-    if (selectedCategory === 'Nearby' && userLocation) {
-      // For demo, we use some fixed coordinates for shops if they don't have them
-      const aLat = (a as any).latitude || -25.9964 + (parseInt(a.id) % 10) * 0.005;
-      const aLng = (a as any).longitude || 28.2268 + (parseInt(a.id) % 10) * 0.005;
-      const bLat = (b as any).latitude || -25.9964 + (parseInt(b.id) % 10) * 0.005;
-      const bLng = (b as any).longitude || 28.2268 + (parseInt(b.id) % 10) * 0.005;
+    // Smart Sort Logic: Prioritize Open -> Specials -> Distance -> Rating
+    const statusA = getShopStatus(a);
+    const statusB = getShopStatus(b);
+
+    // 1. Prioritize Open shops
+    if (statusA.isOpen && !statusB.isOpen) return -1;
+    if (!statusA.isOpen && statusB.isOpen) return 1;
+
+    // 2. Prioritize "Local Eats Special"
+    if (a.is_special && !b.is_special) return -1;
+    if (!a.is_special && b.is_special) return 1;
+
+    // 3. Distance Sort (Nearby Priority)
+    if (userLocation) {
+      const aLat = (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
+      const aLng = (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
+      const bLat = (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
+      const bLng = (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
       
       const distA = Math.sqrt(Math.pow(aLat - userLocation.lat, 2) + Math.pow(aLng - userLocation.lng, 2));
       const distB = Math.sqrt(Math.pow(bLat - userLocation.lat, 2) + Math.pow(bLng - userLocation.lng, 2));
-      return distA - distB;
+      if (Math.abs(distA - distB) > 0.001) return distA - distB;
     }
-    return 0;
+
+    // 4. Rating Sort
+    return b.rating - a.rating;
   });
 
-  const selectedShop = shops.find(s => s.id === selectedShopId) || shops[0];
+  const recentShopIds = [...new Set(orders.map(o => o.shop_id))].slice(0, 5);
+  const recentShops = recentShopIds.map(id => shops.find(s => s.id === id)).filter(Boolean) as Shop[];
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-
-  const projectRef = supabaseUrl.split('//')[1]?.split('.')[0] || 'unknown';
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
   if (loadingShops && shops.length === 0) {
     return (
@@ -2136,17 +2522,17 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
           {fetchError ? fetchError : "It looks like there are no active shops in your area yet."}
         </p>
         
-        {fetchError && fetchError.includes('Network Error') && (
+        {fetchError && (fetchError.includes('Network Error') || fetchError.includes('Failed to fetch')) && (
           <div className="bg-orange-50 dark:bg-orange-900/10 p-4 rounded-2xl mb-6 text-left max-w-xs border border-orange-100 dark:border-orange-900/30">
             <h4 className="text-[10px] font-bold text-orange-800 dark:text-orange-400 uppercase mb-2 flex items-center gap-1">
-              <Info className="w-3 h-3" />
-              Troubleshooting
+              <AlertTriangle className="w-3 h-3" />
+              Network Diagnosis
             </h4>
             <ul className="text-[10px] text-orange-700 dark:text-orange-300 space-y-1.5 list-disc pl-3">
-              <li>Check if your internet connection is active.</li>
-              <li>Disable any **Ad-Blockers** (uBlock, AdBlock) for this site.</li>
-              <li>Ensure your Supabase project is not paused.</li>
-              <li>Verify **VITE_SUPABASE_URL** & **VITE_SUPABASE_ANON_KEY** in settings.</li>
+              <li>**Ad-Blockers:** Disable uBlock, AdBlock, or Brave Shields for this site.</li>
+              <li>**VPN/Firewall:** Some corporate networks block Supabase domains.</li>
+              <li>**Project Status:** Check if your Supabase project is active (not paused).</li>
+              <li>**Config:** Ensure **VITE_SUPABASE_URL** is correct in your secrets.</li>
             </ul>
           </div>
         )}
@@ -2156,7 +2542,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
             <span>Supabase Endpoint</span>
             <span className="text-[8px] bg-slate-200 dark:bg-slate-700 px-1 rounded uppercase">Active</span>
           </div>
-          <div className="truncate text-slate-500 dark:text-slate-300">{supabaseUrl}</div>
+          <div className="truncate text-slate-500 dark:text-slate-300">Connected to Supabase Cloud</div>
         </div>
         
         <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -2217,7 +2603,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
                   if (sqlDiv) sqlDiv.classList.remove('hidden');
                 }
                 
-                alert(`Seeding Error: ${msg}`);
+                showAlert('Seeding Error', msg);
               } finally {
                 if (btn) btn.innerText = 'Seed Demo Shops';
               }
@@ -2241,13 +2627,26 @@ CREATE TABLE IF NOT EXISTS shops (
   category text,
   rating numeric DEFAULT 0,
   is_active boolean DEFAULT true,
-  logo_url text DEFAULT 'https://picsum.photos/seed/shop/200/200'
+  logo_url text DEFAULT 'https://picsum.photos/seed/shop/200/200',
+  owner_id uuid
 );
 
--- 2. Ensure profiles table has favorites
+-- 2. Create notifications table
+CREATE TABLE IF NOT EXISTS notifications (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL,
+  title text NOT NULL,
+  message text NOT NULL,
+  type text NOT NULL,
+  read boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  data jsonb
+);
+
+-- 3. Ensure profiles table has favorites
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS favorites text[];
 
--- 3. Create menu_items table
+-- 4. Create menu_items table
 CREATE TABLE IF NOT EXISTS menu_items (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   shop_id uuid REFERENCES shops(id) ON DELETE CASCADE,
@@ -2258,7 +2657,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
   is_available boolean DEFAULT true
 );
 
--- 3. Create reviews table
+-- 5. Create reviews table
 CREATE TABLE IF NOT EXISTS reviews (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   shop_id uuid REFERENCES shops(id) ON DELETE CASCADE,
@@ -2268,7 +2667,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   createdAt timestamptz DEFAULT now()
 );
 
--- 4. Insert demo data
+-- 6. Insert demo data
 INSERT INTO shops (name, description, location, category, rating, is_active)
 VALUES 
 ('Tembisa Kota King', 'The best Khas-Khas in Tembisa', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
@@ -2294,10 +2693,20 @@ VALUES
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-50 border-b border-primary/5">
         <div className="flex items-center gap-1">
-          <span className="text-orange-600 font-extrabold text-2xl tracking-tighter">LocalEats</span>
-          <div className="w-2 h-2 bg-red-500 rounded-full mb-1"></div>
+          <LocalEatsLogo width={140} height={36} />
         </div>
         <div className="flex items-center gap-2">
+          <button 
+            onClick={onNotifications}
+            className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
+          >
+            <Bell className="w-6 h-6" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
           <div className="relative">
             <button 
               onClick={() => setIsSettingsOpen(!isSettingsOpen)}
@@ -2364,6 +2773,17 @@ VALUES
               </div>
               
               <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowOnlyOpen(!showOnlyOpen)}
+                  className={`whitespace-nowrap px-3 py-1.5 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 border ${
+                    showOnlyOpen 
+                      ? 'bg-green-500/10 text-green-600 border-green-500/30' 
+                      : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800'
+                  }`}
+                >
+                  <Clock className={`w-2.5 h-2.5 ${showOnlyOpen ? 'fill-current' : ''}`} />
+                  Open Now
+                </button>
                 {[0, 3, 4, 4.5].map(rating => (
                   <button 
                     key={rating}
@@ -2381,21 +2801,46 @@ VALUES
               </div>
             </section>
 
-            {/* Quick Start Guide for New Users */}
+            {/* Recent Orders Carousel - Prioritized at top */}
+            {recentShops.length > 0 && (
+              <section className="mb-6">
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Order Again</h3>
+                </div>
+                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 px-1">
+                  {recentShops.map(shop => (
+                    <div 
+                      key={shop.id}
+                      onClick={() => onStoreInfo(shop.id)}
+                      className="flex flex-col items-center gap-2 shrink-0 w-24 group cursor-pointer"
+                    >
+                      <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-orange-500 to-yellow-400 shadow-lg group-active:scale-95 transition-transform">
+                        <div className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 overflow-hidden">
+                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Quick Start Guide for New Users / Discover */}
             {favorites.length === 0 && (
               <section className="mb-6 px-1 animate-in fade-in slide-in-from-left-4 duration-700">
                 <div className="bg-gradient-to-br from-orange-500 to-orange-600 p-6 rounded-[32px] shadow-xl shadow-orange-200 dark:shadow-none relative overflow-hidden group">
                   <div className="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
                   <div className="relative z-10">
-                    <h3 className="text-white text-xl font-black tracking-tight mb-2">Welcome to LocalEats! 🇿🇦</h3>
+                    <h3 className="text-white text-xl font-black tracking-tight mb-2">Discover Tembisa's Best! 🇿🇦</h3>
                     <p className="text-white/90 text-xs font-medium leading-relaxed mb-4">
-                      Start your journey by following your favorite Tembisa shops to see their menus instantly.
+                      You haven't followed any shops yet. Start your journey by exploring local favorites!
                     </p>
                     <button 
                       onClick={onDiscover}
                       className="bg-white text-orange-600 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer"
                     >
-                      Find Shops to Follow
+                      Discover Shops
                     </button>
                   </div>
                   <div className="absolute bottom-0 right-4 opacity-20 group-hover:scale-110 transition-transform duration-700">
@@ -2405,289 +2850,96 @@ VALUES
               </section>
             )}
 
-            {/* Restaurants Near You */}
-            <section className="mb-6">
-              <div className="flex items-center justify-between mb-3 px-1">
-                <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Restaurants Near You</h3>
-                <button 
-                  onClick={onRequestLocation}
-                  className="flex items-center gap-1 text-[10px] font-bold text-orange-600 dark:text-orange-400"
-                >
-                  {userLocation ? <MapPin className="w-3.5 h-3.5" /> : <Locate className="w-3.5 h-3.5" />}
-                  {userLocation ? 'Update Location' : 'Get Location'}
-                </button>
-              </div>
-              <div className="flex gap-4 overflow-x-auto custom-scrollbar pb-2 px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {sortedShops.slice(0, 5).map((shop) => (
-                  <div 
-                    key={shop.id} 
-                    onClick={() => onStoreInfo(shop.id)}
-                    className="flex flex-col gap-2 shrink-0 w-48 bg-white dark:bg-slate-900 rounded-2xl p-3 shadow-sm border border-gray-100 dark:border-slate-800 cursor-pointer hover:shadow-md transition-shadow"
-                  >
-                    <div className="h-24 w-full rounded-xl overflow-hidden relative">
-                      <img alt={shop.name} className="w-full h-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
-                      <div className="absolute top-2 right-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm px-1.5 py-0.5 rounded-lg flex items-center gap-0.5 shadow-sm">
-                        <Star className="w-2.5 h-2.5 text-yellow-500 fill-yellow-500" />
-                        <span className="text-[10px] font-bold text-slate-900 dark:text-white">{shop.rating}</span>
+            {/* Favorites Carousel */}
+            {favorites.length > 0 && (
+              <section className="mb-6">
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Your Favorites</h3>
+                </div>
+                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 px-1">
+                  {shops.filter(s => favorites.includes(s.id)).map(shop => (
+                    <div 
+                      key={shop.id}
+                      onClick={() => onStoreInfo(shop.id)}
+                      className="flex flex-col items-center gap-2 shrink-0 w-24 group cursor-pointer"
+                    >
+                      <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-red-500 to-pink-400 shadow-lg group-active:scale-95 transition-transform">
+                        <div className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 overflow-hidden">
+                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                        </div>
                       </div>
+                      <span className="text-[10px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{shop.name}</h4>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-2.5 h-2.5 text-gray-400" />
-                        <span className="text-[10px] text-gray-500 dark:text-slate-400 truncate">{shop.address || 'Tembisa'}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {sortedShops.length === 0 && (
-                  <div className="flex flex-col items-center justify-center w-full py-8 bg-gray-50 dark:bg-slate-800/50 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-                    <Navigation className="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" />
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500 italic">No restaurants found nearby.</p>
-                  </div>
-                )}
-              </div>
-            </section>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Followed Stores */}
-            <section className="mb-6">
-              <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-3 ml-1">Followed Stores</h3>
-              <div className="flex gap-4 overflow-x-auto custom-scrollbar pb-2 px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {shops.filter(s => favorites.includes(s.id)).map((shop) => (
-                  <div 
-                    key={shop.id} 
-                    onClick={() => setSelectedShopId(shop.id)}
-                    className="flex flex-col items-center gap-1.5 shrink-0 w-[72px] cursor-pointer"
-                  >
-                    <div className={`w-16 h-16 rounded-full ring-2 p-0.5 shadow-sm bg-white dark:bg-slate-800 transition-all ${selectedShopId === shop.id ? 'ring-orange-500 scale-105' : 'ring-gray-200 dark:ring-slate-700'}`}>
-                      <img alt={shop.name} className="w-full h-full rounded-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
-                    </div>
-                    <span className={`text-[10px] font-semibold text-center truncate w-full transition-colors ${selectedShopId === shop.id ? 'text-orange-600 dark:text-orange-400' : 'text-gray-600 dark:text-slate-400'}`}>
-                      {shop.name}
-                    </span>
-                  </div>
-                ))}
-                {shops.filter(s => favorites.includes(s.id)).length === 0 && (
-                  <div className="flex flex-col items-center justify-center w-full py-4 bg-gray-50 dark:bg-slate-800/50 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-                    <p className="text-[10px] text-gray-400 dark:text-slate-500 italic mb-2">You haven't followed any stores yet.</p>
-                    <button onClick={onDiscover} className="text-[10px] font-bold text-orange-600 dark:text-orange-400 underline">Discover Stores</button>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {/* Menu Section */}
-            {favorites.length > 0 ? (
-              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg flex-grow flex flex-col overflow-hidden mb-4 relative">
-                <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center">
-                      <img alt={selectedShop.name} className="w-8 h-8 rounded-full object-cover" src={selectedShop.logo} loading="lazy" referrerPolicy="no-referrer"/>
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">{selectedShop.name} Menu</h2>
-                      <p className="text-xs text-gray-500 dark:text-slate-400 font-medium">{selectedShop.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 flex-col items-end justify-center">
-                    <div className="flex items-center gap-2 relative">
-                      <span className="bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">Open Now</span>
-                      <button 
-                        onClick={() => setIsStoreSettingsOpen(!isStoreSettingsOpen)}
-                        aria-label="Store settings" 
-                        className={`text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 transition-colors flex items-center justify-center p-1 rounded-full cursor-pointer ${isStoreSettingsOpen ? 'bg-gray-100 dark:bg-slate-800' : 'hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                      >
-                        <MoreVertical className="w-5 h-5" />
-                      </button>
-
-                      {isStoreSettingsOpen && (
-                        <>
-                          <div className="fixed inset-0 z-[50]" onClick={() => setIsStoreSettingsOpen(false)}></div>
-                          <div className="absolute top-full right-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-xl shadow-xl z-[60] py-1 animate-in fade-in zoom-in duration-200 origin-top-right">
-                            <button 
-                              onClick={() => { setIsStoreSettingsOpen(false); toggleFavorite(selectedShopId || ''); }}
-                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
-                            >
-                              <UserMinus className="w-4 h-4" />
-                              Unfollow
-                            </button>
-                            <button 
-                              onClick={() => { setIsStoreSettingsOpen(false); onStoreInfo(selectedShopId); }}
-                              className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 border-b border-gray-50 dark:border-slate-700 cursor-pointer"
-                            >
-                              <Info className="w-4 h-4" />
-                              Store Info
-                            </button>
-                            <button className="w-full text-left px-4 py-2.5 text-xs font-semibold text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2 cursor-pointer">
-                              <AlertTriangle className="w-4 h-4" />
-                              Report Store
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-0.5 mt-1">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Star 
-                          key={i} 
-                          className={`w-3 h-3 ${i < Math.floor(selectedShop.rating) ? 'text-orange-500 fill-orange-500' : 'text-gray-300 dark:text-slate-600'}`} 
-                        />
-                      ))}
-                      <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 ml-1">{selectedShop.rating}</span>
-                    </div>
-                  </div>
-                </div>
-                    <div className="flex-grow overflow-y-auto p-4 space-y-3 pb-24">
-                      {selectedShop.menu.map((item) => {
-                        const cartItem = cart.find(i => i.id === item.id && i.shopId === selectedShopId);
-                        const quantity = cartItem?.quantity || 0;
-                        const isExpanded = expandedItems.includes(item.id);
-                        const hasDescription = item.description && item.description.length > 0;
-                        const isLongDescription = item.description && item.description.length > 40;
-
-                        return (
-                          <div key={item.id} className={`flex flex-col p-3 rounded-2xl border transition-all ${quantity > 0 ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/30 shadow-sm' : 'bg-gray-50 dark:bg-slate-800/50 border-gray-100 dark:border-slate-700'}`}>
-                            <div className="flex items-center justify-between w-full">
-                              <div className="flex flex-col flex-1 mr-2">
-                                <span className="text-sm font-bold text-gray-800 dark:text-white">{item.name}</span>
-                                <span className="text-xs text-orange-600 dark:text-orange-400 font-bold mt-1">{item.displayPrice}</span>
-                              </div>
-                              
-                              {quantity > 0 ? (
-                                <div className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-xl border border-orange-200 dark:border-orange-500/30 p-1 shadow-sm">
-                                  <button 
-                                    onClick={() => removeFromCart(item.id, selectedShopId)}
-                                    className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
-                                  >
-                                    <Minus className="w-4 h-4" />
-                                  </button>
-                                  <span className="text-sm font-bold w-4 text-center dark:text-white">{quantity}</span>
-                                  <button 
-                                    onClick={() => addToCart(item, selectedShopId)}
-                                    className="w-8 h-8 flex items-center justify-center text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-lg transition-colors cursor-pointer"
-                                  >
-                                    <Plus className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              ) : (
-                                <button 
-                                  onClick={() => addToCart(item, selectedShopId)} 
-                                  className="text-xs font-bold px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white shadow-md shadow-orange-200 dark:shadow-none transition-all cursor-pointer"
-                                >
-                                  Buy
-                                </button>
-                              )}
-                            </div>
-
-                            {hasDescription && (
-                              <div className="mt-2">
-                                <p className={`text-[10px] text-gray-500 dark:text-slate-400 leading-relaxed ${!isExpanded && isLongDescription ? 'line-clamp-1' : ''}`}>
-                                  {item.description}
-                                </p>
-                                {isLongDescription && (
-                                  <button 
-                                    onClick={() => toggleExpand(item.id)}
-                                    className="flex items-center gap-1 text-[10px] font-bold text-primary mt-1 hover:underline cursor-pointer"
-                                  >
-                                    <span>{isExpanded ? 'Show Less' : 'Read More'}</span>
-                                    <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                  </button>
-                                )}
+            <section className="mb-24">
+              <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-4 ml-1">All Local Shops</h3>
+              <div className="grid grid-cols-1 gap-4">
+                {sortedShops.map((shop) => {
+                  const isFollowed = favorites.includes(shop.id);
+                  return (
+                    <div 
+                      key={shop.id}
+                      onClick={() => onStoreInfo(shop.id)}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-4 flex items-center gap-4 border border-gray-100 dark:border-slate-800 shadow-sm active:scale-[0.98] transition-all relative group"
+                    >
+                      <div className="w-20 h-20 rounded-2xl overflow-hidden shrink-0">
+                        <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-black text-slate-900 dark:text-white truncate">{shop.name}</h4>
+                            {isFollowed && (
+                              <div className="bg-red-50 dark:bg-red-500/10 p-1 rounded-full">
+                                <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />
                               </div>
                             )}
                           </div>
-                        );
-                      })}
+                          <div className="flex items-center gap-0.5">
+                            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                            <span className="text-xs font-black text-slate-900 dark:text-white">{shop.rating}</span>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-1 mt-0.5">{shop.description}</p>
+                        <div className="flex items-center justify-between mt-2">
+                          <TrustBadge shop={shop} />
+                          {isFollowed && (
+                            <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">Following</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                
-                {/* Submit Order Button Container */}
-                {cartCount > 0 && (
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-slate-900 via-white dark:via-slate-900 to-transparent pt-8 animate-in slide-in-from-bottom-4 duration-300">
-                    <div className="flex gap-2">
-                      <button onClick={onCheckout} className="flex-grow bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer">
-                        <span>Submit order ({cartCount})</span>
-                        <ArrowRight className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={clearCart}
-                        title="Clear Cart"
-                        className="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-500/30 p-4 rounded-2xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
-                      >
-                        <Trash2 className="w-6 h-6" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </section>
-            ) : (
-              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg flex-grow flex flex-col items-center justify-center p-8 text-center mb-4 border border-gray-100 dark:border-slate-800">
-                <div className="w-20 h-20 bg-orange-50 dark:bg-orange-500/10 rounded-full flex items-center justify-center mb-4">
-                  <ShoppingBasket className="w-10 h-10 text-orange-500" />
+                  );
+                })}
+              </div>
+            </section>
+
+            {sortedShops.length === 0 && (
+              <section className="py-20 text-center">
+                <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                  <Store className="w-10 h-10" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No Followed Shops</h3>
-                <p className="text-sm text-gray-500 dark:text-slate-400 max-w-[240px] mb-6">
-                  Follow a shop to see their delicious menu items right here on your homepage.
-                </p>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">No Shops Found</h3>
+                <p className="text-xs text-slate-500 mt-1">Try adjusting your filters or search query.</p>
                 <button 
-                  onClick={onDiscover}
-                  className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('All');
+                    setMinRating(0);
+                    setShowOnlyOpen(false);
+                  }}
+                  className="mt-6 px-6 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
                 >
-                  Discover Shops
+                  Clear All Filters
                 </button>
               </section>
             )}
       </main>
-
-      {/* Floating Cart Button */}
-      <AnimatePresence>
-        {cartCount > 0 && (
-          <motion.button
-            initial={{ scale: 0, y: 20 }}
-            animate={{ scale: 1, y: 0 }}
-            exit={{ scale: 0, y: 20 }}
-            onClick={onCheckout}
-            className="fixed bottom-24 right-6 z-50 bg-orange-600 text-white p-4 rounded-full shadow-2xl flex items-center gap-2 active:scale-95 transition-transform cursor-pointer"
-          >
-            <div className="relative">
-              <ShoppingCart className="w-6 h-6" />
-              <span className="absolute -top-2 -right-2 bg-white text-orange-600 text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-sm border border-orange-100">
-                {cartCount}
-              </span>
-            </div>
-            <span className="font-bold text-sm pr-1">Checkout</span>
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      {/* Sticky Checkout Bar */}
-      <AnimatePresence>
-        {cartCount > 0 && (
-          <motion.div 
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-xl border-t border-slate-100 dark:border-slate-800 shadow-[0_-8px_30px_rgb(0,0,0,0.04)]"
-          >
-            <div className="max-w-md mx-auto">
-              <button 
-                onClick={onCheckout}
-                className="w-full h-14 bg-orange-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-orange-200 dark:shadow-none flex items-center justify-between px-6 active:scale-[0.98] transition-all cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="bg-white/20 px-2.5 py-1 rounded-lg text-[10px]">
-                    {cartCount}
-                  </div>
-                  <span className="uppercase tracking-widest">Checkout Now</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs opacity-70">Total:</span>
-                  <span className="text-base">R {cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString()}</span>
-                </div>
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* BottomNavigation */}
       <nav className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 px-6 py-2 pb-6 flex justify-around items-center sticky bottom-0 z-40">
@@ -2714,7 +2966,18 @@ VALUES
   );
 }
 
-function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, setCart }: { userProfile: UserProfile, session: any, shops: Shop[], onBack: () => void, onConfirm: () => void, cart: CartItem[], setCart: Dispatch<SetStateAction<CartItem[]>> }) {
+function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, setCart, setNotification, showAlert, showConfirm }: { 
+  userProfile: UserProfile, 
+  session: Session | null, 
+  shops: Shop[], 
+  onBack: () => void, 
+  onConfirm: () => void, 
+  cart: CartItem[], 
+  setCart: Dispatch<SetStateAction<CartItem[]>>, 
+  setNotification: Dispatch<SetStateAction<any>>,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+}) {
   const [loading, setLoading] = useState(false);
   
   const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -2723,10 +2986,28 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
 
   const handleConfirm = async () => {
     if (!userProfile.fullName || !userProfile.phone) {
-      alert('Please complete your profile (Name and Phone) before ordering.');
+      showAlert('Incomplete Profile', 'Please complete your profile (Name and Phone) before ordering.');
       return;
     }
     
+    const status = getShopStatus(primaryShop);
+    const isClosed = !status.isOpen;
+    
+    if (isClosed) {
+      showConfirm(
+        'Shop Closed',
+        `${primaryShop.name} is currently closed. Your order will be attended to when they open at ${status.nextOpeningTime || 'their next opening hour'}. Do you want to proceed?`,
+        () => {
+          // Proceed with checkout
+          processCheckout(isClosed);
+        }
+      );
+      return;
+    }
+    processCheckout(false);
+  };
+
+  const processCheckout = async (isClosed: boolean) => {
     setLoading(true);
     if ("vibrate" in navigator) {
       navigator.vibrate([10, 30, 10]); // Premium double-tap feel for confirmation
@@ -2758,10 +3039,20 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
       }
       
       console.log('Order successfully placed:', data);
+      
+      if (isClosed) {
+        setNotification({ 
+          message: `Order submitted! Note: ${primaryShop.name} is currently closed. Your order will be attended to when they open at ${primaryShop.opening_time || 'their next opening hour'}.`, 
+          type: 'info' 
+        });
+      } else {
+        setNotification({ message: 'Order successfully placed!', type: 'success' });
+      }
+      
       onConfirm();
     } catch (error: any) {
       console.error('Error submitting order:', error);
-      alert(`Failed to place order: ${error.message || 'Unknown error'}. Please try again.`);
+      showAlert('Order Error', `Failed to place order: ${error.message || 'Unknown error'}. Please try again.`);
     } finally {
       setLoading(false);
     }
@@ -2778,11 +3069,11 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
           <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1">Checkout</h2>
           <button 
             onClick={() => {
-              if (window.confirm('Clear all items from your cart?')) {
+              showConfirm('Clear Cart', 'Clear all items from your cart?', () => {
                 setCart([]);
                 localStorage.setItem('cart', JSON.stringify([]));
                 onBack();
-              }
+              });
             }}
             className="text-red-500 text-xs font-bold flex items-center gap-1 p-2 rounded-xl hover:bg-red-50 transition-colors cursor-pointer"
           >
@@ -2927,10 +3218,20 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
   );
 }
 
-function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation }: { shops: Shop[], onHome: () => void, onExplore: () => void, favorites: string[], toggleFavorite: (shopId: string) => void, onSelectShop: (shopId: string) => void, userLocation: { lat: number, lng: number } | null }) {
+function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert }: { 
+  shops: Shop[], 
+  onHome: () => void, 
+  onExplore: () => void, 
+  favorites: string[], 
+  toggleFavorite: (shopId: string) => void, 
+  onSelectShop: (shopId: string) => void, 
+  userLocation: { lat: number, lng: number } | null,
+  showAlert: (title: string, message: string) => void
+}) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [minRating, setMinRating] = useState(0);
+  const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   
   const categories = ['All', 'Nearby', ...new Set(shops.map(s => s.category))];
@@ -2941,15 +3242,16 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
     const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
     const matchesCategory = selectedCategory === 'All' || selectedCategory === 'Nearby' || shop.category === selectedCategory;
     const matchesRating = shop.rating >= minRating;
-    return matchesSearch && matchesCategory && matchesRating;
+    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+    return matchesSearch && matchesCategory && matchesRating && matchesOpen;
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
     if (selectedCategory === 'Nearby' && userLocation) {
-      const aLat = (a as any).latitude || -25.9964 + (parseInt(a.id) % 10) * 0.005;
-      const aLng = (a as any).longitude || 28.2268 + (parseInt(a.id) % 10) * 0.005;
-      const bLat = (b as any).latitude || -25.9964 + (parseInt(b.id) % 10) * 0.005;
-      const bLng = (b as any).longitude || 28.2268 + (parseInt(b.id) % 10) * 0.005;
+      const aLat = (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
+      const aLng = (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
+      const bLat = (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
+      const bLng = (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
       
       const distA = Math.sqrt(Math.pow(aLat - userLocation.lat, 2) + Math.pow(aLng - userLocation.lng, 2));
       const distB = Math.sqrt(Math.pow(bLat - userLocation.lat, 2) + Math.pow(bLng - userLocation.lng, 2));
@@ -2977,7 +3279,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
               {viewMode === 'list' ? <Map className="w-5 h-5" /> : <List className="w-5 h-5" />}
             </button>
             <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-[#ff7a2f] shadow-sm">
-              <img className="w-full h-full object-cover" alt="User profile photo avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjDviWscgS5U3EHdflVMH2lw438ZIVTcAGpl49HTuhtYnGnSfmj-j2T7UXu5rn0URgx6WUnkNAvuzKIgfhWSpQOch5ABihBoWNM3z-RPXHqaA24O9y0NFMKiMIoU9TFnGbS4tbMulbBnjouRLsmXb3kMzUopz3ng_f-1m3X7yAo1Fb3Hebd-UF2Y7b8ZpwTWzv38qWzFP3dBBKbJr5gf6vK6XlqxSL_RJLfyxvBFqEHeF6XjLFdIGLeqWj_gft_DIt4zi87H4PEQ"/>
+              <img className="w-full h-full object-cover" alt="User profile photo avatar" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjDviWscgS5U3EHdflVMH2lw438ZIVTcAGpl49HTuhtYnGnSfmj-j2T7UXu5rn0URgx6WUnkNAvuzKIgfhWSpQOch5ABihBoWNM3z-RPXHqaA24O9y0NFMKiMIoU9TFnGbS4tbMulbBnjouRLsmXb3kMzUopz3ng_f-1m3X7yAo1Fb3Hebd-UF2Y7b8ZpwTWzv38qWzFP3dBBKbJr5gf6vK6XlqxSL_RJLfyxvBFqEHeF6XjLFdIGLeqWj_gft_DIt4zi87H4PEQ" referrerPolicy="no-referrer"/>
             </div>
           </div>
         </div>
@@ -3025,6 +3327,17 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             </div>
             
             <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button 
+                onClick={() => setShowOnlyOpen(!showOnlyOpen)}
+                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  showOnlyOpen 
+                    ? 'bg-green-500/10 text-green-600 border-green-500/30' 
+                    : 'bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                <Clock className={`w-3 h-3 ${showOnlyOpen ? 'fill-current' : ''}`} />
+                Open Now
+              </button>
               {[0, 3, 4, 4.5].map(rating => (
                 <button 
                   key={rating}
@@ -3055,7 +3368,12 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                   className="group bg-[#ffffff] dark:bg-slate-900 rounded-lg overflow-hidden shadow-[0_8px_32px_rgba(45,47,49,0.06)] transition-all duration-300 hover:-translate-y-1 border border-transparent dark:border-slate-800 cursor-pointer"
                 >
                   <div className="h-48 relative">
-                    <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo}/>
+                    <BlurUpImage 
+                      src={shop.logo} 
+                      alt={shop.name} 
+                      className="w-full h-full"
+                      blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
+                    />
                     <div className="absolute top-4 right-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-1 shadow-sm">
                       <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
                       <span className="text-sm font-bold text-[#2d2f31] dark:text-white">{shop.rating}</span>
@@ -3064,8 +3382,8 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                   <div className="p-6">
                     <div className="flex justify-between items-start mb-4">
                       <div className="flex gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl">
-                          {shop.name.charAt(0)}
+                        <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl overflow-hidden">
+                          <img src={shop.logo} alt={shop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         </div>
                         <div>
                           <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
@@ -3073,6 +3391,11 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                         </div>
                       </div>
                     </div>
+                    
+                    <div className="mb-6">
+                      <TrustBadge shop={shop} />
+                    </div>
+
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
@@ -3124,7 +3447,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             {shops.slice(0, 2).map(shop => (
               <div key={shop.id} className="flex-none w-80 snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center">
                 <div className="w-32 h-32 rounded-full overflow-hidden mb-4 border-4 border-white dark:border-slate-700 shadow-lg">
-                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo}/>
+                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo} referrerPolicy="no-referrer"/>
                 </div>
                 <h4 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h4>
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">"{shop.description}"</p>
@@ -3156,7 +3479,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   );
 }
 
-function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, userProfile, onLogout, setNotification }: { onBack: () => void, onSave: (data: Partial<UserProfile>) => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, userProfile: UserProfile, onLogout: () => void, setNotification: (n: any) => void }) {
+function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, userProfile, onLogout, setNotification }: { onBack: () => void, onSave: (data: Partial<UserProfile>) => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, userProfile: UserProfile, onLogout: () => void, setNotification: (n: NotificationState) => void }) {
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [phone, setPhone] = useState(userProfile.phone);
   const [address, setAddress] = useState(userProfile.address);
@@ -3342,7 +3665,69 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
   );
 }
 
-function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart }: { onBack: () => void, shop: Shop, isFavorite: boolean, onToggleFavorite: () => void, userProfile: UserProfile | null, session: any, onSignUp: () => void, addToCart: (item: MenuItem, shopId: string) => void }) {
+const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | null, isOpen: boolean, onClose: () => void, onConfirm: (quantity: number) => void }) => {
+  const [quantity, setQuantity] = useState(1);
+
+  if (!item || !isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
+        <div className="flex justify-between items-start mb-6">
+          <div className="flex-1">
+            <h3 className="text-2xl font-black text-slate-900 dark:text-white leading-tight">{item.name}</h3>
+            <p className="text-orange-600 font-black text-lg mt-1">{item.displayPrice}</p>
+          </div>
+          <button onClick={onClose} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center gap-8 py-4">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Select Quantity</p>
+          <div className="flex items-center gap-8">
+            <button 
+              onClick={() => setQuantity(Math.max(1, quantity - 1))}
+              className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700"
+            >
+              <Minus className="w-8 h-8" />
+            </button>
+            <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">{quantity}</span>
+            <button 
+              onClick={() => setQuantity(quantity + 1)}
+              className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all"
+            >
+              <Plus className="w-8 h-8" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-10 flex gap-4">
+          <button 
+            onClick={() => onConfirm(quantity)}
+            className="flex-1 h-16 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3"
+          >
+            <ShoppingBag className="w-6 h-6" />
+            <span>Add to Basket • R{(item.price * quantity).toFixed(2)}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm }: { 
+  onBack: () => void, 
+  shop: Shop, 
+  isFavorite: boolean, 
+  onToggleFavorite: () => void, 
+  userProfile: UserProfile | null, 
+  session: Session | null, 
+  onSignUp: () => void, 
+  addToCart: (item: MenuItem, shopId: string, quantity?: number) => void,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+}) {
   const [activeTab, setActiveTab] = useState<'menu' | 'reviews' | 'info'>('menu');
   const [searchQuery, setSearchQuery] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
@@ -3352,6 +3737,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [tableMissing, setTableMissing] = useState(false);
+  const [selectedItemForQuantity, setSelectedItemForQuantity] = useState<MenuItem | null>(null);
 
   const fetchReviews = useCallback(async () => {
     setLoadingReviews(true);
@@ -3403,7 +3789,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
       if (error) {
         if (error.code === 'PGRST205') {
           setTableMissing(true);
-          alert('Error: The reviews table is missing from the database. Please run the SQL setup in the Home screen.');
+          showAlert('Database Error', 'The reviews table is missing from the database. Please run the SQL setup in the Home screen.');
           return;
         }
         throw error;
@@ -3413,10 +3799,10 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
       setNewComment('');
       setNewRating(5);
       fetchReviews();
-      alert('Thank you for your review!');
+      showAlert('Success', 'Thank you for your review!');
     } catch (error) {
       console.error('Error submitting review:', error);
-      alert('Failed to submit review. Please try again.');
+      showAlert('Error', 'Failed to submit review. Please try again.');
     } finally {
       setIsSubmittingReview(false);
     }
@@ -3449,7 +3835,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   }).catch(console.error);
                 } else {
                   navigator.clipboard.writeText(shareUrl);
-                  alert('Link copied to clipboard! You can now share this with others.');
+                  showAlert('Link Copied', 'Link copied to clipboard! You can now share this with others.');
                 }
               }}
               className="text-gray-700 dark:text-slate-300 cursor-pointer hover:text-orange-600 transition-colors"
@@ -3547,7 +3933,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                   filteredMenu.map((item) => (
                     <div key={item.id} className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all">
                       <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
-                        <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
+                        <BlurUpImage src={item.image} alt={item.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
                       </div>
                       <div className="flex-1 flex flex-col justify-between py-0.5">
                         <div>
@@ -3557,10 +3943,11 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         <div className="flex items-center justify-between">
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
                           <button 
-                            onClick={() => addToCart(item, shop.id)}
-                            className="size-8 bg-orange-600 text-white rounded-lg flex items-center justify-center shadow-lg shadow-orange-600/20 active:scale-90 transition-all cursor-pointer"
+                            onClick={() => setSelectedItemForQuantity(item)}
+                            className="px-4 py-2 bg-orange-600 text-white rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer text-[10px] font-black uppercase tracking-widest"
                           >
-                            <Plus className="w-5 h-5" />
+                            <span>Buy</span>
+                            <Plus className="w-3 h-3" />
                           </button>
                         </div>
                       </div>
@@ -3762,11 +4149,11 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                       </div>
                       <div>
                         <h3 className="font-bold text-gray-900 dark:text-white text-lg">Contact</h3>
-                        <p className="text-gray-500 dark:text-slate-400 mt-1">+27 12 345 6789</p>
+                        <p className="text-gray-500 dark:text-slate-400 mt-1">{shop.phone || '+27 12 345 6789'}</p>
                       </div>
                     </div>
                     <button 
-                      onClick={() => window.open('tel:+27123456789')}
+                      onClick={() => window.open(`tel:${shop.phone || '+27123456789'}`)}
                       className="w-full mt-2 py-4 px-6 bg-orange-600 rounded-xl text-white font-bold hover:bg-orange-700 active:scale-[0.96] transition-all shadow-lg shadow-orange-900/20 flex items-center justify-center space-x-2 cursor-pointer"
                     >
                       <PhoneCall className="w-5 h-5" />
@@ -3779,106 +4166,141 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
           )}
         </div>
       </main>
+
+      <QuantityModal 
+        item={selectedItemForQuantity}
+        isOpen={!!selectedItemForQuantity}
+        onClose={() => setSelectedItemForQuantity(null)}
+        onConfirm={(quantity) => {
+          if (selectedItemForQuantity) {
+            addToCart(selectedItemForQuantity, shop.id, quantity);
+            setSelectedItemForQuantity(null);
+          }
+        }}
+      />
     </div>
   );
 }
 
-function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo }: { shops: Shop[], onHome: () => void, onDiscover: () => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onStoreInfo: (shopId: string) => void }) {
+const shopIcon = new L.Icon({
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+const userIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+function MapRecenter({ center }: { center: [number, number] }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center);
+  }, [center, map]);
+  return null;
+}
+
+function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo, favorites, toggleFavorite, showAlert }: { 
+  shops: Shop[], 
+  onHome: () => void, 
+  onDiscover: () => void, 
+  userLocation: { lat: number, lng: number } | null, 
+  onRequestLocation: () => void, 
+  onStoreInfo: (shopId: string) => void, 
+  favorites: string[], 
+  toggleFavorite: (id: string) => void,
+  showAlert: (title: string, message: string) => void
+}) {
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Map shop data to the format expected by the map view
-  const mapShops = shops.map((shop, index) => ({
-    ...shop,
-    // Distribute them on the map if they don't have coordinates
-    top: `${20 + (index * 25) % 60}%`,
-    left: `${20 + (index * 35) % 60}%`,
-  }));
+  const filteredShops = shops.filter(shop => {
+    const query = searchQuery.trim().toLowerCase();
+    const shopText = `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
+    return query === '' || query.split(/\s+/).every(term => shopText.includes(term));
+  });
 
-  const activeShop = mapShops.find(s => s.id === selectedShopId);
+  const activeShop = shops.find(s => s.id === selectedShopId);
+  const mapCenter: [number, number] = userLocation ? [userLocation.lat, userLocation.lng] : [-25.9964, 28.2268];
 
   return (
     <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl overflow-hidden">
       {/* Search Overlay */}
-      <div className="absolute top-6 left-4 right-4 z-30">
+      <div className="absolute top-6 left-4 right-4 z-[1000]">
         <div className="bg-white dark:bg-slate-900/90 backdrop-blur-md rounded-full shadow-xl flex items-center px-4 py-3 border border-gray-100 dark:border-slate-800">
           <Search className="w-5 h-5 text-gray-400 mr-3" />
           <input 
             type="text" 
             placeholder="Search for food spots..." 
             className="flex-grow outline-none text-sm font-medium bg-transparent"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
           />
           <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-3"></div>
           <button className="text-orange-500" onClick={onRequestLocation}>
             {userLocation ? <LocateFixed className="w-5 h-5" /> : <Locate className="w-5 h-5" />}
           </button>
         </div>
-        
-        {/* Quick Filters */}
-        <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar pb-2">
-          {['Near Me', 'Top Rated', 'Open Now', 'Kota', 'Braai'].map((filter) => (
-            <button key={filter} className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-md text-xs font-semibold whitespace-nowrap border border-gray-100 dark:border-slate-800">
-              {filter}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Map Container */}
-      <div className="map-container flex-grow relative">
-        {/* Simulated Roads */}
-        <div className="map-road" style={{ top: '20%', left: 0, width: '100%', height: '40px' }}></div>
-        <div className="map-road" style={{ top: 0, left: '30%', width: '40px', height: '100%' }}></div>
-        <div className="map-road" style={{ top: '60%', left: 0, width: '100%', height: '40px' }}></div>
-        <div className="map-road" style={{ top: 0, left: '70%', width: '40px', height: '100%' }}></div>
+      <div className="flex-grow relative z-10">
+        <MapContainer center={mapCenter} zoom={14} scrollWheelZoom={true} className="h-full w-full">
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <MapRecenter center={mapCenter} />
+          
+          {userLocation && (
+            <Marker position={[userLocation.lat, userLocation.lng]} icon={userIcon}>
+              <Popup>You are here</Popup>
+            </Marker>
+          )}
 
-        {/* User Location Marker */}
-        {userLocation && (
-          <div 
-            className="absolute z-20 flex flex-col items-center"
-            style={{ top: '45%', left: '45%' }}
-          >
-            <div className="relative">
-              <div className="w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-lg animate-pulse"></div>
-              <div className="absolute inset-0 w-4 h-4 bg-blue-400 rounded-full animate-ping opacity-75"></div>
-            </div>
-            <span className="bg-blue-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full mt-1 shadow-sm">You</span>
-          </div>
-        )}
-
-        {/* Shop Pins */}
-        {mapShops.map((shop) => (
-          <div 
-            key={shop.id}
-            className="absolute z-10 cursor-pointer transition-transform hover:scale-110" 
-            style={{ top: shop.top, left: shop.left }}
-            onClick={() => setSelectedShopId(shop.id)}
-          >
-            <div className="relative">
-              {selectedShopId === shop.id && (
-                <div className="animate-pulse-orange absolute -inset-2 bg-orange-500 rounded-full opacity-20"></div>
-              )}
-              <div className={`${selectedShopId === shop.id ? 'bg-orange-500 text-white' : 'bg-white dark:bg-slate-800 text-orange-500'} p-2 rounded-full shadow-lg border-2 border-white dark:border-slate-700 transition-colors`}>
-                <Utensils className="w-4 h-4" />
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {/* User Location */}
-        <div className="absolute z-20" style={{ top: '50%', left: '35%' }}>
-          <div className="relative">
-            <div className="absolute -inset-3 bg-blue-500 rounded-full opacity-20 animate-ping"></div>
-            <div className="bg-blue-600 w-4 h-4 rounded-full border-2 border-white shadow-md"></div>
-          </div>
-        </div>
+          {filteredShops.map((shop) => {
+            const isFollowed = favorites.includes(shop.id);
+            return (
+              <Marker 
+                key={shop.id} 
+                position={[shop.latitude || -25.9964, shop.longitude || 28.2268]} 
+                icon={shopIcon}
+                eventHandlers={{
+                  click: () => setSelectedShopId(shop.id),
+                }}
+              >
+                <Popup>
+                  <div className="p-1">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <p className="font-bold text-sm">{shop.name}</p>
+                      {isFollowed && <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                      <span className="text-xs">{shop.rating}</span>
+                    </div>
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
+        </MapContainer>
 
         {/* Floating Action Buttons */}
-        <div className="absolute bottom-24 right-4 z-20 flex flex-col gap-3">
-          <button className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors">
-            <LocateFixed className="w-6 h-6" />
+        <div className="absolute bottom-24 right-4 z-[1000] flex flex-col gap-3">
+          <button onClick={onHome} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer">
+            <Home className="w-6 h-6" />
           </button>
-          <button className="bg-orange-500 p-3 rounded-full shadow-lg text-white hover:bg-orange-600 transition-colors">
-            <Layers className="w-6 h-6" />
+          <button onClick={onRequestLocation} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer">
+            <LocateFixed className="w-6 h-6" />
           </button>
         </div>
       </div>
@@ -3891,7 +4313,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute bottom-0 left-0 right-0 z-40 bg-white dark:bg-[#221610] rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-24"
+            className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-[#221610] rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-24"
           >
             <div className="relative">
               <div className="w-12 h-1.5 bg-gray-200 dark:bg-slate-700 rounded-full mx-auto mb-6 cursor-pointer" onClick={() => setSelectedShopId(null)}></div>
@@ -3904,17 +4326,28 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             </div>
             
             <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white">{activeShop.name}</h3>
-                <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">{activeShop.category} • 1.2 km away</p>
-                <div className="flex items-center mt-1">
-                  <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
-                  <span className="text-sm font-bold ml-1 dark:text-white">{activeShop.rating}</span>
-                  <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">(120+ reviews)</span>
+              <div className="flex gap-4">
+                <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md">
+                  <img src={activeShop.logo} alt={activeShop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">{activeShop.name}</h3>
+                    {favorites.includes(activeShop.id) && <Heart className="w-4 h-4 text-red-500 fill-current" />}
+                  </div>
+                  <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">{activeShop.category} • {activeShop.address}</p>
+                  <div className="flex items-center mt-1">
+                    <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
+                    <span className="text-sm font-bold ml-1 dark:text-white">{activeShop.rating}</span>
+                    <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">(120+ reviews)</span>
+                  </div>
                 </div>
               </div>
-              <button className="bg-gray-100 dark:bg-slate-800 p-2 rounded-full text-gray-400 dark:text-slate-500">
-                <Heart className="w-5 h-5" />
+              <button 
+                onClick={() => toggleFavorite(activeShop.id)}
+                className={`p-2 rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? 'bg-red-50 dark:bg-red-500/10 text-red-500' : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'}`}
+              >
+                <Heart className={`w-5 h-5 ${favorites.includes(activeShop.id) ? 'fill-current' : ''}`} />
               </button>
             </div>
 
@@ -3928,23 +4361,11 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
               </button>
               <button 
                 onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(activeShop.address)}`, '_blank')}
-                className="bg-gray-900 dark:bg-slate-800 text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                className="bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
               >
                 <Navigation className="w-5 h-5" />
                 Directions
               </button>
-            </div>
-
-            <div className="flex gap-3 overflow-x-auto no-scrollbar">
-              {[1, 2, 3].map((i) => (
-                <img 
-                  key={i}
-                  src={`https://picsum.photos/seed/food${activeShop.id}${i}/200/150`} 
-                  alt="Food" 
-                  className="w-32 h-24 rounded-xl object-cover flex-shrink-0 border border-gray-100 dark:border-slate-800"
-                  referrerPolicy="no-referrer"
-                />
-              ))}
             </div>
           </motion.div>
         )}
@@ -3975,7 +4396,178 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
   );
 }
 
-function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, isDarkMode, onToggleDarkMode, setNotification }: { userProfile: UserProfile, setUserProfile: Dispatch<SetStateAction<UserProfile>>, onBack: () => void, onLogout: () => void, onProfile: () => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, isDarkMode: boolean, onToggleDarkMode: () => void, setNotification: (n: any) => void }) {
+function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { notifications: AppNotification[], onBack: () => void, onRead: (id: string) => void, onDelete: (id: string) => void }) {
+  return (
+    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+        <div className="px-4 py-4 flex items-center justify-between">
+          <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-bold tracking-tight">Notifications</h1>
+          <div className="w-10"></div>
+        </div>
+      </header>
+
+      <main className="flex-grow overflow-y-auto px-4 py-6 space-y-4">
+        {notifications.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
+              <Bell className="w-8 h-8" />
+            </div>
+            <p className="text-slate-500">No notifications yet</p>
+          </div>
+        ) : (
+          notifications.sort((a, b) => b.timestamp - a.timestamp).map(notif => (
+            <div 
+              key={notif.id} 
+              onClick={() => onRead(notif.id)}
+              className={`p-4 rounded-xl border transition-all cursor-pointer relative group ${notif.read ? 'bg-white dark:bg-slate-900/30 border-slate-100 dark:border-slate-800' : 'bg-primary/5 border-primary/20 shadow-sm'}`}
+            >
+              <div className="flex items-start space-x-3">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  notif.type === 'order' ? 'bg-orange-100 text-orange-600' : 
+                  notif.type === 'promo' ? 'bg-indigo-100 text-indigo-600' : 
+                  notif.type === 'follow' ? 'bg-pink-100 text-pink-600' :
+                  'bg-blue-100 text-blue-600'
+                }`}>
+                  {notif.type === 'order' ? <Package className="w-5 h-5" /> : 
+                   notif.type === 'promo' ? <Tag className="w-5 h-5" /> : 
+                   notif.type === 'follow' ? <Heart className="w-5 h-5" /> :
+                   <Info className="w-5 h-5" />}
+                </div>
+                <div className="flex-grow">
+                  <div className="flex justify-between items-start">
+                    <h3 className={`font-bold text-sm ${notif.read ? 'text-slate-700 dark:text-slate-300' : 'text-slate-900 dark:text-white'}`}>{notif.title}</h3>
+                    <span className="text-[10px] text-slate-400">{new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{notif.message}</p>
+                </div>
+              </div>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onDelete(notif.id); }}
+                className="absolute top-2 right-2 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))
+        )}
+      </main>
+    </div>
+  );
+}
+
+function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops: Shop[], onBack: () => void }) {
+  const getStatusStep = (status: string) => {
+    switch(status) {
+      case 'pending': return 1;
+      case 'preparing': return 2;
+      case 'ready': return 3;
+      case 'completed': return 4;
+      default: return 1;
+    }
+  };
+
+  const activeOrders = orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
+
+  return (
+    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+        <div className="px-4 py-4 flex items-center justify-between">
+          <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-bold tracking-tight">Track Orders</h1>
+          <div className="w-10"></div>
+        </div>
+      </header>
+
+      <main className="flex-grow overflow-y-auto px-4 py-6 space-y-6">
+        {activeOrders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
+              <Package className="w-8 h-8" />
+            </div>
+            <p className="text-slate-500">No active orders to track</p>
+            <button onClick={onBack} className="text-primary font-bold">Order something legendary!</button>
+          </div>
+        ) : (
+          activeOrders.map(order => {
+            const shop = shops.find(s => s.id === order.shop_id);
+            const step = getStatusStep(order.status);
+            
+            return (
+              <div key={order.id} className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/10 p-5 shadow-sm space-y-6">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800">
+                      <img src={shop?.logo || 'https://picsum.photos/seed/shop/100/100'} alt={shop?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 dark:text-white">{shop?.name || 'Local Shop'}</h3>
+                      <p className="text-xs text-slate-500">{order.product_name} x{order.quantity}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-400">Order ID</p>
+                    <p className="text-xs font-mono font-bold text-primary">#{order.id.slice(0, 8)}</p>
+                  </div>
+                </div>
+
+                {/* Tracking Steps */}
+                <div className="relative pt-2">
+                  <div className="absolute top-5 left-0 w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full">
+                    <div 
+                      className="h-full bg-primary transition-all duration-1000 ease-out rounded-full" 
+                      style={{ width: `${((step - 1) / 3) * 100}%` }}
+                    ></div>
+                  </div>
+                  
+                  <div className="relative flex justify-between">
+                    {[
+                      { s: 'pending', icon: <Hourglass className="w-4 h-4" />, label: 'Placed' },
+                      { s: 'preparing', icon: <Utensils className="w-4 h-4" />, label: 'Preparing' },
+                      { s: 'ready', icon: <CheckCircle2 className="w-4 h-4" />, label: 'Ready' },
+                      { s: 'completed', icon: <CheckSquare className="w-4 h-4" />, label: 'Collected' }
+                    ].map((item, index) => {
+                      const isActive = step > index;
+                      const isCurrent = step === index + 1;
+                      
+                      return (
+                        <div key={item.s} className="flex flex-col items-center space-y-2">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-500 z-10 ${isActive ? 'bg-primary border-primary text-white' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-300'} ${isCurrent ? 'scale-110 shadow-lg shadow-primary/30' : ''}`}>
+                            {item.icon}
+                          </div>
+                          <span className={`text-[10px] font-bold ${isActive ? 'text-primary' : 'text-slate-400'}`}>{item.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="bg-primary/5 rounded-xl p-4 flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
+                    <Info className="w-5 h-5" />
+                  </div>
+                  <div className="flex-grow">
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">
+                      {order.status === 'pending' && "Waiting for shop to accept..."}
+                      {order.status === 'preparing' && "Chef is working their magic!"}
+                      {order.status === 'ready' && "Your food is ready for collection!"}
+                    </p>
+                    <p className="text-[10px] text-slate-500">Estimated time: 15-20 mins</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </main>
+    </div>
+  );
+}
+function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, isDarkMode, onToggleDarkMode, setNotification }: { userProfile: UserProfile, setUserProfile: Dispatch<SetStateAction<UserProfile>>, onBack: () => void, onLogout: () => void, onProfile: () => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, isDarkMode: boolean, onToggleDarkMode: () => void, setNotification: (n: NotificationState) => void }) {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -4041,6 +4633,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                   alt="Profile Picture" 
                   className="w-16 h-16 rounded-full object-cover border-2 border-primary/20" 
                   src={userProfile.photoURL || DEFAULT_AVATAR_URL}
+                  referrerPolicy="no-referrer"
                 />
               )}
               <button 
@@ -4093,6 +4686,49 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 <span>Reset Theme Preference</span>
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* Support & Legal Section */}
+        <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Support & Legal</h3>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <button 
+              onClick={() => window.open('https://wa.me/27123456789', '_blank')}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center text-green-600 dark:text-green-400">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
+                <span className="font-medium">WhatsApp Support</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
+            <button 
+              onClick={() => setNotification({ message: "Terms of Service coming soon!", type: 'info' })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <span className="font-medium">Terms of Service</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
+            <button 
+              onClick={() => setNotification({ message: "Privacy Policy coming soon!", type: 'info' })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <span className="font-medium">Privacy Policy</span>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-300" />
+            </button>
           </div>
         </section>
 
@@ -4220,7 +4856,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 </div>
                 <span className="font-medium">About App</span>
               </div>
-              <span className="text-xs text-slate-400">v1.0.4</span>
+              <span className="text-xs text-slate-400">v{APP_VERSION.split(' ')[0]}</span>
             </div>
           </div>
         </section>
@@ -4231,17 +4867,24 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
             <LogOut className="w-5 h-5" />
             <span>Logout</span>
           </button>
-          <p className="text-center text-xs text-slate-400 mt-6">LocalEats Version 2.4.1 (1024)</p>
+          <p className="text-center text-xs text-slate-400 mt-6">LocalEats Version {APP_VERSION}</p>
         </div>
       </main>
     </div>
   );
 }
 
-function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal }: { onBack: () => void, orderAcceptedModal: any, setOrderAcceptedModal: any }) {
-  const [orders, setOrders] = useState<any[]>([]);
+function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt }: { 
+  onBack: () => void, 
+  orderAcceptedModal: { isOpen: boolean, productName: string, ownerMessage: string }, 
+  setOrderAcceptedModal: Dispatch<SetStateAction<{ isOpen: boolean, productName: string, ownerMessage: string }>>,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
+  showPrompt: (title: string, message: string, onConfirm: (value: string) => void, defaultValue?: string) => void
+}) {
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [shop, setShop] = useState<any>(null);
+  const [shop, setShop] = useState<Shop | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats'>('orders');
@@ -4255,6 +4898,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   };
 
   useEffect(() => {
+    let channel: any; // Real-time channel type is complex, keeping any for now but could be RealtimeChannel
     const fetchShopAndOrders = async () => {
       try {
         setLoading(true);
@@ -4285,7 +4929,25 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           return;
         }
 
-        setShop(shopData);
+        // Format shop data to match Shop type
+        const formattedShop: Shop = {
+          id: String(shopData.id),
+          name: shopData.name,
+          logo: shopData.logo_url || `https://picsum.photos/seed/${shopData.id}/200/200`,
+          rating: Number(shopData.rating) || 4.5,
+          description: shopData.description || "",
+          address: shopData.location || "",
+          category: shopData.category || "",
+          owner_id: shopData.owner_id,
+          opening_time: shopData.opening_time,
+          closing_time: shopData.closing_time,
+          phone: shopData.phone,
+          latitude: shopData.latitude,
+          longitude: shopData.longitude,
+          menu: [] // Menu items will be fetched if needed or left empty for dashboard
+        };
+
+        setShop(formattedShop);
 
         if (shopData) {
           // 2. Initial fetch of orders for this shop
@@ -4302,10 +4964,10 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           }
           
           console.log(`Found ${ordersData?.length || 0} orders for this shop.`);
-          setOrders(ordersData || []);
+          setOrders((ordersData || []) as Order[]);
 
           // 3. Subscribe to real-time updates for THIS shop
-          const channel = supabase
+          channel = supabase
             .channel(`orders:${shopData.id}`)
             .on(
               'postgres_changes',
@@ -4318,23 +4980,19 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               (payload) => {
                 console.log('Real-time order update received:', payload);
                 if (payload.eventType === 'INSERT') {
-                  setOrders(prev => [payload.new, ...prev]);
+                  setOrders(prev => [payload.new as Order, ...prev]);
                   // Vibration alert for new order
                   if ("vibrate" in navigator) {
                     navigator.vibrate([100, 50, 100]);
                   }
                 } else if (payload.eventType === 'UPDATE') {
-                  setOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+                  setOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new as Order : o));
                 } else if (payload.eventType === 'DELETE') {
                   setOrders(prev => prev.filter(o => o.id !== payload.old.id));
                 }
               }
             )
             .subscribe();
-
-          return () => {
-            supabase.removeChannel(channel);
-          };
         }
       } catch (err: any) {
         console.error('Error in Shop Dashboard:', err);
@@ -4347,14 +5005,27 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     };
 
     fetchShopAndOrders();
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
   }, []);
 
   const updateOrderStatus = async (orderId: string, newStatus: string) => {
-    let ownerMessage = "";
     if (newStatus === 'confirmed') {
-      ownerMessage = window.prompt("Enter a message for the customer (optional):", "Your order is being prepared with love! 🔥") || "";
+      showPrompt(
+        "Order Message",
+        "Enter a message for the customer (optional):",
+        (ownerMessage) => {
+          executeStatusUpdate(orderId, newStatus, ownerMessage || "Your order is being prepared with love! 🔥");
+        },
+        "Your order is being prepared with love! 🔥"
+      );
+    } else {
+      executeStatusUpdate(orderId, newStatus);
     }
+  };
 
+  const executeStatusUpdate = async (orderId: string, newStatus: string, ownerMessage?: string) => {
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
@@ -4371,8 +5042,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       const history = currentOrder?.status_history || [];
       const newHistory = [...history, { status: newStatus, timestamp: new Date().toISOString() }];
 
-      const updateData: any = { 
-        status: newStatus,
+      const updateData: Partial<Order> = { 
+        status: newStatus as Order['status'],
         status_history: newHistory
       };
       if (ownerMessage) updateData.owner_message = ownerMessage;
@@ -4384,16 +5055,17 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
 
       if (error) {
         // Fallback if columns don't exist
-        const fallbackData: any = { status: newStatus };
+        const fallbackData: Partial<Order> = { status: newStatus as Order['status'] };
         const { error: fallbackError } = await supabase
           .from('orders')
           .update(fallbackData)
           .eq('id', orderId);
         if (fallbackError) throw fallbackError;
       }
-    } catch (err) {
-      console.error('Error updating status:', err);
-      alert('Failed to update status');
+    } catch (err: unknown) {
+      console.error('Error updating order status:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      showAlert("Update Failed", errorMessage);
     }
   };
 
@@ -4499,7 +5171,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             <button 
               onClick={async () => {
                 const { count, error } = await supabase.from('orders').select('*', { count: 'exact', head: true });
-                alert(`Total orders in DB: ${count || 0}`);
+                showAlert('Database Info', `Total orders in DB: ${count || 0}`);
               }}
               className="mt-3 w-full py-2 bg-orange-600/20 text-orange-400 border border-orange-600/30 rounded-lg font-bold hover:bg-orange-600/30 transition-colors"
             >
@@ -4583,7 +5255,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                       window.location.reload();
                     } catch (err: any) {
                       console.error('Error creating shop:', err);
-                      alert('Failed to create shop: ' + err.message);
+                      showAlert('Error', 'Failed to create shop: ' + err.message);
                     }
                   }}
                   className="w-full px-6 py-2 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-xl font-bold text-sm cursor-pointer"
@@ -4622,7 +5294,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             </div>
             {shop?.menu_items?.length > 0 ? (
               <div className="grid grid-cols-1 gap-3">
-                {shop.menu_items.map((item: any) => {
+                {shop.menu.map((item: MenuItem) => {
                   const isExpanded = expandedItems.includes(item.id);
                   const hasDescription = item.description && item.description.length > 0;
                   const isLongDescription = item.description && item.description.length > 40;
@@ -4745,7 +5417,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   // but we might want to refresh shop data if we added menu items
                 } catch (err: any) {
                   console.error('Error seeding orders:', err);
-                  alert('Failed to seed orders: ' + err.message);
+                  showAlert('Error', 'Failed to seed orders: ' + err.message);
                 }
               }}
               className="px-4 py-2 border border-primary/20 text-primary/60 rounded-lg text-[10px] uppercase font-bold tracking-widest hover:bg-primary/5 transition-colors cursor-pointer"
@@ -4830,9 +5502,9 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 {['pending', 'confirmed'].includes(order.status) && (
                   <button 
                     onClick={() => {
-                      if (window.confirm('Are you sure you want to cancel this order?')) {
+                      showConfirm('Cancel Order', 'Are you sure you want to cancel this order?', () => {
                         updateOrderStatus(order.id, 'cancelled');
-                      }
+                      });
                     }}
                     className="px-4 bg-red-50 text-red-600 border border-red-100 text-xs font-bold py-3 rounded-xl hover:bg-red-100 transition-all cursor-pointer"
                   >
@@ -4878,14 +5550,18 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   );
 }
 
-function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
-  const [orders, setOrders] = useState<any[]>([]);
+function AdminOrdersScreen({ onBack, showAlert, showConfirm }: { 
+  onBack: () => void,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+}) {
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
-  const [orderToCancel, setOrderToCancel] = useState<any | null>(null);
-  const [orderToConfirm, setOrderToConfirm] = useState<any | null>(null);
+  const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
+  const [orderToConfirm, setOrderToConfirm] = useState<Order | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState("Your order is being prepared with love! 🔥");
 
   useEffect(() => {
@@ -4903,9 +5579,9 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
         },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            setOrders(prev => [payload.new, ...prev]);
+            setOrders(prev => [payload.new as Order, ...prev]);
           } else if (payload.eventType === 'UPDATE') {
-            setOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+            setOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new as Order : o));
           } else if (payload.eventType === 'DELETE') {
             setOrders(prev => prev.filter(o => o.id !== payload.old.id));
           }
@@ -4927,7 +5603,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
         .order('created_at', { ascending: false });
       
       if (error) throw error;
-      setOrders(data || []);
+      setOrders((data || []) as Order[]);
     } catch (error: any) {
       console.error('Error fetching orders:', error);
       // We don't have a local error state in AdminOrdersScreen, but we can log it clearly
@@ -4956,8 +5632,8 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
       const history = currentOrder?.status_history || [];
       const newHistory = [...history, { status, timestamp: new Date().toISOString() }];
 
-      const updateData: any = { 
-        status,
+      const updateData: Partial<Order> = { 
+        status: status as Order['status'],
         status_history: newHistory
       };
       if (message) updateData.owner_message = message;
@@ -4969,7 +5645,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
       
       if (error) {
         // Fallback if columns don't exist
-        const fallbackData: any = { status };
+        const fallbackData: Partial<Order> = { status: status as Order['status'] };
         const { error: fallbackError } = await supabase
           .from('orders')
           .update(fallbackData)
@@ -4977,9 +5653,10 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
         if (fallbackError) throw fallbackError;
       }
       fetchOrders(); // Refresh list
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error updating order status:', error);
-      alert('Failed to update status');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      showAlert('Error', errorMessage);
     }
   };
 
@@ -5165,7 +5842,7 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
                           onClick={(e) => {
                             e.stopPropagation();
                             navigator.clipboard.writeText(`${order.address}, ${order.city}, ${order.country}`);
-                            alert('Address copied to clipboard!');
+                            showAlert('Copied', 'Address copied to clipboard!');
                           }}
                           className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
                         >
@@ -5320,7 +5997,13 @@ function AdminOrdersScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, onBack: () => void, userProfile: UserProfile }) {
+function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfirm }: { 
+  session: Session | null, 
+  onBack: () => void, 
+  userProfile: UserProfile,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+}) {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
@@ -5336,7 +6019,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
       setCancellingOrderId(null);
     } catch (error: any) {
       console.error('Error cancelling order:', error);
-      alert(`Failed to cancel order: ${error.message}`);
+      showAlert('Error', `Failed to cancel order: ${error.message}`);
     }
   };
 
@@ -5544,7 +6227,7 @@ function OrderHistoryScreen({ session, onBack, userProfile }: { session: any, on
                       Status Journey
                     </p>
                     <div className="space-y-3 pl-1">
-                      {order.status_history.map((h: any, i: number) => (
+                      {order.status_history.map((h: StatusHistoryItem, i: number) => (
                         <div key={i} className="flex gap-3 relative">
                           {i !== order.status_history.length - 1 && (
                             <div className="absolute left-1.5 top-3 w-0.5 h-full bg-slate-100 dark:bg-slate-800"></div>

@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Public+Sans:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 @theme {
   --color-brand-orange: #FF6B00;
@@ -39,28 +40,28 @@ body {
 }
 
 /* Map Styles */
-.map-container {
-  background-color: #f3f4f6;
-  background-image: radial-gradient(#d1d5db 1px, transparent 1px);
-  background-size: 20px 20px;
-  position: relative;
-  overflow: hidden;
-  flex-grow: 1;
-}
-
-.dark .map-container {
-  background-color: #1a110c;
-  background-image: radial-gradient(#33221a 1px, transparent 1px);
-}
-
-.map-road {
-  position: absolute;
-  background-color: #e5e7eb;
+.leaflet-container {
+  width: 100%;
+  height: 100%;
   z-index: 1;
 }
 
-.dark .map-road {
-  background-color: #2d1e16;
+.dark .leaflet-tile {
+  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+.leaflet-control-zoom {
+  display: none !important;
+}
+
+.leaflet-control-attribution {
+  display: none !important;
+}
+
+.custom-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @keyframes pulse-orange {
