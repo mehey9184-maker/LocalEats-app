@@ -7,6 +7,23 @@ import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, Cha
 import { motion, AnimatePresence } from 'motion/react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+
+// Fix for default marker icons in react-leaflet
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import iconRetina from 'leaflet/dist/images/marker-icon-2x.png';
+
+let DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconRetinaUrl: iconRetina,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
 import { 
   Home, 
   Store, 
@@ -97,7 +114,7 @@ import { LocalEatsLogo } from './components/LocalEatsLogo';
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 
-type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications';
+type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
 
 type AppNotification = {
   id: string;
@@ -134,6 +151,9 @@ type Order = {
   created_at: string;
   status_history?: StatusHistoryItem[];
   owner_message?: string;
+  payment_method?: 'cash' | 'card_machine';
+  special_instructions?: string;
+  customizations?: { name: string, price: number }[];
 };
 
 type PendingReview = {
@@ -151,6 +171,7 @@ type MenuItem = {
   displayPrice: string;
   image: string;
   description?: string;
+  customizations?: { name: string, price: number }[];
 };
 
 type CartItem = {
@@ -160,6 +181,8 @@ type CartItem = {
   price: number;
   quantity: number;
   image: string;
+  specialInstructions?: string;
+  selectedCustomizations?: { name: string, price: number }[];
 };
 
 type Review = {
@@ -189,6 +212,9 @@ type Shop = {
   delivery_eta?: string;
   is_special?: boolean;
   phone?: string;
+  reviewCount?: number;
+  prepTime?: string;
+  isOpen?: boolean;
 };
 
 const APP_VERSION = "2.4.1 (1024)";
@@ -415,6 +441,8 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
   const [previousScreen, setPreviousScreen] = useState<Screen | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
+  const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [shops, setShops] = useState<Shop[]>(() => {
     const saved = localStorage.getItem('cached_shops');
@@ -515,11 +543,24 @@ export default function App() {
         const deterministicLat = -25.9964 + (shopHash % 100) * 0.0002 - 0.01;
         const deterministicLng = 28.2268 + (shopHash % 100) * 0.0003 - 0.015;
 
+        const now = new Date();
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        const currentTimeStr = `${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')}`;
+        
+        let isOpen = true;
+        if (s.opening_time && s.closing_time) {
+          isOpen = currentTimeStr >= s.opening_time && currentTimeStr <= s.closing_time;
+        }
+
         return {
           id: String(s.id),
           name: s.name,
           logo: s.logo_url || `https://picsum.photos/seed/${s.id}/200/200`,
           rating: Number(s.rating) || 4.5,
+          reviewCount: 12 + (shopHash % 88), // Mock review count
+          prepTime: "15-20 min", // Mock prep time
+          isOpen: isOpen,
           description: s.description || "Local Tembisa Flavours",
           address: s.location || "Tembisa",
           category: s.category || "Kota",
@@ -552,11 +593,11 @@ export default function App() {
       let errorMessage = err.message || 'Failed to connect to the server';
       
       if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
-        errorMessage = 'Network Error: The connection to Supabase was blocked or timed out. This often happens due to ad-blockers (uBlock/AdBlock), corporate firewalls, or being offline. Please check your internet and disable ad-blockers for this site.';
+        errorMessage = 'Network Error: We couldn\'t connect to the server. Please check your internet connection.';
       } else if (err.status === 401 || err.status === 403) {
-        errorMessage = 'Authentication Error: Your Supabase API key might be invalid or expired. Please verify your VITE_SUPABASE_ANON_KEY.';
+        errorMessage = 'Authentication Error: Please log in again.';
       } else if (err.status === 404) {
-        errorMessage = 'Configuration Error: The Supabase project or table was not found. Please check your VITE_SUPABASE_URL.';
+        errorMessage = 'Configuration Error: We couldn\'t find what you were looking for.';
       } else if (err.code === 'PGRST301') {
         errorMessage = 'Database Error: JWT expired or invalid. Try refreshing the page.';
       }
@@ -600,19 +641,30 @@ export default function App() {
     );
   }, []);
 
+  const requestNotificationPermission = useCallback(async () => {
+    if (!("Notification" in window)) {
+      console.log("This browser does not support desktop notification");
+      return;
+    }
+    if (Notification.permission !== "denied") {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        console.log("Notification permission granted.");
+      }
+    }
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('app_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
-  const authInitialized = useRef(false);
-
   useEffect(() => {
-    if (authInitialized.current) return;
-    authInitialized.current = true;
-
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) setCurrentScreen('home');
+      if (session) {
+        setCurrentScreen('home');
+        requestNotificationPermission();
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -620,6 +672,7 @@ export default function App() {
       if (session) {
         setUserProfile(prev => ({ ...prev, id: session.user.id }));
         setCurrentScreen('home');
+        requestNotificationPermission();
       }
       else setCurrentScreen('splash');
     });
@@ -627,6 +680,24 @@ export default function App() {
     return () => {
       subscription.unsubscribe();
     };
+  }, [requestNotificationPermission]);
+
+  useEffect(() => {
+    const checkVersion = async () => {
+      try {
+        const response = await fetch('/version.json?t=' + Date.now());
+        const data = await response.json();
+        setAppVersion(data.version);
+        if (data.version !== '4.0') {
+          setIsUpdateAvailable(true);
+        }
+      } catch (e) {
+        console.error('Failed to check for updates', e);
+      }
+    };
+
+    const timer = setInterval(checkVersion, 60000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -664,7 +735,13 @@ export default function App() {
               
               if (newStatus === 'preparing') message = `Chef at ${shop?.name} is preparing your food! 🍳`;
               if (newStatus === 'ready') message = `🔥 Your order from ${shop?.name} is READY for collection!`;
+              if (newStatus === 'confirmed') message = `${shop?.name} has confirmed your order!`;
               if (newStatus === 'completed') message = `Legendary! You've collected your order from ${shop?.name}. Enjoy! 😋`;
+              
+              // Trigger browser notification if permission granted
+              if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(title, { body: message, icon: shop?.logo });
+              }
 
               const newNotif: AppNotification = {
                 id: Math.random().toString(36).substr(2, 9),
@@ -912,14 +989,14 @@ export default function App() {
     }
   }, []);
 
-  const addToCart = (item: MenuItem, shopId: string, quantity: number = 1) => {
+  const addToCart = (item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '') => {
     triggerHaptic();
     setCart(prev => {
-      const existing = prev.find(i => i.id === item.id && i.shopId === shopId);
+      const existing = prev.find(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions);
       if (existing) {
-        return prev.map(i => i.id === item.id && i.shopId === shopId ? { ...i, quantity: i.quantity + quantity } : i);
+        return prev.map(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions ? { ...i, quantity: i.quantity + quantity } : i);
       }
-      return [...prev, { ...item, shopId, quantity }];
+      return [...prev, { ...item, shopId, quantity, specialInstructions }];
     });
     setNotification({ message: `Added ${quantity}x ${item.name} to cart`, type: 'success' });
     setTimeout(() => setNotification(null), 2000);
@@ -1197,6 +1274,7 @@ export default function App() {
             onRequestLocation={requestLocation}
             orders={orders}
             showAlert={showAlert}
+            appVersion={appVersion}
           />
         )}
         {currentScreen === 'notifications' && (
@@ -1264,7 +1342,7 @@ export default function App() {
         {currentScreen === 'discover' && (
           <DiscoverScreen 
             shops={shops} 
-            onHome={() => setCurrentScreen(previousScreen || 'home')} 
+            onHome={() => setCurrentScreen('home')} 
             onExplore={() => { setPreviousScreen('discover'); setCurrentScreen('explore'); }}
             favorites={favorites}
             toggleFavorite={toggleFavorite}
@@ -1280,7 +1358,7 @@ export default function App() {
         {currentScreen === 'explore' && (
           <ExploreScreen 
             shops={shops} 
-            onHome={() => setCurrentScreen(previousScreen || 'home')} 
+            onHome={() => setCurrentScreen('home')} 
             onDiscover={() => { setPreviousScreen('explore'); setCurrentScreen('discover'); }} 
             userLocation={userLocation}
             onRequestLocation={requestLocation}
@@ -1366,6 +1444,7 @@ export default function App() {
             onOrderHistory={() => { setPreviousScreen('profile'); setCurrentScreen('order-history'); }}
             onAdminOrders={() => { setPreviousScreen('profile'); setCurrentScreen('admin-orders'); }}
             onShopDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('shop-dashboard'); }}
+            onContactUs={() => { setPreviousScreen('profile'); setCurrentScreen('contact'); }}
             userProfile={userProfile}
             onLogout={async () => {
               await supabase.auth.signOut();
@@ -1388,6 +1467,13 @@ export default function App() {
               setCurrentScreen('splash');
             }}
             setNotification={setNotification}
+          />
+        )}
+        {currentScreen === 'contact' && (
+          <ContactScreen
+            onBack={() => setCurrentScreen(previousScreen || 'profile')}
+            userProfile={userProfile}
+            showAlert={showAlert}
           />
         )}
         {currentScreen === 'checkout' && (
@@ -2021,7 +2107,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
       console.error('Error uploading avatar:', error);
       let errorMsg = error.message;
       if (errorMsg === 'Bucket not found') {
-        errorMsg = "Storage bucket 'avatars' not found. Please create a public bucket named 'avatars' in your Supabase dashboard.";
+        errorMsg = "We couldn't upload your photo right now. Please try again later.";
       }
       setNotification({ message: `Error uploading avatar: ${errorMsg}`, type: 'error' });
     } finally {
@@ -2183,7 +2269,11 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
       
       onLogin();
     } catch (error: any) {
-      setNotification({ message: error.message, type: 'error' });
+      let msg = error.message;
+      if (msg === 'Failed to fetch') {
+        msg = "Oops! We couldn't connect to the internet. Please check your connection and try again.";
+      }
+      setNotification({ message: msg, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -2395,8 +2485,8 @@ interface ShopCardProps {
 const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
   return (
     <div 
-      onClick={onClick}
-      className="flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 cursor-pointer hover:shadow-xl transition-all group active:scale-[0.98]"
+      onClick={shop.isOpen !== false ? onClick : undefined}
+      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all group ${shop.isOpen !== false ? 'cursor-pointer hover:shadow-xl active:scale-[0.98]' : 'opacity-60 grayscale-[0.5]'}`}
     >
       <div className="h-36 w-full rounded-2xl overflow-hidden relative">
         <BlurUpImage 
@@ -2405,14 +2495,22 @@ const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
           className="w-full h-full"
           blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
         />
-        {shop.is_special && (
+        {shop.is_special && shop.isOpen !== false && (
           <div className="absolute top-3 left-3 bg-orange-600 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg">
             Local Special
+          </div>
+        )}
+        {shop.isOpen === false && (
+          <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center backdrop-blur-[2px]">
+            <div className="bg-slate-900 text-white px-4 py-2 rounded-full text-xs font-black uppercase tracking-widest shadow-lg">
+              Closed
+            </div>
           </div>
         )}
         <div className="absolute bottom-3 right-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-xl flex items-center gap-1 shadow-sm border border-white/20">
           <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
           <span className="text-xs font-black text-slate-900 dark:text-white">{shop.rating}</span>
+          <span className="text-[9px] text-slate-500">({shop.reviewCount || 0})</span>
         </div>
       </div>
       <div className="px-1">
@@ -2423,16 +2521,23 @@ const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
         
         <TrustBadge shop={shop} />
         
-        <div className="flex items-center gap-1 mt-3 pt-3 border-t border-gray-50 dark:border-slate-800/50">
-          <MapPin className="w-3 h-3 text-gray-400" />
-          <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate">{shop.address || 'Tembisa'}</span>
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50 dark:border-slate-800/50">
+          <div className="flex items-center gap-1">
+            <MapPin className="w-3 h-3 text-gray-400" />
+            <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate">{shop.distance ? `${shop.distance.toFixed(1)} km` : (shop.address || 'Tembisa')}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Clock className="w-3 h-3 text-orange-500" />
+            <span className="text-[10px] font-bold text-orange-600">{shop.prepTime || '15-20 min'}</span>
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void }) {
+function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string }) {
+  const isUpdateAvailable = false; // Added as a temporary fix
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -2577,69 +2682,71 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
           </button>
 
           {/* Demo Seeder for Presentation */}
-          <button 
-            id="seed-button"
-            onClick={async () => {
-              const btn = document.getElementById('seed-button');
-              if (btn) btn.innerText = 'Seeding...';
-              try {
-                console.log('Starting demo data seeding...');
-                const { data: newShops, error: seedError } = await supabase
-                  .from('shops')
-                  .insert([
-                    { name: 'Tembisa Kota King', description: 'The best Khas-Khas in Tembisa', location: 'Winnie Mandela Zone 1', category: 'Kota', rating: 4.8, is_active: true },
-                    { name: 'Mama\'s Kitchen', description: 'Home-style African cuisine', location: 'Oakmoor', category: 'Traditional', rating: 4.6, is_active: true },
-                    { name: 'The Grill Master', description: 'Flame-grilled chicken and steaks', location: 'Hospital View', category: 'Grill', rating: 4.7, is_active: true }
-                  ])
-                  .select();
-                
-                if (seedError) {
-                  console.error('Shops seeding failed:', seedError);
-                  throw seedError;
-                }
-                
-                console.log('Shops seeded successfully:', newShops);
-                
-                // Add some menu items for the first shop
-                if (newShops && newShops[0]) {
-                  const { error: menuSeedError } = await supabase.from('menu_items').insert([
-                    { shop_id: newShops[0].id, name: "The King Kota", price: 45, description: "Chips, Polony, Cheese, Russian, Steak" },
-                    { shop_id: newShops[0].id, name: "Special Combo", price: 35, description: "Chips, Russian, Egg" }
-                  ]);
+          <details className="w-full mt-4">
+            <summary className="text-xs text-slate-400 cursor-pointer text-center mb-4">Developer Options</summary>
+            <button 
+              id="seed-button"
+              onClick={async () => {
+                const btn = document.getElementById('seed-button');
+                if (btn) btn.innerText = 'Seeding...';
+                try {
+                  console.log('Starting demo data seeding...');
+                  const { data: newShops, error: seedError } = await supabase
+                    .from('shops')
+                    .insert([
+                      { name: 'Tembisa Kota King', description: 'The best Khas-Khas in Tembisa', location: 'Winnie Mandela Zone 1', category: 'Kota', rating: 4.8, is_active: true },
+                      { name: 'Mama\'s Kitchen', description: 'Home-style African cuisine', location: 'Oakmoor', category: 'Traditional', rating: 4.6, is_active: true },
+                      { name: 'The Grill Master', description: 'Flame-grilled chicken and steaks', location: 'Hospital View', category: 'Grill', rating: 4.7, is_active: true }
+                    ])
+                    .select();
                   
-                  if (menuSeedError) {
-                    console.error('Menu items seeding failed:', menuSeedError);
+                  if (seedError) {
+                    console.error('Shops seeding failed:', seedError);
+                    throw seedError;
                   }
+                  
+                  console.log('Shops seeded successfully:', newShops);
+                  
+                  // Add some menu items for the first shop
+                  if (newShops && newShops[0]) {
+                    const { error: menuSeedError } = await supabase.from('menu_items').insert([
+                      { shop_id: newShops[0].id, name: "The King Kota", price: 45, description: "Chips, Polony, Cheese, Russian, Steak" },
+                      { shop_id: newShops[0].id, name: "Special Combo", price: 35, description: "Chips, Russian, Egg" }
+                    ]);
+                    
+                    if (menuSeedError) {
+                      console.error('Menu items seeding failed:', menuSeedError);
+                    }
+                  }
+                  
+                  onRetry();
+                } catch (err: any) {
+                  console.error('Seeding error detail:', err);
+                  const isFetchError = err.message === 'Failed to fetch';
+                  const msg = isFetchError 
+                    ? 'Network Blocked: Your browser or an ad-blocker is preventing the data from being saved.'
+                    : (err.message || 'Unknown error during seeding');
+                  
+                  if (isFetchError) {
+                    const sqlDiv = document.getElementById('manual-sql-area');
+                    if (sqlDiv) sqlDiv.classList.remove('hidden');
+                  }
+                  
+                  showAlert('Seeding Error', msg);
+                } finally {
+                  if (btn) btn.innerText = 'Seed Demo Shops';
                 }
-                
-                onRetry();
-              } catch (err: any) {
-                console.error('Seeding error detail:', err);
-                const isFetchError = err.message === 'Failed to fetch';
-                const msg = isFetchError 
-                  ? 'Network Blocked: Your browser or an ad-blocker is preventing the data from being saved.'
-                  : (err.message || 'Unknown error during seeding');
-                
-                if (isFetchError) {
-                  const sqlDiv = document.getElementById('manual-sql-area');
-                  if (sqlDiv) sqlDiv.classList.remove('hidden');
-                }
-                
-                showAlert('Seeding Error', msg);
-              } finally {
-                if (btn) btn.innerText = 'Seed Demo Shops';
-              }
-            }}
-            className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-xl cursor-pointer active:scale-95 transition-transform"
-          >
-            Seed Demo Shops
-          </button>
+              }}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-xl cursor-pointer active:scale-95 transition-transform"
+            >
+              Seed Demo Shops
+            </button>
 
-          <div id="manual-sql-area" className="hidden mt-4 text-left">
-            <p className="text-[10px] font-bold text-red-500 mb-2 uppercase tracking-tight">Manual Setup Required</p>
-            <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">Your browser blocked the automatic setup. Please copy this SQL and run it in your Supabase SQL Editor:</p>
-            <div className="bg-slate-100 p-3 rounded-xl border border-slate-200 overflow-x-auto mb-4">
-              <pre className="text-[8px] font-mono text-slate-700 whitespace-pre-wrap leading-tight">
+            <div id="manual-sql-area" className="hidden mt-4 text-left">
+              <p className="text-[10px] font-bold text-red-500 mb-2 uppercase tracking-tight">Manual Setup Required</p>
+              <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">Your browser blocked the automatic setup. Please copy this SQL and run it in your Supabase SQL Editor:</p>
+              <div className="bg-slate-100 p-3 rounded-xl border border-slate-200 overflow-x-auto mb-4">
+                <pre className="text-[8px] font-mono text-slate-700 whitespace-pre-wrap leading-tight">
 {`-- 1. Create shops table
 CREATE TABLE IF NOT EXISTS shops (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -2705,6 +2812,7 @@ VALUES
             
             <p className="text-[9px] text-slate-400 mt-4 italic text-center">Then click "Retry Loading" above.</p>
           </div>
+          </details>
         </div>
       </div>
     );
@@ -2712,10 +2820,20 @@ VALUES
 
   return (
     <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl">
+      {isUpdateAvailable && (
+        <button
+          onClick={() => window.location.reload()}
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-2xl z-[9999] font-bold flex items-center gap-2"
+        >
+          <RefreshCw className="w-5 h-5" />
+          Update Available!
+        </button>
+      )}
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-50 border-b border-primary/5">
         <div className="flex items-center gap-1">
           <LocalEatsLogo width={140} height={36} />
+          <span className="text-[8px] text-slate-400 opacity-50 ml-1">v{appVersion}</span>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -3001,6 +3119,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
   showConfirm: (title: string, message: string, onConfirm: () => void) => void
 }) {
   const [loading, setLoading] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
   
   const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const primaryShopId = cart.length > 0 ? cart[0].shopId : (shops[0]?.id || '');
@@ -3048,8 +3167,9 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
         product_variant: '',
         quantity: item.quantity,
         price: item.price * item.quantity,
-        notes: '',
-        status: 'pending'
+        notes: item.specialInstructions || '',
+        status: 'pending',
+        payment_method: paymentMethod
       }));
 
       console.log('Submitting order to Supabase:', orderData);
@@ -3116,6 +3236,9 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
                   <div className="flex flex-col justify-center flex-1">
                     <p className="text-slate-900 dark:text-slate-100 text-base font-semibold leading-normal line-clamp-1">{item.name}</p>
                     <p className="text-slate-500 dark:text-slate-400 text-xs font-medium leading-normal">Quantity: {item.quantity}</p>
+                    {item.specialInstructions && (
+                      <p className="text-orange-600 text-[10px] font-medium leading-normal mt-1 italic line-clamp-2">Note: {item.specialInstructions}</p>
+                    )}
                   </div>
                   <div className="shrink-0">
                     <p className="text-primary text-base font-bold leading-normal">R {(item.price * item.quantity).toFixed(2)}</p>
@@ -3133,7 +3256,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
                 <div className="flex flex-col gap-2 flex-1">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-primary" />
-                    <p className="text-primary text-sm font-bold uppercase tracking-wider">Ready in 15-20 mins</p>
+                    <p className="text-primary text-sm font-bold uppercase tracking-wider">Ready in {primaryShop.prepTime || '15-20 min'}</p>
                   </div>
                   <p className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight">{primaryShop.name}</p>
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-tight">{primaryShop.address}</p>
@@ -3145,10 +3268,39 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
           
           {/* Payment Info Section */}
           <section>
-            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Payment Info</h3>
-            <div className="bg-primary/10 border border-primary/20 p-4 rounded-xl flex items-center gap-3">
-              <Banknote className="w-5 h-5 text-primary" />
-              <p className="text-slate-900 dark:text-slate-100 text-base font-medium">Pay at store upon pickup</p>
+            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Payment Method</h3>
+            <div className="flex flex-col gap-3">
+              <label className={`flex items-center justify-between p-4 rounded-xl border-2 cursor-pointer transition-all ${paymentMethod === 'cash' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20' : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`size-10 rounded-full flex items-center justify-center ${paymentMethod === 'cash' ? 'bg-orange-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                    <Banknote className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold">Cash on Collection</p>
+                    <p className="text-slate-500 text-xs">Pay with cash when you arrive</p>
+                  </div>
+                </div>
+                <div className={`size-6 rounded-full border-2 flex items-center justify-center ${paymentMethod === 'cash' ? 'border-orange-600' : 'border-slate-300'}`}>
+                  {paymentMethod === 'cash' && <div className="size-3 bg-orange-600 rounded-full" />}
+                </div>
+                <input type="radio" name="payment" value="cash" checked={paymentMethod === 'cash'} onChange={() => setPaymentMethod('cash')} className="hidden" />
+              </label>
+
+              <label className={`flex items-center justify-between p-4 rounded-xl border-2 cursor-pointer transition-all ${paymentMethod === 'card_machine' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20' : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`size-10 rounded-full flex items-center justify-center ${paymentMethod === 'card_machine' ? 'bg-orange-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold">Card Machine</p>
+                    <p className="text-slate-500 text-xs">Swipe or tap when you arrive</p>
+                  </div>
+                </div>
+                <div className={`size-6 rounded-full border-2 flex items-center justify-center ${paymentMethod === 'card_machine' ? 'border-orange-600' : 'border-slate-300'}`}>
+                  {paymentMethod === 'card_machine' && <div className="size-3 bg-orange-600 rounded-full" />}
+                </div>
+                <input type="radio" name="payment" value="card_machine" checked={paymentMethod === 'card_machine'} onChange={() => setPaymentMethod('card_machine')} className="hidden" />
+              </label>
             </div>
           </section>
           
@@ -3501,7 +3653,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   );
 }
 
-function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, userProfile, onLogout, setNotification }: { onBack: () => void, onSave: (data: Partial<UserProfile>) => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, userProfile: UserProfile, onLogout: () => void, setNotification: (n: NotificationState) => void }) {
+function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, onContactUs, userProfile, onLogout, setNotification }: { onBack: () => void, onSave: (data: Partial<UserProfile>) => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, onContactUs: () => void, userProfile: UserProfile, onLogout: () => void, setNotification: (n: NotificationState) => void }) {
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [phone, setPhone] = useState(userProfile.phone);
   const [address, setAddress] = useState(userProfile.address);
@@ -3521,7 +3673,7 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
       console.error('Error uploading avatar:', error);
       let errorMsg = error.message;
       if (errorMsg === 'Bucket not found') {
-        errorMsg = "Storage bucket 'avatars' not found. Please create a public bucket named 'avatars' in your Supabase dashboard.";
+        errorMsg = "We couldn't upload your photo right now. Please try again later.";
       }
       setNotification({ message: `Error uploading avatar: ${errorMsg}`, type: 'error' });
     } finally {
@@ -3616,6 +3768,20 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
               <ChevronRight className="w-5 h-5 text-orange-600 dark:text-orange-400" />
             </button>
           )}
+
+          <button 
+            onClick={onContactUs}
+            className="flex items-center gap-4 p-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+          >
+            <div className="size-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400">
+              <Mail className="w-6 h-6" />
+            </div>
+            <div className="flex-1 text-left">
+              <p className="font-bold text-slate-900 dark:text-white">Contact Us</p>
+              <p className="text-slate-500 text-xs">Get help or send feedback</p>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-400" />
+          </button>
         </div>
 
         {/* Editable Fields */}
@@ -3687,8 +3853,9 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
   );
 }
 
-const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | null, isOpen: boolean, onClose: () => void, onConfirm: (quantity: number) => void }) => {
+const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | null, isOpen: boolean, onClose: () => void, onConfirm: (quantity: number, specialInstructions: string) => void }) => {
   const [quantity, setQuantity] = useState(1);
+  const [specialInstructions, setSpecialInstructions] = useState('');
 
   if (!item || !isOpen) return null;
 
@@ -3705,28 +3872,40 @@ const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | 
           </button>
         </div>
 
-        <div className="flex flex-col items-center gap-8 py-4">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Select Quantity</p>
-          <div className="flex items-center gap-8">
-            <button 
-              onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700"
-            >
-              <Minus className="w-8 h-8" />
-            </button>
-            <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">{quantity}</span>
-            <button 
-              onClick={() => setQuantity(quantity + 1)}
-              className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all"
-            >
-              <Plus className="w-8 h-8" />
-            </button>
+        <div className="flex flex-col items-center gap-6 py-4">
+          <div className="w-full">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Special Instructions</label>
+            <textarea
+              value={specialInstructions}
+              onChange={(e) => setSpecialInstructions(e.target.value)}
+              placeholder="E.g. No atchar, toast the bun..."
+              className="w-full h-20 p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-600/20 transition-all resize-none"
+            />
+          </div>
+
+          <div className="w-full flex flex-col items-center">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Select Quantity</p>
+            <div className="flex items-center gap-8">
+              <button 
+                onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700"
+              >
+                <Minus className="w-8 h-8" />
+              </button>
+              <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">{quantity}</span>
+              <button 
+                onClick={() => setQuantity(quantity + 1)}
+                className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all"
+              >
+                <Plus className="w-8 h-8" />
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="mt-10 flex gap-4">
+        <div className="mt-8 flex gap-4">
           <button 
-            onClick={() => onConfirm(quantity)}
+            onClick={() => onConfirm(quantity, specialInstructions)}
             className="flex-1 h-16 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3"
           >
             <ShoppingBag className="w-6 h-6" />
@@ -3746,7 +3925,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   userProfile: UserProfile | null, 
   session: Session | null, 
   onSignUp: () => void, 
-  addToCart: (item: MenuItem, shopId: string, quantity?: number) => void,
+  addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void
 }) {
@@ -3966,12 +4145,14 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
                           <button 
                             onClick={() => {
+                              if (shop.isOpen === false) return;
                               setSelectedItemForQuantity(item);
                             }}
-                            className="px-4 py-2 bg-orange-600 text-white rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer text-[10px] font-black uppercase tracking-widest"
+                            disabled={shop.isOpen === false}
+                            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${shop.isOpen === false ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 active:scale-95 cursor-pointer'}`}
                           >
-                            <span>Buy</span>
-                            <Plus className="w-3 h-3" />
+                            <span>{shop.isOpen === false ? 'Closed' : 'Buy'}</span>
+                            {shop.isOpen !== false && <Plus className="w-3 h-3" />}
                           </button>
                         </div>
                       </div>
@@ -4195,9 +4376,9 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         item={selectedItemForQuantity}
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
-        onConfirm={(quantity) => {
+        onConfirm={(quantity, specialInstructions) => {
           if (selectedItemForQuantity) {
-            addToCart(selectedItemForQuantity, shop.id, quantity);
+            addToCart(selectedItemForQuantity, shop.id, quantity, specialInstructions);
             setSelectedItemForQuantity(null);
           }
         }}
@@ -4253,7 +4434,11 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
   });
 
   const activeShop = shops.find(s => s.id === selectedShopId);
-  const mapCenter: [number, number] = userLocation ? [userLocation.lat, userLocation.lng] : [-25.9964, 28.2268];
+  const mapCenter: [number, number] = activeShop && activeShop.latitude && activeShop.longitude 
+    ? [activeShop.latitude, activeShop.longitude] 
+    : userLocation 
+      ? [userLocation.lat, userLocation.lng] 
+      : [-25.9964, 28.2268];
 
   return (
     <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl overflow-hidden">
@@ -4611,7 +4796,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
       console.error('Error uploading avatar:', error);
       let errorMsg = error.message;
       if (errorMsg === 'Bucket not found') {
-        errorMsg = "Storage bucket 'avatars' not found. Please create a public bucket named 'avatars' in your Supabase dashboard.";
+        errorMsg = "We couldn't upload your photo right now. Please try again later.";
       }
       setNotification({ message: `Error uploading avatar: ${errorMsg}`, type: 'error' });
     } finally {
@@ -4911,7 +5096,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   const [shop, setShop] = useState<Shop | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing' | 'settings'>('orders');
   const [showDebug, setShowDebug] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
 
@@ -5021,7 +5206,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       } catch (err: any) {
         console.error('Error in Shop Dashboard:', err);
         setError(err.message === 'Failed to fetch' 
-          ? 'Network Error: Could not reach Supabase. Check your internet or disable ad-blockers.'
+          ? 'Network Error: Please check your internet connection.'
           : (err.message || 'Failed to load dashboard data'));
       } finally {
         setLoading(false);
@@ -5455,6 +5640,69 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               </button>
             </div>
           </div>
+        ) : activeTab === 'settings' ? (
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
+              <h3 className="font-bold text-lg mb-4">Shop Location</h3>
+              <p className="text-xs text-slate-500 mb-4">Update your shop's coordinates so customers can find you on the map.</p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Latitude</label>
+                  <input 
+                    type="text" 
+                    value={shop.latitude || ''}
+                    readOnly
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 mt-1 text-sm font-medium opacity-70"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Longitude</label>
+                  <input 
+                    type="text" 
+                    value={shop.longitude || ''}
+                    readOnly
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 mt-1 text-sm font-medium opacity-70"
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    if ("geolocation" in navigator) {
+                      navigator.geolocation.getCurrentPosition(
+                        async (position) => {
+                          try {
+                            const { error } = await supabase
+                              .from('shops')
+                              .update({ 
+                                latitude: position.coords.latitude, 
+                                longitude: position.coords.longitude 
+                              })
+                              .eq('id', shop.id);
+                            
+                            if (error) throw error;
+                            
+                            setShop({ ...shop, latitude: position.coords.latitude, longitude: position.coords.longitude });
+                            showAlert('Success', 'Shop location updated to your current position!');
+                          } catch (err: any) {
+                            showAlert('Error', 'Failed to update location: ' + err.message);
+                          }
+                        },
+                        (error) => {
+                          showAlert('Error', 'Could not get your location. Please ensure location services are enabled.');
+                        }
+                      );
+                    } else {
+                      showAlert('Error', 'Geolocation is not supported by your browser.');
+                    }
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-600/20 active:scale-95 transition-all mt-2 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <LocateFixed className="w-4 h-4" />
+                  Update to Current Location
+                </button>
+              </div>
+            </div>
+          </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-6">
             <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
@@ -5544,6 +5792,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                     </div>
                     <p className="font-bold text-slate-800 dark:text-slate-200">{order.product_name}</p>
                   </div>
+                  {order.payment_method && (
+                    <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-bold text-xs">
+                      {order.payment_method === 'cash' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
+                      {order.payment_method === 'cash' ? 'Cash' : 'Card'}
+                    </div>
+                  )}
                 </div>
                 {order.notes && (
                   <div className="mt-3 p-2 bg-orange-50 dark:bg-orange-500/10 rounded-lg border border-orange-100 dark:border-orange-500/20">
@@ -5638,6 +5892,13 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           <Megaphone className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-wider">Marketing</span>
         </button>
+        <button 
+          onClick={() => setActiveTab('settings')}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'settings' ? 'text-primary' : 'text-slate-400'}`}
+        >
+          <MapPin className="w-6 h-6" />
+          <span className="text-[10px] font-bold uppercase tracking-wider">Location</span>
+        </button>
       </nav>
     </div>
   );
@@ -5652,6 +5913,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [orderToConfirm, setOrderToConfirm] = useState<Order | null>(null);
@@ -5701,7 +5963,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
       console.error('Error fetching orders:', error);
       // We don't have a local error state in AdminOrdersScreen, but we can log it clearly
       if (error.message === 'Failed to fetch') {
-        console.error('Network Error: Could not reach Supabase. Check your internet or disable ad-blockers.');
+        console.error('Network Error: Please check your internet connection.');
       }
     } finally {
       setLoading(false);
@@ -5759,6 +6021,10 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
       order.product_name?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
     return matchesSearch && matchesStatus;
+  }).sort((a, b) => {
+    const dateA = new Date(a.created_at).getTime();
+    const dateB = new Date(b.created_at).getTime();
+    return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
   });
 
   return (
@@ -5805,10 +6071,20 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
               {statusFilter === 'all' ? 'Recent Orders' : `${statusFilter} Orders`} ({filteredOrders.length})
             </h2>
-            <button onClick={fetchOrders} className="text-primary text-xs font-bold flex items-center gap-1 cursor-pointer">
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')} 
+                className="text-slate-500 hover:text-primary text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                title={`Sort by date: ${sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}`}
+              >
+                <Clock className="w-4 h-4" />
+                {sortOrder === 'desc' ? 'Newest' : 'Oldest'}
+              </button>
+              <button onClick={fetchOrders} className="text-primary text-xs font-bold flex items-center gap-1 cursor-pointer">
+                <RefreshCw className="w-4 h-4" />
+                Refresh
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -5916,9 +6192,17 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                           {order.product_variant && (
                             <p className="text-xs text-slate-500 mb-1">Variant: {order.product_variant}</p>
                           )}
-                          <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <Layers className="w-3.5 h-3.5" />
-                            Quantity: {order.quantity}
+                          <div className="flex items-center justify-between text-xs text-slate-500">
+                            <div className="flex items-center gap-2">
+                              <Layers className="w-3.5 h-3.5" />
+                              Quantity: {order.quantity}
+                            </div>
+                            {order.payment_method && (
+                              <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-bold">
+                                {order.payment_method === 'cash' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
+                                {order.payment_method === 'cash' ? 'Cash' : 'Card'}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -6135,7 +6419,7 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
         console.error('Error fetching orders:', error);
         if (error.message === 'Failed to fetch') {
           // You could add a local error state here if needed
-          console.error('Network Error: Could not reach Supabase. Check your internet or disable ad-blockers.');
+          console.error('Network Error: Please check your internet connection.');
         }
       } finally {
         setLoading(false);
@@ -6308,9 +6592,23 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                 )}
 
                 <div className="flex justify-between items-center pt-2 border-t border-slate-50 dark:border-slate-800">
-                  <p className="text-slate-500 text-xs">Quantity: {order.quantity}</p>
+                  <div className="flex flex-col">
+                    <p className="text-slate-500 text-xs">Quantity: {order.quantity}</p>
+                    {order.payment_method && (
+                      <p className="text-slate-400 text-[10px] uppercase tracking-widest mt-1">
+                        {order.payment_method === 'cash' ? '💵 Cash on Collection' : '💳 Card Machine'}
+                      </p>
+                    )}
+                  </div>
                   <p className="text-primary font-bold">R {(order.price || 0).toFixed(2)}</p>
                 </div>
+                {order.notes && (
+                  <div className="bg-orange-50 dark:bg-orange-900/10 p-2 rounded-lg border border-orange-100 dark:border-orange-900/30">
+                    <p className="text-orange-700 dark:text-orange-400 text-[10px] font-medium italic">
+                      <span className="font-bold not-italic">Note:</span> {order.notes}
+                    </p>
+                  </div>
+                )}
 
                 {/* Status History Timeline */}
                 {order.status_history && order.status_history.length > 0 && (
@@ -6456,6 +6754,117 @@ function ReviewScreen({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ContactScreen({ onBack, userProfile, showAlert }: { onBack: () => void, userProfile: UserProfile, showAlert: (title: string, message: string) => void }) {
+  const [name, setName] = useState(userProfile.fullName || '');
+  const [email, setEmail] = useState(userProfile.email || '');
+  const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name || !email || !message) {
+      showAlert('Error', 'Please fill in all fields.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from('contact_messages').insert([{
+        name,
+        email,
+        message,
+        user_id: userProfile.id || null,
+        created_at: new Date().toISOString()
+      }]);
+      
+      if (error) {
+        console.warn('Could not insert into contact_messages, falling back to mailto', error);
+        window.location.href = `mailto:support@localeats.co.za?subject=Contact from ${name}&body=${encodeURIComponent(message + '\n\nFrom: ' + email)}`;
+      } else {
+        showAlert('Success', 'Your message has been sent. We will get back to you soon!');
+        setMessage('');
+      }
+    } catch (err) {
+      console.error(err);
+      window.location.href = `mailto:support@localeats.co.za?subject=Contact from ${name}&body=${encodeURIComponent(message + '\n\nFrom: ' + email)}`;
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+        <div className="px-4 py-4 flex items-center">
+          <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer transition-transform active:scale-95">
+            <ArrowLeft className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-bold tracking-tight flex-1 text-center pr-10">Contact Us</h1>
+        </div>
+      </header>
+
+      <main className="flex-1 p-6">
+        <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-3xl mb-8 flex flex-col items-center text-center border border-blue-100 dark:border-blue-800/50">
+          <div className="w-16 h-16 bg-blue-100 dark:bg-blue-800 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-300 mb-4 shadow-inner">
+            <Mail className="w-8 h-8" />
+          </div>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">We'd love to hear from you!</h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">Have a question, feedback, or need help with an order? Send us a message.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Your Name</label>
+            <input 
+              type="text" 
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-4 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              placeholder="John Doe"
+            />
+          </div>
+          
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Email Address</label>
+            <input 
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-4 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              placeholder="john@example.com"
+            />
+          </div>
+          
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Message</label>
+            <textarea 
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-4 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all resize-none"
+              placeholder="How can we help you?"
+              rows={5}
+            />
+          </div>
+
+          <button 
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full bg-primary text-white font-bold py-4 rounded-2xl shadow-lg shadow-primary/30 hover:bg-primary/90 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed mt-4"
+          >
+            {isSubmitting ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <>
+                <Send className="w-5 h-5" />
+                Send Message
+              </>
+            )}
+          </button>
+        </form>
+      </main>
     </div>
   );
 }
