@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent } from 'react';
+import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
@@ -88,6 +88,11 @@ import {
   ShoppingBasket,
   Ban,
   Delete,
+  Send,
+  CheckCircle2,
+  CheckSquare,
+  XCircle,
+  Hourglass,
   LogIn,
   Locate,
   LocateFixed,
@@ -95,10 +100,6 @@ import {
   ChevronLeft,
   Bug,
   Package,
-  XCircle,
-  CheckCircle2,
-  Hourglass,
-  CheckSquare,
   Eye,
   EyeOff,
   MessageCircle,
@@ -658,10 +659,41 @@ export default function App() {
     localStorage.setItem('app_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
+  const fetchUserProfile = useCallback(async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (data) {
+        setUserProfile({
+          id: data.user_id,
+          fullName: data.fullName || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          city: data.city || '',
+          address: data.address || '',
+          country: data.country || 'South Africa',
+          role: data.role || 'user',
+          photoURL: data.photo_url || ''
+        });
+        if (data.favorites) {
+          setFavorites(data.favorites);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching user profile:', err);
+    }
+  }, []);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
+        fetchUserProfile(session.user.id);
         setCurrentScreen('home');
         requestNotificationPermission();
       }
@@ -670,7 +702,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session) {
-        setUserProfile(prev => ({ ...prev, id: session.user.id }));
+        fetchUserProfile(session.user.id);
         setCurrentScreen('home');
         requestNotificationPermission();
       }
@@ -680,7 +712,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [requestNotificationPermission]);
+  }, [requestNotificationPermission, fetchUserProfile]);
 
   useEffect(() => {
     const checkVersion = async () => {
@@ -854,6 +886,33 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
+
+  useEffect(() => {
+    // Check for updates by polling metadata.json
+    const checkForUpdates = async () => {
+      try {
+        const response = await fetch('/metadata.json');
+        const metadata = await response.json();
+        
+        if (metadata.version) {
+          setAppVersion(metadata.version);
+          
+          // Check if stored version is different to notify user
+          const lastKnownVersion = localStorage.getItem('last_known_version');
+          if (lastKnownVersion && lastKnownVersion !== metadata.version) {
+            setIsUpdateAvailable(true);
+          }
+          localStorage.setItem('last_known_version', metadata.version);
+        }
+      } catch (err) {
+        console.warn('Update check failed:', err);
+      }
+    };
+
+    checkForUpdates();
+    const interval = setInterval(checkForUpdates, 300000); // Check every 5 mins
+    return () => clearInterval(interval);
+  }, []);
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('favorites');
@@ -1041,8 +1100,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('userProfile', JSON.stringify(userProfile));
     
-    // Sync with Supabase if profile is complete and session exists
-    if (session?.user?.id && userProfile.fullName) {
+    // Sync with Supabase if session exists
+    if (session?.user?.id) {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
@@ -1052,15 +1111,20 @@ export default function App() {
               user_id: session.user.id,
               fullName: userProfile.fullName,
               email: userProfile.email,
+              phone: userProfile.phone,
+              city: userProfile.city,
+              address: userProfile.address,
+              country: userProfile.country,
               role: userProfile.role,
               photo_url: userProfile.photoURL,
+              favorites: favorites,
               updated_at: new Date().toISOString()
             });
           if (error) {
             console.error('Error syncing profile to Supabase:', error);
             if (error.message === 'Failed to fetch') {
               setNotification({ 
-                message: "⚠️ Connection lost. Profile sync failed. Check your internet.", 
+                message: "⚠️ Connection lost. Profile sync failed.", 
                 type: 'info' 
               });
             }
@@ -1068,10 +1132,10 @@ export default function App() {
         } catch (err) {
           console.error('Sync error:', err);
         }
-      }, 1000); // 1s debounce
+      }, 2000); 
       return () => clearTimeout(timer);
     }
-  }, [userProfile, session]);
+  }, [userProfile, session, favorites]);
 
   return (
     <div className="relative">
@@ -1229,10 +1293,10 @@ export default function App() {
         {currentScreen === 'complete-profile' && (
           <CompleteProfileScreen 
             userProfile={userProfile}
-            onBack={() => setCurrentScreen('success')} 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onSave={(data) => {
               setUserProfile(prev => ({ ...prev, ...data }));
-              setCurrentScreen('home');
+              setCurrentScreen(previousScreen || 'home');
             }} 
             setNotification={setNotification}
           />
@@ -1483,6 +1547,10 @@ export default function App() {
             shops={shops}
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onConfirm={() => setCurrentScreen('order-success')} 
+            onIncompleteProfile={() => {
+              setPreviousScreen('checkout');
+              setCurrentScreen('complete-profile');
+            }}
             cart={cart}
             setCart={setCart}
             setNotification={setNotification}
@@ -2090,9 +2158,19 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
 function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }: { userProfile: UserProfile, onBack: () => void, onSave: (data: Partial<UserProfile>) => void, setNotification: (n: NotificationState) => void }) {
   const [email, setEmail] = useState(userProfile.email);
   const [address, setAddress] = useState(userProfile.address);
+  const [phone, setPhone] = useState(userProfile.phone);
+  const [fullName, setFullName] = useState(userProfile.fullName);
   const [city, setCity] = useState(userProfile.city);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSave = () => {
+    if (!fullName || !phone || !city || !address) {
+      setNotification({ message: 'Please fill in all required fields to proceed.', type: 'error' });
+      return;
+    }
+    onSave({ fullName, phone, city, address });
+  };
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     try {
@@ -2116,17 +2194,18 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full flex-col overflow-x-hidden">
+    <div className="bg-white dark:bg-[#1a110c] font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
+      <div className="flex-1 flex flex-col w-full overflow-x-hidden pb-24">
         {/* Top App Bar */}
-        <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10">
-          <div onClick={onBack} className="text-primary flex size-12 shrink-0 items-center cursor-pointer">
+        <div className="flex items-center bg-white dark:bg-[#1a110c] p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
+          <button onClick={onBack} className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
-          </div>
+          </button>
           <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-12">Complete Your Profile</h2>
         </div>
+
         {/* Profile Photo Section */}
-        <div className="flex p-6 @container">
+        <div className="flex p-8">
           <input
             type="file"
             accept="image/*"
@@ -2138,88 +2217,123 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
           <div className="flex w-full flex-col gap-6 items-center">
             <div className="flex gap-4 flex-col items-center group">
               <div className="relative">
-                <div className="bg-primary/10 dark:bg-primary/20 bg-center bg-no-repeat aspect-square bg-cover rounded-full min-h-32 w-32 border-2 border-dashed border-primary/40 flex items-center justify-center overflow-hidden" style={{ backgroundImage: `url("${userProfile.photoURL || DEFAULT_AVATAR_URL}")` }}>
-                  {uploading ? (
-                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                  ) : (
-                    !userProfile.photoURL && <User className="w-12 h-12 text-slate-300" />
-                  )}
-                </div>
                 <div 
+                  className="bg-primary/5 dark:bg-primary/10 bg-center bg-no-repeat aspect-square bg-cover rounded-full min-h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/60" 
+                  style={{ backgroundImage: userProfile.photoURL ? `url("${userProfile.photoURL}")` : `url("${DEFAULT_AVATAR_URL}")` }}
+                >
+                  {uploading && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <Loader2 className="w-8 h-8 text-white animate-spin" />
+                    </div>
+                  )}
+                  {!userProfile.photoURL && !uploading && <User className="w-12 h-12 text-slate-300 dark:text-slate-700" />}
+                </div>
+                <button 
                   onClick={() => fileInputRef.current?.click()}
-                  className="absolute bottom-0 right-0 bg-primary text-white rounded-full p-2 border-4 border-background-light dark:border-background-dark shadow-lg cursor-pointer hover:scale-110 transition-transform"
+                  className="absolute bottom-1 right-1 bg-primary text-white rounded-full p-2.5 border-4 border-white dark:border-[#1a110c] shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
                 >
                   <Camera className="w-4 h-4 text-white" />
-                </div>
+                </button>
               </div>
-              <div className="flex flex-col items-center justify-center space-y-1">
-                <p className="text-slate-900 dark:text-slate-100 text-xl font-bold leading-tight tracking-tight text-center">{userProfile.fullName || 'Upload Photo'}</p>
-                <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-normal text-center max-w-[240px]">Add a photo so the LocalEats community can recognize you</p>
+              <div className="text-center space-y-1">
+                <p className="text-slate-900 dark:text-slate-100 text-xl font-bold tracking-tight">{fullName || 'Your Name'}</p>
+                <p className="text-slate-500 dark:text-slate-400 text-[13px] max-w-[240px]">Improve your profile by adding a clear photo</p>
               </div>
             </div>
           </div>
         </div>
+
         {/* Form Fields */}
-        <div className="flex flex-col gap-1 px-4 py-2 max-w-md mx-auto w-full">
-          <div className="flex flex-wrap items-end gap-4 py-3">
-            <label className="flex flex-col min-w-40 flex-1">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">Email Address</p>
+        <div className="px-6 space-y-6 max-w-md mx-auto w-full">
+          <div className="space-y-4">
+            <label className="block">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">Full Name</span>
+              <div className="relative group">
+                <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
+                <input 
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
+                  placeholder="e.g. John Doe" 
+                  type="text"
+                />
+              </div>
+            </label>
+
+            <label className="block">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">Phone Number</span>
+              <div className="relative group">
+                <Phone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
+                <input 
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
+                  placeholder="081 234 5678" 
+                  type="tel"
+                />
+              </div>
+            </label>
+
+            <label className="block opacity-60">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">Email (Read Only)</span>
               <div className="relative">
                 <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="form-input flex w-full min-w-0 flex-1 rounded-xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/50 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                  placeholder="example@email.com" 
+                  disabled
+                  className="w-full rounded-2xl text-slate-400 border-2 border-slate-100 dark:border-slate-900 bg-slate-100 dark:bg-slate-950 h-14 pl-12 pr-4 text-base font-medium cursor-not-allowed" 
                   type="email"
                 />
               </div>
             </label>
-          </div>
-          <div className="flex flex-wrap items-end gap-4 py-3">
-            <label className="flex flex-col min-w-40 flex-1">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">City</p>
-              <div className="relative">
-                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+            <label className="block">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">City</span>
+              <div className="relative group">
+                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input 
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
-                  className="form-input flex w-full min-w-0 flex-1 rounded-xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/50 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                  placeholder="Enter your city" 
+                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
+                  placeholder="e.g. Tembisa" 
                   type="text"
                 />
               </div>
             </label>
-          </div>
-          <div className="flex flex-wrap items-end gap-4 py-3">
-            <label className="flex flex-col min-w-40 flex-1">
-              <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2 ml-1">Home Address</p>
-              <div className="relative">
-                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+
+            <label className="block">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">Home Address</span>
+              <div className="relative group">
+                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input 
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  className="form-input flex w-full min-w-0 flex-1 rounded-xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/50 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                  placeholder="Enter your street address" 
+                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
+                  placeholder="Section / Street / Number" 
                   type="text"
                 />
               </div>
             </label>
           </div>
-          <div className="flex items-center gap-2 px-1 py-4">
-            <input className="rounded text-primary focus:ring-primary border-slate-300 dark:bg-slate-800" id="terms" type="checkbox" defaultChecked/>
-            <label className="text-sm text-slate-500 dark:text-slate-400" htmlFor="terms">I agree to the <span className="text-primary font-medium">Terms of Service</span> and <span className="text-primary font-medium">Privacy Policy</span></label>
-          </div>
         </div>
-        {/* Sticky Bottom Button */}
-        <div className="mt-auto p-4 bg-white dark:bg-[#221610] max-w-md mx-auto w-full">
-          <button onClick={() => onSave({ email, address, city })} className="flex w-full cursor-pointer items-center justify-center overflow-hidden rounded-xl h-14 px-5 bg-primary text-white text-base font-bold leading-normal tracking-wide shadow-lg shadow-primary/20 active:scale-[0.98] transition-transform">
-            <span className="truncate">Save & Continue</span>
+
+        <div className="flex items-center gap-2 px-6 py-4">
+          <input className="rounded text-primary focus:ring-primary border-slate-300 dark:bg-slate-900" id="terms" type="checkbox" defaultChecked/>
+          <label className="text-sm text-slate-500 dark:text-slate-400" htmlFor="terms">I agree to the <span className="text-primary font-medium">Terms of Service</span></label>
+        </div>
+        </div>
+        
+        {/* Sticky Save Button Container */}
+        <div className="fixed bottom-0 left-0 right-0 p-6 bg-white/80 dark:bg-[#1a110c]/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
+          <button 
+            onClick={handleSave}
+            className="w-full bg-primary hover:bg-primary text-white font-black h-16 rounded-2xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 text-lg"
+          >
+            Save Profile Info
+            <ArrowRight className="w-5 h-5" />
           </button>
-          <div className="h-6"></div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2772,8 +2886,16 @@ CREATE TABLE IF NOT EXISTS notifications (
   data jsonb
 );
 
--- 3. Ensure profiles table has favorites
+-- 3. Ensure profiles table has necessary columns
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS favorites text[];
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS photo_url text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS fullName text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role text DEFAULT 'user';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
 
 -- 4. Create menu_items table
 CREATE TABLE IF NOT EXISTS menu_items (
@@ -3106,12 +3228,13 @@ VALUES
   );
 }
 
-function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, setCart, setNotification, showAlert, showConfirm }: { 
+function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm }: { 
   userProfile: UserProfile, 
   session: Session | null, 
   shops: Shop[], 
   onBack: () => void, 
   onConfirm: () => void, 
+  onIncompleteProfile: () => void,
   cart: CartItem[], 
   setCart: Dispatch<SetStateAction<CartItem[]>>, 
   setNotification: Dispatch<SetStateAction<any>>,
@@ -3127,7 +3250,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, cart, 
 
   const handleConfirm = async () => {
     if (!userProfile.fullName || !userProfile.phone) {
-      showAlert('Incomplete Profile', 'Please complete your profile (Name and Phone) before ordering.');
+      onIncompleteProfile();
       return;
     }
     
@@ -3682,18 +3805,18 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full max-w-md mx-auto flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
-        {/* Header */}
-        <div className="flex items-center p-4 justify-between sticky top-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md z-10 border-b border-slate-200 dark:border-slate-800">
-          <button onClick={onBack} className="flex size-10 items-center justify-center rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer">
-            <ArrowLeft className="w-6 h-6 text-slate-900 dark:text-slate-100" />
+    <div className="bg-white dark:bg-background-dark font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
+      <div className="flex-1 flex flex-col w-full max-w-md mx-auto overflow-x-hidden">
+        {/* Top App Bar */}
+        <div className="flex items-center bg-white dark:bg-background-dark p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
+          <button onClick={onBack} className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer">
+            <ArrowLeft className="w-6 h-6" />
           </button>
-          <h2 className="text-xl font-bold leading-tight tracking-tight flex-1 text-center pr-10">Profile</h2>
+          <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-12">Profile Settings</h2>
         </div>
         
         {/* Profile Picture Section */}
-        <div className="flex p-6 @container">
+        <div className="flex p-8">
           <input
             type="file"
             accept="image/*"
@@ -3702,151 +3825,120 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
             ref={fileInputRef}
             className="hidden"
           />
-          <div className="flex w-full flex-col gap-4 items-center">
-            <div className="relative group">
-              <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-full border-4 border-white dark:border-slate-800 shadow-lg h-32 w-32 flex items-center justify-center overflow-hidden" style={{ backgroundImage: `url("${userProfile.photoURL || DEFAULT_AVATAR_URL}")` }}>
-                {uploading && <Loader2 className="w-10 h-10 text-primary animate-spin" />}
+          <div className="flex w-full flex-col gap-6 items-center">
+            <div className="relative">
+              <div 
+                className="bg-primary/5 dark:bg-primary/10 bg-center bg-no-repeat aspect-square bg-cover rounded-full h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all" 
+                style={{ backgroundImage: userProfile.photoURL ? `url("${userProfile.photoURL}")` : `url("${DEFAULT_AVATAR_URL}")` }}
+              >
+                {uploading && (
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <Loader2 className="w-8 h-8 text-white animate-spin" />
+                  </div>
+                )}
+                {!userProfile.photoURL && !uploading && <User className="w-12 h-12 text-slate-300 dark:text-slate-700" />}
               </div>
               <button 
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-0 right-0 bg-primary text-white p-2 rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-transform cursor-pointer"
+                className="absolute bottom-1 right-1 bg-primary text-white rounded-full p-2.5 border-4 border-white dark:border-background-dark shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
               >
-                <Camera className="w-4 h-4" />
+                <Camera className="w-4 h-4 text-white" />
               </button>
             </div>
-            <div className="flex flex-col items-center justify-center">
-              <p className="text-2xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white">{userProfile.fullName || 'User'}</p>
-              <p className="text-primary text-sm font-medium mt-1">{userProfile.email}</p>
+            <div className="text-center space-y-1">
+              <p className="text-slate-900 dark:text-slate-100 text-xl font-bold tracking-tight">{userProfile.fullName || 'User'}</p>
+              <p className="text-slate-500 dark:text-slate-400 text-[13px]">{userProfile.email}</p>
             </div>
           </div>
         </div>
-        
-        {/* Navigation Options */}
-        <div className="px-4 py-2 flex flex-col gap-3">
-          <button 
-            onClick={onOrderHistory}
-            className="flex items-center gap-4 p-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
-          >
-            <div className="size-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-              <ShoppingBag className="w-6 h-6" />
-            </div>
-            <div className="flex-1 text-left">
-              <p className="font-bold text-slate-900 dark:text-white">My Orders</p>
-              <p className="text-slate-500 text-xs">View your order history</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-400" />
-          </button>
+
+        {/* Menu Items */}
+        <div className="px-6 pb-24 space-y-1">
+          <div className="py-2">
+             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Activities</p>
+             <div className="space-y-1">
+               <button onClick={onOrderHistory} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all group">
+                 <div className="flex items-center gap-4">
+                   <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-xl text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
+                     <ShoppingBag className="w-6 h-6" />
+                   </div>
+                   <div className="text-left">
+                     <p className="font-bold text-[15px]">My Orders</p>
+                     <p className="text-xs text-slate-500">Track your current and past orders</p>
+                   </div>
+                 </div>
+                 <ChevronRight className="w-5 h-5 text-slate-300" />
+               </button>
+             </div>
+          </div>
+
+          <div className="py-2">
+             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Support & Feedback</p>
+             <div className="space-y-1">
+               <button onClick={onContactUs} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all group">
+                 <div className="flex items-center gap-4">
+                   <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
+                     <MessageSquare className="w-6 h-6" />
+                   </div>
+                   <div className="text-left">
+                     <p className="font-bold text-[15px]">Contact Us</p>
+                     <p className="text-xs text-slate-500">Need help? We're here for you</p>
+                   </div>
+                 </div>
+                 <ChevronRight className="w-5 h-5 text-slate-300" />
+               </button>
+             </div>
+          </div>
 
           {userProfile.role === 'admin' && (
-            <button 
-              onClick={onAdminOrders}
-              className="flex items-center gap-4 p-4 bg-primary/5 rounded-2xl border border-primary/10 shadow-sm hover:bg-primary/10 transition-all cursor-pointer"
-            >
-              <div className="size-10 bg-primary/20 rounded-xl flex items-center justify-center text-primary">
-                <LayoutDashboard className="w-6 h-6" />
-              </div>
-              <div className="flex-1 text-left">
-                <p className="font-bold text-primary">Admin Dashboard</p>
-                <p className="text-slate-500 text-xs">Manage store orders</p>
-              </div>
-              <ChevronRight className="w-5 h-5 text-primary" />
-            </button>
+            <div className="py-2">
+               <p className="text-[11px] font-bold text-orange-400 uppercase tracking-widest px-2 mb-2">Admin Dashboard</p>
+               <div className="space-y-1">
+                 <button onClick={onAdminOrders} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-orange-50 dark:hover:bg-orange-950/20 transition-all group">
+                   <div className="flex items-center gap-4">
+                     <div className="p-3 bg-orange-100 dark:bg-orange-500/20 rounded-xl text-orange-600 group-hover:scale-110 transition-transform">
+                       <LayoutDashboard className="w-6 h-6" />
+                     </div>
+                     <div className="text-left">
+                       <p className="font-bold text-[15px]">Admin Orders</p>
+                       <p className="text-xs text-slate-500">Manage all system orders</p>
+                     </div>
+                   </div>
+                   <ChevronRight className="w-5 h-5 text-orange-300" />
+                 </button>
+               </div>
+            </div>
           )}
 
           {userProfile.role === 'shop_owner' && (
-            <button 
-              onClick={onShopDashboard}
-              className="flex items-center gap-4 p-4 bg-orange-50 dark:bg-orange-500/10 rounded-2xl border border-orange-100 dark:border-orange-500/20 shadow-sm hover:bg-orange-100 dark:hover:bg-orange-500/20 transition-all cursor-pointer"
-            >
-              <div className="size-10 bg-orange-100 dark:bg-orange-500/20 rounded-xl flex items-center justify-center text-orange-600 dark:text-orange-400">
-                <Store className="w-6 h-6" />
-              </div>
-              <div className="flex-1 text-left">
-                <p className="font-bold text-orange-600 dark:text-orange-400">Shop Dashboard</p>
-                <p className="text-slate-500 dark:text-slate-400 text-xs">Manage your shop orders</p>
-              </div>
-              <ChevronRight className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-            </button>
+            <div className="py-2">
+               <p className="text-[11px] font-bold text-orange-400 uppercase tracking-widest px-2 mb-2">Shop Dashboard</p>
+               <div className="space-y-1">
+                 <button onClick={onShopDashboard} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-orange-50 dark:hover:bg-orange-950/20 transition-all group">
+                   <div className="flex items-center gap-4">
+                     <div className="p-3 bg-orange-100 dark:bg-orange-500/20 rounded-xl text-orange-600 group-hover:scale-110 transition-transform">
+                       <Store className="w-6 h-6" />
+                     </div>
+                     <div className="text-left">
+                       <p className="font-bold text-[15px]">Shop Dashboard</p>
+                       <p className="text-xs text-slate-500">Manage your store and menu</p>
+                     </div>
+                   </div>
+                   <ChevronRight className="w-5 h-5 text-orange-300" />
+                 </button>
+               </div>
+            </div>
           )}
 
-          <button 
-            onClick={onContactUs}
-            className="flex items-center gap-4 p-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
-          >
-            <div className="size-10 bg-blue-50 dark:bg-blue-900/20 rounded-xl flex items-center justify-center text-blue-600 dark:text-blue-400">
-              <Mail className="w-6 h-6" />
-            </div>
-            <div className="flex-1 text-left">
-              <p className="font-bold text-slate-900 dark:text-white">Contact Us</p>
-              <p className="text-slate-500 text-xs">Get help or send feedback</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-slate-400" />
-          </button>
-        </div>
-
-        {/* Editable Fields */}
-        <div className="flex flex-col gap-2 px-4 py-2 mt-4">
-          <h3 className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-widest ml-1 mb-2">Account Settings</h3>
-          
-          <div className="flex flex-col gap-1.5 py-2">
-            <label className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1">Full Name</label>
-            <div className="relative flex items-center group">
-              <input 
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium" 
-                type="text"
-              />
-              <Search className="w-5 h-5 absolute right-4 text-slate-400 group-focus-within:text-primary" />
-            </div>
+          <div className="py-8">
+            <button 
+              onClick={onLogout}
+              className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl text-red-500 font-bold border-2 border-red-100 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-5 h-5" />
+              Sign Out
+            </button>
           </div>
-          
-          <div className="flex flex-col gap-1.5 py-2">
-            <label className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1">Phone Number</label>
-            <div className="relative flex items-center group">
-              <input 
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium" 
-                type="tel"
-              />
-              <Phone className="w-5 h-5 absolute right-4 text-slate-400 group-focus-within:text-primary" />
-            </div>
-          </div>
-          
-          <div className="flex flex-col gap-1.5 py-2">
-            <label className="text-slate-500 dark:text-slate-400 text-xs font-semibold ml-1">Home Address</label>
-            <div className="relative flex items-center group">
-              <textarea 
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                className="form-input w-full rounded-xl border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 py-4 px-4 pr-12 focus:border-primary focus:ring-primary dark:focus:border-primary transition-all text-slate-900 dark:text-white font-medium resize-none" 
-                rows={2}
-              ></textarea>
-              <MapPin className="w-5 h-5 absolute right-4 top-4 text-slate-400 group-focus-within:text-primary" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="px-4 py-6">
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center justify-center gap-2 py-4 text-red-500 font-bold bg-red-50 dark:bg-red-500/10 rounded-xl hover:bg-red-100 dark:hover:bg-red-500/20 transition-all cursor-pointer"
-          >
-            <LogOut className="w-5 h-5" />
-            Logout
-          </button>
-        </div>
-
-        {/* Action Button */}
-        <div className="p-4 bg-white dark:bg-[#221610] sticky bottom-0 border-t border-slate-100 dark:border-slate-800">
-          <button 
-            onClick={() => onSave({ fullName, phone, address })} 
-            className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/30 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
-          >
-            <Save className="w-5 h-5" />
-            Save Changes
-          </button>
         </div>
       </div>
     </div>
@@ -6508,12 +6600,12 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
               <div key={order.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3">
                 <div className="flex justify-between items-start">
                   <div>
-                    <p className="text-[10px] font-bold text-primary uppercase tracking-widest mb-1">Order #{order.id.toString().slice(-6)}</p>
-                    <p className="text-slate-900 dark:text-slate-100 font-bold text-base">{order.product_name}</p>
-                    <p className="text-slate-500 text-[10px] font-medium">{new Date(order.created_at).toLocaleDateString()} • {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="text-[12px] font-bold text-primary uppercase tracking-widest mb-1">Order #{order.id.toString().slice(-6)}</p>
+                    <p className="text-slate-900 dark:text-slate-100 font-bold text-lg">{order.product_name}</p>
+                    <p className="text-slate-500 text-[12px] font-medium">{new Date(order.created_at).toLocaleDateString()} • {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm ${
+                    <span className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest shadow-sm ${
                       order.status === 'pending' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                       order.status === 'confirmed' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
                       order.status === 'ready' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
@@ -6532,9 +6624,9 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                   <div className="flex justify-end pt-2">
                     <button 
                       onClick={() => setCancellingOrderId(order.id)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-[10px] font-bold uppercase tracking-widest rounded-lg border border-rose-100 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer"
+                      className="flex items-center gap-1.5 px-4 py-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-bold uppercase tracking-widest rounded-lg border border-rose-100 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer"
                     >
-                      <XCircle className="w-3 h-3" />
+                      <XCircle className="w-4 h-4" />
                       Cancel Order
                     </button>
                   </div>
@@ -6764,7 +6856,7 @@ function ContactScreen({ onBack, userProfile, showAlert }: { onBack: () => void,
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!name || !email || !message) {
       showAlert('Error', 'Please fill in all fields.');
