@@ -108,7 +108,8 @@ import {
   QrCode,
   Download,
   Megaphone,
-  WifiOff
+  WifiOff,
+  Bike
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -536,9 +537,9 @@ export default function App() {
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  const triggerHaptic = useCallback(() => {
+  const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
     if ("vibrate" in navigator) {
-      navigator.vibrate(10);
+      navigator.vibrate(pattern);
     }
   }, []);
 
@@ -1107,7 +1108,7 @@ export default function App() {
   }, []);
 
   const addToCart = (item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '') => {
-    triggerHaptic();
+    triggerHaptic([50, 30, 50]); // Premium double-pulse haptic
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions);
       if (existing) {
@@ -4230,6 +4231,43 @@ const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | 
   );
 };
 
+function RestaurantSchema({ shop }: { shop: Shop }) {
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "Restaurant",
+    "name": shop.name,
+    "image": shop.logo,
+    "servesCuisine": shop.category,
+    "description": shop.description,
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": shop.address,
+      "addressLocality": "Tembisa",
+      "addressRegion": "Gauteng",
+      "addressCountry": "ZA"
+    },
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": shop.rating,
+      "reviewCount": shop.reviewCount || 120
+    },
+    "openingHoursSpecification": [
+      {
+        "@type": "OpeningHoursSpecification",
+        "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+        "opens": shop.opening_time || "08:00",
+        "closes": shop.closing_time || "20:00"
+      }
+    ]
+  };
+
+  return (
+    <script type="application/ld+json">
+      {JSON.stringify(schema)}
+    </script>
+  );
+}
+
 function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm }: { 
   onBack: () => void, 
   shop: Shop, 
@@ -4324,6 +4362,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
 
   return (
     <div className="bg-white dark:bg-[#221610] text-gray-900 dark:text-white antialiased min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+      <RestaurantSchema shop={shop} />
       {/* TopAppBar */}
       <header className="sticky top-0 z-50 flex items-center px-4 h-16 bg-white dark:bg-[#221610] w-full border-b border-gray-100 dark:border-slate-800">
         <div className="flex items-center w-full">
@@ -4987,6 +5026,65 @@ function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { noti
   );
 }
 
+function RiderTrackingSimulation() {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setProgress(prev => (prev < 100 ? prev + 0.1 : 0));
+    }, 50);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="p-5 bg-orange-50 dark:bg-orange-950/20 rounded-3xl border border-orange-100 dark:border-orange-900/30 overflow-hidden relative">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-black uppercase tracking-widest text-orange-600">Live Rider Tracking</h3>
+        <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold animate-pulse">ON THE WAY</span>
+      </div>
+      
+      <div className="relative h-12 flex items-center">
+        {/* Track Line */}
+        <div className="absolute left-0 right-0 h-1 bg-slate-200 dark:bg-slate-800 rounded-full"></div>
+        
+        {/* Animated Rider */}
+        <motion.div 
+          style={{ left: `${progress}%` }}
+          className="absolute -translate-x-1/2 z-10"
+        >
+          <div className="relative">
+            <div className="p-2 bg-orange-600 text-white rounded-full shadow-lg shadow-orange-600/30">
+              <Bike className="w-5 h-5" />
+            </div>
+            {/* Pulsing indicator */}
+            <div className="absolute -inset-1 bg-orange-600/20 rounded-full animate-ping"></div>
+          </div>
+        </motion.div>
+        
+        {/* Destination Marker */}
+        <div className="absolute right-0 p-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-full">
+          <MapPin className="w-3 h-3" />
+        </div>
+      </div>
+      
+      <div className="flex justify-between mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+        <span>Kitchen</span>
+        <span>Your Home</span>
+      </div>
+      
+      <div className="mt-4 pt-4 border-t border-orange-100 dark:border-orange-900/20 flex items-center gap-3">
+        <div className="size-8 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
+          <User className="w-4 h-4 text-slate-500" />
+        </div>
+        <div>
+          <p className="text-[10px] font-bold">Rider: Themba M.</p>
+          <p className="text-[9px] text-slate-400">Arriving in approx. 8 mins</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops: Shop[], onBack: () => void }) {
   const getStatusStep = (status: string) => {
     switch(status) {
@@ -5028,6 +5126,8 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
             
             return (
               <div key={order.id} className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/10 p-5 shadow-sm space-y-6">
+                {order.status !== 'pending' && order.is_delivery && <RiderTrackingSimulation />}
+                
                 <div className="flex justify-between items-start">
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800">
