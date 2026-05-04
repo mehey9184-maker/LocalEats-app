@@ -107,7 +107,8 @@ import {
   Shield,
   QrCode,
   Download,
-  Megaphone
+  Megaphone,
+  WifiOff
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -148,7 +149,11 @@ type Order = {
   quantity: number;
   price: number;
   notes: string;
-  status: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  is_delivery?: boolean;
+  delivery_fee?: number;
+  rider_id?: string;
+  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled';
   created_at: string;
   status_history?: StatusHistoryItem[];
   owner_message?: string;
@@ -444,6 +449,42 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Connectivity monitoring
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    // Heartbeat check for Supabase connectivity
+    const checkSupabase = async () => {
+      try {
+        const { error } = await supabase.from('shops').select('id').limit(1);
+        if (error) {
+          // If it's a network error specifically, mark as offline
+          if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+            setIsOnline(false);
+          }
+        } else {
+          setIsOnline(true);
+        }
+      } catch (err) {
+        setIsOnline(false);
+      }
+    };
+
+    const interval = setInterval(checkSupabase, 30000); // Check every 30s
+    checkSupabase();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [shops, setShops] = useState<Shop[]>(() => {
     const saved = localStorage.getItem('cached_shops');
@@ -486,7 +527,6 @@ export default function App() {
 
   const [notification, setNotification] = useState<NotificationState>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     const saved = localStorage.getItem('app_notifications');
     return saved ? JSON.parse(saved) : [];
@@ -588,13 +628,17 @@ export default function App() {
       localStorage.setItem('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
       setLoadingShops(false);
     } catch (err: any) {
-      console.error('Error fetching shops:', err);
+      const isNetworkError = err.message === 'Failed to fetch' || err.name === 'TypeError' || (err.message && err.message.toLowerCase().includes('network'));
       
-      // Detailed error diagnostics
+      // Only log errors that are not network-related, or log them only on final failure
+      if (!isNetworkError || retries === 0) {
+        console.error('Error fetching shops:', err);
+      }
+      
       let errorMessage = err.message || 'Failed to connect to the server';
       
-      if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
-        errorMessage = 'Network Error: We couldn\'t connect to the server. Please check your internet connection.';
+      if (isNetworkError) {
+        errorMessage = 'Network Error: We couldn\'t connect to the server. Please check your internet connection or disable ad-blockers.';
       } else if (err.status === 401 || err.status === 403) {
         errorMessage = 'Authentication Error: Please log in again.';
       } else if (err.status === 404) {
@@ -605,11 +649,19 @@ export default function App() {
       
       if (retries > 0) {
         console.log(`Retrying fetchShopsData... (${retries} retries left)`);
-        setLoadingShops(false); // Fix Issue 7: Ensure loading spinner stops before retry
-        setTimeout(() => fetchShopsData(retries - 1), 2000);
+        // We don't stop loading spinner during retries to prevent flickering
+        setTimeout(() => fetchShopsData(retries - 1), 2500);
       } else {
         setFetchError(errorMessage);
         setLoadingShops(false);
+        
+        // Show a more friendly notification for network issues
+        if (isNetworkError) {
+          setNotification({ 
+            message: "Connection lost. Please check if your ad-blocker is blocking Supabase.", 
+            type: 'error' 
+          });
+        }
       }
     }
   }, []);
@@ -659,7 +711,7 @@ export default function App() {
     localStorage.setItem('app_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
-  const fetchUserProfile = useCallback(async (userId: string) => {
+  const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -684,8 +736,18 @@ export default function App() {
           setFavorites(data.favorites);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching user profile:', err);
+      // Specifically catch network errors
+      const isNetworkError = err.message === 'Failed to fetch' || err.name === 'TypeError';
+      
+      if (isNetworkError && retries > 0) {
+        console.log(`Retrying fetchUserProfile... (${retries} retries left)`);
+        setTimeout(() => fetchUserProfile(userId, retries - 1), 3000);
+      } else if (isNetworkError) {
+        console.warn('Network Error: Could not reach Supabase for profile fetch.');
+        setIsOnline(false);
+      }
     }
   }, []);
 
@@ -715,20 +777,42 @@ export default function App() {
   }, [requestNotificationPermission, fetchUserProfile]);
 
   useEffect(() => {
+    // Consolidated update check logic
     const checkVersion = async () => {
       try {
-        const response = await fetch('/version.json?t=' + Date.now());
-        const data = await response.json();
-        setAppVersion(data.version);
-        if (data.version !== '4.0') {
-          setIsUpdateAvailable(true);
+        // Try version.json first
+        const vResponse = await fetch('/version.json?t=' + Date.now());
+        if (vResponse.ok) {
+          const vData = await vResponse.json();
+          if (vData && vData.version) {
+            setAppVersion(vData.version);
+            if (vData.version !== '4.0') {
+              setIsUpdateAvailable(true);
+            }
+            return; // Success
+          }
+        }
+
+        // Fallback to metadata.json as backup version source
+        const mResponse = await fetch('/metadata.json');
+        if (mResponse.ok) {
+          const mData = await mResponse.json();
+          if (mData && mData.version) {
+            setAppVersion(mData.version);
+            const lastKnownVersion = localStorage.getItem('last_known_version');
+            if (lastKnownVersion && lastKnownVersion !== mData.version) {
+              setIsUpdateAvailable(true);
+            }
+            localStorage.setItem('last_known_version', mData.version);
+          }
         }
       } catch (e) {
-        console.error('Failed to check for updates', e);
+        // Silently fail update checks to avoid console clutter on flaky connections
       }
     };
 
-    const timer = setInterval(checkVersion, 60000);
+    const timer = setInterval(checkVersion, 300000); // Check every 5 mins
+    checkVersion(); // Initial check
     return () => clearInterval(timer);
   }, []);
 
@@ -887,32 +971,6 @@ export default function App() {
     }
   }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
 
-  useEffect(() => {
-    // Check for updates by polling metadata.json
-    const checkForUpdates = async () => {
-      try {
-        const response = await fetch('/metadata.json');
-        const metadata = await response.json();
-        
-        if (metadata.version) {
-          setAppVersion(metadata.version);
-          
-          // Check if stored version is different to notify user
-          const lastKnownVersion = localStorage.getItem('last_known_version');
-          if (lastKnownVersion && lastKnownVersion !== metadata.version) {
-            setIsUpdateAvailable(true);
-          }
-          localStorage.setItem('last_known_version', metadata.version);
-        }
-      } catch (err) {
-        console.warn('Update check failed:', err);
-      }
-    };
-
-    checkForUpdates();
-    const interval = setInterval(checkForUpdates, 300000); // Check every 5 mins
-    return () => clearInterval(interval);
-  }, []);
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('favorites');
@@ -1208,6 +1266,32 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* Connectivity Banner */}
+        <AnimatePresence>
+          {!isOnline && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-slate-900 dark:bg-red-600 text-white text-[10px] py-2 px-4 text-center font-bold flex items-center justify-center gap-2 z-[250] sticky top-0 shadow-lg border-b border-white/10"
+            >
+              <div className="flex items-center gap-2">
+                <WifiOff className="w-3.5 h-3.5 animate-pulse" />
+                <span className="uppercase tracking-widest">Connective Problem Detected</span>
+              </div>
+              <button 
+                onClick={() => {
+                  triggerHaptic();
+                  fetchShopsData();
+                }} 
+                className="ml-3 bg-white/20 px-3 py-1 rounded-full text-[9px] hover:bg-white/30 transition-colors uppercase font-black"
+              >
+                Retry Reconnect
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Order Accepted Modal */}
         <AnimatePresence>
           {orderAcceptedModal.isOpen && (
@@ -1438,7 +1522,10 @@ export default function App() {
         )}
         {currentScreen === 'store-info' && (
           <StoreInfoScreen 
-            onBack={() => setCurrentScreen(previousScreen || 'home')} 
+            onBack={() => {
+              if ("vibrate" in navigator) navigator.vibrate(5);
+              setCurrentScreen(previousScreen || 'home');
+            }} 
             shop={shops.find(s => s.id === selectedStoreId) || shops[0]} 
             isFavorite={favorites.includes(selectedStoreId || '')}
             onToggleFavorite={() => {
@@ -2725,6 +2812,30 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
+  if (fetchError && shops.length === 0) {
+    return (
+      <div className="bg-slate-50 dark:bg-slate-900 min-h-screen flex flex-col items-center justify-center p-8 max-w-md mx-auto shadow-2xl">
+        <div className="bg-red-50 dark:bg-red-500/10 p-6 rounded-[32px] border border-red-100 dark:border-red-900/30 flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 mb-4">
+            <WifiOff className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2 leading-tight tracking-tight">Backend Timeout</h2>
+          <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 max-w-[240px]">
+            {fetchError.includes('Network Error') 
+              ? "We couldn't reach South Africa's servers. Check your ad-blocker or internet." 
+              : fetchError}
+          </p>
+          <button 
+            onClick={onRetry} 
+            className="w-full py-4 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-2xl shadow-xl active:scale-95 transition-all cursor-pointer hover:shadow-2xl"
+          >
+            Reconnect & Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loadingShops && shops.length === 0) {
     return (
       <div className="bg-gray-50 dark:bg-[#221610] min-h-screen flex flex-col max-w-md mx-auto shadow-2xl">
@@ -2918,7 +3029,45 @@ CREATE TABLE IF NOT EXISTS reviews (
   createdAt timestamptz DEFAULT now()
 );
 
--- 6. Insert demo data
+-- 6. Create orders table
+CREATE TABLE IF NOT EXISTS orders (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid,
+  shop_id uuid REFERENCES shops(id) ON DELETE SET NULL,
+  customer_name text NOT NULL,
+  phone text NOT NULL,
+  email text,
+  city text,
+  address text NOT NULL,
+  country text DEFAULT 'South Africa',
+  product_name text NOT NULL,
+  product_variant text,
+  quantity integer DEFAULT 1,
+  price numeric NOT NULL,
+  notes text,
+  status text DEFAULT 'pending',
+  payment_method text DEFAULT 'Cash on Delivery',
+  is_delivery boolean DEFAULT false,
+  delivery_fee numeric DEFAULT 0,
+  rider_id uuid,
+  delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled')),
+  created_at timestamptz DEFAULT now()
+);
+
+-- 7. Create rider_profiles table
+CREATE TABLE IF NOT EXISTS rider_profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name text,
+  vehicle_type text DEFAULT 'bicycle',
+  is_online boolean DEFAULT false,
+  total_earnings numeric DEFAULT 0,
+  current_lat numeric,
+  current_lng numeric,
+  rating numeric DEFAULT 5.0,
+  created_at timestamptz DEFAULT now()
+);
+
+-- 8. Insert demo data
 INSERT INTO shops (name, description, location, category, rating, is_active)
 VALUES 
 ('Tembisa Kota King', 'The best Khas-Khas in Tembisa', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
@@ -3243,13 +3392,23 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 }) {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
+  const [deliveryType, setDeliveryType] = useState<'collection' | 'delivery'>('collection');
+  const DELIVERY_FEE = 5.00;
   
-  const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalAmount = deliveryType === 'delivery' ? subtotal + DELIVERY_FEE : subtotal;
+  
   const primaryShopId = cart.length > 0 ? cart[0].shopId : (shops[0]?.id || '');
   const primaryShop = shops.find(s => s.id === primaryShopId) || shops[0];
 
   const handleConfirm = async () => {
     if (!userProfile.fullName || !userProfile.phone) {
+      onIncompleteProfile();
+      return;
+    }
+
+    if (deliveryType === 'delivery' && (!userProfile.address || !userProfile.city)) {
+      showAlert('Delivery Info Needed', 'Please complete your profile with an address for delivery.');
       onIncompleteProfile();
       return;
     }
@@ -3279,7 +3438,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     try {
       const orderData = cart.map(item => ({
         user_id: session?.user?.id,
-        shop_id: item.shopId, // Added shop_id so the owner sees it!
+        shop_id: item.shopId,
         customer_name: userProfile.fullName,
         phone: userProfile.phone,
         email: userProfile.email,
@@ -3292,22 +3451,23 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         price: item.price * item.quantity,
         notes: item.specialInstructions || '',
         status: 'pending',
-        payment_method: paymentMethod
+        payment_method: paymentMethod,
+        is_delivery: deliveryType === 'delivery',
+        delivery_fee: deliveryType === 'delivery' ? DELIVERY_FEE : 0,
+        delivery_status: deliveryType === 'delivery' ? 'finding_rider' : 'none'
       }));
 
-      console.log('Submitting order to Supabase:', orderData);
+      console.log('Submitting order with delivery info:', orderData);
       const { data, error } = await supabase.from('orders').insert(orderData).select();
       
       if (error) {
-        console.error('Supabase insert error details:', error);
+        console.error('Supabase insert error:', error);
         throw error;
       }
       
-      console.log('Order successfully placed:', data);
-      
       if (isClosed) {
         setNotification({ 
-          message: `Order submitted! Note: ${primaryShop.name} is currently closed. Your order will be attended to when they open at ${primaryShop.opening_time || 'their next opening hour'}.`, 
+          message: `Order submitted! Note: ${primaryShop.name} is currently closed.`, 
           type: 'info' 
         });
       } else {
@@ -3317,7 +3477,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
       onConfirm();
     } catch (error: any) {
       console.error('Error submitting order:', error);
-      showAlert('Order Error', `Failed to place order: ${error.message || 'Unknown error'}. Please try again.`);
+      showAlert('Order Error', `Failed to place order: ${error.message || 'Unknown error'}.`);
     } finally {
       setLoading(false);
     }
@@ -3370,22 +3530,71 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               ))}
             </div>
           </section>
-          
-          {/* Pickup Details Section */}
+
+          {/* Delivery Options */}
           <section>
-            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Pickup Details</h3>
-            <div className="bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
-              <div className="flex items-stretch justify-between gap-4">
-                <div className="flex flex-col gap-2 flex-1">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-primary" />
-                    <p className="text-primary text-sm font-bold uppercase tracking-wider">Ready in {primaryShop.prepTime || '15-20 min'}</p>
-                  </div>
-                  <p className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight">{primaryShop.name}</p>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-tight">{primaryShop.address}</p>
+            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Fulfillment Type</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={() => setDeliveryType('collection')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${deliveryType === 'collection' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20 ring-4 ring-orange-500/10' : 'border-slate-100 dark:border-slate-800'}`}
+              >
+                <ShoppingBasket className={`w-8 h-8 ${deliveryType === 'collection' ? 'text-orange-600' : 'text-slate-400'}`} />
+                <div className="text-center">
+                  <p className={`text-sm font-bold ${deliveryType === 'collection' ? 'text-orange-700 dark:text-orange-400' : 'text-slate-600'}`}>Collection</p>
+                  <p className="text-[10px] text-slate-500">Free</p>
                 </div>
-                <div className="w-24 bg-center bg-no-repeat aspect-square bg-cover rounded-xl border border-slate-200 dark:border-slate-700" style={{ backgroundImage: `url("${primaryShop.logo}")` }}></div>
-              </div>
+              </button>
+
+              <button 
+                onClick={() => setDeliveryType('delivery')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${deliveryType === 'delivery' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20 ring-4 ring-orange-500/10' : 'border-slate-100 dark:border-slate-800'}`}
+              >
+                <div className="relative">
+                  <Navigation className={`w-8 h-8 ${deliveryType === 'delivery' ? 'text-orange-600' : 'text-slate-400'}`} />
+                  <span className="absolute -top-1 -right-1 bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full">R5</span>
+                </div>
+                <div className="text-center">
+                  <p className={`text-sm font-bold ${deliveryType === 'delivery' ? 'text-orange-700 dark:text-orange-400' : 'text-slate-600'}`}>Bicycle Delivery</p>
+                  <p className="text-[10px] text-slate-500">+R{DELIVERY_FEE.toFixed(2)}</p>
+                </div>
+              </button>
+            </div>
+          </section>
+          
+          {/* Pickup/Address Details Section */}
+          <section>
+            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">
+              {deliveryType === 'delivery' ? 'Delivery Address' : 'Pickup Details'}
+            </h3>
+            <div className="bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm relative overflow-hidden">
+              {deliveryType === 'delivery' ? (
+                <div className="flex items-start gap-4">
+                  <div className="size-12 rounded-2xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center shrink-0">
+                    <MapPin className="w-6 h-6 text-orange-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold leading-tight">
+                      {userProfile.address || 'No Address Set'}
+                    </p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-normal mt-1 leading-tight">
+                      {userProfile.city || 'Tembisa'}, {userProfile.country}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-stretch justify-between gap-4">
+                  <div className="flex flex-col gap-2 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-primary" />
+                      <p className="text-primary text-sm font-bold uppercase tracking-wider">Ready in {primaryShop.prepTime || '15-20 min'}</p>
+                    </div>
+                    <p className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight">{primaryShop.name}</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-normal leading-tight">{primaryShop.address}</p>
+                  </div>
+                  <div className="w-24 bg-center bg-no-repeat aspect-square bg-cover rounded-xl border border-slate-200 dark:border-slate-700" style={{ backgroundImage: `url("${primaryShop.logo}")` }}></div>
+                </div>
+              )}
             </div>
           </section>
           
@@ -3399,8 +3608,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                     <Banknote className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold">Cash on Collection</p>
-                    <p className="text-slate-500 text-xs">Pay with cash when you arrive</p>
+                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold">Cash on {deliveryType === 'delivery' ? 'Delivery' : 'Collection'}</p>
+                    <p className="text-slate-500 text-xs">Pay when the order arrives</p>
                   </div>
                 </div>
                 <div className={`size-6 rounded-full border-2 flex items-center justify-center ${paymentMethod === 'cash' ? 'border-orange-600' : 'border-slate-300'}`}>
@@ -3416,7 +3625,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   </div>
                   <div>
                     <p className="text-slate-900 dark:text-slate-100 text-base font-bold">Card Machine</p>
-                    <p className="text-slate-500 text-xs">Swipe or tap when you arrive</p>
+                    <p className="text-slate-500 text-xs">Swipe or tap when order arrives</p>
                   </div>
                 </div>
                 <div className={`size-6 rounded-full border-2 flex items-center justify-center ${paymentMethod === 'card_machine' ? 'border-orange-600' : 'border-slate-300'}`}>
@@ -3429,9 +3638,21 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           
           {/* Total Amount Section */}
           <section className="border-t border-slate-200 dark:border-slate-800 pt-6">
-            <div className="flex justify-between items-center px-2">
-              <span className="text-slate-500 dark:text-slate-400 text-lg">Total Amount</span>
-              <span className="text-slate-900 dark:text-slate-100 text-3xl font-black">R {totalAmount.toFixed(2)}</span>
+            <div className="flex flex-col gap-2 px-2">
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 font-medium">
+                <span>Subtotal</span>
+                <span>R {subtotal.toFixed(2)}</span>
+              </div>
+              {deliveryType === 'delivery' && (
+                <div className="flex justify-between items-center text-sm text-orange-600 font-bold">
+                  <span>Delivery Fee (Bicycle)</span>
+                  <span>R {DELIVERY_FEE.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center mt-2">
+                <span className="text-slate-900 dark:text-slate-100 text-lg font-bold">Total Amount</span>
+                <span className="text-slate-900 dark:text-slate-100 text-3xl font-black">R {totalAmount.toFixed(2)}</span>
+              </div>
             </div>
           </section>
           
@@ -3445,8 +3666,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>Confirm Order</span>
-                  <CheckCircle className="w-5 h-5" />
+                  <span>Place Order</span>
+                  <ArrowRight className="w-5 h-5" />
                 </>
               )}
             </button>
@@ -4104,9 +4325,16 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   return (
     <div className="bg-white dark:bg-[#221610] text-gray-900 dark:text-white antialiased min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
       {/* TopAppBar */}
-      <header className="fixed top-0 left-0 right-0 z-50 flex items-center px-4 h-16 bg-white dark:bg-[#221610] max-w-md mx-auto">
+      <header className="sticky top-0 z-50 flex items-center px-4 h-16 bg-white dark:bg-[#221610] w-full border-b border-gray-100 dark:border-slate-800">
         <div className="flex items-center w-full">
-          <button onClick={onBack} className="mr-4 active:scale-95 duration-200 ease-in-out transition-opacity hover:opacity-80 text-orange-600 cursor-pointer">
+          <button 
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onBack();
+            }} 
+            className="mr-4 p-2 -ml-2 active:scale-95 duration-200 ease-in-out transition-all hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-full text-orange-600 cursor-pointer z-50"
+          >
             <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="font-bold text-lg tracking-tight text-gray-900 dark:text-white flex-grow">Store Info</h1>
@@ -4139,7 +4367,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         </div>
       </header>
 
-      <main className="pt-20 pb-12 px-4 flex-grow overflow-y-auto">
+      <main className="pb-12 px-4 flex-grow overflow-y-auto">
         {/* Hero Section: Logo and Rating */}
         <section className="mb-8 flex flex-col items-center">
           {!session && (
@@ -5331,10 +5559,10 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       navigator.vibrate(10); // Subtle feedback for status change
     }
     try {
-      // Fetch current order to get existing history
+      // Fetch current order to get existing history and delivery info
       const { data: currentOrder, error: fetchError } = await supabase
         .from('orders')
-        .select('status_history')
+        .select('*')
         .eq('id', orderId)
         .single();
 
@@ -5343,9 +5571,20 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       const history = currentOrder?.status_history || [];
       const newHistory = [...history, { status: newStatus, timestamp: new Date().toISOString() }];
 
-      const updateData: Partial<Order> = { 
-        status: newStatus as Order['status'],
-        status_history: newHistory
+      // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready, 
+      // it shifts to 'finding_rider' status instead of just 'ready'
+      let finalStatus = newStatus;
+      let deliveryStatus = currentOrder?.delivery_status;
+
+      if (newStatus === 'ready' && currentOrder?.is_delivery) {
+        finalStatus = 'ready';
+        deliveryStatus = 'finding_rider';
+      }
+
+      const updateData: any = { 
+        status: finalStatus,
+        status_history: newHistory,
+        delivery_status: deliveryStatus
       };
       if (ownerMessage) updateData.owner_message = ownerMessage;
 
@@ -5354,15 +5593,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         .update(updateData)
         .eq('id', orderId);
 
-      if (error) {
-        // Fallback if columns don't exist
-        const fallbackData: Partial<Order> = { status: newStatus as Order['status'] };
-        const { error: fallbackError } = await supabase
-          .from('orders')
-          .update(fallbackData)
-          .eq('id', orderId);
-        if (fallbackError) throw fallbackError;
-      }
+      if (error) throw error;
     } catch (err: unknown) {
       console.error('Error updating order status:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -5370,7 +5601,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string, deliveryStatus?: string) => {
+    if (deliveryStatus === 'finding_rider') return 'bg-indigo-100 text-indigo-600 border-indigo-200';
+    if (deliveryStatus === 'rider_assigned') return 'bg-blue-100 text-blue-600 border-blue-200';
+    if (deliveryStatus === 'picked_up') return 'bg-purple-100 text-purple-600 border-purple-200';
+    if (deliveryStatus === 'delivered') return 'bg-emerald-100 text-emerald-600 border-emerald-200';
+
     switch (status) {
       case 'pending': return 'bg-orange-100 text-orange-600 border-orange-200';
       case 'confirmed': return 'bg-blue-100 text-blue-600 border-blue-200';
@@ -5858,9 +6094,15 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-bold text-slate-400">#{order.id.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${getStatusColor(order.status)}`}>
-                      {order.status}
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${getStatusColor(order.status, order.delivery_status)}`}>
+                      {order.delivery_status ? order.delivery_status.replace('_', ' ') : order.status}
                     </span>
+                    {order.is_delivery && (
+                      <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                        <Navigation className="w-2 h-2" />
+                        Rider Required
+                      </span>
+                    )}
                   </div>
                   <h3 className="font-bold text-lg">{order.customer_name}</h3>
                   <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -5901,7 +6143,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               <div className="p-4 flex gap-2 overflow-x-auto no-scrollbar">
                 {order.status === 'pending' && (
                   <button 
-                    onClick={() => updateOrderStatus(order.id, 'confirmed')}
+                    onClick={() => updateOrderStatus('confirmed', order.id)}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     Confirm Order
@@ -5909,7 +6151,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 )}
                 {order.status === 'confirmed' && (
                   <button 
-                    onClick={() => updateOrderStatus(order.id, 'preparing')}
+                    onClick={() => updateOrderStatus('preparing', order.id)}
                     className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     Start Preparing
@@ -5917,7 +6159,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 )}
                 {order.status === 'preparing' && (
                   <button 
-                    onClick={() => updateOrderStatus(order.id, 'ready')}
+                    onClick={() => updateOrderStatus('ready', order.id)}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     Mark as Ready
@@ -5925,7 +6167,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 )}
                 {order.status === 'ready' && (
                   <button 
-                    onClick={() => updateOrderStatus(order.id, 'completed')}
+                    onClick={() => updateOrderStatus('completed', order.id)}
                     className="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
                   >
                     Complete Order
@@ -5935,7 +6177,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   <button 
                     onClick={() => {
                       showConfirm('Cancel Order', 'Are you sure you want to cancel this order?', () => {
-                        updateOrderStatus(order.id, 'cancelled');
+                        updateOrderStatus('cancelled', order.id);
                       });
                     }}
                     className="px-4 bg-red-50 text-red-600 border border-red-100 text-xs font-bold py-3 rounded-xl hover:bg-red-100 transition-all cursor-pointer"
@@ -6062,15 +6304,15 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, status: string, message?: string) => {
+  const updateOrderStatus = async (status: string, orderId: string, message?: string) => {
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
     try {
-      // Fetch current order to get existing history
+      // Fetch current order to get existing history and delivery info
       const { data: currentOrder, error: fetchError } = await supabase
         .from('orders')
-        .select('status_history')
+        .select('*')
         .eq('id', orderId)
         .single();
 
@@ -6079,9 +6321,20 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
       const history = currentOrder?.status_history || [];
       const newHistory = [...history, { status, timestamp: new Date().toISOString() }];
 
-      const updateData: Partial<Order> = { 
-        status: status as Order['status'],
-        status_history: newHistory
+      // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready, 
+      // it shifts to 'finding_rider' status instead of just 'ready'
+      let finalStatus = status;
+      let deliveryStatus = currentOrder?.delivery_status;
+
+      if (status === 'ready' && currentOrder?.is_delivery) {
+        finalStatus = 'ready';
+        deliveryStatus = 'finding_rider';
+      }
+
+      const updateData: any = { 
+        status: finalStatus,
+        status_history: newHistory,
+        delivery_status: deliveryStatus
       };
       if (message) updateData.owner_message = message;
 
@@ -6090,20 +6343,28 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
         .update(updateData)
         .eq('id', orderId);
       
-      if (error) {
-        // Fallback if columns don't exist
-        const fallbackData: Partial<Order> = { status: status as Order['status'] };
-        const { error: fallbackError } = await supabase
-          .from('orders')
-          .update(fallbackData)
-          .eq('id', orderId);
-        if (fallbackError) throw fallbackError;
-      }
+      if (error) throw error;
       fetchOrders(); // Refresh list
     } catch (error: unknown) {
       console.error('Error updating order status:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       showAlert('Error', errorMessage);
+    }
+  };
+
+  const getStatusColor = (status: string, deliveryStatus?: string) => {
+    if (deliveryStatus === 'finding_rider') return 'bg-indigo-100 text-indigo-600 border-indigo-200';
+    if (deliveryStatus === 'rider_assigned') return 'bg-blue-100 text-blue-600 border-blue-200';
+    if (deliveryStatus === 'picked_up') return 'bg-purple-100 text-purple-600 border-purple-200';
+    if (deliveryStatus === 'delivered') return 'bg-emerald-100 text-emerald-600 border-emerald-200';
+
+    switch (status) {
+      case 'pending': return 'bg-orange-100 text-orange-600 border-orange-200';
+      case 'confirmed': return 'bg-blue-100 text-blue-600 border-blue-200';
+      case 'preparing': return 'bg-purple-100 text-purple-600 border-purple-200';
+      case 'ready': return 'bg-green-100 text-green-600 border-green-200';
+      case 'completed': return 'bg-gray-100 text-gray-600 border-gray-200';
+      default: return 'bg-gray-100 text-gray-600 border-gray-200';
     }
   };
 
@@ -6217,17 +6478,18 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                     <p className="font-bold text-sm truncate">{order.product_name}</p>
                     <p className="text-xs text-slate-500 truncate">{order.customer_name} • {order.phone}</p>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2 ${
-                    order.status === 'pending' ? 'bg-amber-100 text-amber-700' :
-                    order.status === 'confirmed' ? 'bg-blue-100 text-blue-700' :
-                    order.status === 'ready' ? 'bg-emerald-100 text-emerald-700' :
-                    order.status === 'completed' ? 'bg-slate-100 text-slate-700' :
-                    order.status === 'cancelled' ? 'bg-rose-100 text-rose-700' :
-                    'bg-slate-100 text-slate-700'
-                  }`}>
-                    {order.status}
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2 border ${getStatusColor(order.status, order.delivery_status)}`}>
+                    {order.delivery_status ? order.delivery_status.replace('_', ' ') : order.status}
                   </span>
                 </div>
+                {order.is_delivery && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                      <Navigation className="w-2 h-2" />
+                      Rider Needed (R{order.delivery_fee})
+                    </span>
+                  </div>
+                )}
                 
                 {/* Collapsed View: Address */}
                 {expandedOrderId !== order.id && (
@@ -6279,15 +6541,23 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                         <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
                           <div className="flex justify-between items-start mb-2">
                             <p className="text-sm font-bold">{order.product_name}</p>
-                            <p className="text-sm font-black text-primary">R {order.price?.toLocaleString()}</p>
+                            <p className="text-sm font-black text-primary">R {((order.price || 0) + (order.delivery_fee || 0)).toLocaleString()}</p>
                           </div>
                           {order.product_variant && (
                             <p className="text-xs text-slate-500 mb-1">Variant: {order.product_variant}</p>
                           )}
                           <div className="flex items-center justify-between text-xs text-slate-500">
-                            <div className="flex items-center gap-2">
-                              <Layers className="w-3.5 h-3.5" />
-                              Quantity: {order.quantity}
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <Layers className="w-3.5 h-3.5" />
+                                Quantity: {order.quantity}
+                              </div>
+                              {order.is_delivery && (
+                                <div className="flex items-center gap-2 text-orange-600 font-bold">
+                                  <Navigation className="w-3.5 h-3.5" />
+                                  Delivery: R{order.delivery_fee}
+                                </div>
+                              )}
                             </div>
                             {order.payment_method && (
                               <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-bold">
@@ -6359,7 +6629,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                   )}
                   {order.status === 'confirmed' && (
                     <button 
-                      onClick={() => updateOrderStatus(order.id, 'ready')}
+                      onClick={() => updateOrderStatus('ready', order.id)}
                       className="flex-1 h-9 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 transition-colors cursor-pointer"
                     >
                       Mark Ready
@@ -6367,7 +6637,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                   )}
                   {order.status === 'ready' && (
                     <button 
-                      onClick={() => updateOrderStatus(order.id, 'completed')}
+                      onClick={() => updateOrderStatus('completed', order.id)}
                       className="flex-1 h-9 bg-slate-900 dark:bg-white dark:text-slate-900 text-white text-xs font-bold rounded-lg hover:opacity-90 transition-colors cursor-pointer"
                     >
                       Complete
@@ -6407,7 +6677,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                 </button>
                 <button 
                   onClick={() => {
-                    updateOrderStatus(orderToCancel.id, 'cancelled');
+                    updateOrderStatus('cancelled', orderToCancel.id);
                     setOrderToCancel(null);
                   }}
                   className="flex-1 h-11 bg-rose-500 text-white font-bold rounded-xl hover:bg-rose-600 transition-colors cursor-pointer"
@@ -6450,7 +6720,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                 </button>
                 <button 
                   onClick={() => {
-                    updateOrderStatus(orderToConfirm.id, 'confirmed', confirmationMessage);
+                    updateOrderStatus('confirmed', orderToConfirm.id, confirmationMessage);
                     setOrderToConfirm(null);
                   }}
                   className="flex-1 h-11 bg-blue-500 text-white font-bold rounded-xl hover:bg-blue-600 transition-colors cursor-pointer"
@@ -6608,14 +6878,12 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                     <span className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest shadow-sm ${
                       order.status === 'pending' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                       order.status === 'confirmed' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
-                      order.status === 'ready' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
-                      order.status === 'out_for_delivery' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' :
-                      order.status === 'delivered' ? 'bg-green-100 text-green-700 border border-green-200' :
+                      order.status === 'ready' ? (order.is_delivery ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200') :
                       order.status === 'completed' ? 'bg-slate-100 text-slate-700 border border-slate-200' :
                       order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                       'bg-slate-100 text-slate-700 border border-slate-200'
                     }`}>
-                      {order.status.replace('_', ' ')}
+                      {order.status === 'ready' && order.is_delivery ? 'Finding Rider' : order.status.replace('_', ' ')}
                     </span>
                   </div>
                 </div>
@@ -6686,13 +6954,18 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                 <div className="flex justify-between items-center pt-2 border-t border-slate-50 dark:border-slate-800">
                   <div className="flex flex-col">
                     <p className="text-slate-500 text-xs">Quantity: {order.quantity}</p>
-                    {order.payment_method && (
+                    {order.is_delivery ? (
+                      <p className="text-orange-600 text-[10px] uppercase font-black tracking-widest mt-1 flex items-center gap-1">
+                        <Navigation className="w-3 h-3" />
+                        Bicycle Delivery (R{order.delivery_fee || '5.00'})
+                      </p>
+                    ) : (
                       <p className="text-slate-400 text-[10px] uppercase tracking-widest mt-1">
                         {order.payment_method === 'cash' ? '💵 Cash on Collection' : '💳 Card Machine'}
                       </p>
                     )}
                   </div>
-                  <p className="text-primary font-bold">R {(order.price || 0).toFixed(2)}</p>
+                  <p className="text-primary font-bold">R {((order.price || 0) + (order.delivery_fee || 0)).toFixed(2)}</p>
                 </div>
                 {order.notes && (
                   <div className="bg-orange-50 dark:bg-orange-900/10 p-2 rounded-lg border border-orange-100 dark:border-orange-900/30">
