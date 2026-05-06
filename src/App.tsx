@@ -12,6 +12,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 import iconRetina from 'leaflet/dist/images/marker-icon-2x.png';
+import QRCode from 'qrcode';
 
 let DefaultIcon = L.icon({
   iconUrl: icon,
@@ -46,6 +47,7 @@ import {
   MapPin, 
   MoreVertical, 
   UserMinus, 
+  UserPlus,
   AlertCircle, 
   Star, 
   Minus, 
@@ -70,6 +72,7 @@ import {
   Layers, 
   Heart, 
   Share2,
+  Sparkles,
   BookOpen, 
   Camera, 
   Moon, 
@@ -87,6 +90,10 @@ import {
   Tag,
   ShoppingBasket,
   Ban,
+  Bike,
+  Timer,
+  Megaphone,
+  Package,
   Delete,
   Send,
   CheckCircle2,
@@ -99,7 +106,6 @@ import {
   Banknote,
   ChevronLeft,
   Bug,
-  Package,
   Eye,
   EyeOff,
   MessageCircle,
@@ -107,15 +113,12 @@ import {
   Shield,
   QrCode,
   Download,
-  Megaphone,
-  WifiOff,
-  Bike
+  WifiOff
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { LocalEatsLogo } from './components/LocalEatsLogo';
 import jsPDF from 'jspdf';
-import QRCode from 'qrcode';
 
 type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
 
@@ -135,6 +138,8 @@ type StatusHistoryItem = {
   timestamp: string;
 };
 
+const SUPPORTED_CITY = 'Tembisa';
+
 type Order = {
   id: string;
   user_id: string;
@@ -150,15 +155,15 @@ type Order = {
   quantity: number;
   price: number;
   notes: string;
-  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
   delivery_fee?: number;
   rider_id?: string;
-  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled';
+  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled' | 'delivery' | 'collection' | 'ready' | 'pending' | 'preparing' | 'confirmed' | 'completed';
   created_at: string;
   status_history?: StatusHistoryItem[];
   owner_message?: string;
-  payment_method?: 'cash' | 'card_machine';
+  payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine';
   special_instructions?: string;
   customizations?: { name: string, price: number }[];
 };
@@ -1149,7 +1154,7 @@ export default function App() {
       fullName: '',
       email: '',
       phone: '',
-      city: '',
+      city: SUPPORTED_CITY,
       address: '',
       country: 'South Africa',
       role: 'user'
@@ -1417,6 +1422,7 @@ export default function App() {
             setNotification={setNotification}
             setPendingReview={setPendingReview}
             setCurrentScreen={setCurrentScreen}
+            currentScreen={currentScreen}
             favorites={favorites}
             toggleFavorite={toggleFavorite}
             userLocation={userLocation}
@@ -1424,6 +1430,7 @@ export default function App() {
             orders={orders}
             showAlert={showAlert}
             appVersion={appVersion}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'notifications' && (
@@ -1502,6 +1509,7 @@ export default function App() {
             }}
             userLocation={userLocation}
             showAlert={showAlert}
+            setCurrentScreen={setCurrentScreen}
           />
         )}
         {currentScreen === 'explore' && (
@@ -1543,15 +1551,10 @@ export default function App() {
             userProfile={userProfile}
             session={session}
             onSignUp={() => setCurrentScreen('signup')}
-            addToCart={(item, shopId) => {
-              if (!session) {
-                setCurrentScreen('signup');
-                return;
-              }
-              addToCart(item, shopId);
-            }}
+            addToCart={addToCart}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            setCurrentScreen={setCurrentScreen}
           />
         )}
         {currentScreen === 'settings' && (
@@ -1584,6 +1587,7 @@ export default function App() {
             showAlert={showAlert}
             showConfirm={showConfirm}
             showPrompt={showPrompt}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'profile' && (
@@ -1727,12 +1731,12 @@ function SplashScreen({ onNext, onLogin, onGuestBrowse }: { onNext: () => void, 
   };
 
   return (
-    <main className="relative h-screen w-full flex flex-col overflow-hidden font-sans antialiased text-brand-dark bg-white dark:bg-[#221610] dark:text-white">
+    <main className="relative min-h-screen w-full flex flex-col overflow-hidden font-sans antialiased text-brand-dark bg-white dark:bg-[#221610] dark:text-white">
       {/* Background Image Section */}
       <section className="absolute inset-0 z-0">
         <img
           alt="Delicious South African Kota with chips and toppings"
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover grayscale-[10%]"
           src="https://lh3.googleusercontent.com/aida-public/AB6AXuALAhJY_048XGlh8sNMGuww7VeuS2h3Og31s-hbNNwHFmTDaxjk8N-NQXrl-aJtTh6qzRJ1a08acjgvkI46WVBuMtsPK4Wb4uvAPENlBULnMLPADN_q4yUJxmWbpJBTvuNUsyCwdim2YO8lT-LWsvOU599-LeSw4NBONUWlIIlCdqU8rAq86Kz8L_9gOUyop73K2Uu4yq_46NeYWOUTqYJ6nS7GFVWqREEiIeSXyxXGJdwVOZwg2y7-MUGLlVI4HTtsM3_a6kMNbA"
           referrerPolicy="no-referrer"
         />
@@ -1740,71 +1744,58 @@ function SplashScreen({ onNext, onLogin, onGuestBrowse }: { onNext: () => void, 
         <div className="absolute inset-0 hero-gradient"></div>
       </section>
 
-      {/* Header Content */}
-      <header className="relative z-10 w-full px-6 pt-12 flex flex-col items-center">
-        <div className="status-bar-spacer"></div>
-        <LocalEatsLogo width={220} height={60} showBackground={true} />
-      </header>
+      <div className="relative z-10 flex-1 flex flex-col max-w-screen-xl mx-auto w-full">
+        {/* Header Content */}
+        <header className="w-full px-6 pt-12 flex flex-col items-center sm:items-start">
+          <div className="status-bar-spacer"></div>
+          <LocalEatsLogo width={220} height={60} showBackground={true} />
+        </header>
 
-      {/* Bottom Action Section */}
-      <section className="mt-auto relative z-10 w-full px-6 pb-12 bottom-inset">
-        {/* Value Proposition */}
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold text-white leading-tight">
-            Find the legendary <br />
-            <span className="text-brand-orange underline decoration-2 underline-offset-4">
-              Kota joints
-            </span>{" "}
-            near you.
-          </h2>
-          <p className="text-gray-200 mt-2 text-sm font-medium">
-            Fresh ingredients, street-style, delivered fast.
-          </p>
-        </div>
+        {/* Bottom Action Section */}
+        <section className="mt-auto w-full px-6 pb-12 bottom-inset max-w-2xl">
+          {/* Value Proposition */}
+          <div className="mb-8">
+            <h2 className="text-4xl md:text-5xl font-extrabold text-white leading-tight tracking-tight">
+              Find the legendary <br />
+              <span className="text-brand-orange underline decoration-4 underline-offset-8">
+                Kota joints
+              </span>{" "}
+              near you.
+            </h2>
+            <p className="text-gray-100 mt-4 text-base md:text-lg font-medium opacity-90">
+              Fresh ingredients, street-style, delivered fast by our bicycle fleet.
+            </p>
+          </div>
 
-        {/* Primary Action */}
-        <div className="w-full">
-          <button 
-            onClick={handleGetStarted}
-            className="w-full bg-brand-orange text-white py-4 rounded-2xl font-bold text-lg hover:bg-orange-600 transition-all shadow-xl active:scale-[0.98] flex items-center justify-center space-x-2 cursor-pointer"
-          >
-            <span>Get Started</span>
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
+          {/* Action Row */}
+          <div className="flex flex-col sm:flex-row gap-4 w-full">
+            <button 
+              onClick={handleGetStarted}
+              className="flex-1 bg-brand-orange text-white py-4 px-8 rounded-2xl font-bold text-lg hover:bg-orange-600 transition-all shadow-xl shadow-orange-950/20 active:scale-[0.98] flex items-center justify-center space-x-2 cursor-pointer"
             >
-              <path
-                d="M13 7l5 5m0 0l-5 5m5-5H6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2.5"
-              ></path>
-            </svg>
-          </button>
-        </div>
+              <span>Get Started</span>
+              <ArrowRight className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => { playClick(); onGuestBrowse(); }}
+              className="px-8 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-2xl font-bold transition-all active:scale-[0.95] cursor-pointer"
+            >
+              Explore as Guest
+            </button>
+          </div>
 
-        {/* Footer Links / Secondary Action */}
-        <div className="mt-6 flex justify-between items-center px-2">
-          <button
-            className="text-white/80 text-sm font-semibold hover:text-white transition-colors cursor-pointer"
-            onClick={handleSignIn}
-          >
-            Sign In
-          </button>
-          <button
-            className="text-white/80 text-sm font-semibold hover:text-white transition-colors cursor-pointer"
-            onClick={() => {
-              playClick();
-              onGuestBrowse();
-            }}
-          >
-            Browse as Guest
-          </button>
-        </div>
-      </section>
+          {/* Small Footer */}
+          <div className="mt-8 flex items-center gap-2">
+            <p className="text-white/60 text-sm">Have account already?</p>
+            <button
+              className="text-white font-bold text-sm hover:text-brand-orange underline underline-offset-4 transition-colors cursor-pointer"
+              onClick={handleSignIn}
+            >
+              Log In
+            </button>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
@@ -1825,25 +1816,25 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
 
   return (
     <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
-        <div className="flex items-center p-4 pb-2 justify-center mt-8">
-          <LocalEatsLogo width={160} height={42} />
-        </div>
-        <div className="px-6">
-          <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-[32px] font-bold leading-tight text-center pb-2 pt-6">Welcome</h1>
-          <p className="text-slate-600 dark:text-slate-400 text-center text-sm mb-6">Discover the best local flavors near you.</p>
-        </div>
-        <div className="pb-6 px-6">
-          <div className="flex border-b border-slate-200 dark:border-slate-800 justify-between">
-            <button onClick={onLogin} className="flex flex-col items-center justify-center border-b-[3px] border-transparent text-slate-500 dark:text-slate-400 pb-[13px] pt-4 flex-1 cursor-pointer">
-              <p className="text-sm font-bold leading-normal tracking-[0.015em]">Login</p>
-            </button>
-            <button className="flex flex-col items-center justify-center border-b-[3px] border-primary text-primary pb-[13px] pt-4 flex-1 cursor-pointer">
-              <p className="text-sm font-bold leading-normal tracking-[0.015em]">Sign Up</p>
-            </button>
+      <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
+        <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
+          <div className="flex items-center justify-center">
+            <LocalEatsLogo width={160} height={42} />
           </div>
-        </div>
-        <div className="flex flex-col gap-4 px-6 py-2">
+          <div className="text-center">
+            <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-3xl font-bold leading-tight pb-2">Welcome</h1>
+            <p className="text-slate-600 dark:text-slate-400 text-sm">Discover the best local flavors near you.</p>
+          </div>
+          <div className="w-full">
+            <div className="flex border-b border-slate-200 dark:border-slate-800 justify-between mb-6">
+              <button onClick={onLogin} className="flex flex-col items-center justify-center border-b-[3px] border-transparent text-slate-500 dark:text-slate-400 pb-[13px] pt-4 flex-1 cursor-pointer">
+                <p className="text-sm font-bold leading-normal tracking-[0.015em]">Login</p>
+              </button>
+              <button className="flex flex-col items-center justify-center border-b-[3px] border-primary text-primary pb-[13px] pt-4 flex-1 cursor-pointer">
+                <p className="text-sm font-bold leading-normal tracking-[0.015em]">Sign Up</p>
+              </button>
+            </div>
+            <div className="flex flex-col gap-5">
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Full Name</p>
             <div className="relative">
@@ -1940,6 +1931,8 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
         </div>
       </div>
     </div>
+  </div>
+</div>
   );
 }
 
@@ -2283,7 +2276,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
 
   return (
     <div className="bg-white dark:bg-[#1a110c] font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
-      <div className="flex-1 flex flex-col w-full overflow-x-hidden pb-24">
+      <div className="flex-1 flex flex-col w-full max-w-screen-xl mx-auto overflow-x-hidden pb-24 relative">
         {/* Top App Bar */}
         <div className="flex items-center bg-white dark:bg-[#1a110c] p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
           <button onClick={onBack} className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer">
@@ -2293,7 +2286,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
         </div>
 
         {/* Profile Photo Section */}
-        <div className="flex p-8">
+        <div className="flex p-8 max-w-md mx-auto w-full">
           <input
             type="file"
             accept="image/*"
@@ -2375,15 +2368,14 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
               </div>
             </label>
 
-            <label className="block">
-              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">City</span>
-              <div className="relative group">
-                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
+            <label className="block opacity-60">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">City (Only Serving Tembisa)</span>
+              <div className="relative">
+                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
-                  placeholder="e.g. Tembisa" 
+                  value={SUPPORTED_CITY}
+                  disabled
+                  className="w-full rounded-2xl text-slate-400 border-2 border-slate-100 dark:border-slate-900 bg-slate-100 dark:bg-slate-950 h-14 pl-12 pr-4 text-base font-medium cursor-not-allowed" 
                   type="text"
                 />
               </div>
@@ -2422,7 +2414,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
           </button>
         </div>
       </div>
-  );
+    );
 }
 
 function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: NotificationState) => void }) {
@@ -2482,47 +2474,49 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
-        {/* Logo Section */}
-        <div className="flex items-center p-4 pb-2 justify-center mt-8">
-          <LocalEatsLogo width={160} height={42} />
-        </div>
-        {/* Welcome Header */}
-        <div className="px-6">
-          <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-[32px] font-bold leading-tight text-center pb-2 pt-6">Welcome Back</h1>
-          <p className="text-slate-600 dark:text-slate-400 text-center text-sm mb-6">Log in to order your favorite local meals.</p>
-        </div>
-        {/* Tabs */}
-        <div className="pb-6 px-6">
-          <div className="flex border-b border-slate-200 dark:border-slate-800 justify-between">
-            <button className="flex flex-col items-center justify-center border-b-[3px] border-primary text-primary pb-[13px] pt-4 flex-1 cursor-pointer">
-              <p className="text-sm font-bold leading-normal tracking-[0.015em]">Login</p>
-            </button>
-            <button onClick={onSignUp} className="flex flex-col items-center justify-center border-b-[3px] border-transparent text-slate-500 dark:text-slate-400 pb-[13px] pt-4 flex-1 cursor-pointer">
-              <p className="text-sm font-bold leading-normal tracking-[0.015em]">Sign Up</p>
-            </button>
+    <div className="bg-white dark:bg-[#221610] font-sans text-slate-900 dark:text-slate-100 min-h-screen">
+      <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
+        <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
+          {/* Logo Section */}
+          <div className="flex items-center justify-center">
+            <LocalEatsLogo width={160} height={42} />
           </div>
-        </div>
-        {/* Login Type Toggle */}
-        <div className="px-6 py-2">
-          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-            <button 
-              onClick={() => setLoginType('email')}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'email' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
-            >
-              Email
-            </button>
-            <button 
-              onClick={() => setLoginType('phone')}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'phone' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
-            >
-              Phone
-            </button>
+          {/* Welcome Header */}
+          <div className="text-center">
+            <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-3xl font-bold leading-tight pb-2">Welcome Back</h1>
+            <p className="text-slate-600 dark:text-slate-400 text-sm">Log in to order your favorite local meals.</p>
           </div>
-        </div>
-        {/* Form Fields */}
-        <div className="flex flex-col gap-4 px-6 py-2">
+          {/* Tabs */}
+          <div className="w-full">
+            <div className="flex border-b border-slate-200 dark:border-slate-800 justify-between mb-6">
+              <button className="flex flex-col items-center justify-center border-b-[3px] border-primary text-primary pb-[13px] pt-4 flex-1 cursor-pointer">
+                <p className="text-sm font-bold leading-normal tracking-[0.015em]">Login</p>
+              </button>
+              <button onClick={onSignUp} className="flex flex-col items-center justify-center border-b-[3px] border-transparent text-slate-500 dark:text-slate-400 pb-[13px] pt-4 flex-1 cursor-pointer">
+                <p className="text-sm font-bold leading-normal tracking-[0.015em]">Sign Up</p>
+              </button>
+            </div>
+          
+            {/* Login Type Toggle */}
+            <div className="mb-6">
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                <button 
+                  onClick={() => setLoginType('email')}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'email' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
+                >
+                  Email
+                </button>
+                <button 
+                  onClick={() => setLoginType('phone')}
+                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'phone' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
+                >
+                  Phone
+                </button>
+              </div>
+            </div>
+
+            {/* Form Fields */}
+            <div className="flex flex-col gap-5">
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">{loginType === 'email' ? 'Email' : 'Phone Number'}</p>
             <div className="relative">
@@ -2637,6 +2631,8 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
         </div>
       </div>
     </div>
+  </div>
+</div>
   );
 }
 
@@ -2738,21 +2734,15 @@ const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
   );
 };
 
-function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string }) {
-  const isUpdateAvailable = false; // Added as a temporary fix
+function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, currentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion, triggerHaptic }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, currentScreen: Screen, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string, triggerHaptic: (pattern?: number | number[]) => void }) {
+  const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<string[]>([]);
-  const [selectedItemForQuantity, setSelectedItemForQuantity] = useState<MenuItem | null>(null);
-
-  const toggleExpand = (itemId: string) => {
-    setExpandedItems(prev => 
-      prev.includes(itemId) ? prev.filter(id => id !== itemId) : [...prev, itemId]
-    );
-  };
+  
+  const activeOrders = orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled' && o.status !== 'delivered');
 
   const categories = ['All', 'Favorites', 'Nearby', ...new Set(shops.map(s => s.category))];
 
@@ -2765,7 +2755,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
     if (selectedCategory === 'All') {
       matchesCategory = true;
     } else if (selectedCategory === 'Favorites') {
-      matchesCategory = favorites.includes(shop.id.toString());
+      matchesCategory = favorites.includes(shop.id);
     } else if (selectedCategory === 'Nearby') {
       matchesCategory = true; // We'll sort these
     } else {
@@ -2775,7 +2765,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
     const matchesRating = shop.rating >= minRating;
     const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
     
-    return matchesSearch && matchesCategory && matchesRating && matchesOpen && favorites.includes(shop.id.toString());
+    return matchesSearch && matchesCategory && matchesRating && matchesOpen;
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
@@ -3031,6 +3021,11 @@ CREATE TABLE IF NOT EXISTS reviews (
 );
 
 -- 6. Create orders table
+-- Run this if you get check constraint errors for delivery_status:
+-- ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_delivery_status_check;
+-- UPDATE orders SET delivery_status = 'none' WHERE delivery_status IS NULL OR delivery_status NOT IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed');
+-- ALTER TABLE orders ADD CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed'));
+
 CREATE TABLE IF NOT EXISTS orders (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id uuid,
@@ -3051,8 +3046,9 @@ CREATE TABLE IF NOT EXISTS orders (
   is_delivery boolean DEFAULT false,
   delivery_fee numeric DEFAULT 0,
   rider_id uuid,
-  delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled')),
-  created_at timestamptz DEFAULT now()
+  delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed')),
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- 7. Create rider_profiles table
@@ -3091,7 +3087,7 @@ VALUES
   }
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
       {isUpdateAvailable && (
         <button
           onClick={() => window.location.reload()}
@@ -3102,10 +3098,17 @@ VALUES
         </button>
       )}
       {/* TopBar */}
-      <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md px-4 py-3 flex items-center justify-between shadow-sm sticky top-0 z-50 border-b border-primary/5">
-        <div className="flex items-center gap-1">
-          <LocalEatsLogo width={140} height={36} />
-          <span className="text-[8px] text-slate-400 opacity-50 ml-1">v{appVersion}</span>
+      <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
+        <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex flex-col">
+          <div className="flex items-center gap-1">
+            <LocalEatsLogo width={120} height={32} />
+            <span className="text-[8px] text-slate-400 opacity-50 ml-1">v{appVersion}</span>
+          </div>
+          <div className="flex items-center gap-1.5 ml-1 mt-0.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+            <p className="text-[8px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400">Serving Tembisa Only</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -3151,9 +3154,31 @@ VALUES
             )}
           </div>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <main className="flex-grow flex flex-col p-4 overflow-y-auto">
+      <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
+        {activeOrders.length > 0 && (
+          <div className="mb-6 animate-in slide-in-from-top-4 duration-500">
+            <button 
+              onClick={() => { triggerHaptic(); setCurrentScreen('order-tracking'); }}
+              className="w-full bg-slate-900 dark:bg-orange-600 rounded-[32px] p-4 flex items-center justify-between shadow-xl shadow-slate-200 dark:shadow-none hover:translate-y-[-2px] active:scale-95 transition-all text-white relative overflow-hidden group"
+            >
+              <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div className="flex items-center gap-4 relative z-10">
+                <div className="size-12 bg-white/20 rounded-2xl flex items-center justify-center animate-pulse">
+                  <Package className="w-6 h-6" />
+                </div>
+                <div className="text-left">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 decoration-white/20 underline decoration-2 underline-offset-4 mb-0.5">Active Order</p>
+                  <p className="text-[15px] font-black tracking-tight">{activeOrders.length} order{activeOrders.length > 1 ? 's' : ''} in progress...</p>
+                </div>
+              </div>
+              <ChevronRight className="w-6 h-6 opacity-60 mr-2" />
+            </button>
+          </div>
+        )}
+
         {/* SearchSection */}
         <section className="mb-4">
               <div className="relative group">
@@ -3161,12 +3186,18 @@ VALUES
                   <Search className="h-5 w-5 text-gray-400 dark:text-slate-500" />
                 </div>
                 <input 
-                  className="block w-full pl-10 pr-3 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500" 
+                  className="block w-full pl-10 pr-12 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500" 
                   placeholder="Search for the best Tembisa Kotas..." 
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                <button 
+                  onClick={() => setSelectedCategory(selectedCategory === 'Favorites' ? 'All' : 'Favorites')}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all cursor-pointer ${selectedCategory === 'Favorites' ? 'bg-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-orange-500'}`}
+                >
+                  <Heart className={`w-5 h-5 ${selectedCategory === 'Favorites' ? 'fill-current' : ''}`} />
+                </button>
               </div>
             </section>
 
@@ -3224,63 +3255,14 @@ VALUES
                     <div 
                       key={shop.id}
                       onClick={() => onStoreInfo(shop.id)}
-                      className="flex flex-col items-center gap-2 shrink-0 w-24 group cursor-pointer"
+                      className="flex flex-col items-center gap-2 shrink-0 w-20 group cursor-pointer"
                     >
-                      <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-orange-500 to-yellow-400 shadow-lg group-active:scale-95 transition-transform">
+                      <div className="w-16 h-16 rounded-full p-1 bg-gradient-to-tr from-orange-500 to-yellow-400 shadow-lg group-active:scale-95 transition-transform">
                         <div className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 overflow-hidden">
                           <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
                         </div>
                       </div>
-                      <span className="text-[10px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* Quick Start Guide for New Users / Discover */}
-            {favorites.length === 0 && (
-              <section className="mb-6 px-1 animate-in fade-in slide-in-from-left-4 duration-700">
-                <div className="bg-gradient-to-br from-orange-500 to-orange-600 p-6 rounded-[32px] shadow-xl shadow-orange-200 dark:shadow-none relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-110 transition-transform duration-700"></div>
-                  <div className="relative z-10">
-                    <h3 className="text-white text-xl font-black tracking-tight mb-2">Discover Tembisa's Best! 🇿🇦</h3>
-                    <p className="text-white/90 text-xs font-medium leading-relaxed mb-4">
-                      You haven't followed any shops yet. Start your journey by exploring local favorites!
-                    </p>
-                    <button 
-                      onClick={onDiscover}
-                      className="bg-white text-orange-600 px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer"
-                    >
-                      Discover Shops
-                    </button>
-                  </div>
-                  <div className="absolute bottom-0 right-4 opacity-20 group-hover:scale-110 transition-transform duration-700">
-                    <Store className="w-24 h-24 text-white" />
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Favorites Carousel */}
-            {favorites.length > 0 && (
-              <section className="mb-6">
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Your Favorites</h3>
-                </div>
-                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 px-1">
-                  {shops.filter(s => favorites.includes(s.id)).map(shop => (
-                    <div 
-                      key={shop.id}
-                      onClick={() => onStoreInfo(shop.id)}
-                      className="flex flex-col items-center gap-2 shrink-0 w-24 group cursor-pointer"
-                    >
-                      <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-red-500 to-pink-400 shadow-lg group-active:scale-95 transition-transform">
-                        <div className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 overflow-hidden">
-                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
+                      <span className="text-[9px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
                     </div>
                   ))}
                 </div>
@@ -3289,39 +3271,57 @@ VALUES
 
             {/* Followed Stores */}
             <section className="mb-24">
-              <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest mb-4 ml-1">All Local Shops</h3>
-              <div className="grid grid-cols-1 gap-4">
-                {sortedShops.map((shop) => {
+              <div className="flex items-center justify-between mb-2 px-1">
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Local Merchants</h3>
+                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2 py-0.5 rounded-full">{sortedShops.length} Online</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {sortedShops.map((shop, index) => {
                   const isFollowed = favorites.includes(shop.id);
+                  const status = getShopStatus(shop);
+                  
                   return (
                     <div 
                       key={shop.id}
-                      onClick={() => onStoreInfo(shop.id)}
-                      className="bg-white dark:bg-slate-900 rounded-3xl p-4 flex items-center gap-4 border border-gray-100 dark:border-slate-800 shadow-sm active:scale-[0.98] transition-all relative group"
+                      onClick={() => {
+                        triggerHaptic();
+                        onStoreInfo(shop.id);
+                      }}
+                      className={`flex items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-2xl transition-all cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm`}
                     >
-                      <div className="w-20 h-20 rounded-2xl overflow-hidden shrink-0">
-                        <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                      {/* Shop Logo (WhatsApp Circle Style) */}
+                      <div className="relative shrink-0">
+                        <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${status.isOpen ? 'border-green-500' : 'border-slate-300 dark:border-slate-700'}`}>
+                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                        </div>
+                        {status.isOpen && (
+                          <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-slate-900 rounded-full"></div>
+                        )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-start">
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-sm font-black text-slate-900 dark:text-white truncate">{shop.name}</h4>
-                            {isFollowed && (
-                              <div className="bg-red-50 dark:bg-red-500/10 p-1 rounded-full">
-                                <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-0.5">
+
+                      {/* Shop Info (Chat Preview Style) */}
+                      <div className="flex-1 min-w-0 py-1">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <h4 className="text-[15px] font-black text-slate-900 dark:text-white truncate pr-2">{shop.name}</h4>
+                          <div className="flex items-center gap-1 shrink-0">
                             <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                            <span className="text-xs font-black text-slate-900 dark:text-white">{shop.rating}</span>
+                            <span className="text-[11px] font-black text-slate-900 dark:text-white">{shop.rating}</span>
                           </div>
                         </div>
-                        <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-1 mt-0.5">{shop.description}</p>
-                        <div className="flex items-center justify-between mt-2">
-                          <TrustBadge shop={shop} />
+                        
+                        <div className="flex justify-between items-center">
+                          <p className="text-[13px] text-slate-500 dark:text-slate-400 line-clamp-1 flex-1">
+                            {shop.category} • {shop.description}
+                          </p>
                           {isFollowed && (
-                            <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">Following</span>
+                            <Heart className="w-3 h-3 text-red-500 fill-current ml-2 shrink-0 opacity-60" />
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center gap-2 mt-1.5 overflow-hidden">
+                          <TrustBadge shop={shop} />
+                          {!status.isOpen && (
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Opens {status.nextOpeningTime || 'Soon'}</span>
                           )}
                         </div>
                       </div>
@@ -3354,8 +3354,9 @@ VALUES
       </main>
 
       {/* BottomNavigation */}
-      <nav className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 px-6 py-2 pb-6 flex justify-around items-center sticky bottom-0 z-40">
-        <button className="flex flex-col items-center gap-1 text-orange-600 cursor-pointer">
+      <div className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 sticky bottom-0 z-40">
+        <nav className="max-w-screen-xl mx-auto px-6 py-2 pb-6 flex justify-around items-center">
+          <button className="flex flex-col items-center gap-1 text-orange-600 cursor-pointer">
           <div className="p-1 rounded-xl bg-orange-50 dark:bg-orange-500/10">
             <Home className="w-6 h-6" />
           </div>
@@ -3373,9 +3374,34 @@ VALUES
           </div>
           <span className="text-xs font-semibold">Explore</span>
         </button>
+          <button 
+            onClick={() => {
+              if (activeOrders.length > 0) {
+                setCurrentScreen('order-tracking');
+              } else {
+                onOrderHistory();
+              }
+              triggerHaptic();
+            }}
+            className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${currentScreen === 'order-tracking' || currentScreen === 'order-history' ? 'text-orange-600' : 'text-gray-400 dark:text-slate-500 hover:text-orange-500'}`}
+          >
+            <div className={`p-1 rounded-xl ${currentScreen === 'order-tracking' || currentScreen === 'order-history' ? 'bg-orange-50 dark:bg-orange-500/10' : ''}`}>
+              <ClipboardList className="w-6 h-6" />
+            </div>
+            <span className="text-xs font-semibold">Orders</span>
+          </button>
+        {userProfile.role === 'shop_owner' && (
+          <button onClick={() => { setCurrentScreen('shop-dashboard'); triggerHaptic(); }} className="flex flex-col items-center gap-1 text-gray-400 dark:text-slate-500 hover:text-orange-500 transition-colors cursor-pointer">
+            <div className="p-1">
+              <Bike className="w-6 h-6" />
+            </div>
+            <span className="text-xs font-semibold">Riders</span>
+          </button>
+        )}
       </nav>
     </div>
-  );
+  </div>
+    );
 }
 
 function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm }: { 
@@ -3443,7 +3469,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         customer_name: userProfile.fullName,
         phone: userProfile.phone,
         email: userProfile.email,
-        city: userProfile.city,
+        city: SUPPORTED_CITY,
         address: userProfile.address,
         country: userProfile.country,
         product_name: item.name,
@@ -3455,7 +3481,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         payment_method: paymentMethod,
         is_delivery: deliveryType === 'delivery',
         delivery_fee: deliveryType === 'delivery' ? DELIVERY_FEE : 0,
-        delivery_status: deliveryType === 'delivery' ? 'finding_rider' : 'none'
+        delivery_status: 'none' // Changed from 'pending' to 'none' to fix constraint violation
       }));
 
       console.log('Submitting order with delivery info:', orderData);
@@ -3485,7 +3511,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen">
+    <main className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex h-auto w-full max-w-md mx-auto flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
         {/* Header */}
         <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
@@ -3579,7 +3605,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                       {userProfile.address || 'No Address Set'}
                     </p>
                     <p className="text-slate-500 dark:text-slate-400 text-sm font-normal mt-1 leading-tight">
-                      {userProfile.city || 'Tembisa'}, {userProfile.country}
+                      {SUPPORTED_CITY}, {userProfile.country}
                     </p>
                   </div>
                 </div>
@@ -3675,7 +3701,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 
@@ -3691,53 +3717,58 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
   const shopDisplay = shopNames.length > 1 ? "multiple stores" : (shopNames[0] || "the store");
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col items-center justify-center p-6 text-center">
-      <div className="relative mb-10 flex items-center justify-center">
-        <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
-        <div className="relative h-48 w-48 rounded-full bg-primary/10 flex items-center justify-center">
-          <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
-            <Check className="w-16 h-16 text-white" />
+    <div className="bg-white dark:bg-[#1a110c] font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col items-center justify-center p-6 text-center">
+      <div className="max-w-2xl mx-auto w-full flex flex-col items-center py-12">
+        <div className="relative mb-12 flex items-center justify-center">
+          <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
+          <div className="relative h-48 w-48 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/5">
+            <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-2xl shadow-primary/40 animate-in zoom-in duration-500">
+              <Check className="w-16 h-16 text-white" strokeWidth={4} />
+            </div>
           </div>
         </div>
+
+        <h1 className="text-4xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-white uppercase italic mb-4">Order Placed!</h1>
+        <p className="text-slate-600 dark:text-slate-400 text-lg md:text-xl font-medium mb-12 max-w-md mx-auto">
+          Your order for <span className="text-primary font-bold">R {totalAmount.toFixed(2)}</span> has been sent to {shopDisplay}.
+        </p>
+
+        <div className="w-full max-w-screen-md grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5">
+            <div className="size-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary shrink-0">
+              <Clock className="w-8 h-8" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-primary uppercase tracking-widest mb-1">Time Estimate</p>
+              <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">Ready in 15-20 mins</p>
+              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Collection or Delivery pending</p>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5">
+            <div className="size-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary shrink-0">
+              <Banknote className="w-8 h-8" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Payment</p>
+              <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">Pay at Store</p>
+              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Cash or Card on arrival</p>
+            </div>
+          </div>
+        </div>
+
+        <button 
+          onClick={onHome} 
+          className="w-full max-w-sm bg-slate-900 dark:bg-orange-600 text-white font-black py-5 px-8 rounded-2xl shadow-2xl hover:bg-orange-600 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-3 text-lg"
+        >
+          <Home className="w-6 h-6" />
+          BACK TO HOME
+        </button>
       </div>
-
-      <h1 className="text-3xl font-bold mb-4">Order Placed!</h1>
-      <p className="text-slate-600 dark:text-slate-400 text-lg mb-8 max-w-xs mx-auto">
-        Your order for <span className="text-primary font-bold">R {totalAmount.toFixed(2)}</span> has been sent to {shopDisplay}.
-      </p>
-
-      <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 mb-10">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="size-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-bold text-primary uppercase tracking-wider">Ready in 15-20 mins</p>
-            <p className="text-slate-500 text-xs">Please head to the store for collection</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="size-12 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-            <Banknote className="w-5 h-5" />
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">Pay at Store</p>
-            <p className="text-slate-500 text-xs">Cash or Card accepted on arrival</p>
-          </div>
-        </div>
-      </div>
-
-      <button 
-        onClick={onHome}
-        className="w-full max-w-sm bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl shadow-xl shadow-primary/20 transition-all active:scale-95 cursor-pointer"
-      >
-        Back to Home
-      </button>
     </div>
   );
 }
 
-function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert }: { 
+function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert, setCurrentScreen }: { 
   shops: Shop[], 
   onHome: () => void, 
   onExplore: () => void, 
@@ -3745,7 +3776,8 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   toggleFavorite: (shopId: string) => void, 
   onSelectShop: (shopId: string) => void, 
   userLocation: { lat: number, lng: number } | null,
-  showAlert: (title: string, message: string) => void
+  showAlert: (title: string, message: string) => void,
+  setCurrentScreen: (screen: Screen) => void
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -3753,13 +3785,22 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   
-  const categories = ['All', 'Nearby', ...new Set(shops.map(s => s.category))];
+  const categories = ['All', 'Favorites', 'Nearby', ...new Set(shops.map(s => s.category))];
   
   const filteredShops = shops.filter(shop => {
     const query = searchQuery.trim().toLowerCase();
     const shopText = `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
     const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
-    const matchesCategory = selectedCategory === 'All' || selectedCategory === 'Nearby' || shop.category === selectedCategory;
+    
+    let matchesCategory = false;
+    if (selectedCategory === 'All' || selectedCategory === 'Nearby') {
+      matchesCategory = true;
+    } else if (selectedCategory === 'Favorites') {
+      matchesCategory = favorites.includes(shop.id);
+    } else {
+      matchesCategory = shop.category === selectedCategory;
+    }
+    
     const matchesRating = shop.rating >= minRating;
     const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
     return matchesSearch && matchesCategory && matchesRating && matchesOpen;
@@ -3780,10 +3821,10 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   });
 
   return (
-    <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
       {/* TopAppBar */}
       <header className="bg-[#f6f6f9] dark:bg-slate-900 w-full top-0 sticky z-40 transition-opacity duration-200">
-        <div className="flex justify-between items-center px-6 py-4 w-full">
+        <div className="flex justify-between items-center px-6 py-4 w-full max-w-screen-xl mx-auto">
           <div className="flex items-center gap-4">
             <button onClick={onHome} className="text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer">
               <ArrowLeft className="w-6 h-6" />
@@ -3804,7 +3845,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         </div>
       </header>
       
-      <main className="pb-32 flex-grow overflow-y-auto">
+      <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
@@ -3877,7 +3918,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         
         {/* Store Grid or Map */}
         {viewMode === 'list' ? (
-          <section className="px-6 grid grid-cols-1 gap-8">
+          <section className="px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {sortedShops.map(shop => {
               const isFollowing = favorites.includes(shop.id);
               return (
@@ -3906,9 +3947,17 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                         </div>
                         <div>
                           <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
-                          <p className="text-[#5a5c5e] dark:text-slate-400 text-sm">{shop.address}</p>
+                          <p className="text-[#5a5c5e] dark:text-slate-400 text-xs mb-1">{shop.address}</p>
+                          {getShopStatus(shop).isOpen === false && (
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Opens {getShopStatus(shop).nextOpeningTime || 'Soon'}</p>
+                          )}
                         </div>
                       </div>
+                      {!getShopStatus(shop).isOpen && (
+                        <div className="bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-tighter">
+                          Closed
+                        </div>
+                      )}
                     </div>
                     
                     <div className="mb-6">
@@ -3977,9 +4026,9 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         </section>
       </main>
       
-      {/* BottomNavBar */}
-      <nav className="fixed bottom-0 w-full max-w-md rounded-t-[2rem] z-50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-[0_-8px_32px_rgba(45,47,49,0.06)]">
-        <div className="flex justify-around items-center px-6 pb-8 pt-4">
+      <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
+        <nav className="mx-auto w-full max-w-md md:max-w-xl rounded-t-[2rem] bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-[0_-8px_32px_rgba(45,47,49,0.06)] pointer-events-auto">
+          <div className="flex justify-around items-center px-6 pb-8 pt-4">
           <button onClick={onHome} className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer">
             <Home className="w-6 h-6 mb-1" />
             <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Home</span>
@@ -3995,6 +4044,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         </div>
       </nav>
     </div>
+  </div>
   );
 }
 
@@ -4268,7 +4318,7 @@ function RestaurantSchema({ shop }: { shop: Shop }) {
   );
 }
 
-function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm }: { 
+function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm, setCurrentScreen }: { 
   onBack: () => void, 
   shop: Shop, 
   isFavorite: boolean, 
@@ -4278,7 +4328,8 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   onSignUp: () => void, 
   addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
+  setCurrentScreen: (screen: Screen) => void
 }) {
   const [activeTab, setActiveTab] = useState<'menu' | 'reviews' | 'info'>('menu');
   const [searchQuery, setSearchQuery] = useState('');
@@ -4361,11 +4412,12 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-gray-900 dark:text-white antialiased min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-[#221610] text-gray-900 dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl">
       <RestaurantSchema shop={shop} />
       {/* TopAppBar */}
-      <header className="sticky top-0 z-50 flex items-center px-4 h-16 bg-white dark:bg-[#221610] w-full border-b border-gray-100 dark:border-slate-800">
-        <div className="flex items-center w-full">
+      <header className="sticky top-0 z-50 flex items-center bg-white dark:bg-[#221610] w-full border-b border-gray-100 dark:border-slate-800">
+        <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
+          <div className="flex items-center">
           <button 
             onClick={(e) => {
               e.preventDefault();
@@ -4404,32 +4456,35 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
             </button>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <main className="pb-12 px-4 flex-grow overflow-y-auto">
-        {/* Hero Section: Logo and Rating */}
-        <section className="mb-8 flex flex-col items-center">
-          {!session && (
-            <div className="w-full mb-6 p-4 bg-orange-50 dark:bg-orange-900/20 rounded-2xl border border-orange-100 dark:border-orange-800/50 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500">
-              <div className="flex items-center gap-3">
-                <div className="size-10 bg-orange-100 dark:bg-orange-800 rounded-full flex items-center justify-center text-orange-600">
-                  <User className="w-5 h-5" />
+      <main className="pb-12 px-4 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
+        {/* Responsive Flex Hero for Desktop */}
+        <section className="mb-8 flex flex-col md:flex-row md:items-center md:gap-12 md:py-10">
+          <div className="w-full md:w-auto">
+            {!session && (
+              <div className="w-full mb-6 p-4 bg-orange-50 dark:bg-orange-900/20 rounded-2xl border border-orange-100 dark:border-orange-800/50 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="flex items-center gap-3">
+                  <div className="size-10 bg-orange-100 dark:bg-orange-800 rounded-full flex items-center justify-center text-orange-600">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">New here?</p>
+                    <p className="text-[10px] text-slate-500">Sign up to follow {shop.name}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">New here?</p>
-                  <p className="text-[10px] text-slate-500">Sign up to follow {shop.name}</p>
-                </div>
+                <button 
+                  onClick={onSignUp}
+                  className="px-4 py-2 bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-orange-600/10 active:scale-95 transition-all cursor-pointer"
+                >
+                  Sign Up
+                </button>
               </div>
-              <button 
-                onClick={onSignUp}
-                className="px-4 py-2 bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-orange-600/10 active:scale-95 transition-all cursor-pointer"
-              >
-                Sign Up
-              </button>
-            </div>
-          )}
-          <div className="relative mb-6">
-            <div className="w-32 h-32 rounded-full bg-white dark:bg-slate-800 shadow-lg flex items-center justify-center p-2 border-4 border-orange-100 dark:border-orange-500/20">
+            )}
+          </div>
+          <div className="relative mb-6 md:mb-0 shrink-0 self-center">
+            <div className="w-32 h-32 md:w-48 md:h-48 rounded-full bg-white dark:bg-slate-800 shadow-lg flex items-center justify-center p-2 border-4 border-orange-100 dark:border-orange-500/20">
               <img alt={shop.name} className="w-full h-full rounded-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
             </div>
             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-md flex items-center space-x-1 border border-gray-100 dark:border-slate-700">
@@ -4437,21 +4492,23 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
               <span className="text-sm font-bold text-gray-900 dark:text-white">{shop.rating}</span>
             </div>
           </div>
-          <div className="text-center">
-            <h2 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">{shop.name}</h2>
-            <p className="text-slate-500 text-sm font-medium mb-4">{shop.address}</p>
+          <div className="text-center md:text-left flex-grow">
+            <h2 className="text-2xl md:text-4xl font-black text-gray-900 dark:text-white tracking-tight">{shop.name}</h2>
+            <p className="text-slate-500 text-sm md:text-base font-medium mb-4">{shop.address}</p>
             
-            <button 
-              onClick={() => {
-                const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
-                window.open(url, '_blank');
-              }}
-              className="flex items-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all cursor-pointer mb-6"
-            >
-              <Navigation className="w-4 h-4" />
-              Get Directions
-            </button>
-            <p className="text-gray-500 dark:text-slate-400 font-medium mt-1">{shop.category} • Tembisa</p>
+            <div className="flex flex-col md:flex-row items-center gap-4">
+              <button 
+                onClick={() => {
+                  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
+                  window.open(url, '_blank');
+                }}
+                className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all cursor-pointer"
+              >
+                <Navigation className="w-4 h-4" />
+                Get Directions
+              </button>
+              <p className="text-gray-500 dark:text-slate-400 font-medium">{shop.category} • Tembisa</p>
+            </div>
           </div>
         </section>
 
@@ -4488,7 +4545,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 />
               </div>
 
-              <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredMenu.length > 0 ? (
                   filteredMenu.map((item) => (
                     <div key={item.id} className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all">
@@ -4496,22 +4553,42 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                         <BlurUpImage src={item.image} alt={item.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
                       </div>
                       <div className="flex-1 flex flex-col justify-between py-0.5">
-                        <div>
-                          <h4 className="font-bold text-sm text-slate-900 dark:text-white">{item.name}</h4>
-                          <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">Freshly prepared local favourite</p>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-tight">{item.name}</h4>
+                              {item.customizations && item.customizations.length > 0 && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 rounded text-[8px] font-black text-orange-600 uppercase tracking-tighter" title="Customizable">
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  <span>Customizable</span>
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{item.description || 'Freshly prepared local favourite'}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between mt-auto">
                           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
                           <button 
-                            onClick={() => {
-                              if (shop.isOpen === false) return;
-                              setSelectedItemForQuantity(item);
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const status = getShopStatus(shop);
+                              if (!status.isOpen) {
+                                showAlert('Closed', `This store is currently closed. ${status.message}`);
+                                return;
+                              }
+                              if (!session) {
+                                showAlert('Login Required', 'Please sign in to place an order.');
+                                onSignUp();
+                                return;
+                              }
+                              addToCart(item, shop.id, 1);
+                              setCurrentScreen('checkout');
                             }}
-                            disabled={shop.isOpen === false}
-                            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${shop.isOpen === false ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 active:scale-95 cursor-pointer'}`}
+                            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 active:scale-95 cursor-pointer'}`}
                           >
-                            <span>{shop.isOpen === false ? 'Closed' : 'Buy'}</span>
-                            {shop.isOpen !== false && <Plus className="w-3 h-3" />}
+                            <span>{getShopStatus(shop).isOpen ? 'Buy' : 'Closed'}</span>
+                            {getShopStatus(shop).isOpen && <Plus className="w-3 h-3" />}
                           </button>
                         </div>
                       </div>
@@ -4800,22 +4877,24 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       : [-25.9964, 28.2268];
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans max-w-md mx-auto relative shadow-2xl overflow-hidden">
+    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
       {/* Search Overlay */}
       <div className="absolute top-6 left-4 right-4 z-[1000]">
-        <div className="bg-white dark:bg-slate-900/90 backdrop-blur-md rounded-full shadow-xl flex items-center px-4 py-3 border border-gray-100 dark:border-slate-800">
-          <Search className="w-5 h-5 text-gray-400 mr-3" />
-          <input 
-            type="text" 
-            placeholder="Search for food spots..." 
-            className="flex-grow outline-none text-sm font-medium bg-transparent"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-3"></div>
-          <button className="text-orange-500" onClick={onRequestLocation}>
-            {userLocation ? <LocateFixed className="w-5 h-5" /> : <Locate className="w-5 h-5" />}
-          </button>
+        <div className="max-w-screen-xl mx-auto">
+          <div className="bg-white dark:bg-slate-900/90 backdrop-blur-md rounded-full shadow-xl flex items-center px-4 py-3 border border-gray-100 dark:border-slate-800 max-w-lg md:mx-auto">
+            <Search className="w-5 h-5 text-gray-400 mr-3" />
+            <input 
+              type="text" 
+              placeholder="Search for food spots..." 
+              className="flex-grow outline-none text-sm font-medium bg-transparent"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-3"></div>
+            <button className="text-orange-500" onClick={onRequestLocation}>
+              {userLocation ? <LocateFixed className="w-5 h-5" /> : <Locate className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -4863,13 +4942,15 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
         </MapContainer>
 
         {/* Floating Action Buttons */}
-        <div className="absolute bottom-24 right-4 z-[1000] flex flex-col gap-3">
-          <button onClick={onHome} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer">
-            <Home className="w-6 h-6" />
-          </button>
-          <button onClick={onRequestLocation} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer">
-            <LocateFixed className="w-6 h-6" />
-          </button>
+        <div className="absolute bottom-24 left-0 right-0 z-[1000] pointer-events-none">
+          <div className="max-w-screen-xl mx-auto flex flex-col items-end gap-3 px-6">
+            <button onClick={onHome} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer pointer-events-auto">
+              <Home className="w-6 h-6" />
+            </button>
+            <button onClick={onRequestLocation} className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer pointer-events-auto">
+              <LocateFixed className="w-6 h-6" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -4940,8 +5021,9 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       </AnimatePresence>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-gray-100 px-6 py-3 flex justify-around items-center max-w-md mx-auto z-50">
-        <button onClick={onHome} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
+      <div className="fixed bottom-0 left-0 right-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-100 dark:border-slate-800 z-50">
+        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center">
+          <button onClick={onHome} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
             <Home className="w-6 h-6" />
           </div>
@@ -4961,7 +5043,8 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
         </button>
       </div>
     </div>
-  );
+  </div>
+    );
 }
 
 function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { notifications: AppNotification[], onBack: () => void, onRead: (id: string) => void, onDelete: (id: string) => void }) {
@@ -5503,22 +5586,44 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   );
 }
 
-function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt }: { 
+function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic }: { 
   onBack: () => void, 
   orderAcceptedModal: { isOpen: boolean, productName: string, ownerMessage: string }, 
   setOrderAcceptedModal: Dispatch<SetStateAction<{ isOpen: boolean, productName: string, ownerMessage: string }>>,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
-  showPrompt: (title: string, message: string, onConfirm: (value: string) => void, defaultValue?: string) => void
+  showPrompt: (title: string, message: string, onConfirm: (value: string) => void, defaultValue?: string) => void,
+  triggerHaptic: (pattern?: number | number[]) => void
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [shop, setShop] = useState<Shop | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing' | 'settings'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing' | 'settings' | 'riders'>('orders');
   const [showDebug, setShowDebug] = useState(false);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const [pairingCode, setPairingCode] = useState('');
+  const [qrCodeData, setQrCodeData] = useState('');
+
+  const generatePairingCode = async () => {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setPairingCode(code);
+    triggerHaptic();
+    
+    try {
+      const dataUrl = await QRCode.toDataURL(`pairing:${code}`);
+      setQrCodeData(dataUrl);
+    } catch (err) {
+      console.error('QR code generation failed:', err);
+    }
+
+    // In a real app, you would save this code to the database with an expiry
+    setTimeout(() => {
+      setPairingCode('');
+      setQrCodeData('');
+    }, 600000); // Expires in 10 mins
+  };
 
   const toggleExpand = (itemId: string) => {
     setExpandedItems(prev => 
@@ -5674,7 +5779,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready, 
       // it shifts to 'finding_rider' status instead of just 'ready'
       let finalStatus = newStatus;
-      let deliveryStatus = currentOrder?.delivery_status;
+      let deliveryStatus = currentOrder?.delivery_status || 'none';
 
       if (newStatus === 'ready' && currentOrder?.is_delivery) {
         finalStatus = 'ready';
@@ -5796,10 +5901,10 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
       <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
-        <div className="px-4 py-4 flex items-center justify-between">
-          <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
+        <div className="max-w-screen-xl mx-auto px-4 py-4 flex items-center justify-between">
+          <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer hover:text-orange-600 transition-colors">
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="text-center relative">
@@ -5822,7 +5927,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         </div>
       </header>
 
-      <main className="flex-grow overflow-y-auto p-4 space-y-4 pb-24">
+      <main className="flex-grow overflow-y-auto p-4 space-y-4 pb-24 max-w-screen-xl mx-auto w-full">
         {showDebug && (
           <div className="mb-6 p-4 bg-slate-900 text-slate-300 rounded-2xl text-[10px] font-mono border border-slate-700 shadow-xl animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="flex justify-between items-center mb-2 border-b border-slate-800 pb-2">
@@ -5867,20 +5972,39 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             </button>
           </div>
         )}
-        {/* Stats Bar */}
         {!loading && !error && shop && activeTab === 'orders' && (
-          <div className="grid grid-cols-3 gap-3 mb-2">
-            <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl border border-orange-100 dark:border-orange-800/50">
-              <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Active</p>
-              <p className="text-xl font-black text-orange-700 dark:text-orange-300">{activeOrdersCount}</p>
+          <div className="space-y-3 mb-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl border border-orange-100 dark:border-orange-800/50">
+                <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Active</p>
+                <p className="text-xl font-black text-orange-700 dark:text-orange-300">{activeOrdersCount}</p>
+              </div>
+              <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-2xl border border-green-100 dark:border-green-800/50">
+                <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Ready</p>
+                <p className="text-xl font-black text-green-700 dark:text-green-300">{readyOrdersCount}</p>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl border border-blue-100 dark:border-blue-800/50">
+                <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-1">Revenue</p>
+                <p className="text-xl font-black text-blue-700 dark:text-blue-300">R{Math.round(todayRevenue)}</p>
+              </div>
             </div>
-            <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-2xl border border-green-100 dark:border-green-800/50">
-              <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Ready</p>
-              <p className="text-xl font-black text-green-700 dark:text-green-300">{readyOrdersCount}</p>
-            </div>
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl border border-blue-100 dark:border-blue-800/50">
-              <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-1">Revenue</p>
-              <p className="text-xl font-black text-blue-700 dark:text-blue-300">R{Math.round(todayRevenue)}</p>
+
+            <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800/50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-500/20 rounded-xl flex items-center justify-center text-indigo-600">
+                  <Navigation className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-indigo-900 dark:text-indigo-100 uppercase tracking-tight">Rider Fleet</p>
+                  <p className="text-[10px] text-indigo-600/70 dark:text-indigo-400/70">Connect delivery partners</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setActiveTab('riders')}
+                className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-lg shadow-lg shadow-indigo-600/20 active:scale-95 transition-all cursor-pointer"
+              >
+                Manage
+              </button>
             </div>
           </div>
         )}
@@ -6068,6 +6192,79 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               </button>
             </div>
           </div>
+        ) : activeTab === 'riders' ? (
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
+               <div className="flex items-center gap-3 mb-6">
+                <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-600">
+                  <Navigation className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg">Rider Fleet</h3>
+                  <p className="text-xs text-slate-500">Manage your delivery partners</p>
+                </div>
+              </div>
+
+              {!pairingCode ? (
+                <div className="text-center py-8 space-y-6">
+                   <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                    <UserPlus className="w-10 h-10" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-900 dark:text-white">No riders connected</p>
+                    <p className="text-xs text-slate-500 px-8 mt-1">Connect your own riders to fulfill delivery orders and track them in real-time.</p>
+                  </div>
+                  <button 
+                    onClick={generatePairingCode}
+                    className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    Generate First Pairing Code
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center space-y-6 animate-in zoom-in-95 duration-300">
+                   <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-2xl border-2 border-dashed border-indigo-200 dark:border-indigo-900/50">
+                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Pairing Code</p>
+                     <p className="text-5xl font-black tracking-[0.2em] text-indigo-600 mb-4 font-mono">{pairingCode}</p>
+                     <div className="flex justify-center p-4 bg-white rounded-xl mb-4 shadow-inner">
+                        {qrCodeData ? (
+                          <img src={qrCodeData} alt="Pairing QR Code" className="w-[150px] h-[150px]" />
+                        ) : (
+                          <div className="w-[150px] h-[150px] flex items-center justify-center bg-slate-100">
+                            <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
+                          </div>
+                        )}
+                     </div>
+                     <p className="text-[10px] text-slate-500 italic">This code will expire in 10 minutes</p>
+                   </div>
+                   <button 
+                    onClick={() => setPairingCode('')}
+                    className="w-full py-3 border-2 border-indigo-600/10 text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4">Connection Tips</h4>
+              <ul className="space-y-3">
+                <li className="flex gap-2 text-xs text-slate-500">
+                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
+                  <span>Ask your riders to download the LocalEats Rider app.</span>
+                </li>
+                <li className="flex gap-2 text-xs text-slate-500">
+                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
+                  <span>Tell them to scan this QR code or type the 6-digit code.</span>
+                </li>
+                <li className="flex gap-2 text-xs text-slate-500">
+                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
+                  <span>Once connected, you can assign them delivery orders.</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         ) : activeTab === 'settings' ? (
           <div className="space-y-4">
             <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
@@ -6162,6 +6359,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                       quantity: 1, 
                       price: 45, 
                       status: 'pending',
+                      delivery_status: 'none',
                       created_at: new Date().toISOString()
                     },
                     { 
@@ -6171,6 +6369,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                       quantity: 2, 
                       price: 70, 
                       status: 'preparing',
+                      delivery_status: 'none',
                       created_at: new Date(Date.now() - 600000).toISOString()
                     }
                   ]);
@@ -6297,41 +6496,41 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         )}
       </main>
 
-      <nav className="bg-white dark:bg-slate-900 border-t border-primary/10 px-6 py-4 flex justify-around items-center sticky bottom-0">
+      <nav className="bg-white dark:bg-slate-900 border-t border-primary/10 px-4 py-4 flex justify-between items-center sticky bottom-0">
         <button 
           onClick={() => setActiveTab('orders')}
-          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'orders' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === 'orders' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <ClipboardList className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Orders</span>
+          <ClipboardList className="w-5 h-5" />
+          <span className="text-[8px] font-bold uppercase tracking-wider">Orders</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('riders')}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === 'riders' ? 'text-indigo-600' : 'text-slate-400'}`}
+        >
+          <Navigation className="w-5 h-5" />
+          <span className="text-[8px] font-bold uppercase tracking-wider">Riders</span>
         </button>
         <button 
           onClick={() => setActiveTab('inventory')}
-          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'inventory' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === 'inventory' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <Package className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Inventory</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('stats')}
-          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'stats' ? 'text-primary' : 'text-slate-400'}`}
-        >
-          <BarChart3 className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Stats</span>
+          <Package className="w-5 h-5" />
+          <span className="text-[8px] font-bold uppercase tracking-wider">Stock</span>
         </button>
         <button 
           onClick={() => setActiveTab('marketing')}
-          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'marketing' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === 'marketing' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <Megaphone className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Marketing</span>
+          <Megaphone className="w-5 h-5" />
+          <span className="text-[8px] font-bold uppercase tracking-wider">Promo</span>
         </button>
         <button 
           onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer ${activeTab === 'settings' ? 'text-primary' : 'text-slate-400'}`}
+          className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === 'settings' ? 'text-primary' : 'text-slate-400'}`}
         >
-          <MapPin className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-wider">Location</span>
+          <MapPin className="w-5 h-5" />
+          <span className="text-[8px] font-bold uppercase tracking-wider">Map</span>
         </button>
       </nav>
     </div>
@@ -6424,7 +6623,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
       // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready, 
       // it shifts to 'finding_rider' status instead of just 'ready'
       let finalStatus = status;
-      let deliveryStatus = currentOrder?.delivery_status;
+      let deliveryStatus = currentOrder?.delivery_status || 'none';
 
       if (status === 'ready' && currentOrder?.is_delivery) {
         finalStatus = 'ready';
@@ -6481,8 +6680,8 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
   });
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
+    <div className="bg-white dark:bg-[#221610] font-sans text-slate-900 dark:text-slate-100 min-h-screen">
+      <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden shadow-2xl">
         <header className="flex items-center p-4 bg-white dark:bg-[#221610] sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
@@ -6490,7 +6689,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
           <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 text-center mr-10">Admin Dashboard</h1>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main className="flex-1 overflow-y-auto p-4 space-y-6">
           {/* Search Bar */}
           <div className="relative group">
             <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
@@ -6920,22 +7119,24 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
 
   return (
     <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full max-w-md mx-auto flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
-        <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
-          <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer">
-            <ArrowLeft className="w-6 h-6" />
+      <div className="relative flex h-auto min-h-screen w-full flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
+        <header className="bg-white dark:bg-[#221610] border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+          <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
+            <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer transition-colors hover:text-orange-500">
+              <ArrowLeft className="w-6 h-6" />
+            </div>
+            {loading ? (
+              <div className="h-6 w-32 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mx-auto"></div>
+            ) : (
+              <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-12">My Orders</h2>
+            )}
           </div>
-          {loading ? (
-            <div className="h-6 w-32 bg-slate-200 dark:bg-slate-700 rounded animate-pulse"></div>
-          ) : (
-            <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1">My Orders</h2>
-          )}
-        </div>
+        </header>
 
-        <main className="flex-1 p-4 flex flex-col gap-4">
+        <main className="flex-1 p-4 max-w-screen-xl mx-auto w-full flex flex-col gap-4">
           {loading ? (
-            <div className="flex-1 flex flex-col gap-4">
-              {[1, 2, 3, 4].map((i) => (
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 animate-pulse">
                   <div className="flex justify-between items-start mb-4">
                     <div className="space-y-2">
@@ -6944,32 +7145,29 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                     </div>
                     <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
                   </div>
-                  <div className="flex justify-between items-center pt-4 border-t border-slate-50 dark:border-slate-800">
-                    <div className="h-4 w-16 bg-slate-100 dark:bg-slate-800 rounded"></div>
-                    <div className="h-5 w-20 bg-slate-200 dark:bg-slate-700 rounded"></div>
-                  </div>
                 </div>
               ))}
             </div>
           ) : orders.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6">
-              <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-4">
-                <ShoppingBag className="w-10 h-10" />
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20">
+              <div className="size-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-6">
+                <ShoppingBag className="w-12 h-12" />
               </div>
-              <h3 className="text-lg font-bold mb-2">No orders yet</h3>
+              <h3 className="text-xl font-bold mb-2">No orders yet</h3>
               <p className="text-slate-500 text-sm mb-8">Your order history will appear here once you place an order.</p>
               <button 
                 onClick={onBack}
-                className="bg-primary text-white font-bold py-4 px-8 rounded-2xl shadow-xl shadow-primary/20 transition-all active:scale-95"
+                className="bg-primary text-white font-bold py-4 px-10 rounded-2xl shadow-xl shadow-primary/20 transition-all active:scale-95 cursor-pointer"
               >
                 Start Ordering
               </button>
             </div>
           ) : (
-            orders.map((order) => (
-              <div key={order.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3">
-                <div className="flex justify-between items-start">
-                  <div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {orders.map((order) => (
+                <div key={order.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3 group hover:border-orange-500/20 transition-all">
+                  <div className="flex justify-between items-start">
+                    <div>
                     <p className="text-[12px] font-bold text-primary uppercase tracking-widest mb-1">Order #{order.id.toString().slice(-6)}</p>
                     <p className="text-slate-900 dark:text-slate-100 font-bold text-lg">{order.product_name}</p>
                     <p className="text-slate-500 text-[12px] font-medium">{new Date(order.created_at).toLocaleDateString()} • {new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
@@ -7114,9 +7312,10 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                   </div>
                 )}
               </div>
-            ))
-          )}
-        </main>
+            ))}
+          </div>
+        )}
+      </main>
 
         {/* Cancellation Confirmation Modal */}
         {cancellingOrderId && (
