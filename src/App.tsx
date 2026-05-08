@@ -6,7 +6,7 @@
 import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import L from 'leaflet';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 
 // Fix for default marker icons in react-leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -66,6 +66,7 @@ import {
   Save, 
   SearchX, 
   Database, 
+  MessageCircle,
   MessageSquare, 
   Navigation, 
   PhoneCall, 
@@ -108,19 +109,24 @@ import {
   Bug,
   Eye,
   EyeOff,
-  MessageCircle,
   FileText,
   Shield,
   QrCode,
   Download,
-  WifiOff
+  Gift,
+  Fingerprint,
+  Zap,
+  WifiOff,
+  Edit,
+  Edit2,
+  SlidersHorizontal
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { LocalEatsLogo } from './components/LocalEatsLogo';
 import jsPDF from 'jspdf';
 
-type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
+type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'rider-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
 
 type AppNotification = {
   id: string;
@@ -166,6 +172,8 @@ type Order = {
   payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine';
   special_instructions?: string;
   customizations?: { name: string, price: number }[];
+  latitude?: number;
+  longitude?: number;
 };
 
 type PendingReview = {
@@ -182,6 +190,7 @@ type MenuItem = {
   price: number;
   displayPrice: string;
   image: string;
+  image_url?: string;
   description?: string;
   customizations?: { name: string, price: number }[];
 };
@@ -227,6 +236,7 @@ type Shop = {
   reviewCount?: number;
   prepTime?: string;
   isOpen?: boolean;
+  images?: string[];
 };
 
 const APP_VERSION = "2.4.1 (1024)";
@@ -242,7 +252,227 @@ const hashString = (str: string) => {
   return Math.abs(hash);
 };
 
-const getShopStatus = (shop: Shop) => {
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Radius of the earth in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return d;
+};
+
+function AddressSearch({ onSelect, initialAddress }: { onSelect: (data: { address: string, lat: number, lng: number }) => void, initialAddress?: string }) {
+  const [query, setQuery] = useState(initialAddress || '');
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSearch = async (val: string) => {
+    setQuery(val);
+    if (val.length < 3) {
+      setResults([]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' ' + SUPPORTED_CITY)}&limit=5`);
+      const data = await response.json();
+      setResults(data);
+      setShowResults(true);
+    } catch (error) {
+      console.error('Nominatim error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser');
+      return;
+    }
+
+    setLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await response.json();
+          const address = data.display_name;
+          setQuery(address);
+          onSelect({ address, lat: latitude, lng: longitude });
+          setShowResults(false);
+        } catch (error) {
+          console.error('Reverse geocoding error:', error);
+          // Fallback if reverse geocoding fails
+          onSelect({ address: `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, lat: latitude, lng: longitude });
+        } finally {
+          setLoading(false);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        setLoading(false);
+        alert('Failed to get your current location. Please search manually.');
+      },
+      { enableHighAccuracy: true }
+    );
+  };
+
+  return (
+    <div className="relative w-full" ref={searchRef}>
+      <div className="relative">
+        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => handleSearch(e.target.value)}
+          onFocus={() => query.length >= 3 && setShowResults(true)}
+          placeholder="Start typing your street address..."
+          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl py-3 pl-10 pr-12 text-sm focus:ring-2 focus:ring-orange-500 transition-all outline-none"
+        />
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {loading ? (
+            <Loader2 className="w-4 h-4 animate-spin text-orange-600 mr-1" />
+          ) : (
+            <button
+              onClick={handleCurrentLocation}
+              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-orange-600 transition-colors"
+              title="Use current location"
+            >
+              <LocateFixed className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showResults && results.length > 0 && (
+        <div className="absolute z-[100] top-full mt-2 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          {results.map((res, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                const data = {
+                  address: res.display_name,
+                  lat: parseFloat(res.lat),
+                  lng: parseFloat(res.lon)
+                };
+                setQuery(res.display_name);
+                onSelect(data);
+                setShowResults(false);
+              }}
+              className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 last:border-0 transition-colors flex items-start gap-3"
+            >
+              <div className="bg-orange-100 dark:bg-orange-900/30 p-1.5 rounded-lg shrink-0">
+                <MapPin className="w-4 h-4 text-orange-600" />
+              </div>
+              <span className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2">{res.display_name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { lat: number, lng: number }, onCoordsChange: (c: { lat: number, lng: number }) => void, shopCoords?: { lat: number, lng: number } }) {
+  function DraggableMarker() {
+    const markerRef = useRef<any>(null);
+    const eventHandlers = useCallback(() => ({
+      dragend() {
+        const marker = markerRef.current;
+        if (marker != null) {
+          const newPos = marker.getLatLng();
+          onCoordsChange({ lat: newPos.lat, lng: newPos.lng });
+        }
+      },
+    }), [onCoordsChange]);
+
+    return (
+      <Marker
+        draggable={true}
+        eventHandlers={eventHandlers()}
+        position={coords}
+        ref={markerRef}
+      >
+        <Popup minWidth={90}>
+          <div className="text-center">
+            <p className="font-bold text-xs">Delivery Point</p>
+            <p className="text-[10px] text-slate-500">Drag to adjust precisely</p>
+          </div>
+        </Popup>
+      </Marker>
+    );
+  }
+
+  function ChangeView({ center, shopCenter }: { center: any, shopCenter?: any }) {
+    const map = useMap();
+    
+    useEffect(() => {
+      if (shopCenter) {
+        // Fit bounds to show both markers
+        const bounds = L.latLngBounds([center, shopCenter]);
+        map.fitBounds(bounds, { padding: [30, 30] });
+      } else {
+        map.setView(center, 12); // Slightly zoomed out to see context
+        map.panTo(center);
+      }
+    }, [center, shopCenter, map]);
+    
+    return null;
+  }
+
+  const shopIcon = L.divIcon({
+    html: `<div class="bg-orange-600 p-2 rounded-full border-2 border-white shadow-lg text-white flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
+    className: '',
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+  });
+
+  return (
+    <div className="h-48 w-full rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 relative z-10">
+      <MapContainer center={coords} zoom={16} scrollWheelZoom={false} className="h-full w-full">
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <DraggableMarker />
+        
+        {shopCoords && (
+          <Marker position={shopCoords} icon={shopIcon}>
+            <Popup>
+              <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
+            </Popup>
+          </Marker>
+        )}
+        
+        <ChangeView center={coords} shopCenter={shopCoords} />
+      </MapContainer>
+      <div className="absolute bottom-2 left-2 right-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[10px] text-center z-[1000] pointer-events-none font-medium">
+        Drag pin to your exact delivery point
+      </div>
+    </div>
+  );
+}
+
+function getShopStatus(shop: Shop): { isOpen: boolean, message: string, warning?: boolean, nextOpeningTime?: string } {
   if (!shop.opening_time || !shop.closing_time) return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
   
   const now = new Date();
@@ -277,7 +507,7 @@ const getShopStatus = (shop: Shop) => {
   }
 
   return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
-};
+}
 
 const BlurUpImage = ({ src, alt, className, blurHash = "https://picsum.photos/seed/blur/10/10" }: { src: string, alt: string, className?: string, blurHash?: string }) => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -343,28 +573,86 @@ type UserProfile = {
   city: string;
   address: string;
   country: string;
-  role: 'user' | 'admin' | 'shop_owner';
+  role: 'user' | 'admin' | 'shop_owner' | 'rider';
   photoURL?: string;
+  latitude?: number;
+  longitude?: number;
+};
+
+const validateSAPhone = (phone: string) => {
+  // SA format: +27 or 0 followed by 9 digits
+  const saPhoneRegex = /^(\+27|0)[0-9]{9}$/;
+  return saPhoneRegex.test(phone.replace(/\s+/g, ''));
 };
 
 const DEFAULT_AVATAR_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuDQ_oJXmkvF6zCsi-MN_DEL7mLVwaHWe2bdg5-LNmA7uJ3Eh_HnDZN7G9qMWP52xq3HmN4FA-PdBK56usW1gusmE0gAOzJVnznRSqmcUdQYi1V2B39MYizUktww0MHeemCIHeQCnyi31PLj36ie-F5J15C-R7hzeqltPBxVN6rYZGUSxaiOi6PNaXlFxpdnPYSm8wS2_CnI_4p6sdx_ulKdOTfyas-fwJ116yUHLmytLnZvv3oAUffPd_-POY2O7d5Hyv1PvYD-dw";
+const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
+const DEFAULT_SHOP_LOGO = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&q=80&w=800";
+
+const compressImage = (file: File, maxWidth = 1000, maxHeight = 1000, quality = 0.75): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error('Image compression failed'));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = reject;
+    };
+    reader.onerror = reject;
+  });
+};
 
 const uploadAvatar = async (file: File, userId?: string) => {
-  const fileExt = file.name.split('.').pop();
-  const fileName = `${Math.random()}.${fileExt}`;
-  const filePath = userId ? `${userId}/${fileName}` : `${fileName}`;
+  try {
+    // Compress image before upload to save database/storage space
+    const compressedBlob = await compressImage(file);
+    const fileExt = 'jpg'; // We compress to jpeg
+    const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = userId ? `${userId}/${fileName}` : `${fileName}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from('avatars')
-    .upload(filePath, file);
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(filePath, compressedBlob, {
+        contentType: 'image/jpeg'
+      });
 
-  if (uploadError) throw uploadError;
+    if (uploadError) throw uploadError;
 
-  const { data: { publicUrl } } = supabase.storage
-    .from('avatars')
-    .getPublicUrl(filePath);
+    const { data: { publicUrl } } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(filePath);
 
-  return publicUrl;
+    return publicUrl;
+  } catch (error) {
+    console.error('Compression or Upload failed:', error);
+    throw error;
+  }
 };
 
 type ModalState = {
@@ -617,6 +905,12 @@ export default function App() {
           phone: s.phone || "+27 12 345 6789",
           latitude: s.latitude || deterministicLat,
           longitude: s.longitude || deterministicLng,
+          images: (s as any).images || [
+            s.logo_url || `https://picsum.photos/seed/${s.id}/600/400`,
+            `https://picsum.photos/seed/${s.id}_dish1/600/400`,
+            `https://picsum.photos/seed/${s.id}_dish2/600/400`,
+            `https://picsum.photos/seed/${s.id}_dish3/600/400`
+          ],
           menu: (menuData || [])
             .filter(m => String(m.shop_id) === String(s.id))
             .map(m => ({
@@ -736,7 +1030,9 @@ export default function App() {
           address: data.address || '',
           country: data.country || 'South Africa',
           role: data.role || 'user',
-          photoURL: data.photo_url || ''
+          photoURL: data.photo_url || '',
+          latitude: data.latitude,
+          longitude: data.longitude
         });
         if (data.favorites) {
           setFavorites(data.favorites);
@@ -756,6 +1052,36 @@ export default function App() {
       }
     }
   }, []);
+
+  const handleUpdateProfile = async (data: Partial<UserProfile>, showSuccess = true) => {
+    const updated = { ...userProfile, ...data };
+    setUserProfile(updated);
+    
+    if (session?.user?.id) {
+      try {
+        const { error } = await supabase.from('profiles').upsert({
+          user_id: session.user.id,
+          fullName: updated.fullName,
+          email: updated.email,
+          phone: updated.phone,
+          city: updated.city,
+          address: updated.address,
+          country: updated.country,
+          role: updated.role,
+          photo_url: updated.photoURL,
+          latitude: updated.latitude,
+          longitude: updated.longitude,
+          updated_at: new Date().toISOString()
+        });
+        if (error) throw error;
+        if (showSuccess) {
+          setNotification({ message: '✨ Profile and location data successfully saved!', type: 'success' });
+        }
+      } catch (err: any) {
+        setNotification({ message: 'Error saving profile: ' + err.message, type: 'error' });
+      }
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -864,6 +1190,12 @@ export default function App() {
               if ("Notification" in window && Notification.permission === "granted") {
                 new Notification(title, { body: message, icon: shop?.logo });
               }
+
+              // Show prominent temporary notification (toast)
+              setNotification({ 
+                message: message, 
+                type: newStatus === 'cancelled' ? 'error' : (newStatus === 'ready' || newStatus === 'completed' ? 'success' : 'info')
+              });
 
               const newNotif: AppNotification = {
                 id: Math.random().toString(36).substr(2, 9),
@@ -1181,6 +1513,8 @@ export default function App() {
               country: userProfile.country,
               role: userProfile.role,
               photo_url: userProfile.photoURL,
+              latitude: userProfile.latitude,
+              longitude: userProfile.longitude,
               favorites: favorites,
               updated_at: new Date().toISOString()
             });
@@ -1384,8 +1718,8 @@ export default function App() {
           <CompleteProfileScreen 
             userProfile={userProfile}
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
-            onSave={(data) => {
-              setUserProfile(prev => ({ ...prev, ...data }));
+            onSave={async (data) => {
+              await handleUpdateProfile(data);
               setCurrentScreen(previousScreen || 'home');
             }} 
             setNotification={setNotification}
@@ -1567,6 +1901,7 @@ export default function App() {
             onOrderHistory={() => { setPreviousScreen('settings'); setCurrentScreen('order-history'); }}
             onAdminOrders={() => { setPreviousScreen('settings'); setCurrentScreen('admin-orders'); }}
             onShopDashboard={() => { setPreviousScreen('settings'); setCurrentScreen('shop-dashboard'); }}
+            onRiderDashboard={() => { setPreviousScreen('settings'); setCurrentScreen('rider-dashboard'); }}
             isDarkMode={isDarkMode}
             onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
             setNotification={setNotification}
@@ -1590,16 +1925,24 @@ export default function App() {
             triggerHaptic={triggerHaptic}
           />
         )}
+        {currentScreen === 'rider-dashboard' && (
+          <RiderDashboardScreen 
+            onBack={() => setCurrentScreen(previousScreen || 'home')} 
+            showAlert={showAlert}
+            showConfirm={showConfirm}
+          />
+        )}
         {currentScreen === 'profile' && (
           <ProfileScreen 
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
-            onSave={(data) => {
-              setUserProfile(prev => ({ ...prev, ...data }));
+            onSave={async (data) => {
+              await handleUpdateProfile(data);
               setCurrentScreen(previousScreen || 'home');
             }} 
             onOrderHistory={() => { setPreviousScreen('profile'); setCurrentScreen('order-history'); }}
             onAdminOrders={() => { setPreviousScreen('profile'); setCurrentScreen('admin-orders'); }}
             onShopDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('shop-dashboard'); }}
+            onRiderDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('rider-dashboard'); }}
             onContactUs={() => { setPreviousScreen('profile'); setCurrentScreen('contact'); }}
             userProfile={userProfile}
             onLogout={async () => {
@@ -1648,6 +1991,7 @@ export default function App() {
             setNotification={setNotification}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            userLocation={userLocation}
           />
         )}
         {currentScreen === 'order-success' && (
@@ -1811,6 +2155,15 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
       setNotification({ message: 'Please fill in all fields', type: 'error' });
       return;
     }
+    
+    if (!validateSAPhone(phone)) {
+      setNotification({ 
+        message: 'Invalid South African phone format. Use 0XX XXX XXXX or +27XX XXX XXXX', 
+        type: 'error' 
+      });
+      return;
+    }
+
     onNext({ fullName, email, phone });
   };
 
@@ -2242,15 +2595,37 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
   const [phone, setPhone] = useState(userProfile.phone);
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [city, setCity] = useState(userProfile.city);
+  const [latitude, setLatitude] = useState<number | undefined>(userProfile.latitude);
+  const [longitude, setLongitude] = useState<number | undefined>(userProfile.longitude);
   const [uploading, setUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!fullName || !phone || !city || !address) {
       setNotification({ message: 'Please fill in all required fields to proceed.', type: 'error' });
       return;
     }
-    onSave({ fullName, phone, city, address });
+    
+    if (!validateSAPhone(phone)) {
+      setNotification({ 
+        message: 'Invalid South African phone format. Use 0XX XXX XXXX or +27XX XXX XXXX', 
+        type: 'error' 
+      });
+      return;
+    }
+
+    if (!latitude || !longitude) {
+      setNotification({ message: 'Please search and select your precise address on the map to provide delivery coordinates.', type: 'error' });
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await onSave({ fullName, phone, city, address, latitude, longitude });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -2381,19 +2756,41 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
               </div>
             </label>
 
-            <label className="block">
-              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">Home Address</span>
-              <div className="relative group">
-                <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
-                <input 
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
-                  placeholder="Section / Street / Number" 
-                  type="text"
-                />
-              </div>
-            </label>
+            <div className="space-y-4">
+              <label className="block p-4 bg-orange-50 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 rounded-2xl">
+                <span className="block text-orange-900 dark:text-orange-300 text-sm font-bold mb-3 ml-1 flex items-center gap-2">
+                  <LocateFixed className="w-4 h-4" />
+                  Precise Home Location
+                </span>
+                
+                <div className="space-y-4">
+                  <AddressSearch 
+                    initialAddress={address}
+                    onSelect={(data) => {
+                      setAddress(data.address);
+                      setLatitude(data.lat);
+                      setLongitude(data.lng);
+                    }}
+                  />
+
+                  {latitude && longitude && (
+                    <LocationPickerMap 
+                      coords={{ lat: latitude, lng: longitude }}
+                      onCoordsChange={(c) => {
+                        setLatitude(c.lat);
+                        setLongitude(c.lng);
+                      }}
+                    />
+                  )}
+
+                  {!latitude && (
+                    <div className="text-[10px] text-slate-500 italic bg-white dark:bg-slate-900/50 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
+                      * Search your address to drop a precise pin for the rider.
+                    </div>
+                  )}
+                </div>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -2407,10 +2804,20 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
         <div className="fixed bottom-0 left-0 right-0 p-6 bg-white/80 dark:bg-[#1a110c]/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
           <button 
             onClick={handleSave}
-            className="w-full bg-primary hover:bg-primary text-white font-black h-16 rounded-2xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 text-lg"
+            disabled={isSaving}
+            className="w-full bg-primary hover:bg-primary text-white font-black h-16 rounded-2xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 text-lg disabled:opacity-70 disabled:cursor-wait"
           >
-            Save Profile Info
-            <ArrowRight className="w-5 h-5" />
+            {isSaving ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Saving Profile...
+              </>
+            ) : (
+              <>
+                Save Profile Info
+                <ArrowRight className="w-5 h-5" />
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -2688,7 +3095,7 @@ const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
     >
       <div className="h-36 w-full rounded-2xl overflow-hidden relative">
         <BlurUpImage 
-          src={shop.logo} 
+          src={shop.logo || DEFAULT_SHOP_LOGO} 
           alt={shop.name} 
           className="w-full h-full"
           blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -2997,6 +3404,8 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role text DEFAULT 'user';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude numeric;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude numeric;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
 
 -- 4. Create menu_items table
@@ -3045,6 +3454,8 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_method text DEFAULT 'Cash on Delivery',
   is_delivery boolean DEFAULT false,
   delivery_fee numeric DEFAULT 0,
+  latitude numeric,
+  longitude numeric,
   rider_id uuid,
   delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed')),
   created_at timestamptz DEFAULT now(),
@@ -3064,7 +3475,15 @@ CREATE TABLE IF NOT EXISTS rider_profiles (
   created_at timestamptz DEFAULT now()
 );
 
--- 8. Insert demo data
+-- 8. Create rider_locations table for real-time tracking
+CREATE TABLE IF NOT EXISTS rider_locations (
+  rider_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  latitude numeric NOT NULL,
+  longitude numeric NOT NULL,
+  updated_at timestamptz DEFAULT now()
+);
+
+-- 9. Insert demo data
 INSERT INTO shops (name, description, location, category, rating, is_active)
 VALUES 
 ('Tembisa Kota King', 'The best Khas-Khas in Tembisa', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
@@ -3100,14 +3519,14 @@ VALUES
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
         <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex flex-col">
+          <div className="flex flex-col bg-gradient-to-br from-[#c0cbf8] to-[#d5e2fa] dark:from-[#1e293b] dark:to-[#0f172a] w-[300px] h-[86px] pl-6 pt-3 font-bold rounded-[24px] border-[0.9px] border-white/40 shadow-xl shadow-indigo-500/10 overflow-hidden scale-90 sm:scale-100 origin-left ring-4 ring-white/50 dark:ring-black/20">
           <div className="flex items-center gap-1">
             <LocalEatsLogo width={120} height={32} />
-            <span className="text-[8px] text-slate-400 opacity-50 ml-1">v{appVersion}</span>
+            <span className="text-[8px] text-slate-500 dark:text-slate-400 opacity-50 ml-1">v{appVersion}</span>
           </div>
-          <div className="flex items-center gap-1.5 ml-1 mt-0.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-            <p className="text-[8px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400">Serving Tembisa Only</p>
+          <div className="flex items-center gap-1.5 ml-1 mt-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
+            <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-800 dark:text-slate-200">Serving Tembisa Only</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -3244,26 +3663,45 @@ VALUES
               </div>
             </section>
 
-            {/* Recent Orders Carousel - Prioritized at top */}
+            {/* Order Again Carousel - Prioritized at top */}
             {recentShops.length > 0 && (
-              <section className="mb-6">
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Order Again</h3>
+              <section className="mb-8 px-1">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <History className="w-5 h-5 text-orange-600" />
+                    <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-tight">Order Again</h3>
+                  </div>
+                  <button onClick={onOrderHistory} className="text-[10px] font-black text-orange-600 uppercase tracking-widest hover:underline">View History</button>
                 </div>
-                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 px-1">
+                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2 snap-x">
                   {recentShops.map(shop => (
-                    <div 
+                    <motion.div 
                       key={shop.id}
-                      onClick={() => onStoreInfo(shop.id)}
-                      className="flex flex-col items-center gap-2 shrink-0 w-20 group cursor-pointer"
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => {
+                        onStoreInfo(shop.id);
+                        triggerHaptic(10);
+                      }}
+                      className="flex flex-col items-center gap-3 shrink-0 w-24 snap-center cursor-pointer group"
                     >
-                      <div className="w-16 h-16 rounded-full p-1 bg-gradient-to-tr from-orange-500 to-yellow-400 shadow-lg group-active:scale-95 transition-transform">
-                        <div className="w-full h-full rounded-full border-2 border-white dark:border-slate-900 overflow-hidden">
-                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                      <div className="relative">
+                        <div className="size-20 rounded-3xl p-1 bg-white dark:bg-slate-800 shadow-xl border border-slate-100 dark:border-slate-700 group-hover:border-orange-500/50 transition-all overflow-hidden">
+                          <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full rounded-2xl object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                        </div>
+                        {shop.rating >= 4.5 && (
+                          <div className="absolute -top-2 -right-2 bg-yellow-400 text-[#221610] size-6 rounded-full flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900">
+                            <Star className="w-3 h-3 fill-current" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-center">
+                        <span className="text-[10px] font-black text-slate-900 dark:text-white line-clamp-1 w-full">{shop.name}</span>
+                        <div className="flex items-center justify-center gap-1 mt-0.5">
+                           <Clock className="w-2.5 h-2.5 text-slate-400" />
+                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">{shop.delivery_eta || '30m'}</span>
                         </div>
                       </div>
-                      <span className="text-[9px] font-black text-slate-900 dark:text-white truncate w-full text-center">{shop.name}</span>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
               </section>
@@ -3292,7 +3730,7 @@ VALUES
                       {/* Shop Logo (WhatsApp Circle Style) */}
                       <div className="relative shrink-0">
                         <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${status.isOpen ? 'border-green-500' : 'border-slate-300 dark:border-slate-700'}`}>
-                          <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+                          <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
                         </div>
                         {status.isOpen && (
                           <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-slate-900 rounded-full"></div>
@@ -3355,18 +3793,18 @@ VALUES
 
       {/* BottomNavigation */}
       <div className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 sticky bottom-0 z-40">
-        <nav className="max-w-screen-xl mx-auto px-6 py-2 pb-6 flex justify-around items-center">
-          <button className="flex flex-col items-center gap-1 text-orange-600 cursor-pointer">
-          <div className="p-1 rounded-xl bg-orange-50 dark:bg-orange-500/10">
+        <nav className="max-w-screen-xl mx-auto px-3 sm:px-6 py-2 pb-6 flex justify-around items-center bg-[#d5e2fa] dark:bg-[#d5e2fa]/10 rounded-[12px] border-[3px] border-indigo-200/30 inset-shadow-sm shadow-inner transition-all transform active:scale-98">
+          <button className="flex flex-col items-center gap-1 text-slate-700 dark:text-slate-300 cursor-pointer">
+          <div className="p-1 rounded-xl bg-orange-500/10 dark:bg-orange-500/10">
             <Home className="w-6 h-6" />
           </div>
-          <span className="text-xs font-bold">Home</span>
+          <span className="text-[10px] font-bold">Home</span>
         </button>
-        <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-gray-400 dark:text-slate-500 hover:text-orange-500 transition-colors cursor-pointer">
-          <div className="p-1">
-            <Store className="w-6 h-6" />
+        <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
+          <div className="p-1 relative">
+            <Store className="w-6 h-6 bg-white dark:bg-slate-800 rounded-lg p-0.5 shadow-sm group-hover:scale-110 transition-transform" />
           </div>
-          <span className="text-xs font-semibold">Discover</span>
+          <span className="text-[10px] font-bold">Discover</span>
         </button>
         <button onClick={onExplore} className="flex flex-col items-center gap-1 text-gray-400 dark:text-slate-500 hover:text-orange-500 transition-colors cursor-pointer">
           <div className="p-1">
@@ -3404,7 +3842,7 @@ VALUES
     );
 }
 
-function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm }: { 
+function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm, userLocation }: { 
   userProfile: UserProfile, 
   session: Session | null, 
   shops: Shop[], 
@@ -3415,29 +3853,79 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   setCart: Dispatch<SetStateAction<CartItem[]>>, 
   setNotification: Dispatch<SetStateAction<any>>,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
+  userLocation: { lat: number, lng: number } | null
 }) {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
   const [deliveryType, setDeliveryType] = useState<'collection' | 'delivery'>('collection');
-  const DELIVERY_FEE = 5.00;
+  const [deliveryLocation, setDeliveryLocation] = useState<{ address: string, lat: number, lng: number } | null>(() => {
+    const cached = localStorage.getItem('delivery_location');
+    if (cached) return JSON.parse(cached);
+    if (userLocation) {
+      return {
+        address: 'Current Location',
+        lat: userLocation.lat,
+        lng: userLocation.lng
+      };
+    }
+    if (userProfile.latitude && userProfile.longitude) {
+      return { 
+        address: userProfile.address, 
+        lat: userProfile.latitude, 
+        lng: userProfile.longitude 
+      };
+    }
+    return null;
+  });
+  const [distance, setDistance] = useState<number | null>(null);
   
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const totalAmount = deliveryType === 'delivery' ? subtotal + DELIVERY_FEE : subtotal;
-  
+  const DELIVERY_FEE = 5.00; // LOCKED: Flat-rate delivery fee regardless of items/weight
+  const MAX_DELIVERY_DISTANCE = 5.0; // 5km limit
+
+  useEffect(() => {
+    if (!deliveryLocation && userLocation && deliveryType === 'delivery') {
+      setDeliveryLocation({
+        address: 'Current Location (GPS)',
+        lat: userLocation.lat,
+        lng: userLocation.lng
+      });
+    }
+  }, [userLocation, deliveryType, deliveryLocation]);
+
   const primaryShopId = cart.length > 0 ? cart[0].shopId : (shops[0]?.id || '');
   const primaryShop = shops.find(s => s.id === primaryShopId) || shops[0];
 
+  useEffect(() => {
+    if (deliveryLocation && primaryShop.latitude && primaryShop.longitude) {
+      const dist = calculateDistance(
+        deliveryLocation.lat, 
+        deliveryLocation.lng, 
+        primaryShop.latitude, 
+        primaryShop.longitude
+      );
+      setDistance(dist);
+    }
+  }, [deliveryLocation, primaryShop]);
+
+  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const totalAmount = deliveryType === 'delivery' ? subtotal + DELIVERY_FEE : subtotal;
+  
   const handleConfirm = async () => {
     if (!userProfile.fullName || !userProfile.phone) {
       onIncompleteProfile();
       return;
     }
 
-    if (deliveryType === 'delivery' && (!userProfile.address || !userProfile.city)) {
-      showAlert('Delivery Info Needed', 'Please complete your profile with an address for delivery.');
-      onIncompleteProfile();
-      return;
+    if (deliveryType === 'delivery') {
+      if (!deliveryLocation) {
+        showAlert('Location Needed', 'Please search and confirm your delivery location on the map.');
+        return;
+      }
+      if (distance !== null && distance > MAX_DELIVERY_DISTANCE) {
+        showAlert('Store Too Far', `Sorry, this store is ${distance.toFixed(1)}km away. We only deliver within ${MAX_DELIVERY_DISTANCE}km for the R5 flat fee.`);
+        return;
+      }
     }
     
     const status = getShopStatus(primaryShop);
@@ -3462,6 +3950,28 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     if ("vibrate" in navigator) {
       navigator.vibrate([10, 30, 10]); // Premium double-tap feel for confirmation
     }
+
+    let currentLat = deliveryType === 'delivery' ? deliveryLocation?.lat : null;
+    let currentLng = deliveryType === 'delivery' ? deliveryLocation?.lng : null;
+
+    // Capture precise geolocation if requested
+    if (deliveryType === 'delivery' && navigator.geolocation) {
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 0
+          });
+        });
+        currentLat = position.coords.latitude;
+        currentLng = position.coords.longitude;
+        console.log('Captured precise delivery location:', { lat: currentLat, lng: currentLng });
+      } catch (err) {
+        console.warn('Geolocation capture failed, falling back to manual address coords:', err);
+      }
+    }
+
     try {
       const orderData = cart.map(item => ({
         user_id: session?.user?.id,
@@ -3470,7 +3980,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         phone: userProfile.phone,
         email: userProfile.email,
         city: SUPPORTED_CITY,
-        address: userProfile.address,
+        address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
         country: userProfile.country,
         product_name: item.name,
         product_variant: '',
@@ -3481,7 +3991,9 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         payment_method: paymentMethod,
         is_delivery: deliveryType === 'delivery',
         delivery_fee: deliveryType === 'delivery' ? DELIVERY_FEE : 0,
-        delivery_status: 'none' // Changed from 'pending' to 'none' to fix constraint violation
+        delivery_status: 'none',
+        latitude: currentLat,
+        longitude: currentLng
       }));
 
       console.log('Submitting order with delivery info:', orderData);
@@ -3541,7 +4053,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             <div className="flex flex-col gap-4">
               {cart.map((item, idx) => (
                 <div key={idx} className="flex items-center gap-4 bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
-                  <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-lg size-16 shrink-0" style={{ backgroundImage: `url("${item.image}")` }}>
+                  <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-lg size-16 shrink-0" style={{ backgroundImage: `url("${item.image || DEFAULT_MENU_IMAGE}")` }}>
                   </div>
                   <div className="flex flex-col justify-center flex-1">
                     <p className="text-slate-900 dark:text-slate-100 text-base font-semibold leading-normal line-clamp-1">{item.name}</p>
@@ -3555,35 +4067,72 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   </div>
                 </div>
               ))}
+              
+              {deliveryType === 'delivery' && (
+                <div className="flex items-center gap-4 bg-orange-50 dark:bg-orange-500/10 p-4 rounded-xl border border-orange-100 dark:border-orange-950/20 shadow-sm animate-in zoom-in-95 duration-200">
+                  <div className="p-3 bg-orange-100 dark:bg-orange-600/20 rounded-xl text-orange-600">
+                    <Bike className="w-6 h-6" />
+                  </div>
+                  <div className="flex-grow">
+                    <p className="text-sm font-bold text-orange-900 dark:text-orange-200">Bicycle Delivery Fee</p>
+                    <p className="text-[10px] text-orange-600 font-bold uppercase tracking-widest">Flat Rate within 5km</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-orange-600 text-lg font-black tracking-tight">R {DELIVERY_FEE.toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
           {/* Delivery Options */}
           <section>
-            <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">Fulfillment Type</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Fulfillment Type</h3>
+              {distance !== null && (
+                <div className={`px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-widest ${distance > MAX_DELIVERY_DISTANCE ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                  {distance.toFixed(1)}km away
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <button 
                 onClick={() => setDeliveryType('collection')}
-                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${deliveryType === 'collection' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20 ring-4 ring-orange-500/10' : 'border-slate-100 dark:border-slate-800'}`}
+                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${deliveryType === 'collection' ? 'border-slate-900 dark:border-slate-100 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-lg' : 'border-slate-100 dark:border-slate-800'}`}
               >
-                <ShoppingBasket className={`w-8 h-8 ${deliveryType === 'collection' ? 'text-orange-600' : 'text-slate-400'}`} />
+                <ShoppingBasket className={`w-8 h-8 ${deliveryType === 'collection' ? '' : 'text-slate-400'}`} />
                 <div className="text-center">
-                  <p className={`text-sm font-bold ${deliveryType === 'collection' ? 'text-orange-700 dark:text-orange-400' : 'text-slate-600'}`}>Collection</p>
-                  <p className="text-[10px] text-slate-500">Free</p>
+                  <p className={`text-sm font-bold ${deliveryType === 'collection' ? '' : 'text-slate-600'}`}>Collection</p>
+                  <p className="text-[10px] opacity-70">Free</p>
                 </div>
               </button>
 
               <button 
-                onClick={() => setDeliveryType('delivery')}
-                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${deliveryType === 'delivery' ? 'border-orange-600 bg-orange-50 dark:bg-orange-900/20 ring-4 ring-orange-500/10' : 'border-slate-100 dark:border-slate-800'}`}
+                onClick={() => {
+                  if (distance !== null && distance > MAX_DELIVERY_DISTANCE) {
+                    showAlert('Too Far', `Store is ${distance.toFixed(1)}km away. Bicycle delivery is limited to ${MAX_DELIVERY_DISTANCE}km.`);
+                    return;
+                  }
+                  setDeliveryType('delivery');
+                }}
+                disabled={distance !== null && distance > MAX_DELIVERY_DISTANCE}
+                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
+                  distance !== null && distance > MAX_DELIVERY_DISTANCE 
+                    ? 'opacity-40 grayscale cursor-not-allowed border-slate-100 dark:border-slate-800' 
+                    : deliveryType === 'delivery' 
+                      ? 'border-orange-600 bg-orange-600 text-white shadow-lg' 
+                      : 'border-slate-100 dark:border-slate-800'
+                }`}
               >
                 <div className="relative">
-                  <Navigation className={`w-8 h-8 ${deliveryType === 'delivery' ? 'text-orange-600' : 'text-slate-400'}`} />
-                  <span className="absolute -top-1 -right-1 bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full">R5</span>
+                  <Navigation className={`w-8 h-8 ${deliveryType === 'delivery' ? '' : 'text-slate-400'}`} />
+                  {distance !== null && distance > MAX_DELIVERY_DISTANCE && (
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] font-black px-1 rounded-full">!</span>
+                  )}
                 </div>
                 <div className="text-center">
-                  <p className={`text-sm font-bold ${deliveryType === 'delivery' ? 'text-orange-700 dark:text-orange-400' : 'text-slate-600'}`}>Bicycle Delivery</p>
-                  <p className="text-[10px] text-slate-500">+R{DELIVERY_FEE.toFixed(2)}</p>
+                  <p className={`text-sm font-bold ${deliveryType === 'delivery' ? '' : 'text-slate-600'}`}>Delivery</p>
+                  <p className="text-[10px] opacity-70">+R{DELIVERY_FEE.toFixed(2)}</p>
                 </div>
               </button>
             </div>
@@ -3594,22 +4143,75 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3">
               {deliveryType === 'delivery' ? 'Delivery Address' : 'Pickup Details'}
             </h3>
-            <div className="bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm relative overflow-hidden">
-              {deliveryType === 'delivery' ? (
-                <div className="flex items-start gap-4">
-                  <div className="size-12 rounded-2xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center shrink-0">
-                    <MapPin className="w-6 h-6 text-orange-600" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-slate-900 dark:text-slate-100 text-base font-bold leading-tight">
-                      {userProfile.address || 'No Address Set'}
-                    </p>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm font-normal mt-1 leading-tight">
-                      {SUPPORTED_CITY}, {userProfile.country}
-                    </p>
-                  </div>
+            
+            {deliveryType === 'delivery' ? (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Delivery Spot</span>
+                  {userLocation && (
+                    <div className="flex items-center gap-1 bg-green-50 dark:bg-green-500/10 px-2 py-0.5 rounded-full border border-green-100 dark:border-green-500/20">
+                      <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-[8px] font-black text-green-600 uppercase">Live GPS Active</span>
+                    </div>
+                  )}
                 </div>
-              ) : (
+                <AddressSearch 
+                  initialAddress={deliveryLocation?.address}
+                  onSelect={(data) => {
+                    setDeliveryLocation(data);
+                    localStorage.setItem('delivery_location', JSON.stringify(data));
+                  }} 
+                />
+                
+                {deliveryLocation && (
+                  <div className="flex flex-col gap-3">
+                    <LocationPickerMap 
+                      coords={{ lat: deliveryLocation.lat, lng: deliveryLocation.lng }}
+                      shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
+                      onCoordsChange={(newCoords) => {
+                        const updated = { ...deliveryLocation, ...newCoords };
+                        setDeliveryLocation(updated);
+                        localStorage.setItem('delivery_location', JSON.stringify(updated));
+                      }}
+                    />
+                    
+                      <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/30 p-3 rounded-xl flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Bike className="w-4 h-4 text-orange-600" />
+                          <span className="text-xs font-bold text-orange-800 dark:text-orange-400">
+                            {distance !== null ? `Distance: ${distance.toFixed(2)}km` : 'Calculating...'}
+                          </span>
+                        </div>
+                        {distance !== null && distance > MAX_DELIVERY_DISTANCE ? (
+                          <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">Too Far</span>
+                        ) : (
+                          <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold">In Range</span>
+                        )}
+                      </div>
+
+                      {distance !== null && distance > MAX_DELIVERY_DISTANCE && (
+                        <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 p-4 rounded-xl flex items-start gap-3 animate-pulse">
+                          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold text-red-700 dark:text-red-400">Store is too far for R5 delivery!</p>
+                            <p className="text-[10px] text-red-600 dark:text-red-500 mt-1">Our bicycle riders only serve within {MAX_DELIVERY_DISTANCE}km. Please select "Collection" or choose a closer shop.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                )}
+
+                {!deliveryLocation && !userProfile.address && (
+                  <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-800/30 flex items-start gap-3">
+                    <Info className="w-5 h-5 text-blue-600 shrink-0" />
+                    <p className="text-xs text-blue-800 dark:text-blue-400 leading-relaxed font-medium">
+                      Search for your address above to see if you're in range for our R5 bicycle delivery.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm relative overflow-hidden">
                 <div className="flex items-stretch justify-between gap-4">
                   <div className="flex flex-col gap-2 flex-1">
                     <div className="flex items-center gap-2">
@@ -3621,8 +4223,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   </div>
                   <div className="w-24 bg-center bg-no-repeat aspect-square bg-cover rounded-xl border border-slate-200 dark:border-slate-700" style={{ backgroundImage: `url("${primaryShop.logo}")` }}></div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </section>
           
           {/* Payment Info Section */}
@@ -3672,7 +4274,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               </div>
               {deliveryType === 'delivery' && (
                 <div className="flex justify-between items-center text-sm text-orange-600 font-bold">
-                  <span>Delivery Fee (Bicycle)</span>
+                  <span>Delivery Fee (Flat Rate)</span>
                   <span>R {DELIVERY_FEE.toFixed(2)}</span>
                 </div>
               )}
@@ -3706,6 +4308,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 }
 
 function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart: CartItem[], shops: Shop[] }) {
+  const [showRatePrompt, setShowRatePrompt] = useState(true);
+
   useEffect(() => {
     if ("vibrate" in navigator) {
       navigator.vibrate([20, 50, 20, 50, 30]); // Success fanfare haptic
@@ -3735,34 +4339,83 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
 
         <div className="w-full max-w-screen-md grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5">
-            <div className="size-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary shrink-0">
+            <div className="size-16 bg-orange-600/10 rounded-2xl flex items-center justify-center text-orange-600 shrink-0">
               <Clock className="w-8 h-8" />
             </div>
             <div>
-              <p className="text-sm font-black text-primary uppercase tracking-widest mb-1">Time Estimate</p>
+              <p className="text-sm font-black text-orange-600 uppercase tracking-widest mb-1">Time Estimate</p>
               <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">Ready in 15-20 mins</p>
-              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Collection or Delivery pending</p>
+              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Status: Preparing Now</p>
             </div>
           </div>
+          
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5">
-            <div className="size-16 bg-primary/10 rounded-2xl flex items-center justify-center text-primary shrink-0">
-              <Banknote className="w-8 h-8" />
+            <div className="size-16 bg-green-600/10 rounded-2xl flex items-center justify-center text-green-600 shrink-0">
+              <Box className="w-8 h-8" />
             </div>
             <div>
-              <p className="text-sm font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-1">Payment</p>
-              <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">Pay at Store</p>
-              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Cash or Card on arrival</p>
+              <p className="text-sm font-black text-green-600 uppercase tracking-widest mb-1">Order Status</p>
+              <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">Sent to Merchant</p>
+              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">Tracking ID: #{Math.floor(1000 + Math.random() * 9000)}</p>
             </div>
           </div>
         </div>
 
-        <button 
+        {/* Dynamic Rating Prompt */}
+        <AnimatePresence>
+          {showRatePrompt && (
+            <motion.div 
+              initial={{ opacity: 0, y: 20, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="w-full max-w-md bg-[#221610] text-white p-8 rounded-[40px] shadow-2xl relative overflow-hidden mb-12 border border-white/5"
+            >
+              <div className="absolute top-0 right-0 p-4">
+                <button onClick={() => setShowRatePrompt(false)} className="text-white/20 hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="flex flex-col items-center gap-6 relative z-10">
+                <div className="size-20 bg-orange-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-orange-600/30 rotate-3">
+                  <Star className="w-10 h-10 text-white fill-current" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-2xl font-black uppercase tracking-tight italic mb-2">Love LocalEats?</h3>
+                  <p className="text-white/60 text-sm font-medium leading-relaxed px-4">Your support helps Tembisa merchants thrive. Rate us on the App Store!</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map(i => (
+                    <button key={i} className="text-orange-500 hover:scale-110 active:scale-95 transition-transform" onClick={() => triggerHaptic(10)}>
+                      <Star className="w-6 h-6 fill-current" />
+                    </button>
+                  ))}
+                </div>
+                <button 
+                  onClick={() => {
+                    triggerHaptic(50);
+                    window.open('https://apps.apple.com', '_blank');
+                    setShowRatePrompt(false);
+                  }}
+                  className="w-full py-4 bg-white text-black font-black uppercase tracking-widest rounded-2xl shadow-xl active:scale-95 transition-all text-[10px]"
+                >
+                  Confirm & Rate
+                </button>
+              </div>
+              <div className="absolute -bottom-12 -left-12 size-48 bg-orange-600/20 rounded-full blur-3xl"></div>
+              <div className="absolute -top-12 -right-12 size-48 bg-orange-600/10 rounded-full blur-3xl"></div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <motion.button 
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           onClick={onHome} 
-          className="w-full max-w-sm bg-slate-900 dark:bg-orange-600 text-white font-black py-5 px-8 rounded-2xl shadow-2xl hover:bg-orange-600 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-3 text-lg"
+          className="w-full max-w-sm py-5 bg-slate-900 dark:bg-orange-600 text-white font-black uppercase tracking-[0.2em] rounded-3xl shadow-2xl active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
         >
-          <Home className="w-6 h-6" />
-          BACK TO HOME
-        </button>
+          <Home className="w-5 h-5" />
+          Back to Home
+        </motion.button>
       </div>
     </div>
   );
@@ -3929,7 +4582,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                 >
                   <div className="h-48 relative">
                     <BlurUpImage 
-                      src={shop.logo} 
+                      src={shop.logo || DEFAULT_SHOP_LOGO} 
                       alt={shop.name} 
                       className="w-full h-full"
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -3943,7 +4596,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                     <div className="flex justify-between items-start mb-4">
                       <div className="flex gap-4">
                         <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl overflow-hidden">
-                          <img src={shop.logo} alt={shop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <img src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         </div>
                         <div>
                           <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
@@ -3982,8 +4635,28 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
               );
             })}
             {filteredShops.length === 0 && (
-              <div className="text-center py-12">
-                <p className="text-slate-500 dark:text-slate-400">No shops found matching your search.</p>
+              <div className="col-span-full py-20 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-700">
+                <div className="relative mb-6">
+                  <div className="size-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-300 dark:text-slate-700">
+                    <Store className="w-12 h-12" />
+                  </div>
+                  <X className="absolute -top-1 -right-1 w-6 h-6 text-rose-500 bg-white dark:bg-slate-900 rounded-full p-1 shadow-sm" />
+                </div>
+                <h3 className="text-xl font-black text-[#2d2f31] dark:text-white mb-2">No matches found</h3>
+                <p className="text-[#5a5c5e] dark:text-slate-400 text-sm max-w-[260px] mx-auto leading-relaxed">
+                  We couldn't find any stores matching your criteria. Try adjusting your filters or search query.
+                </p>
+                <button 
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('All');
+                    setMinRating(0);
+                    setShowOnlyOpen(false);
+                  }}
+                  className="mt-8 px-8 py-3.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl cursor-pointer"
+                >
+                  Clear all filters
+                </button>
               </div>
             )}
           </section>
@@ -4015,7 +4688,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             {shops.slice(0, 2).map(shop => (
               <div key={shop.id} className="flex-none w-[85vw] max-w-[320px] snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center">
                 <div className="w-32 h-32 rounded-full overflow-hidden mb-4 border-4 border-white dark:border-slate-700 shadow-lg">
-                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo} referrerPolicy="no-referrer"/>
+                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo || DEFAULT_SHOP_LOGO} referrerPolicy="no-referrer"/>
                 </div>
                 <h4 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h4>
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">"{shop.description}"</p>
@@ -4048,7 +4721,18 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   );
 }
 
-function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, onContactUs, userProfile, onLogout, setNotification }: { onBack: () => void, onSave: (data: Partial<UserProfile>) => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, onContactUs: () => void, userProfile: UserProfile, onLogout: () => void, setNotification: (n: NotificationState) => void }) {
+function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, userProfile, onLogout, setNotification }: { 
+  onBack: () => void, 
+  onSave: (data: Partial<UserProfile>) => void, 
+  onOrderHistory: () => void, 
+  onAdminOrders: () => void, 
+  onShopDashboard: () => void, 
+  onRiderDashboard: () => void,
+  onContactUs: () => void, 
+  userProfile: UserProfile, 
+  onLogout: () => void, 
+  setNotification: (n: NotificationState) => void 
+}) {
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [phone, setPhone] = useState(userProfile.phone);
   const [address, setAddress] = useState(userProfile.address);
@@ -4145,6 +4829,41 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
           </div>
 
           <div className="py-2">
+             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Language & Region</p>
+             <div className="space-y-1">
+               <div className="p-4 bg-slate-50/50 dark:bg-slate-900/30 rounded-3xl border border-slate-100 dark:border-slate-800">
+                 <div className="flex items-center gap-4 mb-4">
+                   <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl text-amber-600 dark:text-amber-400">
+                     <Flag className="w-6 h-6" />
+                   </div>
+                   <div className="text-left">
+                     <p className="font-bold text-[15px]">App Language</p>
+                     <p className="text-xs text-slate-500">Choose your preferred SA language</p>
+                   </div>
+                 </div>
+                 <div className="grid grid-cols-2 gap-2">
+                   {[
+                     'English', 'isiZulu', 'isiXhosa', 'Afrikaans', 
+                     'Sepedi', 'Setswana', 'Sesotho', 'Xitsonga', 
+                     'siSwati', 'Tshivenda', 'isiNdebele'
+                   ].map(lang => (
+                     <button 
+                       key={lang}
+                       onClick={() => {
+                         setNotification({ message: `Language changed to ${lang}`, type: 'success' });
+                         setTimeout(() => setNotification(null), 2000);
+                       }}
+                       className={`px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center border ${lang === 'English' ? 'bg-orange-600 text-white border-orange-600 shadow-md' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-slate-700 hover:border-orange-500/30'}`}
+                     >
+                       {lang}
+                     </button>
+                   ))}
+                 </div>
+               </div>
+             </div>
+          </div>
+
+          <div className="py-2">
              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Support & Feedback</p>
              <div className="space-y-1">
                <button onClick={onContactUs} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all group">
@@ -4197,6 +4916,26 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
                      </div>
                    </div>
                    <ChevronRight className="w-5 h-5 text-orange-300" />
+                 </button>
+               </div>
+            </div>
+          )}
+
+          {userProfile.role === 'rider' && (
+            <div className="py-2">
+               <p className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest px-2 mb-2">Rider Dashboard</p>
+               <div className="space-y-1">
+                 <button onClick={onRiderDashboard} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-indigo-50 dark:hover:bg-indigo-950/20 transition-all group">
+                   <div className="flex items-center gap-4">
+                     <div className="p-3 bg-indigo-100 dark:bg-indigo-500/20 rounded-xl text-indigo-600 group-hover:scale-110 transition-transform">
+                       <Bike className="w-6 h-6" />
+                     </div>
+                     <div className="text-left">
+                       <p className="font-bold text-[15px]">Rider Dashboard</p>
+                       <p className="text-xs text-slate-500">Manage deliveries and tracking</p>
+                     </div>
+                   </div>
+                   <ChevronRight className="w-5 h-5 text-indigo-300" />
                  </button>
                </div>
             </div>
@@ -4318,6 +5057,66 @@ function RestaurantSchema({ shop }: { shop: Shop }) {
   );
 }
 
+const ImageCarousel = ({ images }: { images: string[] }) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const next = () => setCurrentIndex((prev) => (prev + 1) % images.length);
+  const prev = () => setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
+
+  useEffect(() => {
+    const timer = setInterval(next, 5000);
+    return () => clearInterval(timer);
+  }, [images.length]);
+
+  return (
+    <div className="relative w-full h-64 md:h-96 rounded-[32px] overflow-hidden group shadow-2xl">
+      <AnimatePresence mode="wait">
+        <motion.img
+          key={currentIndex}
+          src={images[currentIndex]}
+          initial={{ opacity: 0, scale: 1.1 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.7, ease: [0.32, 0.72, 0, 1] }}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      </AnimatePresence>
+      
+      {/* Overlay Gradient */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
+
+      {/* Navigation Buttons */}
+      {images.length > 1 && (
+        <>
+          <button 
+            onClick={prev}
+            className="absolute left-4 top-1/2 -translate-y-1/2 p-2 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-2xl text-white opacity-0 group-hover:opacity-100 transition-all active:scale-90"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <button 
+            onClick={next}
+            className="absolute right-4 top-1/2 -translate-y-1/2 p-2 bg-white/20 hover:bg-white/40 backdrop-blur-md rounded-2xl text-white opacity-0 group-hover:opacity-100 transition-all active:scale-90"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </button>
+
+          {/* Dots */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2">
+            {images.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setCurrentIndex(i)}
+                className={`h-1.5 rounded-full transition-all duration-300 ${i === currentIndex ? 'w-8 bg-white' : 'w-1.5 bg-white/40'}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm, setCurrentScreen }: { 
   onBack: () => void, 
   shop: Shop, 
@@ -4412,145 +5211,175 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-gray-900 dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl">
+    <div className="bg-white dark:bg-[#221610] text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
-      {/* TopAppBar */}
-      <header className="sticky top-0 z-50 flex items-center bg-white dark:bg-[#221610] w-full border-b border-gray-100 dark:border-slate-800">
-        <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
-          <div className="flex items-center">
+      
+      {/* Immersive Header with Carousel */}
+      <div className="relative h-80 w-full group overflow-hidden">
+        {shop.images && shop.images.length > 0 ? (
+          <ImageCarousel images={shop.images} />
+        ) : (
+          <div className="w-full h-full relative">
+            <img 
+               src={shop.image} 
+               alt={shop.name} 
+               className="w-full h-full object-cover"
+               referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#221610] via-black/20 to-transparent"></div>
+          </div>
+        )}
+        
+        {/* Navigation Overlays */}
+        <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between z-50">
           <button 
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onBack();
-            }} 
-            className="mr-4 p-2 -ml-2 active:scale-95 duration-200 ease-in-out transition-all hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-full text-orange-600 cursor-pointer z-50"
+            onClick={onBack}
+            className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
           >
-            <ArrowLeft className="w-6 h-6" />
+            <ChevronLeft className="w-6 h-6" />
           </button>
-          <h1 className="font-bold text-lg tracking-tight text-gray-900 dark:text-white flex-grow">Store Info</h1>
-          <div className="flex items-center space-x-4">
-            <button 
-              onClick={onToggleFavorite}
-              className={`cursor-pointer transition-all active:scale-90 ${isFavorite ? 'text-red-500' : 'text-gray-400 hover:text-red-400'}`}
-            >
-              <Heart className={`w-6 h-6 ${isFavorite ? 'fill-current' : ''}`} />
-            </button>
+          <div className="flex gap-2">
             <button 
               onClick={() => {
                 const shareUrl = `${window.location.origin}${window.location.pathname}?shopId=${shop.id}`;
                 if (navigator.share) {
-                  navigator.share({
-                    title: shop.name,
-                    text: `Check out ${shop.name} on LocalEats!`,
-                    url: shareUrl,
-                  }).catch(console.error);
+                  navigator.share({ title: shop.name, text: `Check out ${shop.name} on LocalEats!`, url: shareUrl }).catch(console.error);
                 } else {
                   navigator.clipboard.writeText(shareUrl);
-                  showAlert('Link Copied', 'Link copied to clipboard! You can now share this with others.');
+                  showAlert('Link Copied', 'Link copied to clipboard!');
                 }
               }}
-              className="text-gray-700 dark:text-slate-300 cursor-pointer hover:text-orange-600 transition-colors"
+              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
             >
               <Share2 className="w-6 h-6" />
             </button>
+            <button 
+              onClick={onToggleFavorite}
+              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
+            >
+              <Heart className={`w-6 h-6 ${isFavorite ? 'fill-red-500 text-red-500' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        <div className="absolute bottom-6 left-6 right-6 z-10">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="bg-orange-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest shadow-lg">
+                {shop.category}
+              </span>
+              <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
+                <Clock className="w-3 h-3" />
+                {shop.delivery_eta || '30-45 mins'}
+              </div>
+            </div>
+            <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-2xl">{shop.name}</h1>
+            <p className="text-white/80 text-xs font-medium max-w-sm line-clamp-1">{shop.address}</p>
           </div>
         </div>
       </div>
-    </header>
 
-      <main className="pb-12 px-4 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
-        {/* Responsive Flex Hero for Desktop */}
-        <section className="mb-8 flex flex-col md:flex-row md:items-center md:gap-12 md:py-10">
-          <div className="w-full md:w-auto">
-            {!session && (
-              <div className="w-full mb-6 p-4 bg-orange-50 dark:bg-orange-900/20 rounded-2xl border border-orange-100 dark:border-orange-800/50 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500">
-                <div className="flex items-center gap-3">
-                  <div className="size-10 bg-orange-100 dark:bg-orange-800 rounded-full flex items-center justify-center text-orange-600">
-                    <User className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">New here?</p>
-                    <p className="text-[10px] text-slate-500">Sign up to follow {shop.name}</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={onSignUp}
-                  className="px-4 py-2 bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-md shadow-orange-600/10 active:scale-95 transition-all cursor-pointer"
-                >
-                  Sign Up
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="relative mb-6 md:mb-0 shrink-0 self-center">
-            <div className="w-32 h-32 md:w-48 md:h-48 rounded-full bg-white dark:bg-slate-800 shadow-lg flex items-center justify-center p-2 border-4 border-orange-100 dark:border-orange-500/20">
-              <img alt={shop.name} className="w-full h-full rounded-full object-cover" src={shop.logo} loading="lazy" referrerPolicy="no-referrer"/>
-            </div>
-            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-800 px-4 py-1 rounded-full shadow-md flex items-center space-x-1 border border-gray-100 dark:border-slate-700">
-              <Star className="w-4 h-4 text-orange-500 fill-current" />
-              <span className="text-sm font-bold text-gray-900 dark:text-white">{shop.rating}</span>
-            </div>
-          </div>
-          <div className="text-center md:text-left flex-grow">
-            <h2 className="text-2xl md:text-4xl font-black text-gray-900 dark:text-white tracking-tight">{shop.name}</h2>
-            <p className="text-slate-500 text-sm md:text-base font-medium mb-4">{shop.address}</p>
-            
-            <div className="flex flex-col md:flex-row items-center gap-4">
+      <main className="flex-grow flex flex-col px-4 max-w-screen-xl mx-auto w-full">
+        {/* Immersive Header Spacer */}
+        <div className="h-4"></div>
+        
+        {/* Sticky Action Tabs & Buttons */}
+        <div className="sticky top-0 z-40 bg-white/95 dark:bg-[#221610]/95 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
+          <div className="flex gap-3 mb-4">
+            <button 
+              onClick={() => {
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
+                window.open(url, '_blank');
+              }}
+              className="flex-grow flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all cursor-pointer"
+            >
+              <Navigation className="w-4 h-4" />
+              Directions
+            </button>
+            {shop.phone && (
               <button 
                 onClick={() => {
-                  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
+                  const cleanPhone = shop.phone!.replace(/[^0-9]/g, '');
+                  const waPhone = cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone;
+                  const url = `https://wa.me/${waPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering from your shop!`)}`;
                   window.open(url, '_blank');
                 }}
-                className="w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-bold text-sm shadow-xl active:scale-95 transition-all cursor-pointer"
+                className="size-[52px] bg-[#25D366] text-white rounded-2xl flex items-center justify-center shadow-xl shadow-green-500/20 active:scale-95 transition-all cursor-pointer"
               >
-                <Navigation className="w-4 h-4" />
-                Get Directions
+                <MessageCircle className="w-6 h-6" />
               </button>
-              <p className="text-gray-500 dark:text-slate-400 font-medium">{shop.category} • Tembisa</p>
-            </div>
+            )}
           </div>
-        </section>
+        </div>
 
-        {/* Tab Navigation */}
-        <div className="flex bg-gray-100 dark:bg-slate-900/50 p-1 rounded-2xl mb-8">
+        {/* Spacer */}
+        <div className="h-8"></div>
+
+        {/* Tab Navigation Buttons */}
+        <div className="flex space-x-1 py-1 mb-8 overflow-x-auto no-scrollbar scroll-smooth border-b border-gray-100 dark:border-slate-800">
           {(['menu', 'reviews', 'info'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300 cursor-pointer ${
+              className={`relative px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === tab 
-                  ? 'bg-white dark:bg-slate-800 text-orange-600 shadow-sm' 
-                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-slate-300'
+                  ? 'text-orange-600' 
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
               }`}
             >
               {tab}
+              {activeTab === tab && (
+                <motion.div 
+                  layoutId="activeTabIndicator" 
+                  className="absolute bottom-0 left-0 right-0 h-1 bg-orange-600 rounded-full"
+                />
+              )}
             </button>
           ))}
         </div>
 
         {/* Tab Content */}
-        <div className="min-h-[400px]">
+        <div className="flex-grow">
           {activeTab === 'menu' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* Menu Search Bar */}
-              <div className="relative group px-1">
-                <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
+              {/* Search Bar */}
+              <div className="relative group">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
                 <input 
                   type="text" 
-                  placeholder={`Search in ${shop.name}'s menu...`}
+                  placeholder={`Search dishes at ${shop.name}...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full h-12 pl-12 pr-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-600/20 transition-all"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-xs font-bold outline-none transition-all focus:ring-2 focus:ring-orange-600/20"
                 />
               </div>
+
+              {!session && (
+                 <div className="mb-8 p-5 bg-orange-50 dark:bg-orange-950/20 rounded-3xl border border-orange-100 dark:border-orange-900/30 flex items-center justify-between shadow-sm">
+                   <div className="flex items-center gap-4">
+                     <div className="size-12 bg-white dark:bg-slate-900 rounded-2xl flex items-center justify-center text-orange-600 shadow-sm">
+                       <UserPlus className="w-6 h-6" />
+                     </div>
+                     <div>
+                       <p className="text-[10px] font-black uppercase tracking-widest text-orange-600">New Guest</p>
+                       <p className="text-sm font-bold dark:text-white">Sign up for rewards</p>
+                     </div>
+                   </div>
+                   <button 
+                     onClick={onSignUp}
+                     className="px-6 py-3 bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-orange-600/20 active:scale-95 transition-all"
+                   >
+                     Join
+                   </button>
+                 </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredMenu.length > 0 ? (
                   filteredMenu.map((item) => (
                     <div key={item.id} className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all">
                       <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
-                        <BlurUpImage src={item.image} alt={item.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
+                        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
                       </div>
                       <div className="flex-1 flex flex-col justify-between py-0.5">
                         <div className="flex justify-between items-start">
@@ -4755,13 +5584,28 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                       <p className="text-gray-500 dark:text-slate-400 mt-1">{shop.address}</p>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`, '_blank')}
-                    className="w-full mt-2 py-4 px-6 bg-gray-100 dark:bg-slate-800 rounded-xl text-gray-900 dark:text-white font-bold hover:bg-gray-200 dark:hover:bg-slate-700 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer"
-                  >
-                    <Navigation className="w-5 h-5" />
-                    <span>Get Directions</span>
-                  </button>
+                  <div className="flex gap-3 mt-2">
+                    <button 
+                      onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`, '_blank')}
+                      className="flex-1 py-4 px-6 bg-gray-100 dark:bg-slate-800 rounded-xl text-gray-900 dark:text-white font-bold hover:bg-gray-200 dark:hover:bg-slate-700 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                    >
+                      <Navigation className="w-5 h-5" />
+                      <span>Get Directions</span>
+                    </button>
+                    {shop.phone && (
+                      <button 
+                        onClick={() => {
+                          const cleanPhone = shop.phone!.replace(/[^0-9]/g, '');
+                          const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering!`)}`;
+                          window.open(url, '_blank');
+                        }}
+                        className="p-4 bg-[#25D366] text-white rounded-xl shadow-lg shadow-[#25D366]/20 hover:bg-[#20ba59] active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
+                        title="Chat on WhatsApp"
+                      >
+                        <MessageCircle className="w-6 h-6" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Hours & Contact */}
@@ -4862,11 +5706,52 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
 }) {
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [minRating, setMinRating] = useState(0);
+  const [showOnlyOpen, setShowOnlyOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+
+  const categories = ['All', 'Favorites', 'Nearby', ...new Set(shops.map(s => s.category))];
 
   const filteredShops = shops.filter(shop => {
     const query = searchQuery.trim().toLowerCase();
     const shopText = `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
-    return query === '' || query.split(/\s+/).every(term => shopText.includes(term));
+    const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
+    
+    let matchesCategory = false;
+    if (selectedCategory === 'All') {
+      matchesCategory = true;
+    } else if (selectedCategory === 'Favorites') {
+      matchesCategory = favorites.includes(shop.id);
+    } else if (selectedCategory === 'Nearby') {
+      matchesCategory = true; // Handled in sort
+    } else {
+      matchesCategory = shop.category === selectedCategory;
+    }
+    
+    const matchesRating = shop.rating >= minRating;
+    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+    
+    return matchesSearch && matchesCategory && matchesRating && matchesOpen;
+  });
+
+  const sortedShops = [...filteredShops].sort((a, b) => {
+    if (selectedCategory === 'Nearby' && userLocation) {
+      const aLat = (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
+      const aLng = (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
+      const bLat = (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
+      const bLng = (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+      
+      const distA = Math.sqrt(Math.pow(aLat - userLocation.lat, 2) + Math.pow(aLng - userLocation.lng, 2));
+      const distB = Math.sqrt(Math.pow(bLat - userLocation.lat, 2) + Math.pow(bLng - userLocation.lng, 2));
+      return distA - distB;
+    }
+
+    const statusA = getShopStatus(a);
+    const statusB = getShopStatus(b);
+    if (statusA.isOpen && !statusB.isOpen) return -1;
+    if (!statusA.isOpen && statusB.isOpen) return 1;
+    return b.rating - a.rating;
   });
 
   const activeShop = shops.find(s => s.id === selectedShopId);
@@ -4878,23 +5763,98 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
 
   return (
     <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
-      {/* Search Overlay */}
-      <div className="absolute top-6 left-4 right-4 z-[1000]">
-        <div className="max-w-screen-xl mx-auto">
-          <div className="bg-white dark:bg-slate-900/90 backdrop-blur-md rounded-full shadow-xl flex items-center px-4 py-3 border border-gray-100 dark:border-slate-800 max-w-lg md:mx-auto">
-            <Search className="w-5 h-5 text-gray-400 mr-3" />
+      {/* Search & Filter Header Overlay */}
+      <div className="absolute top-6 left-4 right-4 z-[1000] flex flex-col gap-3">
+        <div className="max-w-lg md:mx-auto w-full">
+          <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-2xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
+            <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
             <input 
               type="text" 
-              placeholder="Search for food spots..." 
-              className="flex-grow outline-none text-sm font-medium bg-transparent"
+              placeholder="Filter by name, food, or street..." 
+              className="flex-grow outline-none text-sm font-bold bg-transparent dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-            <div className="w-px h-6 bg-gray-200 dark:bg-slate-700 mx-3"></div>
-            <button className="text-orange-500" onClick={onRequestLocation}>
-              {userLocation ? <LocateFixed className="w-5 h-5" /> : <Locate className="w-5 h-5" />}
-            </button>
+            <div className="flex items-center gap-2">
+               <button 
+                 onClick={() => setIsFilterOpen(!isFilterOpen)}
+                 className={`p-2 rounded-full transition-all ${isFilterOpen ? 'bg-orange-600 text-white shadow-lg' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'}`}
+               >
+                 <SlidersHorizontal className="w-4 h-4" />
+               </button>
+               <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+               <button className="text-orange-500 active:scale-95 transition-transform p-1.5 hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full" onClick={onRequestLocation}>
+                 {userLocation ? <LocateFixed className="w-6 h-6" /> : <Locate className="w-6 h-6" />}
+               </button>
+            </div>
           </div>
+
+          {/* Expanded Filters Drawer Style */}
+          <motion.div 
+            initial={false}
+            animate={{ height: isFilterOpen ? 'auto' : 0, opacity: isFilterOpen ? 1 : 0 }}
+            className="overflow-hidden bg-white/95 dark:bg-[#221610]/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
+          >
+            <div className="p-6 flex flex-col gap-6">
+              {/* Category Toggles */}
+              <div>
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">Browse by Category</p>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => {
+                        setSelectedCategory(cat);
+                        triggerHaptic(10);
+                      }}
+                      className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                        selectedCategory === cat 
+                          ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-xl' 
+                          : 'bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Advanced Utility Filters */}
+              <div className="flex flex-col gap-4">
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] ml-1">Refine Results</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => {
+                      setShowOnlyOpen(!showOnlyOpen);
+                      triggerHaptic(10);
+                    }}
+                    className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                      showOnlyOpen 
+                        ? 'bg-green-500/10 text-green-600 border-green-500/30 shadow-inner' 
+                        : 'bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800'
+                    }`}
+                  >
+                    <Clock className={`w-5 h-5 ${showOnlyOpen ? 'fill-current' : ''}`} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Open Now</span>
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setMinRating(minRating > 0 ? 0 : 4);
+                      triggerHaptic(10);
+                    }}
+                    className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                      minRating > 0 
+                        ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/30 shadow-inner' 
+                        : 'bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800'
+                    }`}
+                  >
+                    <Star className={`w-5 h-5 ${minRating > 0 ? 'fill-current' : ''}`} />
+                    <span className="text-[10px] font-black uppercase tracking-widest">4+ Stars</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
         </div>
       </div>
 
@@ -4977,7 +5937,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             <div className="flex justify-between items-start mb-4">
               <div className="flex gap-4">
                 <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md">
-                  <img src={activeShop.logo} alt={activeShop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img src={activeShop.logo || DEFAULT_SHOP_LOGO} alt={activeShop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -5000,7 +5960,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
               <button 
                 onClick={() => onStoreInfo(activeShop.id)}
                 className="bg-orange-500 text-white py-3 rounded-2xl font-bold shadow-lg shadow-orange-900/20 flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
@@ -5015,31 +5975,44 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
                 <Navigation className="w-5 h-5" />
                 Directions
               </button>
+              {activeShop.phone && (
+                <button 
+                  onClick={() => {
+                    const cleanPhone = activeShop.phone!.replace(/[^0-9]/g, '');
+                    const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${activeShop.name}, I found you on LocalEats!`)}`;
+                    window.open(url, '_blank');
+                  }}
+                  className="bg-[#25D366] text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer col-span-2 md:col-span-1"
+                >
+                  <MessageCircle className="w-5 h-5" />
+                  WhatsApp
+                </button>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-t border-gray-100 dark:border-slate-800 z-50">
-        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center">
-          <button onClick={onHome} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
-          <div className="p-1">
+      <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pointer-events-none">
+        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-[#d5e2fa]/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-2xl pointer-events-auto transition-all">
+          <button onClick={onHome} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
+          <div className="p-1 group-hover:scale-110 transition-transform">
             <Home className="w-6 h-6" />
           </div>
-          <span className="text-xs font-semibold">Home</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Home</span>
         </button>
-        <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-gray-400 hover:text-orange-500 transition-colors cursor-pointer">
-          <div className="p-1">
-            <Store className="w-6 h-6" />
+        <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
+          <div className="p-1 relative group-hover:scale-110 transition-transform">
+            <Store className="w-6 h-6 bg-white dark:bg-slate-800 rounded-lg p-0.5 shadow-sm" />
           </div>
-          <span className="text-xs font-semibold">Discover</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Discover</span>
         </button>
-        <button className="flex flex-col items-center gap-1 text-orange-500 transition-colors cursor-pointer">
-          <div className="p-1">
+        <button className="flex flex-col items-center gap-1 text-orange-600 transition-colors cursor-pointer group">
+          <div className="p-1 group-hover:scale-110 transition-transform">
             <Compass className="w-6 h-6" />
           </div>
-          <span className="text-xs font-semibold">Explore</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Explore</span>
         </button>
       </div>
     </div>
@@ -5109,63 +6082,157 @@ function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { noti
   );
 }
 
-function RiderTrackingSimulation() {
-  const [progress, setProgress] = useState(0);
+function RealTimeRiderTracking({ order, shop }: { order: Order, shop?: Shop }) {
+  const [riderLocation, setRiderLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [showMap, setShowMap] = useState(false);
+  const [riderInfo, setRiderInfo] = useState<any>(null);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setProgress(prev => (prev < 100 ? prev + 0.1 : 0));
-    }, 50);
-    return () => clearInterval(interval);
-  }, []);
+    if (!order.rider_id) return;
+
+    // Fetch initial location and info
+    const initTracking = async () => {
+      const { data: loc } = await supabase.from('rider_locations').select('*').eq('rider_id', order.rider_id).single();
+      if (loc) setRiderLocation({ lat: Number(loc.latitude), lng: Number(loc.longitude) });
+
+      const { data: profile } = await supabase.from('rider_profiles').select('*').eq('id', order.rider_id).single();
+      setRiderInfo(profile);
+    };
+
+    initTracking();
+
+    const channel = supabase.channel(`tracking-${order.id}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'rider_locations',
+        filter: `rider_id=eq.${order.rider_id}`
+      }, (payload) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          setRiderLocation({ lat: Number(payload.new.latitude), lng: Number(payload.new.longitude) });
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [order.rider_id, order.id]);
+
+  const storeCoords = shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS;
+  const deliveryCoords = order.latitude && order.longitude ? { lat: order.latitude, lng: order.longitude } : null;
+
+  if (!order.rider_id) {
+    return (
+      <div className="p-5 bg-blue-50 dark:bg-blue-950/20 rounded-3xl border border-blue-100 dark:border-blue-900/30">
+        <div className="flex items-center gap-3">
+          <div className="size-10 bg-blue-100 dark:bg-blue-500/20 rounded-full flex items-center justify-center text-blue-600 animate-pulse">
+            <Loader2 className="w-5 h-5 animate-spin" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold">Finding a Rider</h3>
+            <p className="text-[10px] text-slate-500">Connecting your order to the nearest available partner...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-5 bg-orange-50 dark:bg-orange-950/20 rounded-3xl border border-orange-100 dark:border-orange-900/30 overflow-hidden relative">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-black uppercase tracking-widest text-orange-600">Live Rider Tracking</h3>
-        <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold animate-pulse">ON THE WAY</span>
-      </div>
-      
-      <div className="relative h-12 flex items-center">
-        {/* Track Line */}
-        <div className="absolute left-0 right-0 h-1 bg-slate-200 dark:bg-slate-800 rounded-full"></div>
-        
-        {/* Animated Rider */}
-        <motion.div 
-          style={{ left: `${progress}%` }}
-          className="absolute -translate-x-1/2 z-10"
-        >
-          <div className="relative">
-            <div className="p-2 bg-orange-600 text-white rounded-full shadow-lg shadow-orange-600/30">
-              <Bike className="w-5 h-5" />
-            </div>
-            {/* Pulsing indicator */}
-            <div className="absolute -inset-1 bg-orange-600/20 rounded-full animate-ping"></div>
+        <div className="flex items-center gap-2">
+          {order.delivery_status === 'picked_up' ? (
+            <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase animate-pulse">Out for Delivery</span>
+          ) : (
+            <div className="w-2 h-2 bg-orange-600 rounded-full animate-pulse"></div>
+          )}
+          <h3 className="text-sm font-black uppercase tracking-widest text-orange-600">Rider Tracking</h3>
+        </div>
+        {deliveryCoords && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Map</span>
+            <button 
+              onClick={() => setShowMap(!showMap)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${showMap ? 'bg-orange-600' : 'bg-slate-200 dark:bg-slate-800'}`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${showMap ? 'translate-x-5' : 'translate-x-1'}`} />
+            </button>
           </div>
-        </motion.div>
-        
-        {/* Destination Marker */}
-        <div className="absolute right-0 p-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-full">
-          <MapPin className="w-3 h-3" />
-        </div>
+        )}
       </div>
       
-      <div className="flex justify-between mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
-        <span>Kitchen</span>
-        <span>Your Home</span>
-      </div>
-      
-      <div className="mt-4 pt-4 border-t border-orange-100 dark:border-orange-900/20 flex items-center gap-3">
-        <div className="size-8 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
-          <User className="w-4 h-4 text-slate-500" />
+      {showMap && deliveryCoords ? (
+        <div className="h-48 w-full rounded-2xl overflow-hidden mb-4 border border-orange-200 dark:border-orange-800 relative z-10 shadow-inner">
+          <MapContainer center={riderLocation || storeCoords} zoom={15} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <Marker position={storeCoords} />
+            <Marker position={deliveryCoords} />
+            {riderLocation && (
+              <Marker position={riderLocation}>
+                <div className="p-1.5 bg-orange-600 text-white rounded-full shadow-lg">
+                  <Bike className="w-4 h-4" />
+                </div>
+              </Marker>
+            )}
+            <ChangeView center={riderLocation || storeCoords} />
+          </MapContainer>
         </div>
-        <div>
-          <p className="text-[10px] font-bold">Rider: Themba M.</p>
-          <p className="text-[9px] text-slate-400">Arriving in approx. 8 mins</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+            <span>Shop</span>
+            <span>Rider Location</span>
+            <span>You</span>
+          </div>
+          <div className="relative h-1 bg-slate-200 dark:bg-slate-800 rounded-full flex items-center">
+             <div className="absolute left-0 w-2 h-2 bg-slate-900 dark:bg-white rounded-full"></div>
+             <div className="absolute right-0 w-2 h-2 bg-orange-600 rounded-full"></div>
+             {/* Progress could be calculated based on distance */}
+             <div className="absolute left-[45%] p-1.5 bg-orange-600 text-white rounded-full shadow-lg animate-bounce">
+                <Bike className="w-4 h-4" />
+             </div>
+          </div>
+        </div>
+      )}
+      
+      <div className="mt-4 pt-4 border-t border-orange-100 dark:border-orange-900/20 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="size-10 rounded-xl bg-orange-100 dark:bg-orange-500/10 flex items-center justify-center text-orange-600">
+            <User className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-xs font-bold">{riderInfo?.full_name || 'Assigned Rider'}</p>
+            <p className="text-[10px] text-slate-500 capitalize">{riderInfo?.vehicle_type || 'Bicycle'} Delivery</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {riderInfo?.phone && (
+            <button 
+              onClick={() => {
+                const cleanPhone = riderInfo.phone.replace(/[^0-9]/g, '');
+                const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${riderInfo.full_name}, I'm checking on my delivery for order #${order.id.slice(0, 5)}!`)}`;
+                window.open(url, '_blank');
+              }}
+              className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-primary/10 shadow-sm text-[#25D366] active:scale-90 transition-all cursor-pointer group"
+              title="WhatsApp Rider"
+            >
+              <MessageCircle className="w-4 h-4 fill-[#25D366]/20" />
+            </button>
+          )}
+          <a href={`tel:${riderInfo?.phone}`} className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-primary/10 shadow-sm text-primary active:scale-90 transition-all">
+            <Phone className="w-4 h-4" />
+          </a>
         </div>
       </div>
     </div>
   );
+}
+
+function ChangeView({ center }: { center: { lat: number, lng: number } }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, 13);
+  }, [center, map]);
+  return null;
 }
 
 function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops: Shop[], onBack: () => void }) {
@@ -5209,22 +6276,46 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
             
             return (
               <div key={order.id} className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/10 p-5 shadow-sm space-y-6">
-                {order.status !== 'pending' && order.is_delivery && <RiderTrackingSimulation />}
+                {order.status !== 'pending' && order.is_delivery && <RealTimeRiderTracking order={order} shop={shop} />}
                 
                 <div className="flex justify-between items-start">
                   <div className="flex items-center space-x-3">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800">
-                      <img src={shop?.logo || 'https://picsum.photos/seed/shop/100/100'} alt={shop?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm">
+                      <img src={shop?.logo || DEFAULT_SHOP_LOGO} alt={shop?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-slate-900 dark:text-white">{shop?.name || 'Local Shop'}</h3>
-                      <p className="text-xs text-slate-500">{order.product_name} x{order.quantity}</p>
+                      <h3 className="font-bold text-slate-900 dark:text-white text-base">{shop?.name || 'Local Shop'}</h3>
+                      <p className="text-xs text-slate-500 font-medium">{order.product_name} x{order.quantity}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-slate-400">Order ID</p>
-                    <p className="text-xs font-mono font-bold text-primary">#{order.id.slice(0, 8)}</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order ID</p>
+                    <p className="text-[11px] font-mono font-bold text-primary">#{order.id.slice(0, 8)}</p>
                   </div>
+                </div>
+
+                {/* Contact Controls */}
+                <div className="flex gap-2">
+                  {shop?.phone && (
+                    <button 
+                      onClick={() => {
+                        const cleanPhone = shop.phone!.replace(/[^0-9]/g, '');
+                        const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm checking on my order #${order.id.slice(0, 5)}!`)}`;
+                        window.open(url, '_blank');
+                      }}
+                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#25D366] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-lg shadow-[#25D366]/20"
+                    >
+                      <MessageCircle className="w-4 h-4 fill-current" />
+                      <span>Message Shop</span>
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => window.open(`tel:${shop?.phone || ''}`)}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>Call Shop</span>
+                  </button>
                 </div>
 
                 {/* Tracking Steps */}
@@ -5279,7 +6370,20 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
     </div>
   );
 }
-function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, isDarkMode, onToggleDarkMode, setNotification }: { userProfile: UserProfile, setUserProfile: Dispatch<SetStateAction<UserProfile>>, onBack: () => void, onLogout: () => void, onProfile: () => void, onOrderHistory: () => void, onAdminOrders: () => void, onShopDashboard: () => void, isDarkMode: boolean, onToggleDarkMode: () => void, setNotification: (n: NotificationState) => void }) {
+function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, isDarkMode, onToggleDarkMode, setNotification }: { 
+  userProfile: UserProfile, 
+  setUserProfile: Dispatch<SetStateAction<UserProfile>>, 
+  onBack: () => void, 
+  onLogout: () => void, 
+  onProfile: () => void, 
+  onOrderHistory: () => void, 
+  onAdminOrders: () => void, 
+  onShopDashboard: () => void, 
+  onRiderDashboard: () => void,
+  isDarkMode: boolean, 
+  onToggleDarkMode: () => void, 
+  setNotification: (n: NotificationState) => void 
+}) {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -5403,6 +6507,72 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
 
         {/* Support & Legal Section */}
         <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Social</h3>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm p-4">
+            <div className="flex items-center gap-4 bg-primary/5 p-4 rounded-2xl">
+              <div className="size-12 bg-primary rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary/20">
+                <Gift className="w-6 h-6" />
+              </div>
+              <div className="flex-grow">
+                <p className="font-bold text-sm">Refer a Friend</p>
+                <p className="text-[10px] text-slate-500 font-medium">Get R50 off your next order</p>
+              </div>
+              <button 
+                onClick={() => {
+                  if (navigator.share) {
+                    navigator.share({
+                      title: 'LocalEats',
+                      text: 'Check out LocalEats! Use my code "LOCAL50" for R50 off.',
+                      url: window.location.href,
+                    });
+                  } else {
+                    setNotification({ message: "Invite link copied!", type: "success" });
+                  }
+                }}
+                className="size-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-primary border border-primary/10 shadow-sm active:scale-95 transition-all cursor-pointer"
+              >
+                <Share2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Security Section */}
+        <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Security</h3>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <button 
+              onClick={() => setNotification({ message: "Password reset sent to your email", type: "success" })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-500/20 flex items-center justify-center text-red-600">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm">Change Password</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </button>
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center space-x-3 text-left">
+                <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center text-green-600">
+                  <Fingerprint className="w-5 h-5" />
+                </div>
+                <div>
+                   <p className="font-medium text-sm">Biometric Login</p>
+                   <p className="text-[10px] text-slate-500">Fast access to your account</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input className="sr-only peer" type="checkbox"/>
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        {/* Support & Legal Section */}
+        <section>
           <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Support & Legal</h3>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
             <button 
@@ -5480,6 +6650,24 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
           </section>
         )}
 
+        {/* Rider Section */}
+        {userProfile.role === 'rider' && (
+          <section>
+            <h3 className="text-xs font-bold uppercase tracking-widest text-indigo-600 mb-3 px-1">Rider Fleet</h3>
+            <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+              <button onClick={onRiderDashboard} className="w-full flex items-center justify-between p-4 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors border-b border-primary/5 cursor-pointer">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
+                    <Bike className="w-5 h-5" />
+                  </div>
+                  <span className="font-medium">Rider Dashboard</span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* Account Section */}
         <section>
           <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Account</h3>
@@ -5524,9 +6712,24 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
               </label>
             </div>
+            <div className="flex items-center justify-between p-4 border-b border-primary/5">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600">
+                  <Mail className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium">Email Reports</p>
+                  <p className="text-xs text-slate-500">Weekly summaries and receipts</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input className="sr-only peer" type="checkbox"/>
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center text-orange-600">
                   <Tag className="w-5 h-5" />
                 </div>
                 <div className="text-left">
@@ -5539,6 +6742,67 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
               </label>
             </div>
+          </div>
+        </section>
+
+        {/* Privacy Section */}
+        <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Privacy</h3>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <div className="flex items-center justify-between p-4 border-b border-primary/5">
+              <div className="flex items-center space-x-3 text-left">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div>
+                   <p className="font-medium text-sm">Public Profile</p>
+                   <p className="text-[10px] text-slate-500">Allow others to see your reviews</p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input defaultChecked className="sr-only peer" type="checkbox"/>
+                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
+            <button 
+              onClick={() => setNotification({ message: "Manage linked accounts feature coming soon", type: "info" })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
+                  <Database className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm">Connected Services</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </button>
+          </div>
+        </section>
+
+        {/* Storage & Cache */}
+        <section>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Data Management</h3>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm p-2">
+            <button 
+              onClick={() => {
+                if (window.confirm("This will clear all local data including your cart and favorites. Proceed?")) {
+                  localStorage.clear();
+                  window.location.reload();
+                }
+              }}
+              className="w-full flex items-center justify-between p-3 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-lg transition-colors group cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-600 group-hover:bg-red-600 group-hover:text-white transition-all">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-sm text-red-600">Clear Local Cache</p>
+                  <p className="text-[10px] text-slate-400">Resets favorites, cart, and state</p>
+                </div>
+              </div>
+              <Zap className="w-4 h-4 text-red-200 group-hover:text-red-500 transition-colors" />
+            </button>
           </div>
         </section>
 
@@ -5586,6 +6850,318 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   );
 }
 
+function RiderDashboardScreen({ onBack, showAlert, showConfirm }: { 
+  onBack: () => void, 
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void
+}) {
+  const [riderProfile, setRiderProfile] = useState<any>(null);
+  const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
+
+  const fetchRiderData = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const { data: profile, error: profileErr } = await supabase
+        .from('rider_profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      if (!profile) {
+        // If profile doesn't exist, try to create it from pairing? 
+        // For now, let's assume it should exist if they got here.
+        setLoading(false);
+        return;
+      }
+
+      setRiderProfile(profile);
+
+      if (profile.current_order_id) {
+        const { data: order } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('id', profile.current_order_id)
+          .single();
+        setActiveOrder(order);
+      } else {
+        setActiveOrder(null);
+      }
+    } catch (err) {
+      console.error('Error fetching rider data:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRiderData();
+    
+    // Subscribe to changes
+    const channel = supabase.channel('rider-updates')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'rider_profiles' 
+      }, fetchRiderData)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'orders' 
+      }, fetchRiderData)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchRiderData]);
+
+  // Periodic Location Updates
+  useEffect(() => {
+    if (!riderProfile?.is_online || activeOrder?.delivery_status !== 'picked_up') {
+      return;
+    }
+
+    const updateLocation = async () => {
+      if (!navigator.geolocation) return;
+
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        
+        const { error } = await supabase
+          .from('rider_locations')
+          .upsert({
+            rider_id: riderProfile.id,
+            latitude,
+            longitude,
+            updated_at: new Date().toISOString()
+          });
+
+        if (error) {
+          console.error('Location update failed:', error);
+        } else {
+          setLastLocationUpdate(Date.now());
+        }
+      }, (err) => {
+        console.error('Geolocation error:', err);
+      }, {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
+      });
+    };
+
+    const interval = setInterval(updateLocation, 10000); // Every 10 seconds
+    updateLocation();
+
+    return () => clearInterval(interval);
+  }, [riderProfile?.is_online, activeOrder?.id, activeOrder?.delivery_status, riderProfile?.id]);
+
+  const toggleOnline = async () => {
+    const { error } = await supabase
+      .from('rider_profiles')
+      .update({ is_online: !riderProfile.is_online })
+      .eq('id', riderProfile.id);
+    
+    if (error) {
+      showAlert('Error', 'Failed to update status');
+    } else {
+      fetchRiderData();
+    }
+  };
+
+  const updateDeliveryStatus = async (status: string, deliveryStatus: string) => {
+    if (!activeOrder) return;
+
+    setLoading(true);
+    try {
+      const { error: orderErr } = await supabase
+        .from('orders')
+        .update({ status, delivery_status: deliveryStatus })
+        .eq('id', activeOrder.id);
+      
+      if (orderErr) throw orderErr;
+
+      if (deliveryStatus === 'delivered') {
+        const { error: riderErr } = await supabase
+          .from('rider_profiles')
+          .update({ 
+            current_order_id: null, 
+            completed_deliveries: (riderProfile.completed_deliveries || 0) + 1 
+          })
+          .eq('id', riderProfile.id);
+        if (riderErr) throw riderErr;
+      }
+
+      showAlert('Success', `Order marked as ${deliveryStatus.replace('_', ' ')}`);
+      fetchRiderData();
+    } catch (err: any) {
+      showAlert('Error', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading && !riderProfile) {
+    return (
+      <div className="h-screen bg-slate-50 dark:bg-[#221610] flex flex-col items-center justify-center p-8 text-center">
+        <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
+        <p className="font-bold">Accessing Rider Fleet...</p>
+      </div>
+    );
+  }
+
+  if (!riderProfile) {
+    return (
+      <div className="h-screen bg-slate-50 dark:bg-[#221610] flex flex-col items-center justify-center p-8 text-center">
+        <XCircle className="w-16 h-16 text-slate-300 mb-4" />
+        <h2 className="text-xl font-bold mb-2">Rider Profile Not Found</h2>
+        <p className="text-sm text-slate-500 mb-6">You need to be registered as a rider to access this dashboard.</p>
+        <button onClick={onBack} className="bg-primary text-white px-8 py-3 rounded-xl font-bold">Return Home</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-slate-50 dark:bg-[#221610] min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl">
+      <header className="p-4 flex items-center justify-between sticky top-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md z-50 border-b border-primary/10">
+        <button onClick={onBack} className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"><ArrowLeft className="w-6 h-6" /></button>
+        <div className="flex flex-col items-center">
+          <h1 className="font-black uppercase tracking-tighter text-xl">Rider Dashboard</h1>
+          <p className="text-[9px] font-black tracking-widest text-primary uppercase">Fleet Service</p>
+        </div>
+        <div className="flex items-center gap-2">
+           <div className={`w-2 h-2 rounded-full ${riderProfile.is_online ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
+           <button 
+             onClick={toggleOnline}
+             className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border transition-all ${riderProfile.is_online ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+           >
+             {riderProfile.is_online ? 'Online' : 'Offline'}
+           </button>
+        </div>
+      </header>
+
+      <main className="flex-grow p-4 space-y-6 overflow-y-auto">
+        {/* Stats Card */}
+        <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-600/20 grid grid-cols-2 gap-4">
+           <div>
+             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-1">Deliveries</p>
+             <p className="text-3xl font-black">{riderProfile.completed_deliveries || 0}</p>
+           </div>
+           <div className="text-right">
+             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-1">Rating</p>
+             <div className="flex items-center justify-end gap-1">
+               <Star className="w-4 h-4 fill-current text-yellow-400" />
+               <p className="text-3xl font-black">{riderProfile.rating || '5.0'}</p>
+             </div>
+           </div>
+        </div>
+
+        {/* Active Order Section */}
+        <section>
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 px-1">Active Assignment</h3>
+          
+          {!activeOrder ? (
+            <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 p-10 text-center space-y-4">
+               <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                 <Package className="w-8 h-8" />
+               </div>
+               <p className="text-sm font-bold text-slate-500">Wait for new assignments</p>
+               {!riderProfile.is_online && (
+                 <p className="text-[10px] text-orange-500 font-bold uppercase animate-bounce">Go online to receive orders</p>
+               )}
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-primary/10 p-6 shadow-sm space-y-6">
+               <div className="flex justify-between items-start">
+                  <div>
+                    <span className="bg-orange-100 text-orange-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase mb-2 inline-block">
+                      {activeOrder.delivery_status.replace('_', ' ')}
+                    </span>
+                    <h4 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">Order #{activeOrder.id.slice(0, 8)}</h4>
+                    <p className="text-xs text-slate-500">{activeOrder.product_name} x{activeOrder.quantity}</p>
+                  </div>
+                  <div className="size-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                    <Bike className="w-6 h-6" />
+                  </div>
+               </div>
+
+               <div className="grid grid-cols-2 gap-4 py-4 border-y border-slate-50 dark:border-slate-800">
+                  <div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Customer</p>
+                    <p className="text-sm font-bold">{activeOrder.customer_name}</p>
+                    <a href={`tel:${activeOrder.phone}`} className="text-xs text-primary font-bold flex items-center gap-1 mt-1">
+                      <Phone className="w-3 h-3" />
+                      {activeOrder.phone}
+                    </a>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Earned</p>
+                    <p className="text-sm font-bold">R{activeOrder.delivery_fee || 15}</p>
+                    <p className="text-[10px] text-slate-400">Fixed Fee</p>
+                  </div>
+               </div>
+
+               {/* Address Section */}
+               <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl flex items-start gap-3">
+                  <div className="size-8 bg-white dark:bg-slate-900 rounded-xl flex items-center justify-center text-slate-400 shadow-sm shrink-0">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <div className="flex-grow">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Delivery Address</p>
+                    <p className="text-xs font-bold leading-relaxed">{activeOrder.address}</p>
+                  </div>
+                  <button 
+                    onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${activeOrder.latitude},${activeOrder.longitude}`, '_blank')}
+                    className="p-2 bg-primary text-white rounded-lg shadow-lg active:scale-95 transition-all shrink-0"
+                  >
+                    <Navigation className="w-4 h-4" />
+                  </button>
+               </div>
+
+               {/* Action Buttons */}
+               <div className="space-y-3">
+                  {activeOrder.delivery_status === 'rider_assigned' && (
+                    <button 
+                      onClick={() => updateDeliveryStatus('preparing', 'picked_up')}
+                      disabled={loading}
+                      className="w-full py-4 bg-orange-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <Package className="w-5 h-5" />}
+                      Mark as Picked Up
+                    </button>
+                  )}
+                  {activeOrder.delivery_status === 'picked_up' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-center gap-2 text-[10px] font-bold text-green-500 animate-pulse bg-green-50 dark:bg-green-500/10 py-2 rounded-lg">
+                        <Navigation className="w-3 h-3" />
+                        <span>Live Tracking Active</span>
+                        {lastLocationUpdate > 0 && <span className="opacity-50">({Math.round((Date.now() - lastLocationUpdate)/1000)}s ago)</span>}
+                      </div>
+                      <button 
+                        onClick={() => updateDeliveryStatus('completed', 'delivered')}
+                        disabled={loading}
+                        className="w-full py-4 bg-green-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-green-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                        Confirm Delivery
+                      </button>
+                    </div>
+                  )}
+               </div>
+            </div>
+          )}
+        </section>
+      </main>
+
+      <div className="p-4 bg-white dark:bg-[#221610] border-t border-primary/10">
+        <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-[0.2em]">LocalEats Rider Fleet v2.4.0</p>
+      </div>
+    </div>
+  );
+}
+
 function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic }: { 
   onBack: () => void, 
   orderAcceptedModal: { isOpen: boolean, productName: string, ownerMessage: string }, 
@@ -5602,9 +7178,129 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing' | 'settings' | 'riders'>('orders');
   const [showDebug, setShowDebug] = useState(false);
+  const [orderFilter, setOrderFilter] = useState<'today' | 'seven_days' | 'all'>('today');
+  const [cancellationModal, setCancellationModal] = useState<{ isOpen: boolean, orderId: string | null }>({ isOpen: false, orderId: null });
+  const [cancellationReason, setCancellationReason] = useState("");
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const [pairingCode, setPairingCode] = useState('');
   const [qrCodeData, setQrCodeData] = useState('');
+  const [isEditingMenu, setIsEditingMenu] = useState(false);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [riders, setRiders] = useState<any[]>([]);
+  const [riderLocations, setRiderLocations] = useState<Record<string, { lat: number, lng: number }>>({});
+
+  const fetchRiders = async () => {
+    try {
+      const { data: riderData } = await supabase.from('rider_profiles').select('*').eq('is_online', true);
+      setRiders(riderData || []);
+      
+      const { data: locData } = await supabase.from('rider_locations').select('*');
+      const locMap: Record<string, { lat: number, lng: number }> = {};
+      locData?.forEach(loc => {
+        locMap[loc.rider_id] = { lat: Number(loc.latitude), lng: Number(loc.longitude) };
+      });
+      setRiderLocations(locMap);
+    } catch (err) {
+      console.error('Error fetching riders:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'riders') {
+      fetchRiders();
+      const channel = supabase.channel('rider-tracking')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_locations' }, (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            setRiderLocations(prev => ({
+              ...prev,
+              [payload.new.rider_id]: { lat: Number(payload.new.latitude), lng: Number(payload.new.longitude) }
+            }));
+          }
+        })
+        .subscribe();
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [activeTab]);
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [menuImgUrl, setMenuImgUrl] = useState('');
+
+  const handleMenuImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    try {
+      setIsUploading(true);
+      const url = await uploadAvatar(e.target.files[0], shop?.id);
+      setMenuImgUrl(url);
+    } catch (err: any) {
+      showAlert('Upload Error', err.message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const saveMenuItem = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!shop) return;
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const itemData = {
+      shop_id: shop.id,
+      name: formData.get('name') as string,
+      price: parseFloat(formData.get('price') as string),
+      description: formData.get('description') as string,
+      image_url: menuImgUrl || (formData.get('image_url') as string) || (editingItem?.image_url) || DEFAULT_MENU_IMAGE,
+      is_available: true
+    };
+
+    try {
+      if (editingItem) {
+        const { error } = await supabase.from('menu_items').update(itemData).eq('id', editingItem.id);
+        if (error) throw error;
+        showAlert('Success', 'Menu item updated!');
+      } else {
+        const { error } = await supabase.from('menu_items').insert([itemData]);
+        if (error) throw error;
+        showAlert('Success', 'Menu item added!');
+      }
+      setIsEditingMenu(false);
+      setEditingItem(null);
+      // Refresh shop data to get new menu
+      window.location.reload(); 
+    } catch (err: any) {
+      showAlert('Error', err.message);
+    }
+  };
+
+  const deleteMenuItem = async (itemId: string) => {
+    showConfirm('Delete Item', 'Are you sure you want to remove this item from your menu?', async () => {
+      try {
+        const { error } = await supabase.from('menu_items').delete().eq('id', itemId);
+        if (error) throw error;
+        showAlert('Success', 'Item deleted');
+        window.location.reload();
+      } catch (err: any) {
+        showAlert('Error', err.message);
+      }
+    });
+  };
+
+  const assignRider = async (orderId: string, riderId: string) => {
+    try {
+      const { error } = await supabase.from('orders')
+        .update({ 
+          rider_id: riderId, 
+          delivery_status: 'rider_assigned',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
+      
+      if (error) throw error;
+      showAlert('Success', 'Rider assigned to order!');
+      triggerHaptic();
+    } catch (err: any) {
+      showAlert('Error', err.message);
+    }
+  };
 
   const generatePairingCode = async () => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -5663,7 +7359,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           return;
         }
 
-        // Format shop data to match Shop type
+        // Fetch menu items for the shop
+        const { data: menuData } = await supabase
+          .from('menu_items')
+          .select('*')
+          .eq('shop_id', shopData.id);
+
         const formattedShop: Shop = {
           id: String(shopData.id),
           name: shopData.name,
@@ -5678,7 +7379,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           phone: shopData.phone,
           latitude: shopData.latitude,
           longitude: shopData.longitude,
-          menu: [] // Menu items will be fetched if needed or left empty for dashboard
+          menu: (menuData || []) as MenuItem[]
         };
 
         setShop(formattedShop);
@@ -5744,7 +7445,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     };
   }, []);
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  const updateOrderStatus = async (orderId: string, newStatus: string, reason?: string) => {
+    if (newStatus === 'cancelled' && !reason) {
+      setCancellationModal({ isOpen: true, orderId });
+      return;
+    }
+
     if (newStatus === 'confirmed') {
       showPrompt(
         "Order Message",
@@ -5759,7 +7465,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     }
   };
 
-  const executeStatusUpdate = async (orderId: string, newStatus: string, ownerMessage?: string) => {
+  const executeStatusUpdate = async (orderId: string, newStatus: string, ownerMessage?: string, reason?: string) => {
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
@@ -5774,7 +7480,11 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       if (fetchError) throw fetchError;
 
       const history = currentOrder?.status_history || [];
-      const newHistory = [...history, { status: newStatus, timestamp: new Date().toISOString() }];
+      const newHistory = [...history, { 
+        status: newStatus, 
+        timestamp: new Date().toISOString(),
+        ...(reason && { reason })
+      }];
 
       // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready, 
       // it shifts to 'finding_rider' status instead of just 'ready'
@@ -5792,6 +7502,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         delivery_status: deliveryStatus
       };
       if (ownerMessage) updateData.owner_message = ownerMessage;
+      if (reason) updateData.cancellation_reason = reason;
 
       const { error } = await supabase
         .from('orders')
@@ -5799,6 +7510,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         .eq('id', orderId);
 
       if (error) throw error;
+      
+      if (newStatus === 'cancelled') {
+        showAlert('Success', 'Order cancelled and customer notified.');
+        setCancellationModal({ isOpen: false, orderId: null });
+        setCancellationReason("");
+      }
     } catch (err: unknown) {
       console.error('Error updating order status:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -5818,11 +7535,29 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       case 'preparing': return 'bg-purple-100 text-purple-600 border-purple-200';
       case 'ready': return 'bg-green-100 text-green-600 border-green-200';
       case 'completed': return 'bg-gray-100 text-gray-600 border-gray-200';
+      case 'cancelled': return 'bg-rose-100 text-rose-600 border-rose-200';
       default: return 'bg-gray-100 text-gray-600 border-gray-200';
     }
   };
 
   // Calculate Stats
+  const filteredOrders = orders.filter(o => {
+    const orderDate = new Date(o.created_at);
+    const now = new Date();
+    
+    if (orderFilter === 'today') {
+      return orderDate.toDateString() === now.toDateString();
+    }
+    
+    if (orderFilter === 'seven_days') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      return orderDate >= sevenDaysAgo;
+    }
+    
+    return true; // 'all'
+  });
+
   const activeOrdersCount = orders.filter(o => ['pending', 'confirmed', 'preparing'].includes(o.status)).length;
   const readyOrdersCount = orders.filter(o => o.status === 'ready').length;
   const todayRevenue = orders
@@ -5973,20 +7708,38 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           </div>
         )}
         {!loading && !error && shop && activeTab === 'orders' && (
-          <div className="space-y-3 mb-4">
+          <div className="space-y-4 mb-4 animate-in fade-in slide-in-from-top-4 duration-500">
+            {/* Stats Overview */}
             <div className="grid grid-cols-3 gap-3">
-              <div className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl border border-orange-100 dark:border-orange-800/50">
+              <motion.div whileHover={{ y: -2 }} className="bg-orange-50 dark:bg-orange-900/20 p-3 rounded-2xl border border-orange-100 dark:border-orange-800/50 transition-all shadow-sm">
                 <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-wider mb-1">Active</p>
                 <p className="text-xl font-black text-orange-700 dark:text-orange-300">{activeOrdersCount}</p>
-              </div>
-              <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-2xl border border-green-100 dark:border-green-800/50">
+              </motion.div>
+              <motion.div whileHover={{ y: -2 }} className="bg-green-50 dark:bg-green-900/20 p-3 rounded-2xl border border-green-100 dark:border-green-800/50 transition-all shadow-sm">
                 <p className="text-[10px] font-bold text-green-600 dark:text-green-400 uppercase tracking-wider mb-1">Ready</p>
                 <p className="text-xl font-black text-green-700 dark:text-green-300">{readyOrdersCount}</p>
-              </div>
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl border border-blue-100 dark:border-blue-800/50">
+              </motion.div>
+              <motion.div whileHover={{ y: -2 }} className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl border border-blue-100 dark:border-blue-800/50 transition-all shadow-sm">
                 <p className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-1">Revenue</p>
                 <p className="text-xl font-black text-blue-700 dark:text-blue-300">R{Math.round(todayRevenue)}</p>
-              </div>
+              </motion.div>
+            </div>
+
+            {/* Date Range Filter */}
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+              {(['today', 'seven_days', 'all'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setOrderFilter(filter)}
+                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    orderFilter === filter 
+                      ? 'bg-white dark:bg-slate-700 text-primary shadow-md' 
+                      : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                  }`}
+                >
+                  {filter === 'today' ? 'Today' : filter === 'seven_days' ? 'Last 7 Days' : 'All Time'}
+                </button>
+              ))}
             </div>
 
             <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800/50 flex items-center justify-between">
@@ -6087,11 +7840,14 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           <div className="space-y-4">
             <div className="flex items-center justify-between px-1">
               <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Menu Items</h3>
-              <button className="text-[10px] font-bold text-primary uppercase tracking-widest flex items-center gap-1">
-                <Plus className="w-3.5 h-3.5" /> Add Item
+              <button 
+                onClick={() => { setEditingItem(null); setIsEditingMenu(true); }}
+                className="bg-orange-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add New Item
               </button>
             </div>
-            {shop?.menu_items?.length > 0 ? (
+            {shop?.menu?.length > 0 ? (
               <div className="grid grid-cols-1 gap-3">
                 {shop.menu.map((item: MenuItem) => {
                   const isExpanded = expandedItems.includes(item.id);
@@ -6099,14 +7855,26 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   const isLongDescription = item.description && item.description.length > 40;
 
                   return (
-                    <div key={item.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 shadow-sm flex flex-col space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
+                    <div key={item.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 shadow-sm flex flex-col space-y-3">
+                      <div className="flex items-center gap-3">
+                        <img src={item.image_url || DEFAULT_MENU_IMAGE} alt={item.name} className="w-12 h-12 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
+                        <div className="flex-grow">
                           <p className="font-bold text-sm">{item.name}</p>
+                          <p className="font-bold text-primary text-xs">R{item.price}</p>
                         </div>
-                        <div className="text-right">
-                          <p className="font-bold text-primary text-sm">R{item.price}</p>
-                          <span className="text-[8px] font-bold uppercase text-green-500">In Stock</span>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => { setEditingItem(item); setIsEditingMenu(true); }}
+                            className="p-2 text-slate-400 hover:text-orange-500 transition-colors cursor-pointer"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => deleteMenuItem(item.id)}
+                            className="p-2 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                       {hasDescription && (
@@ -6135,7 +7903,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   <Package className="w-8 h-8" />
                 </div>
                 <p className="font-bold text-slate-900 dark:text-white">No Menu Items Found</p>
-                <p className="text-xs text-slate-500 px-12">Your shop's menu items will appear here once they are added to the database.</p>
+                <p className="text-xs text-slate-500 px-12">Click "Add New Item" to start building your menu.</p>
               </div>
             )}
           </div>
@@ -6194,75 +7962,192 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           </div>
         ) : activeTab === 'riders' ? (
           <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
-               <div className="flex items-center gap-3 mb-6">
-                <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-600">
-                  <Navigation className="w-6 h-6" />
+            <div className="bg-white dark:bg-slate-900/50 p-4 rounded-3xl border border-primary/5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="size-8 bg-indigo-100 dark:bg-indigo-500/20 rounded-xl flex items-center justify-center text-indigo-600">
+                    <Navigation className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold">Live Tracking</h3>
                 </div>
-                <div>
-                  <h3 className="font-bold text-lg">Rider Fleet</h3>
-                  <p className="text-xs text-slate-500">Manage your delivery partners</p>
-                </div>
+                <button 
+                  onClick={fetchRiders}
+                  className="p-2 text-slate-400 hover:text-indigo-600 active:rotate-180 transition-all duration-500 cursor-pointer"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
               </div>
 
-              {!pairingCode ? (
-                <div className="text-center py-8 space-y-6">
-                   <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
-                    <UserPlus className="w-10 h-10" />
+              {/* Mini Map */}
+              <div className="h-64 w-full rounded-2xl overflow-hidden border border-slate-100 dark:border-slate-800 relative z-10">
+                <MapContainer center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS} zoom={13} style={{ height: '100%', width: '100%' }}>
+                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                  {shop?.latitude && shop?.longitude && <Marker position={{ lat: shop.latitude, lng: shop.longitude }} />}
+                  {riders.map(rider => riderLocations[rider.id] && (
+                    <Marker key={rider.id} position={riderLocations[rider.id]}>
+                      <div className={`p-1 rounded-full shadow-lg border-2 ${rider.current_order_id ? 'bg-orange-500 border-white' : 'bg-green-500 border-white'}`}>
+                        <Bike className="w-3 h-3 text-white" />
+                      </div>
+                    </Marker>
+                  ))}
+                  <ChangeView center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS} />
+                </MapContainer>
+              </div>
+
+              <div className="flex gap-4">
+                <div className="flex items-center gap-1.5">
+                  <div className="size-2 bg-green-500 rounded-full"></div>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Available</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="size-2 bg-orange-500 rounded-full"></div>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">On Delivery</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Rider List & Assignment */}
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest px-1">Online Riders ({riders.length})</h4>
+              
+              {riders.length === 0 ? (
+                <div className="bg-slate-50 dark:bg-slate-800/30 p-8 rounded-3xl border border-dashed border-slate-200 dark:border-slate-700 text-center space-y-3">
+                  <div className="size-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                    <UserMinus className="w-6 h-6" />
                   </div>
-                  <div>
-                    <p className="font-bold text-slate-900 dark:text-white">No riders connected</p>
-                    <p className="text-xs text-slate-500 px-8 mt-1">Connect your own riders to fulfill delivery orders and track them in real-time.</p>
-                  </div>
+                  <p className="text-xs text-slate-500">No riders are currently online.</p>
                   <button 
                     onClick={generatePairingCode}
-                    className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest hover:underline"
                   >
-                    Generate First Pairing Code
+                    Generate Entry Code
                   </button>
                 </div>
               ) : (
-                <div className="text-center space-y-6 animate-in zoom-in-95 duration-300">
-                   <div className="bg-slate-50 dark:bg-slate-800/50 p-6 rounded-2xl border-2 border-dashed border-indigo-200 dark:border-indigo-900/50">
-                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Pairing Code</p>
-                     <p className="text-5xl font-black tracking-[0.2em] text-indigo-600 mb-4 font-mono">{pairingCode}</p>
-                     <div className="flex justify-center p-4 bg-white rounded-xl mb-4 shadow-inner">
-                        {qrCodeData ? (
-                          <img src={qrCodeData} alt="Pairing QR Code" className="w-[150px] h-[150px]" />
-                        ) : (
-                          <div className="w-[150px] h-[150px] flex items-center justify-center bg-slate-100">
-                            <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
+                <div className="grid gap-3">
+                  {riders.map(rider => (
+                    <div key={rider.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 shadow-sm">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="size-10 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-500">
+                            <User className="w-5 h-5" />
                           </div>
-                        )}
-                     </div>
-                     <p className="text-[10px] text-slate-500 italic">This code will expire in 10 minutes</p>
-                   </div>
-                   <button 
-                    onClick={() => setPairingCode('')}
-                    className="w-full py-3 border-2 border-indigo-600/10 text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all cursor-pointer"
-                  >
-                    Dismiss
-                  </button>
+                          <div>
+                            <p className="font-bold text-sm">{rider.full_name}</p>
+                            <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">{rider.vehicle_type} • {rider.current_order_id ? 'In Delivery' : 'Available'}</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase ${rider.current_order_id ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                            {rider.current_order_id ? 'Busy' : 'Free'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Manual Assignment Section */}
+                      {orders.some(o => o.status === 'ready' && !o.rider_id) && !rider.current_order_id && (
+                        <div className="pt-3 border-t border-slate-50 dark:border-slate-800">
+                          <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-2">Assign Pending Order</p>
+                          <div className="flex flex-col gap-2">
+                            {orders.filter(o => o.status === 'ready' && !o.rider_id).map(readyOrder => {
+                              // Rider Suggestion Logic: Calculate Proximity
+                              const riderPos = riderLocations[rider.id];
+                              const shopPos = shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : null;
+                              let distance: number | null = null;
+                              
+                              if (riderPos && shopPos) {
+                                distance = calculateDistance(riderPos.lat, riderPos.lng, shopPos.lat, shopPos.lng);
+                              }
+
+                              const isClosest = distance !== null && distance < 2; // Simple threshold for "close"
+
+                              return (
+                                <motion.div 
+                                  key={readyOrder.id}
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  className={`flex items-center justify-between p-2 rounded-xl border ${isClosest ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-100'}`}
+                                >
+                                  <div>
+                                    <p className="text-[10px] font-bold">Order #{readyOrder.id.slice(0, 5)}</p>
+                                    {distance !== null && (
+                                      <p className="text-[8px] text-indigo-600 font-bold uppercase">{distance.toFixed(1)}km away</p>
+                                    )}
+                                  </div>
+                                  <button 
+                                    onClick={async () => {
+                                      try {
+                                        const { error: updateErr } = await supabase
+                                          .from('orders')
+                                          .update({ rider_id: rider.id, delivery_status: 'finding_rider' })
+                                          .eq('id', readyOrder.id);
+                                        if (updateErr) throw updateErr;
+                                        
+                                        const { error: riderErr } = await supabase
+                                          .from('rider_profiles')
+                                          .update({ current_order_id: readyOrder.id })
+                                          .eq('id', rider.id);
+                                        if (riderErr) throw riderErr;
+
+                                        showAlert('Success', `Assigned order #${readyOrder.id.slice(0,5)} to ${rider.full_name}`);
+                                        fetchRiders();
+                                      } catch (err: any) {
+                                        showAlert('Error', 'Assignment failed: ' + err.message);
+                                      }
+                                    }}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-bold transition-all active:scale-95 cursor-pointer ${
+                                      isClosest ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    {isClosest ? 'Accept Sugggestion' : 'Assign'}
+                                  </button>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
-            </div>
 
-            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4">Connection Tips</h4>
-              <ul className="space-y-3">
-                <li className="flex gap-2 text-xs text-slate-500">
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
-                  <span>Ask your riders to download the LocalEats Rider app.</span>
-                </li>
-                <li className="flex gap-2 text-xs text-slate-500">
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
-                  <span>Tell them to scan this QR code or type the 6-digit code.</span>
-                </li>
-                <li className="flex gap-2 text-xs text-slate-500">
-                  <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1 shrink-0"></div>
-                  <span>Once connected, you can assign them delivery orders.</span>
-                </li>
-              </ul>
+              {/* Pairing Section */}
+              <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-600/20 relative overflow-hidden group">
+                 <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+                 <div className="relative z-10">
+                    <h5 className="font-bold text-lg mb-1">Add New Rider</h5>
+                    <p className="text-xs text-indigo-100/80 mb-6">Equip your fleet with the Rider App</p>
+                    
+                    {!pairingCode ? (
+                      <button 
+                        onClick={generatePairingCode}
+                        className="w-full py-3 bg-white text-indigo-600 rounded-xl font-bold uppercase tracking-widest text-xs hover:bg-indigo-50 active:scale-95 transition-all cursor-pointer"
+                      >
+                        Generate Code
+                      </button>
+                    ) : (
+                      <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 text-center">
+                          <p className="text-[10px] font-bold text-indigo-100 uppercase tracking-widest mb-1">Enter Code in Rider App</p>
+                          <p className="text-4xl font-black tracking-[0.3em] font-mono">{pairingCode}</p>
+                        </div>
+                        <div className="flex justify-center bg-white p-3 rounded-2xl shadow-inner">
+                          {qrCodeData ? (
+                            <img src={qrCodeData} alt="QR Code" className="w-32 h-32" />
+                          ) : (
+                            <div className="w-32 h-32 flex items-center justify-center">
+                              <Loader2 className="w-6 h-6 animate-spin text-indigo-200" />
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={() => setPairingCode('')} className="w-full py-2 text-xs font-bold text-indigo-200 hover:text-white transition-colors cursor-pointer">
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
+                 </div>
+              </div>
             </div>
           </div>
         ) : activeTab === 'settings' ? (
@@ -6387,13 +8272,26 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             </button>
           </div>
         ) : (
-          orders.map((order) => (
-            <div key={order.id} className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/5 shadow-sm overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
+          filteredOrders.map((order) => (
+            <motion.div 
+              layout
+              key={order.id} 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/5 shadow-sm overflow-hidden"
+            >
               <div className="p-4 border-b border-primary/5 flex justify-between items-start">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-bold text-slate-400">#{order.id.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${getStatusColor(order.status, order.delivery_status)}`}>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${getStatusColor(order.status, order.delivery_status)}`}>
+                      {order.status === 'pending' && <Clock className="w-3 h-3" />}
+                      {order.status === 'confirmed' && <CheckCircle2 className="w-3 h-3" />}
+                      {order.status === 'preparing' && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {order.status === 'ready' && <Package className="w-3 h-3" />}
+                      {order.status === 'completed' && <CheckCircle2 className="w-3 h-3" />}
+                      {order.status === 'cancelled' && <XCircle className="w-3 h-3" />}
                       {order.delivery_status ? order.delivery_status.replace('_', ' ') : order.status}
                     </span>
                     {order.is_delivery && (
@@ -6491,7 +8389,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   <Phone className="w-4 h-4" />
                 </a>
               </div>
-            </div>
+            </motion.div>
           ))
         )}
       </main>
@@ -6533,6 +8431,191 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           <span className="text-[8px] font-bold uppercase tracking-wider">Map</span>
         </button>
       </nav>
+
+      {/* Cancellation Reason Modal */}
+      <AnimatePresence>
+        {cancellationModal.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCancellationModal({ isOpen: false, orderId: null })}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800">
+                <h3 className="text-xl font-bold">Cancellation Reason</h3>
+                <p className="text-xs text-slate-500">Please provide a reason for cancelling this order.</p>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    "Out of Ingredients", 
+                    "Kitchen Too Busy", 
+                    "Invalid Address", 
+                    "Customer Requested",
+                    "Closing Soon"
+                  ].map((reason) => (
+                    <button
+                      key={reason}
+                      onClick={() => setCancellationReason(reason)}
+                      className={`w-full p-4 rounded-2xl text-left text-sm font-bold transition-all border ${
+                        cancellationReason === reason 
+                          ? 'bg-orange-50 border-orange-200 text-orange-600 ring-2 ring-orange-500/10' 
+                          : 'bg-slate-50 dark:bg-slate-800 border-transparent text-slate-600'
+                      }`}
+                    >
+                      {reason}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-1.5 mt-4">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Custom Reason (Optional)</label>
+                  <textarea 
+                    value={cancellationReason.includes("Out of Ingredients") || cancellationReason === "" ? "" : cancellationReason}
+                    onChange={(e) => setCancellationReason(e.target.value)}
+                    placeholder="Tell the customer why..."
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm outline-none resize-none"
+                    rows={2}
+                  />
+                </div>
+                
+                <div className="flex gap-3 mt-6">
+                  <button 
+                    onClick={() => setCancellationModal({ isOpen: false, orderId: null })}
+                    className="flex-1 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 rounded-2xl font-bold uppercase tracking-widest text-xs"
+                  >
+                    Back
+                  </button>
+                  <button 
+                    onClick={() => executeStatusUpdate(cancellationModal.orderId!, 'cancelled', undefined, cancellationReason || "Operational issues")}
+                    disabled={!cancellationReason}
+                    className="flex-1 py-4 bg-rose-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs shadow-lg shadow-rose-600/20 disabled:opacity-50"
+                  >
+                    Confirm Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Menu Item Modal */}
+      <AnimatePresence>
+        {isEditingMenu && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsEditingMenu(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold">{editingItem ? 'Edit Item' : 'Add New Item'}</h3>
+                  <p className="text-xs text-slate-500">Update your shop menu</p>
+                </div>
+                <button onClick={() => setIsEditingMenu(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={saveMenuItem} className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Item Name</label>
+                  <input 
+                    name="name"
+                    type="text" 
+                    defaultValue={editingItem?.name}
+                    required
+                    placeholder="e.g. Special Kota"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Price (R)</label>
+                    <input 
+                      name="price"
+                      type="number" 
+                      step="0.01"
+                      defaultValue={editingItem?.price}
+                      required
+                      placeholder="0.00"
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Photo</label>
+                    <div className="flex gap-2">
+                       <input 
+                         type="file" 
+                         accept="image/*" 
+                         onChange={handleMenuImageUpload}
+                         className="hidden" 
+                         id="menu-item-photo"
+                       />
+                       <label 
+                         htmlFor="menu-item-photo"
+                         className="flex-shrink-0 w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center cursor-pointer hover:border-orange-500 transition-colors"
+                       >
+                         {isUploading ? (
+                           <Loader2 className="w-5 h-5 animate-spin text-orange-600" />
+                         ) : menuImgUrl || editingItem?.image_url ? (
+                           <img src={menuImgUrl || editingItem?.image_url || DEFAULT_MENU_IMAGE} className="w-full h-full object-cover rounded-lg" />
+                         ) : (
+                           <Camera className="w-5 h-5 text-slate-400" />
+                         )}
+                       </label>
+                       <input 
+                         name="image_url"
+                         type="text" 
+                         value={menuImgUrl || editingItem?.image_url || ''}
+                         onChange={(e) => setMenuImgUrl(e.target.value)}
+                         placeholder="Or paste URL..."
+                         className="flex-grow bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                       />
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Description</label>
+                  <textarea 
+                    name="description"
+                    rows={3}
+                    defaultValue={editingItem?.description}
+                    placeholder="Tell customers what's in it..."
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none transition-all resize-none"
+                  ></textarea>
+                </div>
+                
+                <button 
+                  type="submit"
+                  className="w-full py-4 bg-orange-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-orange-600/20 hover:bg-orange-700 active:scale-95 transition-all mt-6"
+                >
+                  {editingItem ? 'Save Changes' : 'Add to Menu'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -6663,6 +8746,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
       case 'preparing': return 'bg-purple-100 text-purple-600 border-purple-200';
       case 'ready': return 'bg-green-100 text-green-600 border-green-200';
       case 'completed': return 'bg-gray-100 text-gray-600 border-gray-200';
+      case 'cancelled': return 'bg-rose-100 text-rose-600 border-rose-200';
       default: return 'bg-gray-100 text-gray-600 border-gray-200';
     }
   };
@@ -6942,7 +9026,7 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                       Complete
                     </button>
                   )}
-                  {['pending', 'confirmed', 'ready'].includes(order.status) && (
+                  {['pending', 'confirmed'].includes(order.status) && (
                     <button 
                       onClick={() => setOrderToCancel(order)}
                       className="flex-1 h-9 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
@@ -7149,17 +9233,24 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
               ))}
             </div>
           ) : orders.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20">
-              <div className="size-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-6">
-                <ShoppingBag className="w-12 h-12" />
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
+              <div className="relative mb-8">
+                <div className="absolute inset-0 bg-primary/20 rounded-full scale-150 blur-3xl opacity-30 animate-pulse"></div>
+                <div className="size-28 bg-white dark:bg-slate-800 rounded-[40px] shadow-2xl flex items-center justify-center text-primary relative z-10 rotate-3 transition-transform hover:rotate-0 duration-500">
+                  <ShoppingBag className="w-14 h-14" />
+                </div>
+                <div className="absolute -bottom-2 -right-2 size-10 bg-orange-500 text-white rounded-2xl flex items-center justify-center shadow-lg animate-bounce">
+                  <Plus className="w-6 h-6" />
+                </div>
               </div>
-              <h3 className="text-xl font-bold mb-2">No orders yet</h3>
-              <p className="text-slate-500 text-sm mb-8">Your order history will appear here once you place an order.</p>
+              <h3 className="text-2xl font-black mb-3 text-slate-900 dark:text-white leading-tight">No cravings yet?</h3>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-10 max-w-[240px] leading-relaxed font-semibold">Your delicious journey starts with your first order. Ready to discover Tembisa's best flavors?</p>
               <button 
                 onClick={onBack}
-                className="bg-primary text-white font-bold py-4 px-10 rounded-2xl shadow-xl shadow-primary/20 transition-all active:scale-95 cursor-pointer"
+                className="group bg-primary text-white font-black py-4 px-10 rounded-[28px] shadow-2xl shadow-primary/30 transition-all active:scale-95 cursor-pointer flex items-center gap-3"
               >
-                Start Ordering
+                <span>Find Good Food</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </button>
             </div>
           ) : (
@@ -7186,17 +9277,17 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                   </div>
                 </div>
 
-                {order.status === 'pending' && (
-                  <div className="flex justify-end pt-2">
-                    <button 
-                      onClick={() => setCancellingOrderId(order.id)}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-bold uppercase tracking-widest rounded-lg border border-rose-100 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      Cancel Order
-                    </button>
-                  </div>
-                )}
+                  {['pending', 'confirmed'].includes(order.status) && (
+                    <div className="flex justify-end pt-2">
+                      <button 
+                        onClick={() => setCancellingOrderId(order.id)}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-bold uppercase tracking-widest rounded-lg border border-rose-100 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer shadow-sm active:scale-95"
+                      >
+                        <XCircle className="w-4 h-4" />
+                        Cancel Order
+                      </button>
+                    </div>
+                  )}
 
                 {/* Stepped Progress Indicator */}
                 {order.status !== 'cancelled' && (
