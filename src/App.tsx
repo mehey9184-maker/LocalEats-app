@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, Dispatch, SetStateAction, useEffect, useCallback, useRef, ChangeEvent, FormEvent } from 'react';
+import { useState, Dispatch, SetStateAction, useEffect, useCallback, useMemo, useRef, ChangeEvent, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Toaster, toast } from 'sonner';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 
@@ -48,6 +49,7 @@ import {
   MoreVertical, 
   UserMinus, 
   UserPlus,
+  Navigation2,
   AlertCircle, 
   Star, 
   Minus, 
@@ -119,12 +121,16 @@ import {
   WifiOff,
   Edit,
   Edit2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Languages,
+  HelpCircle,
+  ShieldCheck
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { LocalEatsLogo } from './components/LocalEatsLogo';
 import jsPDF from 'jspdf';
+import { useTranslation } from './contexts/LanguageContext';
 
 type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'rider-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
 
@@ -169,6 +175,7 @@ type Order = {
   created_at: string;
   status_history?: StatusHistoryItem[];
   owner_message?: string;
+  cancellation_reason?: string;
   payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine';
   special_instructions?: string;
   customizations?: { name: string, price: number }[];
@@ -193,6 +200,7 @@ type MenuItem = {
   image_url?: string;
   description?: string;
   customizations?: { name: string, price: number }[];
+  is_available?: boolean;
 };
 
 type CartItem = {
@@ -252,6 +260,23 @@ const hashString = (str: string) => {
   return Math.abs(hash);
 };
 
+const handleSupabaseError = (error: any, action: string, showAlert: (title: string, msg: string) => void) => {
+  console.error(`Supabase error during ${action}:`, error);
+  if (error?.code === 'PGRST204') {
+    const colName = error.message.includes("'") ? error.message.split("'")[1] : 'recent';
+    showAlert('Database Sync Delay', `The database is taking a moment to sync new columns (like '${colName}'). Please wait a moment and try again. If it persists, run "NOTIFY pgrst, 'reload schema';" in the Supabase SQL Editor.`);
+  } else if (error?.message === 'Failed to fetch' || error?.message?.includes('Network Error')) {
+    showAlert('Connection Issue', 'Could not connect to the server. Please check your internet connection.');
+  } else if (error?.code === '23505') {
+    showAlert('Duplicate Entry', 'This record already exists in the database.');
+  } else if (error?.code === '42501' || error?.message?.includes('permission denied')) {
+    showAlert('Access Denied', 'You do not have permission to perform this action. Please check your account privileges.');
+  } else {
+    showAlert('Error', `Failed to ${action}: ${error?.message || 'Unknown error occurred'}`);
+  }
+  return error;
+};
+
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371; // Radius of the earth in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -265,11 +290,17 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return d;
 };
 
-function AddressSearch({ onSelect, initialAddress }: { onSelect: (data: { address: string, lat: number, lng: number }) => void, initialAddress?: string }) {
+function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: { 
+  onSelect: (data: { address: string, lat: number, lng: number }) => void, 
+  initialAddress?: string,
+  initialCoords?: { lat: number, lng: number },
+  shopCoords?: { lat: number, lng: number }
+}) {
   const [query, setQuery] = useState(initialAddress || '');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [markerPos, setMarkerPos] = useState<{lat: number, lng: number} | null>(initialCoords || null);
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -317,11 +348,12 @@ function AddressSearch({ onSelect, initialAddress }: { onSelect: (data: { addres
           const data = await response.json();
           const address = data.display_name;
           setQuery(address);
+          setMarkerPos({ lat: latitude, lng: longitude });
           onSelect({ address, lat: latitude, lng: longitude });
           setShowResults(false);
         } catch (error) {
           console.error('Reverse geocoding error:', error);
-          // Fallback if reverse geocoding fails
+          setMarkerPos({ lat: latitude, lng: longitude });
           onSelect({ address: `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, lat: latitude, lng: longitude });
         } finally {
           setLoading(false);
@@ -336,8 +368,83 @@ function AddressSearch({ onSelect, initialAddress }: { onSelect: (data: { addres
     );
   };
 
+  const DraggableMarker = () => {
+    const markerRef = useRef<any>(null);
+    const eventHandlers = useMemo(
+      () => ({
+        dragend() {
+          const marker = markerRef.current;
+          if (marker != null) {
+            const newPos = marker.getLatLng();
+            setMarkerPos(newPos);
+            
+            // Real-time distance calculation for UX feedback
+            if (shopCoords) {
+              const dist = calculateDistance(shopCoords.lat, shopCoords.lng, newPos.lat, newPos.lng);
+              if (dist > 6) {
+                toast.error("Outside Delivery Range", {
+                  description: `Store is ${dist.toFixed(1)}km away. Max range is 6km.`,
+                  id: 'distance-warning',
+                  duration: 4000
+                });
+              } else if (dist > 3) {
+                toast.warning("Entering +R5 Delivery Zone", {
+                  description: "A distance surcharge applies beyond 3km.",
+                  id: 'distance-warning',
+                  duration: 3000
+                });
+              }
+            }
+            
+            onSelect({ address: query, lat: newPos.lat, lng: newPos.lng });
+          }
+        },
+      }),
+      [query],
+    );
+
+    return markerPos ? (
+      <Marker
+        draggable={true}
+        eventHandlers={eventHandlers}
+        position={markerPos}
+        ref={markerRef}
+      >
+        <Popup minWidth={90}>
+          <span>Delivery point</span>
+        </Popup>
+      </Marker>
+    ) : null;
+  };
+
+  const ShopMarker = () => {
+    if (!shopCoords) return null;
+    return (
+      <Marker position={shopCoords} icon={L.divIcon({
+        className: 'custom-shop-icon',
+        html: `<div class="bg-primary p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 28]
+      })}>
+        <Popup>Store Location</Popup>
+      </Marker>
+    );
+  };
+
+  const handleSelect = (res: any) => {
+    const data = {
+      address: res.display_name,
+      lat: parseFloat(res.lat),
+      lng: parseFloat(res.lon)
+    };
+    setQuery(res.display_name);
+    setMarkerPos({ lat: data.lat, lng: data.lng });
+    onSelect(data);
+    setShowResults(false);
+  };
+
   return (
-    <div className="relative w-full" ref={searchRef}>
+    <div className="relative w-full space-y-4" ref={searchRef}>
       <div className="relative">
         <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
         <input
@@ -346,48 +453,66 @@ function AddressSearch({ onSelect, initialAddress }: { onSelect: (data: { addres
           onChange={(e) => handleSearch(e.target.value)}
           onFocus={() => query.length >= 3 && setShowResults(true)}
           placeholder="Start typing your street address..."
-          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl py-3 pl-10 pr-12 text-sm focus:ring-2 focus:ring-orange-500 transition-all outline-none"
+          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl py-4 pl-10 pr-12 text-sm focus:ring-2 focus:ring-orange-500 transition-all outline-none font-bold"
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
           {loading ? (
-            <Loader2 className="w-4 h-4 animate-spin text-orange-600 mr-1" />
+            <Loader2 className="w-5 h-5 animate-spin text-orange-600 mr-1" />
           ) : (
             <button
               onClick={handleCurrentLocation}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-orange-600 transition-colors"
+              type="button"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 hover:bg-orange-100 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 rounded-lg text-orange-600 transition-colors cursor-pointer mr-1"
               title="Use current location"
             >
               <LocateFixed className="w-4 h-4" />
+              <span className="text-xs font-bold whitespace-nowrap">Locate Me</span>
             </button>
           )}
         </div>
+
+        {showResults && results.length > 0 && (
+          <div className="absolute z-[100] top-full mt-2 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+            {results.map((res, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleSelect(res)}
+                className="w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors flex items-start gap-3 cursor-pointer"
+              >
+                <div className="bg-orange-100 dark:bg-orange-900/30 p-2 rounded-lg shrink-0">
+                  <MapPin className="w-4 h-4 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight mb-1">{res.display_name.split(',')[0]}</p>
+                  <p className="text-[10px] text-slate-500 line-clamp-2 uppercase tracking-widest">{res.display_name}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {showResults && results.length > 0 && (
-        <div className="absolute z-[100] top-full mt-2 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-          {results.map((res, idx) => (
-            <button
-              key={idx}
-              onClick={() => {
-                const data = {
-                  address: res.display_name,
-                  lat: parseFloat(res.lat),
-                  lng: parseFloat(res.lon)
-                };
-                setQuery(res.display_name);
-                onSelect(data);
-                setShowResults(false);
-              }}
-              className="w-full text-left p-3 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 last:border-0 transition-colors flex items-start gap-3"
-            >
-              <div className="bg-orange-100 dark:bg-orange-900/30 p-1.5 rounded-lg shrink-0">
-                <MapPin className="w-4 h-4 text-orange-600" />
-              </div>
-              <span className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2">{res.display_name}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <div className="h-56 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0 shadow-lg">
+        <MapContainer 
+          center={markerPos || { lat: -26.01, lng: 28.21 }} 
+          zoom={15} 
+          style={{ height: '100%', width: '100%' }}
+        >
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <RecenterMap coords={markerPos || { lat: -26.01, lng: 28.21 }} />
+          <DraggableMarker />
+          <ShopMarker />
+        </MapContainer>
+        {!markerPos && (
+          <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-950/20 backdrop-blur-[2px] flex items-center justify-center p-4 text-center">
+            <p className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-widest leading-relaxed max-w-[180px]">Select your address to confirm delivery point on map</p>
+          </div>
+        )}
+      </div>
+      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center animate-pulse">
+        📍 Drag the pin to your door for perfect deliveries
+      </p>
     </div>
   );
 }
@@ -502,8 +627,8 @@ function getShopStatus(shop: Shop): { isOpen: boolean, message: string, warning?
     minutesUntilClose = (1440 - currentTime) + closeTime;
   }
 
-  if (minutesUntilClose > 0 && minutesUntilClose <= 60) {
-    return { isOpen: true, message: `Closing in ${minutesUntilClose}m`, warning: true, nextOpeningTime: undefined };
+  if (minutesUntilClose > 0 && minutesUntilClose <= 30) {
+    return { isOpen: true, message: `Closing soon (${minutesUntilClose}m)`, warning: true, nextOpeningTime: undefined };
   }
 
   return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
@@ -577,19 +702,50 @@ type UserProfile = {
   photoURL?: string;
   latitude?: number;
   longitude?: number;
+  language?: string;
+};
+
+const formatSAPhone = (val: string) => {
+  if (!val) return '';
+  let cleaned = val.replace(/\D/g, '');
+  if (cleaned.startsWith('0')) {
+    cleaned = '27' + cleaned.substring(1);
+  }
+  if (cleaned.length > 11) cleaned = cleaned.substring(0, 11);
+  if (cleaned.length === 0) return '';
+  if (cleaned.length <= 2) return '+' + cleaned;
+  if (cleaned.length <= 4) return `+${cleaned.substring(0, 2)} ${cleaned.substring(2)}`;
+  if (cleaned.length <= 7) return `+${cleaned.substring(0, 2)} ${cleaned.substring(2, 4)} ${cleaned.substring(4)}`;
+  return `+${cleaned.substring(0, 2)} ${cleaned.substring(2, 4)} ${cleaned.substring(4, 7)} ${cleaned.substring(7)}`;
 };
 
 const validateSAPhone = (phone: string) => {
-  // SA format: +27 or 0 followed by 9 digits
-  const saPhoneRegex = /^(\+27|0)[0-9]{9}$/;
-  return saPhoneRegex.test(phone.replace(/\s+/g, ''));
+  // SA format: +27 followed by 9 digits (total 11 digits)
+  const cleaned = phone.replace(/\D/g, '');
+  return /^27[0-9]{9}$/.test(cleaned);
 };
 
-const DEFAULT_AVATAR_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuDQ_oJXmkvF6zCsi-MN_DEL7mLVwaHWe2bdg5-LNmA7uJ3Eh_HnDZN7G9qMWP52xq3HmN4FA-PdBK56usW1gusmE0gAOzJVnznRSqmcUdQYi1V2B39MYizUktww0MHeemCIHeQCnyi31PLj36ie-F5J15C-R7hzeqltPBxVN6rYZGUSxaiOi6PNaXlFxpdnPYSm8wS2_CnI_4p6sdx_ulKdOTfyas-fwJ116yUHLmytLnZvv3oAUffPd_-POY2O7d5Hyv1PvYD-dw";
+const DEFAULT_AVATAR_URL = "https://ui-avatars.com/api/?name=User&background=orange&color=fff&size=64&format=webp";
 const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
-const DEFAULT_SHOP_LOGO = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&q=80&w=800";
+const DEFAULT_SHOP_LOGO = "/logo.png"; // Using the uploaded logo as default
 
-const compressImage = (file: File, maxWidth = 1000, maxHeight = 1000, quality = 0.75): Promise<Blob> => {
+async function searchAddress(query: string) {
+  if (!query || query.length < 3) return [];
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=za&limit=5`);
+    const data = await response.json();
+    return data.map((item: any) => ({
+      display_name: item.display_name,
+      lat: parseFloat(item.lat),
+      lon: parseFloat(item.lon)
+    }));
+  } catch (error) {
+    console.error("Address search error:", error);
+    return [];
+  }
+}
+
+const compressImage = (file: File, maxWidth = 800, maxHeight = 800, quality = 0.75): Promise<Blob> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -827,6 +983,37 @@ export default function App() {
   });
   const [orders, setOrders] = useState<Order[]>([]);
 
+  // Audio state for notifications
+  const notificationAudio = useRef<HTMLAudioElement | null>(null);
+  const [audioInitialized, setAudioInitialized] = useState(false);
+
+  useEffect(() => {
+    // Premium "sweet" notification sound
+    notificationAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+  }, []);
+
+  const playNotificationSound = useCallback(() => {
+    if (notificationAudio.current) {
+      notificationAudio.current.currentTime = 0;
+      notificationAudio.current.play().catch(e => console.warn("Audio autoplay blocked:", e));
+    }
+  }, []);
+
+  // Initialize audio on first click to satisfy browser autoplay policies
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      if (notificationAudio.current && !audioInitialized) {
+        notificationAudio.current.play().then(() => {
+           notificationAudio.current?.pause();
+           setAudioInitialized(true);
+        }).catch(() => {});
+        window.removeEventListener('click', handleFirstInteraction);
+      }
+    };
+    window.addEventListener('click', handleFirstInteraction);
+    return () => window.removeEventListener('click', handleFirstInteraction);
+  }, [audioInitialized]);
+
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
@@ -891,7 +1078,7 @@ export default function App() {
         return {
           id: String(s.id),
           name: s.name,
-          logo: s.logo_url || `https://picsum.photos/seed/${s.id}/200/200`,
+          logo: s.logo_url || DEFAULT_SHOP_LOGO,
           rating: Number(s.rating) || 4.5,
           reviewCount: 12 + (shopHash % 88), // Mock review count
           prepTime: "15-20 min", // Mock prep time
@@ -906,10 +1093,10 @@ export default function App() {
           latitude: s.latitude || deterministicLat,
           longitude: s.longitude || deterministicLng,
           images: (s as any).images || [
-            s.logo_url || `https://picsum.photos/seed/${s.id}/600/400`,
-            `https://picsum.photos/seed/${s.id}_dish1/600/400`,
-            `https://picsum.photos/seed/${s.id}_dish2/600/400`,
-            `https://picsum.photos/seed/${s.id}_dish3/600/400`
+            DEFAULT_SHOP_LOGO,
+            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
+            "https://images.unsplash.com/photo-1476224484581-5d996cc0750e?auto=format&fit=crop&q=80&w=600",
+            "https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=600"
           ],
           menu: (menuData || [])
             .filter(m => String(m.shop_id) === String(s.id))
@@ -918,7 +1105,7 @@ export default function App() {
               name: m.name,
               price: Number(m.price),
               displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || `https://picsum.photos/seed/${m.id}/200/200`
+              image: m.image_url || DEFAULT_MENU_IMAGE
             }))
         };
       }).sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
@@ -1071,6 +1258,7 @@ export default function App() {
           photo_url: updated.photoURL,
           latitude: updated.latitude,
           longitude: updated.longitude,
+          language: updated.language || 'en',
           updated_at: new Date().toISOString()
         });
         if (error) throw error;
@@ -1186,6 +1374,30 @@ export default function App() {
               if (newStatus === 'confirmed') message = `${shop?.name} has confirmed your order!`;
               if (newStatus === 'completed') message = `Legendary! You've collected your order from ${shop?.name}. Enjoy! 😋`;
               
+              // Special handling for "ready" status - High visibility UI
+              if (newStatus === 'ready') {
+                const isDelivery = payload.new.is_delivery;
+                toast.success(`Your order from ${shop?.name} is ready!`, {
+                  description: isDelivery ? "Our rider is on the way to collect it. 🚚" : "Your order is ready for pickup! 🏃‍♂️",
+                  duration: 8000,
+                  position: 'top-center',
+                  style: {
+                    background: '#22c55e',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '24px',
+                    padding: '16px',
+                    boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
+                  }
+                });
+
+                // Audio Alert
+                playNotificationSound();
+
+                // Haptic Pulse (Double vibration)
+                triggerHaptic([100, 50, 100]);
+              }
+
               // Trigger browser notification if permission granted
               if ("Notification" in window && Notification.permission === "granted") {
                 new Notification(title, { body: message, icon: shop?.logo });
@@ -1220,15 +1432,25 @@ export default function App() {
                   audio.volume = 0.4;
                   audio.play().catch(e => console.log('Audio play failed:', e));
                 } catch (e) {}
-              }
 
-              setNotification({
-                message: `✅ ${message}`,
-                type: 'success',
-                actions: [
-                  { label: 'Track Order', onClick: () => setCurrentScreen('order-tracking') }
-                ]
-              });
+                setNotification({
+                  message: `✅ ${message}`,
+                  type: 'ready',
+                  persistent: true,
+                  actions: [
+                    { label: 'Track Order', onClick: () => setCurrentScreen('order-tracking') },
+                    { label: 'Dismiss', onClick: () => {} }
+                  ]
+                });
+              } else {
+                setNotification({
+                  message: `✅ ${message}`,
+                  type: 'success',
+                  actions: [
+                    { label: 'Track Order', onClick: () => setCurrentScreen('order-tracking') }
+                  ]
+                });
+              }
 
               if (newStatus === 'picked_up') {
                 setPendingReview({
@@ -1515,12 +1737,19 @@ export default function App() {
               photo_url: userProfile.photoURL,
               latitude: userProfile.latitude,
               longitude: userProfile.longitude,
+              language: userProfile.language || 'en',
               favorites: favorites,
               updated_at: new Date().toISOString()
             });
           if (error) {
             console.error('Error syncing profile to Supabase:', error);
-            if (error.message === 'Failed to fetch') {
+            if (error.code === 'PGRST204') {
+              const colName = error.message.includes("'") ? error.message.split("'")[1] : 'field';
+              setNotification({ 
+                message: `⚠️ Database syncing new profile fields (like '${colName}'). Wait a few minutes or reload DB schema.`, 
+                type: 'info' 
+              });
+            } else if (error.message === 'Failed to fetch') {
               setNotification({ 
                 message: "⚠️ Connection lost. Profile sync failed.", 
                 type: 'info' 
@@ -1544,6 +1773,7 @@ export default function App() {
       )}
       <AnimatePresence mode="wait">
       <div className="relative">
+        <Toaster position="top-center" expand={true} richColors closeButton />
         {/* Global Notification Toast */}
         <AnimatePresence>
           {notification && (
@@ -1844,6 +2074,7 @@ export default function App() {
             userLocation={userLocation}
             showAlert={showAlert}
             setCurrentScreen={setCurrentScreen}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'explore' && (
@@ -1861,6 +2092,7 @@ export default function App() {
             favorites={favorites}
             toggleFavorite={toggleFavorite}
             showAlert={showAlert}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'store-info' && (
@@ -1902,6 +2134,8 @@ export default function App() {
             onAdminOrders={() => { setPreviousScreen('settings'); setCurrentScreen('admin-orders'); }}
             onShopDashboard={() => { setPreviousScreen('settings'); setCurrentScreen('shop-dashboard'); }}
             onRiderDashboard={() => { setPreviousScreen('settings'); setCurrentScreen('rider-dashboard'); }}
+            onContactUs={() => { setPreviousScreen('settings'); setCurrentScreen('contact'); }}
+            onUpdateProfile={handleUpdateProfile}
             isDarkMode={isDarkMode}
             onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
             setNotification={setNotification}
@@ -1909,6 +2143,7 @@ export default function App() {
         )}
         {currentScreen === 'admin-orders' && (
           <AdminOrdersScreen 
+            shops={shops}
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             showAlert={showAlert}
             showConfirm={showConfirm}
@@ -1930,6 +2165,7 @@ export default function App() {
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             showAlert={showAlert}
             showConfirm={showConfirm}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'profile' && (
@@ -1939,11 +2175,6 @@ export default function App() {
               await handleUpdateProfile(data);
               setCurrentScreen(previousScreen || 'home');
             }} 
-            onOrderHistory={() => { setPreviousScreen('profile'); setCurrentScreen('order-history'); }}
-            onAdminOrders={() => { setPreviousScreen('profile'); setCurrentScreen('admin-orders'); }}
-            onShopDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('shop-dashboard'); }}
-            onRiderDashboard={() => { setPreviousScreen('profile'); setCurrentScreen('rider-dashboard'); }}
-            onContactUs={() => { setPreviousScreen('profile'); setCurrentScreen('contact'); }}
             userProfile={userProfile}
             onLogout={async () => {
               await supabase.auth.signOut();
@@ -1966,6 +2197,7 @@ export default function App() {
               setCurrentScreen('splash');
             }}
             setNotification={setNotification}
+            triggerHaptic={triggerHaptic}
           />
         )}
         {currentScreen === 'contact' && (
@@ -1995,7 +2227,7 @@ export default function App() {
           />
         )}
         {currentScreen === 'order-success' && (
-          <OrderSuccessScreen onHome={() => { setCart([]); setCurrentScreen('home'); }} cart={cart} shops={shops} />
+          <OrderSuccessScreen onHome={() => { setCart([]); setCurrentScreen('home'); }} cart={cart} shops={shops} triggerHaptic={triggerHaptic} />
         )}
         {currentScreen === 'order-history' && (
           <OrderHistoryScreen 
@@ -2147,7 +2379,7 @@ function SplashScreen({ onNext, onLogin, onGuestBrowse }: { onNext: () => void, 
 function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: SignUpData) => void, onLogin: () => void, setNotification: (n: NotificationState) => void }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(formatSAPhone(''));
   const [loading, setLoading] = useState(false);
 
   const handleSignUp = async () => {
@@ -2158,7 +2390,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
     
     if (!validateSAPhone(phone)) {
       setNotification({ 
-        message: 'Invalid South African phone format. Use 0XX XXX XXXX or +27XX XXX XXXX', 
+        message: 'Invalid South African phone format. Use +27 XX XXX XXXX', 
         type: 'error' 
       });
       return;
@@ -2216,16 +2448,13 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
           </label>
           <label className="flex flex-col w-full">
             <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Phone Number</p>
-            <div className="flex w-full items-stretch">
-              <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 rounded-l-xl border-r-0">
-                <Flag className="w-5 h-5 text-primary" />
-                <span className="text-slate-600 dark:text-slate-400 font-medium text-sm">+27</span>
-              </div>
+            <div className="relative">
+              <Smartphone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="form-input flex w-full min-w-0 flex-1 rounded-r-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 p-[15px] text-base font-normal leading-normal transition-all" 
-                placeholder="081 234 5678" 
+                onChange={(e) => setPhone(formatSAPhone(e.target.value))}
+                className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
+                placeholder="e.g. +27 71 234 5678" 
                 type="tel"
               />
             </div>
@@ -2592,7 +2821,7 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
 function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }: { userProfile: UserProfile, onBack: () => void, onSave: (data: Partial<UserProfile>) => void, setNotification: (n: NotificationState) => void }) {
   const [email, setEmail] = useState(userProfile.email);
   const [address, setAddress] = useState(userProfile.address);
-  const [phone, setPhone] = useState(userProfile.phone);
+  const [phone, setPhone] = useState(formatSAPhone(userProfile.phone));
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [city, setCity] = useState(userProfile.city);
   const [latitude, setLatitude] = useState<number | undefined>(userProfile.latitude);
@@ -2609,7 +2838,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
     
     if (!validateSAPhone(phone)) {
       setNotification({ 
-        message: 'Invalid South African phone format. Use 0XX XXX XXXX or +27XX XXX XXXX', 
+        message: 'Invalid South African phone format. Use +27 XX XXX XXXX', 
         type: 'error' 
       });
       return;
@@ -2722,9 +2951,9 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
                 <Phone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input 
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => setPhone(formatSAPhone(e.target.value))}
                   className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none" 
-                  placeholder="081 234 5678" 
+                  placeholder="e.g. +27 71 234 5678" 
                   type="tel"
                 />
               </div>
@@ -2766,6 +2995,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
                 <div className="space-y-4">
                   <AddressSearch 
                     initialAddress={address}
+                    initialCoords={latitude && longitude ? { lat: latitude, lng: longitude } : undefined}
                     onSelect={(data) => {
                       setAddress(data.address);
                       setLatitude(data.lat);
@@ -2934,9 +3164,12 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               )}
               <input 
                 value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setIdentifier(loginType === 'phone' ? formatSAPhone(val) : val);
+                }}
                 className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                placeholder={loginType === 'email' ? "Enter your email" : "Enter your phone number"} 
+                placeholder={loginType === 'email' ? "Enter your email" : "e.g. +27 71 234 5678"} 
                 type={loginType === 'email' ? "email" : "tel"}
               />
             </div>
@@ -3142,6 +3375,7 @@ const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
 };
 
 function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, currentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion, triggerHaptic }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, currentScreen: Screen, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string, triggerHaptic: (pattern?: number | number[]) => void }) {
+  const { t } = useTranslation();
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -3379,7 +3613,7 @@ CREATE TABLE IF NOT EXISTS shops (
   category text,
   rating numeric DEFAULT 0,
   is_active boolean DEFAULT true,
-  logo_url text DEFAULT 'https://picsum.photos/seed/shop/200/200',
+  logo_url text DEFAULT 'https://images.unsplash.com/photo-1526367790999-0150786486a9?auto=format&fit=crop&q=80&w=800',
   owner_id uuid
 );
 
@@ -3403,6 +3637,7 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address text;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS language text DEFAULT 'en';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role text DEFAULT 'user';
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude numeric;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude numeric;
@@ -3415,7 +3650,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
   name text NOT NULL,
   price numeric NOT NULL,
   description text,
-  image_url text DEFAULT 'https://picsum.photos/seed/food/200/200',
+  image_url text DEFAULT 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800',
   is_available boolean DEFAULT true
 );
 
@@ -3434,6 +3669,10 @@ CREATE TABLE IF NOT EXISTS reviews (
 -- ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_delivery_status_check;
 -- UPDATE orders SET delivery_status = 'none' WHERE delivery_status IS NULL OR delivery_status NOT IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed');
 -- ALTER TABLE orders ADD CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed'));
+
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS latitude numeric;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS longitude numeric;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_reason text;
 
 CREATE TABLE IF NOT EXISTS orders (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -3468,6 +3707,7 @@ CREATE TABLE IF NOT EXISTS rider_profiles (
   full_name text,
   vehicle_type text DEFAULT 'bicycle',
   is_online boolean DEFAULT false,
+  current_order_id uuid REFERENCES orders(id) ON DELETE SET NULL,
   total_earnings numeric DEFAULT 0,
   current_lat numeric,
   current_lng numeric,
@@ -3488,7 +3728,8 @@ INSERT INTO shops (name, description, location, category, rating, is_active)
 VALUES 
 ('Tembisa Kota King', 'The best Khas-Khas in Tembisa', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
 ('Mama''s Kitchen', 'Home-style African cuisine', 'Oakmoor', 'Traditional', 4.6, true),
-('The Grill Master', 'Flame-grilled chicken and steaks', 'Hospital View', 'Grill', 4.7, true);`}
+('The Grill Master', 'Flame-grilled chicken and steaks', 'Hospital View', 'Grill', 4.7, true);-- 10. Reload PostgREST schema cache
+NOTIFY pgrst, 'reload schema';`}
               </pre>
             </div>
             
@@ -3879,9 +4120,12 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     return null;
   });
   const [distance, setDistance] = useState<number | null>(null);
+  const [deliveryFee, setDeliveryFee] = useState<number>(5.00);
   
-  const DELIVERY_FEE = 5.00; // LOCKED: Flat-rate delivery fee regardless of items/weight
-  const MAX_DELIVERY_DISTANCE = 5.0; // 5km limit
+  const ZONE_A_LIMIT = 3.0;
+  const ZONE_B_LIMIT = 6.0;
+  const ZONE_A_FEE = 5.00;
+  const ZONE_B_FEE = 10.00;
 
   useEffect(() => {
     if (!deliveryLocation && userLocation && deliveryType === 'delivery') {
@@ -3905,11 +4149,30 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         primaryShop.longitude
       );
       setDistance(dist);
+
+      // Distance Warnings & Dynamic Pricing
+      if (dist > ZONE_B_LIMIT) {
+        toast.error("Outside Delivery Range", {
+          description: `Store is ${dist.toFixed(1)}km away. We only deliver within ${ZONE_B_LIMIT}km.`,
+          duration: 5000,
+          position: 'top-center',
+        });
+        setDeliveryFee(0); // Effectively disabled
+      } else if (dist > ZONE_A_LIMIT) {
+        toast.warning("Entering +R5 Delivery Zone", {
+          description: "A small distance surcharge applies to this delivery.",
+          duration: 3000,
+          position: 'top-center',
+        });
+        setDeliveryFee(ZONE_B_FEE);
+      } else {
+        setDeliveryFee(ZONE_A_FEE);
+      }
     }
   }, [deliveryLocation, primaryShop]);
 
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const totalAmount = deliveryType === 'delivery' ? subtotal + DELIVERY_FEE : subtotal;
+  const totalAmount = deliveryType === 'delivery' ? subtotal + deliveryFee : subtotal;
   
   const handleConfirm = async () => {
     if (!userProfile.fullName || !userProfile.phone) {
@@ -3922,8 +4185,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         showAlert('Location Needed', 'Please search and confirm your delivery location on the map.');
         return;
       }
-      if (distance !== null && distance > MAX_DELIVERY_DISTANCE) {
-        showAlert('Store Too Far', `Sorry, this store is ${distance.toFixed(1)}km away. We only deliver within ${MAX_DELIVERY_DISTANCE}km for the R5 flat fee.`);
+      if (distance !== null && distance > ZONE_B_LIMIT) {
+        showAlert('Outside Range', `Sorry, this store is ${distance.toFixed(1)}km away. Our delivery range is capped at ${ZONE_B_LIMIT}km.`);
         return;
       }
     }
@@ -3990,7 +4253,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         status: 'pending',
         payment_method: paymentMethod,
         is_delivery: deliveryType === 'delivery',
-        delivery_fee: deliveryType === 'delivery' ? DELIVERY_FEE : 0,
+        delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
         delivery_status: 'none',
         latitude: currentLat,
         longitude: currentLng
@@ -4015,8 +4278,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
       
       onConfirm();
     } catch (error: any) {
-      console.error('Error submitting order:', error);
-      showAlert('Order Error', `Failed to place order: ${error.message || 'Unknown error'}.`);
+      handleSupabaseError(error, 'place order', showAlert);
     } finally {
       setLoading(false);
     }
@@ -4069,16 +4331,36 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               ))}
               
               {deliveryType === 'delivery' && (
-                <div className="flex items-center gap-4 bg-orange-50 dark:bg-orange-500/10 p-4 rounded-xl border border-orange-100 dark:border-orange-950/20 shadow-sm animate-in zoom-in-95 duration-200">
-                  <div className="p-3 bg-orange-100 dark:bg-orange-600/20 rounded-xl text-orange-600">
+                <div className={`flex items-center gap-4 p-4 rounded-xl border shadow-sm animate-in zoom-in-95 duration-200 ${
+                  distance !== null && distance > ZONE_A_LIMIT 
+                    ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-100 dark:border-amber-950/20' 
+                    : 'bg-orange-50 dark:bg-orange-500/10 border-orange-100 dark:border-orange-950/20'
+                }`}>
+                  <div className={`p-3 rounded-xl ${
+                    distance !== null && distance > ZONE_A_LIMIT 
+                      ? 'bg-amber-100 dark:bg-amber-600/20 text-amber-600' 
+                      : 'bg-orange-100 dark:bg-orange-600/20 text-orange-600'
+                  }`}>
                     <Bike className="w-6 h-6" />
                   </div>
                   <div className="flex-grow">
-                    <p className="text-sm font-bold text-orange-900 dark:text-orange-200">Bicycle Delivery Fee</p>
-                    <p className="text-[10px] text-orange-600 font-bold uppercase tracking-widest">Flat Rate within 5km</p>
+                    <p className={`text-sm font-bold ${
+                      distance !== null && distance > ZONE_A_LIMIT 
+                        ? 'text-amber-900 dark:text-amber-200' 
+                        : 'text-orange-900 dark:text-orange-200'
+                    }`}>
+                      {distance !== null && distance > ZONE_A_LIMIT ? 'Zone B Delivery' : 'Zone A Delivery'}
+                    </p>
+                    <p className={`text-[10px] font-bold uppercase tracking-widest ${
+                      distance !== null && distance > ZONE_A_LIMIT ? 'text-amber-600' : 'text-orange-600'
+                    }`}>
+                      {distance !== null && distance > ZONE_A_LIMIT ? '3km - 6km Surcharge' : 'Flat Rate within 3km'}
+                    </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-orange-600 text-lg font-black tracking-tight">R {DELIVERY_FEE.toFixed(2)}</p>
+                    <p className={`text-lg font-black tracking-tight ${
+                      distance !== null && distance > ZONE_A_LIMIT ? 'text-amber-600' : 'text-orange-600'
+                    }`}>R {deliveryFee.toFixed(2)}</p>
                   </div>
                 </div>
               )}
@@ -4090,8 +4372,12 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em]">Fulfillment Type</h3>
               {distance !== null && (
-                <div className={`px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-widest ${distance > MAX_DELIVERY_DISTANCE ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
-                  {distance.toFixed(1)}km away
+                <div className={`px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-widest ${
+                  distance > ZONE_B_LIMIT ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' : 
+                  distance > ZONE_A_LIMIT ? 'bg-amber-50 text-amber-600 border-amber-100' : 
+                  'bg-green-50 text-green-600 border-green-100'
+                }`}>
+                  {distance.toFixed(1)}km away {distance > ZONE_B_LIMIT && '• OUT OF RANGE'}
                 </div>
               )}
             </div>
@@ -4109,16 +4395,16 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
               <button 
                 onClick={() => {
-                  if (distance !== null && distance > MAX_DELIVERY_DISTANCE) {
-                    showAlert('Too Far', `Store is ${distance.toFixed(1)}km away. Bicycle delivery is limited to ${MAX_DELIVERY_DISTANCE}km.`);
+                  if (distance !== null && distance > ZONE_B_LIMIT) {
+                    showAlert('Too Far', `Store is ${distance.toFixed(1)}km away. Bicycle delivery is limited to ${ZONE_B_LIMIT}km.`);
                     return;
                   }
                   setDeliveryType('delivery');
                 }}
-                disabled={distance !== null && distance > MAX_DELIVERY_DISTANCE}
+                disabled={distance !== null && distance > ZONE_B_LIMIT}
                 className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
-                  distance !== null && distance > MAX_DELIVERY_DISTANCE 
-                    ? 'opacity-40 grayscale cursor-not-allowed border-slate-100 dark:border-slate-800' 
+                  distance !== null && distance > ZONE_B_LIMIT 
+                    ? 'bg-rose-50/50 border-rose-100 dark:border-rose-900/20 grayscale opacity-40 cursor-not-allowed' 
                     : deliveryType === 'delivery' 
                       ? 'border-orange-600 bg-orange-600 text-white shadow-lg' 
                       : 'border-slate-100 dark:border-slate-800'
@@ -4126,13 +4412,15 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               >
                 <div className="relative">
                   <Navigation className={`w-8 h-8 ${deliveryType === 'delivery' ? '' : 'text-slate-400'}`} />
-                  {distance !== null && distance > MAX_DELIVERY_DISTANCE && (
+                  {distance !== null && distance > ZONE_B_LIMIT && (
                     <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] font-black px-1 rounded-full">!</span>
                   )}
                 </div>
                 <div className="text-center">
                   <p className={`text-sm font-bold ${deliveryType === 'delivery' ? '' : 'text-slate-600'}`}>Delivery</p>
-                  <p className="text-[10px] opacity-70">+R{DELIVERY_FEE.toFixed(2)}</p>
+                  <p className="text-[10px] opacity-70">
+                    {distance !== null && distance > ZONE_A_LIMIT ? `+R${ZONE_B_FEE.toFixed(2)}` : `+R${ZONE_A_FEE.toFixed(2)}`}
+                  </p>
                 </div>
               </button>
             </div>
@@ -4157,6 +4445,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                 </div>
                 <AddressSearch 
                   initialAddress={deliveryLocation?.address}
+                  initialCoords={deliveryLocation ? { lat: deliveryLocation.lat, lng: deliveryLocation.lng } : undefined}
+                  shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
                   onSelect={(data) => {
                     setDeliveryLocation(data);
                     localStorage.setItem('delivery_location', JSON.stringify(data));
@@ -4165,16 +4455,6 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                 
                 {deliveryLocation && (
                   <div className="flex flex-col gap-3">
-                    <LocationPickerMap 
-                      coords={{ lat: deliveryLocation.lat, lng: deliveryLocation.lng }}
-                      shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
-                      onCoordsChange={(newCoords) => {
-                        const updated = { ...deliveryLocation, ...newCoords };
-                        setDeliveryLocation(updated);
-                        localStorage.setItem('delivery_location', JSON.stringify(updated));
-                      }}
-                    />
-                    
                       <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/30 p-3 rounded-xl flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Bike className="w-4 h-4 text-orange-600" />
@@ -4182,19 +4462,31 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                             {distance !== null ? `Distance: ${distance.toFixed(2)}km` : 'Calculating...'}
                           </span>
                         </div>
-                        {distance !== null && distance > MAX_DELIVERY_DISTANCE ? (
+                        {distance !== null && distance > ZONE_B_LIMIT ? (
                           <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">Too Far</span>
+                        ) : distance !== null && distance > ZONE_A_LIMIT ? (
+                          <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-bold">Zone B</span>
                         ) : (
-                          <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold">In Range</span>
+                          <span className="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded-full font-bold">Zone A</span>
                         )}
                       </div>
 
-                      {distance !== null && distance > MAX_DELIVERY_DISTANCE && (
-                        <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 p-4 rounded-xl flex items-start gap-3 animate-pulse">
+                      {distance !== null && distance > ZONE_B_LIMIT && (
+                        <div className="bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 p-4 rounded-xl flex items-start gap-3 animate-bounce">
                           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
                           <div>
-                            <p className="text-xs font-bold text-red-700 dark:text-red-400">Store is too far for R5 delivery!</p>
-                            <p className="text-[10px] text-red-600 dark:text-red-500 mt-1">Our bicycle riders only serve within {MAX_DELIVERY_DISTANCE}km. Please select "Collection" or choose a closer shop.</p>
+                            <p className="text-xs font-bold text-red-700 dark:text-red-400">OUT OF DELIVERY RANGE</p>
+                            <p className="text-[10px] text-red-600 dark:text-red-500 mt-1 uppercase font-black tracking-tighter">Maximum range is {ZONE_B_LIMIT}km. This order cannot be delivered.</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {distance !== null && distance > ZONE_A_LIMIT && distance <= ZONE_B_LIMIT && (
+                        <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 p-4 rounded-xl flex items-start gap-3">
+                          <Info className="w-5 h-5 text-amber-600 shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold text-amber-700 dark:text-amber-400">Entering +R5 Delivery Zone</p>
+                            <p className="text-[10px] text-amber-600 dark:text-amber-500 mt-1">Orders beyond 3km require a small distance surcharge for our riders.</p>
                           </div>
                         </div>
                       )}
@@ -4274,8 +4566,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               </div>
               {deliveryType === 'delivery' && (
                 <div className="flex justify-between items-center text-sm text-orange-600 font-bold">
-                  <span>Delivery Fee (Flat Rate)</span>
-                  <span>R {DELIVERY_FEE.toFixed(2)}</span>
+                  <span>Delivery Fee ({distance !== null && distance > ZONE_A_LIMIT ? 'Zone B' : 'Zone A'})</span>
+                  <span>R {deliveryFee.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center mt-2">
@@ -4307,7 +4599,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   );
 }
 
-function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart: CartItem[], shops: Shop[] }) {
+function OrderSuccessScreen({ onHome, cart, shops, triggerHaptic }: { onHome: () => void, cart: CartItem[], shops: Shop[], triggerHaptic: (pattern?: number | number[]) => void }) {
   const [showRatePrompt, setShowRatePrompt] = useState(true);
 
   useEffect(() => {
@@ -4351,7 +4643,7 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
           
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5">
             <div className="size-16 bg-green-600/10 rounded-2xl flex items-center justify-center text-green-600 shrink-0">
-              <Box className="w-8 h-8" />
+              <Package className="w-8 h-8" />
             </div>
             <div>
               <p className="text-sm font-black text-green-600 uppercase tracking-widest mb-1">Order Status</p>
@@ -4421,7 +4713,7 @@ function OrderSuccessScreen({ onHome, cart, shops }: { onHome: () => void, cart:
   );
 }
 
-function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert, setCurrentScreen }: { 
+function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert, setCurrentScreen, triggerHaptic }: { 
   shops: Shop[], 
   onHome: () => void, 
   onExplore: () => void, 
@@ -4430,8 +4722,10 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   onSelectShop: (shopId: string) => void, 
   userLocation: { lat: number, lng: number } | null,
   showAlert: (title: string, message: string) => void,
-  setCurrentScreen: (screen: Screen) => void
+  setCurrentScreen: (screen: Screen) => void,
+  triggerHaptic: (pattern?: number | number[]) => void
 }) {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [minRating, setMinRating] = useState(0);
@@ -4704,15 +4998,15 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
           <div className="flex justify-around items-center px-6 pb-8 pt-4">
           <button onClick={onHome} className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer">
             <Home className="w-6 h-6 mb-1" />
-            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Home</span>
+            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">{t('home')}</span>
           </button>
           <button className="flex flex-col items-center justify-center text-[#FF6B00] dark:text-[#ff7a2f] bg-[#FF6B00]/10 rounded-full px-5 py-2 transition-transform duration-150 active:scale-96 cursor-pointer">
             <Store className="w-6 h-6 mb-1" />
-            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Discover</span>
+            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">{t('discover')}</span>
           </button>
           <button onClick={onExplore} className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer">
             <Compass className="w-6 h-6 mb-1" />
-            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">Explore</span>
+            <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">{t('explore')}</span>
           </button>
         </div>
       </nav>
@@ -4721,23 +5015,144 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   );
 }
 
-function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, userProfile, onLogout, setNotification }: { 
+function AddressPicker({ 
+  value, 
+  onAddressChange, 
+  onLocationChange, 
+  initialLocation 
+}: { 
+  value: string, 
+  onAddressChange: (val: string) => void, 
+  onLocationChange: (lat: number, lng: number) => void,
+  initialLocation?: { lat: number, lng: number } | null
+}) {
+  const [query, setQuery] = useState(value);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [markerPos, setMarkerPos] = useState<{lat: number, lng: number} | null>(initialLocation || null);
+
+  const handleSearch = async (val: string) => {
+    setQuery(val);
+    if (val.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    setLoading(true);
+    const results = await searchAddress(val);
+    setSuggestions(results);
+    setShowSuggestions(true);
+    setLoading(false);
+  };
+
+  const selectSuggestion = (s: any) => {
+    onAddressChange(s.display_name);
+    setQuery(s.display_name);
+    setMarkerPos({ lat: s.lat, lng: s.lon });
+    onLocationChange(s.lat, s.lon);
+    setShowSuggestions(false);
+  };
+
+  const DraggableMarker = () => {
+    const markerRef = useRef<any>(null);
+    const eventHandlers = useMemo(
+      () => ({
+        dragend() {
+          const marker = markerRef.current;
+          if (marker != null) {
+            const newPos = marker.getLatLng();
+            setMarkerPos(newPos);
+            onLocationChange(newPos.lat, newPos.lng);
+          }
+        },
+      }),
+      [],
+    );
+
+    return markerPos ? (
+      <Marker
+        draggable={true}
+        eventHandlers={eventHandlers}
+        position={markerPos}
+        ref={markerRef}
+      >
+        <Popup minWidth={90}>
+          <span>Delivery point</span>
+        </Popup>
+      </Marker>
+    ) : null;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+        </div>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => handleSearch(e.target.value)}
+          placeholder="Search for your street address..."
+          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl pl-12 pr-4 py-4 text-sm font-bold focus:border-primary transition-all outline-none"
+        />
+        
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="absolute top-full left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl mt-2 overflow-hidden shadow-2xl z-50">
+            {suggestions.map((s, idx) => (
+              <button
+                key={idx}
+                onClick={() => selectSuggestion(s)}
+                className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-sm border-b border-slate-100 dark:border-slate-800 last:border-none"
+              >
+                <div className="font-bold truncate">{s.display_name.split(',')[0]}</div>
+                <div className="text-[10px] text-slate-400 truncate uppercase tracking-widest">{s.display_name}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="h-48 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 relative z-0">
+        <MapContainer 
+          center={markerPos || { lat: -26.01, lng: 28.21 }} 
+          zoom={13} 
+          style={{ height: '100%', width: '100%' }}
+        >
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <RecenterMap coords={markerPos || { lat: -26.01, lng: 28.21 }} />
+          <DraggableMarker />
+        </MapContainer>
+        {!markerPos && (
+          <div className="absolute inset-0 bg-black/5 flex items-center justify-center backdrop-blur-[2px]">
+            <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Select an address to see map</p>
+          </div>
+        )}
+      </div>
+      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center">
+        📍 Drag the pin to your exact door for perfect deliveries
+      </p>
+    </div>
+  );
+}
+
+function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification, triggerHaptic }: { 
   onBack: () => void, 
   onSave: (data: Partial<UserProfile>) => void, 
-  onOrderHistory: () => void, 
-  onAdminOrders: () => void, 
-  onShopDashboard: () => void, 
-  onRiderDashboard: () => void,
-  onContactUs: () => void, 
   userProfile: UserProfile, 
   onLogout: () => void, 
-  setNotification: (n: NotificationState) => void 
+  setNotification: (n: NotificationState) => void,
+  triggerHaptic: (pattern?: number | number[]) => void 
 }) {
   const [fullName, setFullName] = useState(userProfile.fullName);
-  const [phone, setPhone] = useState(userProfile.phone);
-  const [address, setAddress] = useState(userProfile.address);
+  const [phone, setPhone] = useState(formatSAPhone(userProfile.phone));
+  const [address, setAddress] = useState(userProfile.address || '');
+  const [city, setCity] = useState(userProfile.city || '');
+  const [latitude, setLatitude] = useState<number | undefined>(userProfile.latitude);
+  const [longitude, setLongitude] = useState<number | undefined>(userProfile.longitude);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { t } = useTranslation();
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     try {
@@ -4748,31 +5163,38 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
       const publicUrl = await uploadAvatar(event.target.files[0], userProfile.id);
       onSave({ photoURL: publicUrl });
       setNotification({ message: 'Profile picture updated!', type: 'success' });
+      triggerHaptic?.(10);
     } catch (error: any) {
       console.error('Error uploading avatar:', error);
-      let errorMsg = error.message;
-      if (errorMsg === 'Bucket not found') {
-        errorMsg = "We couldn't upload your photo right now. Please try again later.";
-      }
-      setNotification({ message: `Error uploading avatar: ${errorMsg}`, type: 'error' });
+      setNotification({ message: `Error: ${error.message}`, type: 'error' });
     } finally {
       setUploading(false);
     }
   };
 
+  const handleUpdateProfile = () => {
+    if (!fullName.trim()) {
+      setNotification({ message: 'Name cannot be empty', type: 'error' });
+      return;
+    }
+    onSave({ fullName, phone, address, city, latitude, longitude });
+    setNotification({ message: 'Profile updated successfully!', type: 'success' });
+    triggerHaptic?.(10);
+  };
+
   return (
-    <div className="bg-white dark:bg-background-dark font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
-      <div className="flex-1 flex flex-col w-full max-w-md mx-auto overflow-x-hidden">
-        {/* Top App Bar */}
-        <div className="flex items-center bg-white dark:bg-background-dark p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
-          <button onClick={onBack} className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer">
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-12">Profile Settings</h2>
-        </div>
-        
-        {/* Profile Picture Section */}
-        <div className="flex p-8">
+    <div className="bg-white dark:bg-[#1a110c] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
+      {/* Header */}
+      <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-[#1a110c] z-10">
+        <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer">
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <h2 className="text-xl font-bold flex-1 text-center pr-10">{t('edit_profile')}</h2>
+      </div>
+
+      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+        {/* Profile Photo */}
+        <div className="flex flex-col items-center gap-4">
           <input
             type="file"
             accept="image/*"
@@ -4781,177 +5203,127 @@ function ProfileScreen({ onBack, onSave, onOrderHistory, onAdminOrders, onShopDa
             ref={fileInputRef}
             className="hidden"
           />
-          <div className="flex w-full flex-col gap-6 items-center">
-            <div className="relative">
-              <div 
-                className="bg-primary/5 dark:bg-primary/10 bg-center bg-no-repeat aspect-square bg-cover rounded-full h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all" 
-                style={{ backgroundImage: userProfile.photoURL ? `url("${userProfile.photoURL}")` : `url("${DEFAULT_AVATAR_URL}")` }}
-              >
-                {uploading && (
-                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 text-white animate-spin" />
-                  </div>
-                )}
-                {!userProfile.photoURL && !uploading && <User className="w-12 h-12 text-slate-300 dark:text-slate-700" />}
-              </div>
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-1 right-1 bg-primary text-white rounded-full p-2.5 border-4 border-white dark:border-background-dark shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
-              >
-                <Camera className="w-4 h-4 text-white" />
-              </button>
-            </div>
-            <div className="text-center space-y-1">
-              <p className="text-slate-900 dark:text-slate-100 text-xl font-bold tracking-tight">{userProfile.fullName || 'User'}</p>
-              <p className="text-slate-500 dark:text-slate-400 text-[13px]">{userProfile.email}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Menu Items */}
-        <div className="px-6 pb-24 space-y-1">
-          <div className="py-2">
-             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Activities</p>
-             <div className="space-y-1">
-               <button onClick={onOrderHistory} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all group">
-                 <div className="flex items-center gap-4">
-                   <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-xl text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform">
-                     <ShoppingBag className="w-6 h-6" />
-                   </div>
-                   <div className="text-left">
-                     <p className="font-bold text-[15px]">My Orders</p>
-                     <p className="text-xs text-slate-500">Track your current and past orders</p>
-                   </div>
-                 </div>
-                 <ChevronRight className="w-5 h-5 text-slate-300" />
-               </button>
-             </div>
-          </div>
-
-          <div className="py-2">
-             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Language & Region</p>
-             <div className="space-y-1">
-               <div className="p-4 bg-slate-50/50 dark:bg-slate-900/30 rounded-3xl border border-slate-100 dark:border-slate-800">
-                 <div className="flex items-center gap-4 mb-4">
-                   <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl text-amber-600 dark:text-amber-400">
-                     <Flag className="w-6 h-6" />
-                   </div>
-                   <div className="text-left">
-                     <p className="font-bold text-[15px]">App Language</p>
-                     <p className="text-xs text-slate-500">Choose your preferred SA language</p>
-                   </div>
-                 </div>
-                 <div className="grid grid-cols-2 gap-2">
-                   {[
-                     'English', 'isiZulu', 'isiXhosa', 'Afrikaans', 
-                     'Sepedi', 'Setswana', 'Sesotho', 'Xitsonga', 
-                     'siSwati', 'Tshivenda', 'isiNdebele'
-                   ].map(lang => (
-                     <button 
-                       key={lang}
-                       onClick={() => {
-                         setNotification({ message: `Language changed to ${lang}`, type: 'success' });
-                         setTimeout(() => setNotification(null), 2000);
-                       }}
-                       className={`px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center border ${lang === 'English' ? 'bg-orange-600 text-white border-orange-600 shadow-md' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-slate-700 hover:border-orange-500/30'}`}
-                     >
-                       {lang}
-                     </button>
-                   ))}
-                 </div>
-               </div>
-             </div>
-          </div>
-
-          <div className="py-2">
-             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest px-2 mb-2">Support & Feedback</p>
-             <div className="space-y-1">
-               <button onClick={onContactUs} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-all group">
-                 <div className="flex items-center gap-4">
-                   <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-xl text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform">
-                     <MessageSquare className="w-6 h-6" />
-                   </div>
-                   <div className="text-left">
-                     <p className="font-bold text-[15px]">Contact Us</p>
-                     <p className="text-xs text-slate-500">Need help? We're here for you</p>
-                   </div>
-                 </div>
-                 <ChevronRight className="w-5 h-5 text-slate-300" />
-               </button>
-             </div>
-          </div>
-
-          {userProfile.role === 'admin' && (
-            <div className="py-2">
-               <p className="text-[11px] font-bold text-orange-400 uppercase tracking-widest px-2 mb-2">Admin Dashboard</p>
-               <div className="space-y-1">
-                 <button onClick={onAdminOrders} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-orange-50 dark:hover:bg-orange-950/20 transition-all group">
-                   <div className="flex items-center gap-4">
-                     <div className="p-3 bg-orange-100 dark:bg-orange-500/20 rounded-xl text-orange-600 group-hover:scale-110 transition-transform">
-                       <LayoutDashboard className="w-6 h-6" />
-                     </div>
-                     <div className="text-left">
-                       <p className="font-bold text-[15px]">Admin Orders</p>
-                       <p className="text-xs text-slate-500">Manage all system orders</p>
-                     </div>
-                   </div>
-                   <ChevronRight className="w-5 h-5 text-orange-300" />
-                 </button>
-               </div>
-            </div>
-          )}
-
-          {userProfile.role === 'shop_owner' && (
-            <div className="py-2">
-               <p className="text-[11px] font-bold text-orange-400 uppercase tracking-widest px-2 mb-2">Shop Dashboard</p>
-               <div className="space-y-1">
-                 <button onClick={onShopDashboard} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-orange-50 dark:hover:bg-orange-950/20 transition-all group">
-                   <div className="flex items-center gap-4">
-                     <div className="p-3 bg-orange-100 dark:bg-orange-500/20 rounded-xl text-orange-600 group-hover:scale-110 transition-transform">
-                       <Store className="w-6 h-6" />
-                     </div>
-                     <div className="text-left">
-                       <p className="font-bold text-[15px]">Shop Dashboard</p>
-                       <p className="text-xs text-slate-500">Manage your store and menu</p>
-                     </div>
-                   </div>
-                   <ChevronRight className="w-5 h-5 text-orange-300" />
-                 </button>
-               </div>
-            </div>
-          )}
-
-          {userProfile.role === 'rider' && (
-            <div className="py-2">
-               <p className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest px-2 mb-2">Rider Dashboard</p>
-               <div className="space-y-1">
-                 <button onClick={onRiderDashboard} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-indigo-50 dark:hover:bg-indigo-950/20 transition-all group">
-                   <div className="flex items-center gap-4">
-                     <div className="p-3 bg-indigo-100 dark:bg-indigo-500/20 rounded-xl text-indigo-600 group-hover:scale-110 transition-transform">
-                       <Bike className="w-6 h-6" />
-                     </div>
-                     <div className="text-left">
-                       <p className="font-bold text-[15px]">Rider Dashboard</p>
-                       <p className="text-xs text-slate-500">Manage deliveries and tracking</p>
-                     </div>
-                   </div>
-                   <ChevronRight className="w-5 h-5 text-indigo-300" />
-                 </button>
-               </div>
-            </div>
-          )}
-
-          <div className="py-8">
-            <button 
-              onClick={onLogout}
-              className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl text-red-500 font-bold border-2 border-red-100 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer"
+          <div className="relative group">
+            <div 
+              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center bg-cover bg-center"
+              style={{ backgroundImage: userProfile.photoURL ? `url("${userProfile.photoURL}")` : undefined }}
             >
-              <LogOut className="w-5 h-5" />
-              Sign Out
+              {!userProfile.photoURL && <User className="w-12 h-12 text-slate-300" />}
+              {uploading && (
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 text-white animate-spin" />
+                </div>
+              )}
+            </div>
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute bottom-0 right-0 p-2.5 bg-primary text-white rounded-xl shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+            >
+              <Camera className="w-4 h-4" />
             </button>
           </div>
+          <div className="text-center">
+            <p className="font-bold text-lg">{userProfile.fullName || 'User'}</p>
+            <p className="text-xs text-slate-400">{userProfile.email}</p>
+          </div>
         </div>
-      </div>
+
+        {/* Form Fields */}
+        <div className="space-y-6">
+          {/* Full Name */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">Full Name</label>
+            <div className="relative">
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Your full name"
+                className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+              />
+            </div>
+          </div>
+
+          {/* Phone Number */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">Phone Number</label>
+            <div className="relative group">
+              <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(formatSAPhone(e.target.value))}
+                placeholder="e.g. +27 71 234 5678"
+                className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Delivery Address */}
+          <div className="space-y-4">
+            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">Delivery Address & Pin</label>
+            <AddressSearch 
+              initialAddress={address}
+              initialCoords={latitude && longitude ? { lat: latitude, lng: longitude } : undefined}
+              onSelect={(data) => {
+                setAddress(data.address);
+                setLatitude(data.lat);
+                setLongitude(data.lng);
+              }}
+            />
+          </div>
+
+          {/* City */}
+          <div className="space-y-2 opacity-60">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">City (Current Service Zone)</label>
+            <div className="relative">
+              <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                value={city}
+                readOnly
+                placeholder="Your city"
+                className="w-full pl-12 pr-4 py-4 bg-slate-100 dark:bg-slate-800 border border-transparent rounded-2xl text-sm cursor-not-allowed outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Email (Readonly) */}
+          <div className="space-y-2 opacity-60">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Email Address (Primary)</label>
+            <div className="relative">
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="email"
+                value={userProfile.email}
+                readOnly
+                className="w-full pl-12 pr-4 py-4 bg-slate-100 dark:bg-slate-800 border border-transparent rounded-2xl text-sm cursor-not-allowed outline-none"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 ml-1">Email is linked to your account and cannot be changed.</p>
+          </div>
+        </div>
+
+        {/* Buttons */}
+        <div className="pt-8 space-y-4">
+          <button 
+            onClick={handleUpdateProfile}
+            className="w-full py-4 bg-primary text-white font-bold rounded-2xl shadow-xl shadow-primary/20 hover:bg-primary/90 active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
+          >
+            <Save className="w-5 h-5" />
+            Save Changes
+          </button>
+
+          <button 
+            onClick={onLogout}
+            className="w-full py-4 bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-bold rounded-2xl hover:shadow-xl transition-all flex items-center justify-center gap-2 text-sm"
+          >
+            <LogOut className="w-5 h-5" />
+            Sign Out
+          </button>
+        </div>
+      </main>
     </div>
   );
 }
@@ -5221,7 +5593,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         ) : (
           <div className="w-full h-full relative">
             <img 
-               src={shop.image} 
+               src={shop.logo} 
                alt={shop.name} 
                className="w-full h-full object-cover"
                referrerPolicy="no-referrer"
@@ -5455,10 +5827,11 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     const percentage = reviews.length > 0 ? (count / reviews.length) * 100 : 0;
                     return (
                       <div key={rating} className="flex items-center gap-3">
-                        <span className="text-[10px] font-bold text-slate-500 w-2">{rating}</span>
+                        <span className="text-[10px] font-bold text-slate-500 w-2 shrink-0 text-center">{rating}</span>
                         <div className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-orange-500 rounded-full" style={{ width: `${percentage}%` }}></div>
+                          <div className="h-full bg-orange-500 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }}></div>
                         </div>
+                        <span className="text-[10px] font-bold text-slate-500 w-6 shrink-0 tabular-nums">({count})</span>
                       </div>
                     );
                   })}
@@ -5593,17 +5966,26 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                       <span>Get Directions</span>
                     </button>
                     {shop.phone && (
-                      <button 
-                        onClick={() => {
-                          const cleanPhone = shop.phone!.replace(/[^0-9]/g, '');
-                          const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering!`)}`;
-                          window.open(url, '_blank');
-                        }}
-                        className="p-4 bg-[#25D366] text-white rounded-xl shadow-lg shadow-[#25D366]/20 hover:bg-[#20ba59] active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
-                        title="Chat on WhatsApp"
-                      >
-                        <MessageCircle className="w-6 h-6" />
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => window.open(`tel:${shop.phone}`, '_blank')}
+                          className="p-4 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl shadow-sm hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
+                          title="Call Shop"
+                        >
+                          <Phone className="w-6 h-6" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            const cleanPhone = shop.phone!.replace(/[^0-9]/g, '');
+                            const url = `https://wa.me/${cleanPhone.startsWith('0') ? '27' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering!`)}`;
+                            window.open(url, '_blank');
+                          }}
+                          className="p-4 bg-[#25D366] text-white rounded-xl shadow-lg shadow-[#25D366]/20 hover:bg-[#20ba59] active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
+                          title="Chat on WhatsApp"
+                        >
+                          <MessageCircle className="w-6 h-6" />
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -5693,7 +6075,7 @@ function MapRecenter({ center }: { center: [number, number] }) {
   return null;
 }
 
-function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo, favorites, toggleFavorite, showAlert }: { 
+function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo, favorites, toggleFavorite, showAlert, triggerHaptic }: { 
   shops: Shop[], 
   onHome: () => void, 
   onDiscover: () => void, 
@@ -5702,8 +6084,10 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
   onStoreInfo: (shopId: string) => void, 
   favorites: string[], 
   toggleFavorite: (id: string) => void,
-  showAlert: (title: string, message: string) => void
+  showAlert: (title: string, message: string) => void,
+  triggerHaptic: (pattern?: number | number[]) => void
 }) {
+  const { t } = useTranslation();
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [minRating, setMinRating] = useState(0);
@@ -6000,19 +6384,19 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
           <div className="p-1 group-hover:scale-110 transition-transform">
             <Home className="w-6 h-6" />
           </div>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Home</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">{t('home')}</span>
         </button>
         <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
           <div className="p-1 relative group-hover:scale-110 transition-transform">
             <Store className="w-6 h-6 bg-white dark:bg-slate-800 rounded-lg p-0.5 shadow-sm" />
           </div>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Discover</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">{t('discover')}</span>
         </button>
         <button className="flex flex-col items-center gap-1 text-orange-600 transition-colors cursor-pointer group">
           <div className="p-1 group-hover:scale-110 transition-transform">
             <Compass className="w-6 h-6" />
           </div>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Explore</span>
+          <span className="text-[10px] font-black uppercase tracking-tighter">{t('explore')}</span>
         </button>
       </div>
     </div>
@@ -6082,9 +6466,19 @@ function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { noti
   );
 }
 
+function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
+  const map = useMap();
+  useEffect(() => {
+    if (coords) {
+      map.setView(coords, map.getZoom());
+    }
+  }, [coords, map]);
+  return null;
+}
+
 function RealTimeRiderTracking({ order, shop }: { order: Order, shop?: Shop }) {
   const [riderLocation, setRiderLocation] = useState<{ lat: number, lng: number } | null>(null);
-  const [showMap, setShowMap] = useState(false);
+  const [showMap, setShowMap] = useState(order.delivery_status === 'picked_up');
   const [riderInfo, setRiderInfo] = useState<any>(null);
 
   useEffect(() => {
@@ -6159,19 +6553,34 @@ function RealTimeRiderTracking({ order, shop }: { order: Order, shop?: Shop }) {
           </div>
         )}
       </div>
-      
+
+      {riderLocation && deliveryCoords && (() => {
+        const dist = calculateDistance(riderLocation.lat, riderLocation.lng, deliveryCoords.lat, deliveryCoords.lng);
+        return dist > 3 ? (
+          <div className="mb-4 bg-red-50 dark:bg-red-500/10 p-3 rounded-lg border border-red-200 dark:border-red-900/30 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold text-red-800 dark:text-red-400">Rider is uncharacteristically far away</p>
+              <p className="text-[10px] text-red-600 dark:text-red-500/80 mt-0.5">Your rider is currently {dist.toFixed(1)}km away from the delivery address. This might take a bit longer.</p>
+            </div>
+          </div>
+        ) : null;
+      })()}
+
       {showMap && deliveryCoords ? (
         <div className="h-48 w-full rounded-2xl overflow-hidden mb-4 border border-orange-200 dark:border-orange-800 relative z-10 shadow-inner">
           <MapContainer center={riderLocation || storeCoords} zoom={15} scrollWheelZoom={false} style={{ height: '100%', width: '100%' }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <RecenterMap coords={riderLocation || storeCoords} />
             <Marker position={storeCoords} />
             <Marker position={deliveryCoords} />
             {riderLocation && (
-              <Marker position={riderLocation}>
-                <div className="p-1.5 bg-orange-600 text-white rounded-full shadow-lg">
-                  <Bike className="w-4 h-4" />
-                </div>
-              </Marker>
+              <Marker position={riderLocation} icon={L.divIcon({
+                className: 'custom-rider-icon',
+                html: `<div class="bg-indigo-600 p-1 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 28]
+              })} />
             )}
             <ChangeView center={riderLocation || storeCoords} />
           </MapContainer>
@@ -6288,9 +6697,27 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
                       <p className="text-xs text-slate-500 font-medium">{order.product_name} x{order.quantity}</p>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right flex flex-col items-end">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order ID</p>
                     <p className="text-[11px] font-mono font-bold text-primary">#{order.id.slice(0, 8)}</p>
+                    <button
+                      onClick={() => {
+                        const shareData = {
+                          title: `Track my order from ${shop?.name}`,
+                          text: `I just ordered ${order.product_name}. Track my delivery here!`,
+                          url: `${window.location.origin}/track/${order.id}`
+                        };
+                        if (navigator.share) {
+                          navigator.share(shareData).catch(() => {});
+                        } else {
+                          navigator.clipboard.writeText(shareData.url);
+                          toast.success('Tracking link copied to clipboard!');
+                        }
+                      }}
+                      className="mt-2 text-[10px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-2 py-1 rounded-full flex items-center gap-1 active:scale-95 transition-transform"
+                    >
+                      <Share2 className="w-3 h-3" /> Share
+                    </button>
                   </div>
                 </div>
 
@@ -6370,7 +6797,7 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
     </div>
   );
 }
-function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, isDarkMode, onToggleDarkMode, setNotification }: { 
+function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, onUpdateProfile, isDarkMode, onToggleDarkMode, setNotification }: { 
   userProfile: UserProfile, 
   setUserProfile: Dispatch<SetStateAction<UserProfile>>, 
   onBack: () => void, 
@@ -6380,12 +6807,16 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   onAdminOrders: () => void, 
   onShopDashboard: () => void, 
   onRiderDashboard: () => void,
+  onContactUs?: () => void,
+  onUpdateProfile: (data: Partial<UserProfile>, showSuccess?: boolean) => void,
   isDarkMode: boolean, 
   onToggleDarkMode: () => void, 
   setNotification: (n: NotificationState) => void 
 }) {
   const [uploading, setUploading] = useState(false);
+  const [showLanguageModal, setShowLanguageModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { t, language, setLanguage } = useTranslation();
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     try {
@@ -6411,6 +6842,21 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
     }
   };
 
+  const languages = [
+    { code: 'en', name: 'English' },
+    { code: 'zu', name: 'IsiZulu' },
+    { code: 'af', name: 'Afrikaans' },
+    { code: 'st', name: 'Sesotho' },
+    { code: 'ts', name: 'Xitsonga' }
+  ];
+
+  const handleLanguageChange = async (langCode: any) => {
+    setLanguage(langCode);
+    onUpdateProfile({ language: langCode }, false);
+    setShowLanguageModal(false);
+    setNotification({ message: `Language changed to ${languages.find(l => l.code === langCode)?.name}`, type: 'success' });
+  };
+
   return (
     <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
       {/* Hidden File Input */}
@@ -6430,8 +6876,8 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-xl font-bold tracking-tight">Settings</h1>
-          <div className="w-10"></div> {/* Spacer for centering */}
+          <h1 className="text-xl font-bold tracking-tight">{t('settings')}</h1>
+          <div className="w-10"></div> 
         </div>
       </header>
 
@@ -6466,399 +6912,270 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
           </div>
         </div>
 
-        {/* Appearance Section */}
+        {/* 1. Account Security */}
         <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Appearance</h3>
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <Shield className="w-4 h-4 text-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-primary">{t('account_security')}</h3>
+          </div>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <button 
+              onClick={onProfile}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center text-orange-600">
+                  <User className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm">{t('edit_profile')}</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </button>
+            <button 
+              onClick={() => setNotification({ message: "Saved addresses coming soon!", type: "info" })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm">{t('saved_addresses')}</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </button>
+            <button 
+              onClick={() => {
+                if (window.confirm("Are you sure you want to delete your account? This action is irreversible.")) {
+                  setNotification({ message: "Account deletion request received.", type: "info" });
+                }
+              }}
+              className="w-full flex items-center justify-between p-4 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-500/20 flex items-center justify-center text-red-600">
+                  <UserMinus className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm text-red-600">{t('delete_account')}</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-red-300" />
+            </button>
+          </div>
+        </section>
+
+        {/* 2. Preferences */}
+        <section>
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <SlidersHorizontal className="w-4 h-4 text-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-primary">{t('preferences')}</h3>
+          </div>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            {/* Language Selection */}
+            <button 
+              onClick={() => setShowLanguageModal(true)}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 flex items-center justify-center text-emerald-600">
+                  <Languages className="w-5 h-5" />
+                </div>
+                <span className="font-medium text-sm">{t('app_language')}</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-slate-500 font-bold">{languages.find(l => l.code === language)?.name}</span>
+                <ChevronRight className="w-4 h-4 text-slate-300" />
+              </div>
+            </button>
+
+            {/* Notifications toggle */}
+            <button 
+              onClick={() => setNotification({ message: "Notification preferences coming soon!", type: "info" })}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
+            >
+              <div className="flex items-center space-x-3 text-left">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center text-orange-600">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                   <p className="font-medium text-sm">{t('notifications')}</p>
+                   <p className="text-[10px] text-slate-500">Push, Email, SMS</p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </button>
+
+            {/* Dark Mode toggle */}
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
                   {isDarkMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                 </div>
-                <span className="font-medium">Dark Mode</span>
+                <span className="font-medium text-sm">{t('dark_mode')}</span>
               </div>
               <button 
-                onClick={() => {
-                  onToggleDarkMode();
-                  setNotification({ 
-                    message: `Switched to ${!isDarkMode ? 'Dark' : 'Light'} Mode`, 
-                    type: 'info' 
-                  });
-                }}
+                onClick={onToggleDarkMode}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isDarkMode ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-700'}`}
               >
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDarkMode ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
-            <div className="px-4 pb-4">
-              <button 
-                onClick={() => {
-                  localStorage.removeItem('dark_mode');
-                  window.location.reload();
-                }}
-                className="text-[10px] text-slate-400 hover:text-primary transition-colors flex items-center space-x-1"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reset Theme Preference</span>
-              </button>
-            </div>
           </div>
         </section>
 
-        {/* Support & Legal Section */}
+        {/* 3. Support & Legal */}
         <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Social</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm p-4">
-            <div className="flex items-center gap-4 bg-primary/5 p-4 rounded-2xl">
-              <div className="size-12 bg-primary rounded-2xl flex items-center justify-center text-white shadow-lg shadow-primary/20">
-                <Gift className="w-6 h-6" />
-              </div>
-              <div className="flex-grow">
-                <p className="font-bold text-sm">Refer a Friend</p>
-                <p className="text-[10px] text-slate-500 font-medium">Get R50 off your next order</p>
-              </div>
-              <button 
-                onClick={() => {
-                  if (navigator.share) {
-                    navigator.share({
-                      title: 'LocalEats',
-                      text: 'Check out LocalEats! Use my code "LOCAL50" for R50 off.',
-                      url: window.location.href,
-                    });
-                  } else {
-                    setNotification({ message: "Invite link copied!", type: "success" });
-                  }
-                }}
-                className="size-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-primary border border-primary/10 shadow-sm active:scale-95 transition-all cursor-pointer"
-              >
-                <Share2 className="w-4 h-4" />
-              </button>
-            </div>
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <HelpCircle className="w-4 h-4 text-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-primary">{t('support_legal')}</h3>
           </div>
-        </section>
-
-        {/* Security Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Security</h3>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
             <button 
-              onClick={() => setNotification({ message: "Password reset sent to your email", type: "success" })}
+              onClick={() => onRiderDashboard ? onContactUs?.() : window.open('https://wa.me/27123456789', '_blank')}
               className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
             >
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-500/20 flex items-center justify-center text-red-600">
-                  <Lock className="w-5 h-5" />
-                </div>
-                <span className="font-medium text-sm">Change Password</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
-            </button>
-            <div className="flex items-center justify-between p-4">
-              <div className="flex items-center space-x-3 text-left">
                 <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center text-green-600">
-                  <Fingerprint className="w-5 h-5" />
-                </div>
-                <div>
-                   <p className="font-medium text-sm">Biometric Login</p>
-                   <p className="text-[10px] text-slate-500">Fast access to your account</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input className="sr-only peer" type="checkbox"/>
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-          </div>
-        </section>
-
-        {/* Support & Legal Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Support & Legal</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-            <button 
-              onClick={() => window.open('https://wa.me/27123456789', '_blank')}
-              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center text-green-600 dark:text-green-400">
                   <MessageCircle className="w-5 h-5" />
                 </div>
-                <span className="font-medium">WhatsApp Support</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300" />
-            </button>
-            <button 
-              onClick={() => setNotification({ message: "Terms of Service coming soon!", type: 'info' })}
-              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
-                  <FileText className="w-5 h-5" />
-                </div>
-                <span className="font-medium">Terms of Service</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300" />
-            </button>
-            <button 
-              onClick={() => setNotification({ message: "Privacy Policy coming soon!", type: 'info' })}
-              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
-                  <Shield className="w-5 h-5" />
-                </div>
-                <span className="font-medium">Privacy Policy</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300" />
-            </button>
-          </div>
-        </section>
-
-        {/* Admin Section */}
-        {userProfile.role === 'admin' && (
-          <section>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Admin Panel</h3>
-            <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-              <button onClick={onAdminOrders} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                    <ShoppingBag className="w-5 h-5" />
-                  </div>
-                  <span className="font-medium">Manage Orders</span>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* Shop Owner Section */}
-        {userProfile.role === 'shop_owner' && (
-          <section>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Shop Management</h3>
-            <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-              <button onClick={onShopDashboard} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center text-orange-600">
-                    <Store className="w-5 h-5" />
-                  </div>
-                  <span className="font-medium">Shop Dashboard</span>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* Rider Section */}
-        {userProfile.role === 'rider' && (
-          <section>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-indigo-600 mb-3 px-1">Rider Fleet</h3>
-            <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-              <button onClick={onRiderDashboard} className="w-full flex items-center justify-between p-4 hover:bg-indigo-50 dark:hover:bg-indigo-900/10 transition-colors border-b border-primary/5 cursor-pointer">
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-600">
-                    <Bike className="w-5 h-5" />
-                  </div>
-                  <span className="font-medium">Rider Dashboard</span>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* Account Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Account</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-            <button onClick={onProfile} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <User className="w-5 h-5" />
-                </div>
-                <span className="font-medium">Profile Information</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-400" />
-            </button>
-            <button onClick={onOrderHistory} className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors cursor-pointer">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <History className="w-5 h-5" />
-                </div>
-                <span className="font-medium">Order History</span>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-400" />
-            </button>
-          </div>
-        </section>
-
-        {/* Notifications Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Notifications</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-            <div className="flex items-center justify-between p-4 border-b border-primary/5">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <Bell className="w-5 h-5" />
-                </div>
-                <div className="text-left">
-                  <p className="font-medium">Push Notifications</p>
-                  <p className="text-xs text-slate-500">Order updates and alerts</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input defaultChecked className="sr-only peer" type="checkbox"/>
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-            <div className="flex items-center justify-between p-4 border-b border-primary/5">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600">
-                  <Mail className="w-5 h-5" />
-                </div>
-                <div className="text-left">
-                  <p className="font-medium">Email Reports</p>
-                  <p className="text-xs text-slate-500">Weekly summaries and receipts</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input className="sr-only peer" type="checkbox"/>
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-            <div className="flex items-center justify-between p-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center text-orange-600">
-                  <Tag className="w-5 h-5" />
-                </div>
-                <div className="text-left">
-                  <p className="font-medium">Promotions</p>
-                  <p className="text-xs text-slate-500">Discounts and special offers</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input className="sr-only peer" type="checkbox"/>
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-          </div>
-        </section>
-
-        {/* Privacy Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Privacy</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
-            <div className="flex items-center justify-between p-4 border-b border-primary/5">
-              <div className="flex items-center space-x-3 text-left">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
-                  <Eye className="w-5 h-5" />
-                </div>
-                <div>
-                   <p className="font-medium text-sm">Public Profile</p>
-                   <p className="text-[10px] text-slate-500">Allow others to see your reviews</p>
-                </div>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input defaultChecked className="sr-only peer" type="checkbox"/>
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-              </label>
-            </div>
-            <button 
-              onClick={() => setNotification({ message: "Manage linked accounts feature coming soon", type: "info" })}
-              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
-                  <Database className="w-5 h-5" />
-                </div>
-                <span className="font-medium text-sm">Connected Services</span>
+                <span className="font-medium text-sm">{t('help_center')}</span>
               </div>
               <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
-          </div>
-        </section>
-
-        {/* Storage & Cache */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">Data Management</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm p-2">
             <button 
-              onClick={() => {
-                if (window.confirm("This will clear all local data including your cart and favorites. Proceed?")) {
-                  localStorage.clear();
-                  window.location.reload();
-                }
-              }}
-              className="w-full flex items-center justify-between p-3 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-lg transition-colors group cursor-pointer"
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
             >
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-600 group-hover:bg-red-600 group-hover:text-white transition-all">
-                  <Trash2 className="w-5 h-5" />
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
+                  <FileText className="w-5 h-5" />
                 </div>
-                <div className="text-left">
-                  <p className="font-medium text-sm text-red-600">Clear Local Cache</p>
-                  <p className="text-[10px] text-slate-400">Resets favorites, cart, and state</p>
-                </div>
+                <span className="font-medium text-sm">{t('terms_conditions')}</span>
               </div>
-              <Zap className="w-4 h-4 text-red-200 group-hover:text-red-500 transition-colors" />
+              <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
-          </div>
-        </section>
-
-        {/* App Settings Section */}
-        <section>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-primary mb-3 px-1">App Settings</h3>
-          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
             <button 
-              onClick={() => setNotification({ message: "Language selection coming soon!", type: 'info' })}
-              className="w-full flex items-center justify-between p-4 hover:bg-primary/5 transition-colors border-b border-primary/5 cursor-pointer"
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
             >
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <Map className="w-5 h-5" />
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
+                  <ShieldCheck className="w-5 h-5" />
                 </div>
-                <span className="font-medium">Language</span>
+                <span className="font-medium text-sm">{t('privacy_policy')}</span>
               </div>
-              <div className="flex items-center space-x-1 text-slate-500">
-                <span className="text-sm">English</span>
-                <ChevronRight className="w-4 h-4" />
-              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600">
                   <Info className="w-5 h-5" />
                 </div>
-                <span className="font-medium">About App</span>
+                <span className="font-medium text-sm">{t('app_version')}</span>
               </div>
-              <span className="text-xs text-slate-400">v{APP_VERSION.split(' ')[0]}</span>
+              <span className="text-xs text-slate-400 font-bold">v{APP_VERSION.split(' ')[0]}</span>
             </div>
           </div>
         </section>
+
+        {/* Refer a friend snippet */}
+        <div className="bg-primary/10 p-4 rounded-2xl border border-primary/20 flex items-center gap-4">
+          <div className="size-12 bg-primary rounded-xl flex items-center justify-center text-white shadow-lg">
+            <Gift className="w-6 h-6" />
+          </div>
+          <div className="flex-grow">
+            <p className="font-bold text-sm">Refer a Friend</p>
+            <p className="text-[10px] text-slate-500 font-medium">Get R50 off your next order</p>
+          </div>
+          <button 
+            onClick={() => {
+              if (navigator.share) {
+                navigator.share({
+                  title: 'LocalEats',
+                  text: 'Check out LocalEats! Use my code "LOCAL50" for R50 off.',
+                  url: window.location.href,
+                });
+              }
+            }}
+            className="size-10 bg-white dark:bg-slate-800 rounded-xl flex items-center justify-center text-primary border border-primary/10 shadow-sm active:scale-95 cursor-pointer"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Global Action Section (Clear Cache) */}
+        <button 
+          onClick={() => {
+            if (window.confirm("This will clear all local data. Proceed?")) {
+              localStorage.clear();
+              window.location.reload();
+            }
+          }}
+          className="w-full flex items-center justify-center p-3 text-red-400 hover:text-red-500 transition-colors text-[10px] font-bold uppercase tracking-widest gap-2"
+        >
+          <RotateCcw className="w-3 h-3" />
+          <span>Reset App Data</span>
+        </button>
 
         {/* Logout Button */}
         <div className="pt-4">
-          <button onClick={onLogout} className="w-full py-4 rounded-xl border-2 border-primary/20 text-primary font-bold hover:bg-primary/5 transition-colors flex items-center justify-center space-x-2 cursor-pointer">
+          <button onClick={onLogout} className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-bold hover:shadow-xl transition-all flex items-center justify-center space-x-2 cursor-pointer active:scale-95">
             <LogOut className="w-5 h-5" />
-            <span>Logout</span>
+            <span>{t('logout')}</span>
           </button>
-          <p className="text-center text-xs text-slate-400 mt-6">LocalEats Version {APP_VERSION}</p>
+          <p className="text-center text-[10px] text-slate-400 mt-6 font-bold uppercase tracking-widest tracking-tighter opacity-50">LocalEats {APP_VERSION}</p>
         </div>
       </main>
+
+      {/* Language Selection Modal */}
+      <AnimatePresence>
+        {showLanguageModal && (
+          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] p-6 pb-12 shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">{t('app_language')}</h3>
+                <button onClick={() => setShowLanguageModal(false)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {languages.map((lang) => (
+                  <button
+                    key={lang.code}
+                    onClick={() => handleLanguageChange(lang.code)}
+                    className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${
+                      language === lang.code 
+                        ? 'border-primary bg-primary/5 text-primary' 
+                        : 'border-slate-50 dark:border-slate-800 hover:border-primary/20'
+                    }`}
+                  >
+                    <span className="font-bold">{lang.name}</span>
+                    {language === lang.code && <CheckCircle className="w-5 h-5" />}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function RiderDashboardScreen({ onBack, showAlert, showConfirm }: { 
+function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic }: { 
   onBack: () => void, 
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void,
+  triggerHaptic: (pattern?: number | number[]) => void
 }) {
   const [riderProfile, setRiderProfile] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  const [orderShop, setOrderShop] = useState<Shop | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
+  const [riderLocation, setRiderLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [gpsError, setGpsError] = useState<string | null>(null);
 
   const fetchRiderData = useCallback(async () => {
     try {
@@ -6872,8 +7189,6 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
         .maybeSingle();
 
       if (!profile) {
-        // If profile doesn't exist, try to create it from pairing? 
-        // For now, let's assume it should exist if they got here.
         setLoading(false);
         return;
       }
@@ -6886,9 +7201,25 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
           .select('*')
           .eq('id', profile.current_order_id)
           .single();
+        
+        // Trigger haptic if this is a NEW assignment
+        if (order && !activeOrder) {
+          triggerHaptic([100, 50, 100]);
+        }
+        
         setActiveOrder(order);
+
+        if (order) {
+          const { data: shop } = await supabase
+            .from('shops')
+            .select('*')
+            .eq('id', order.shop_id)
+            .single();
+          setOrderShop(shop);
+        }
       } else {
         setActiveOrder(null);
+        setOrderShop(null);
       }
     } catch (err) {
       console.error('Error fetching rider data:', err);
@@ -6898,28 +7229,43 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
   }, []);
 
   useEffect(() => {
-    fetchRiderData();
-    
-    // Subscribe to changes
-    const channel = supabase.channel('rider-updates')
+    if (!riderProfile?.id) return;
+
+    // Subscribe to changes for THIS rider specifically
+    const channel = supabase.channel(`rider-dashboard-${riderProfile.id}`)
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
-        table: 'rider_profiles' 
+        table: 'rider_profiles',
+        filter: `id=eq.${riderProfile.id}`
       }, fetchRiderData)
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
-        table: 'orders' 
+        table: 'orders',
+        filter: `rider_id=eq.${riderProfile.id}`
+      }, fetchRiderData)
+      .on('postgres_changes', {
+        // Also watch for unassigned orders that might need auto-assignment 
+        // Or wait for the server-side/shop-side auto-assign to update our rider_id
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'orders',
+        filter: `status=eq.ready`
       }, fetchRiderData)
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
+  }, [fetchRiderData, riderProfile?.id]);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchRiderData();
   }, [fetchRiderData]);
 
   // Periodic Location Updates
   useEffect(() => {
-    if (!riderProfile?.is_online || activeOrder?.delivery_status !== 'picked_up') {
+    if (!riderProfile?.is_online) {
       return;
     }
 
@@ -6940,11 +7286,15 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
 
         if (error) {
           console.error('Location update failed:', error);
+          setGpsError('Sync Error');
         } else {
           setLastLocationUpdate(Date.now());
+          setRiderLocation({ lat: latitude, lng: longitude });
+          setGpsError(null);
         }
       }, (err) => {
         console.error('Geolocation error:', err);
+        setGpsError(err.message || 'GPS Signal Lost');
       }, {
         enableHighAccuracy: true,
         timeout: 5000,
@@ -6984,11 +7334,13 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
       if (orderErr) throw orderErr;
 
       if (deliveryStatus === 'delivered') {
+        const earned = activeOrder.delivery_fee || 0; // The rider earns the delivery fee
         const { error: riderErr } = await supabase
           .from('rider_profiles')
           .update({ 
             current_order_id: null, 
-            completed_deliveries: (riderProfile.completed_deliveries || 0) + 1 
+            completed_deliveries: (riderProfile.completed_deliveries || 0) + 1,
+            total_earnings: (riderProfile.total_earnings || 0) + earned
           })
           .eq('id', riderProfile.id);
         if (riderErr) throw riderErr;
@@ -7033,29 +7385,86 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
         </div>
         <div className="flex items-center gap-2">
            <div className={`w-2 h-2 rounded-full ${riderProfile.is_online ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
+           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mr-2">
+             {riderProfile.is_online ? 'Live & Active' : 'Offline'}
+           </p>
            <button 
              onClick={toggleOnline}
-             className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border transition-all ${riderProfile.is_online ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+             className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${riderProfile.is_online ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
            >
-             {riderProfile.is_online ? 'Online' : 'Offline'}
+             {riderProfile.is_online ? 'Go Offline' : 'Go Online'}
            </button>
         </div>
       </header>
 
+      {riderProfile.is_online && (
+        <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-900/30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="size-2 bg-indigo-600 rounded-full animate-ping"></div>
+            <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Searching for nearby orders...</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {gpsError && (
+              <span className="text-[9px] font-black text-red-500 uppercase flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" /> {gpsError}
+              </span>
+            )}
+            {lastLocationUpdate > 0 && (
+              <span className="text-[9px] text-slate-400 font-medium italic">
+                GPS: {Math.floor((Date.now() - lastLocationUpdate) / 1000)}s ago
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <main className="flex-grow p-4 space-y-6 overflow-y-auto">
-        {/* Stats Card */}
-        <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-600/20 grid grid-cols-2 gap-4">
-           <div>
-             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-1">Deliveries</p>
-             <p className="text-3xl font-black">{riderProfile.completed_deliveries || 0}</p>
-           </div>
-           <div className="text-right">
-             <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-1">Rating</p>
-             <div className="flex items-center justify-end gap-1">
-               <Star className="w-4 h-4 fill-current text-yellow-400" />
-               <p className="text-3xl font-black">{riderProfile.rating || '5.0'}</p>
+        {/* Stats & Vehicle Card */}
+        <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-600/20 relative overflow-hidden">
+           <div className="relative z-10">
+             <div className="flex justify-between items-start mb-6">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-80 mb-1">Total Earnings</p>
+                  <p className="text-4xl font-black text-white">R{(riderProfile.total_earnings || 0).toFixed(2)}</p>
+                </div>
+                <div className="flex gap-1 bg-white/10 backdrop-blur-md p-1 rounded-xl border border-white/10">
+                  {(['bicycle', 'scooter', 'car'] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={async () => {
+                        const { error } = await supabase
+                          .from('rider_profiles')
+                          .update({ vehicle_type: v })
+                          .eq('id', riderProfile.id);
+                        if (!error) fetchRiderData();
+                      }}
+                      className={`p-2 rounded-lg transition-all active:scale-95 ${riderProfile.vehicle_type === v ? 'bg-white text-indigo-600 shadow-sm' : 'text-indigo-100 hover:bg-white/5'}`}
+                    >
+                      {v === 'bicycle' && <Bike className="w-4 h-4" />}
+                      {v === 'scooter' && <Navigation className="w-4 h-4" />}
+                      {v === 'car' && <Layers className="w-4 h-4" />}
+                    </button>
+                  ))}
+                </div>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-0.5">Completed</p>
+                  <p className="text-xl font-bold">{riderProfile.completed_deliveries || 0} Drops</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-0.5">Rating</p>
+                  <div className="flex items-center justify-end gap-1">
+                    <span className="text-xl font-bold">{riderProfile.rating || '5.0'}</span>
+                    <Star className="w-4 h-4 text-amber-300 fill-amber-300" />
+                  </div>
+                </div>
              </div>
            </div>
+           
+           {/* Decorative background element */}
+           <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
         </div>
 
         {/* Active Order Section */}
@@ -7097,9 +7506,19 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
                     </a>
                   </div>
                   <div className="text-right">
-                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Earned</p>
-                    <p className="text-sm font-bold">R{activeOrder.delivery_fee || 15}</p>
-                    <p className="text-[10px] text-slate-400">Fixed Fee</p>
+                    <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Fixed Payout</p>
+                    <div className="flex flex-col items-end">
+                      <p className={`text-xl font-black ${activeOrder.delivery_fee > 5 ? 'text-orange-600' : 'text-emerald-600'}`}>R{activeOrder.delivery_fee?.toFixed(2) || '5.00'}</p>
+                      {orderShop && (
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border mt-1 ${
+                          calculateDistance(orderShop.latitude || 0, orderShop.longitude || 0, activeOrder.latitude || 0, activeOrder.longitude || 0) > 3 
+                            ? 'bg-orange-100 text-orange-700 border-orange-200' 
+                            : 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                        }`}>
+                          {calculateDistance(orderShop.latitude || 0, orderShop.longitude || 0, activeOrder.latitude || 0, activeOrder.longitude || 0) > 3 ? 'Zone B (3-6km)' : 'Zone A (0-3km)'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                </div>
 
@@ -7119,6 +7538,35 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm }: {
                     <Navigation className="w-4 h-4" />
                   </button>
                </div>
+
+               {/* Mini Map */}
+               {activeOrder.latitude && activeOrder.longitude && (
+                 <div className="h-48 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-10 shadow-inner">
+                   <MapContainer 
+                     center={{ lat: activeOrder.latitude, lng: activeOrder.longitude }} 
+                     zoom={14} 
+                     scrollWheelZoom={false} 
+                     style={{ height: '100%', width: '100%' }}
+                   >
+                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                     {/* Destination Marker */}
+                     <Marker position={{ lat: activeOrder.latitude, lng: activeOrder.longitude }} />
+                     
+                     {/* Rider Location Marker */}
+                     {riderProfile?.is_online && riderLocation && (
+                       <Marker 
+                         position={riderLocation}
+                         icon={L.divIcon({
+                           className: 'custom-rider-icon',
+                           html: `<div class="bg-indigo-600 p-1 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+                           iconSize: [28, 28],
+                           iconAnchor: [14, 28]
+                         })} 
+                       />
+                     )}
+                   </MapContainer>
+                 </div>
+               )}
 
                {/* Action Buttons */}
                <div className="space-y-3">
@@ -7225,6 +7673,76 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   const [isUploading, setIsUploading] = useState(false);
   const [menuImgUrl, setMenuImgUrl] = useState('');
 
+  const autoAssignClosestRider = async (orderId: string) => {
+    if (!shop) return;
+    
+    try {
+      // 1. Get online riders who are not busy
+      const { data: onlineRiders, error: riderError } = await supabase
+        .from('rider_profiles')
+        .select('*')
+        .eq('is_online', true)
+        .is('current_order_id', null);
+      
+      if (riderError || !onlineRiders || onlineRiders.length === 0) {
+        console.log('No free riders available for auto-assignment');
+        return;
+      }
+
+      // 2. Get their locations (must be updated within last 5 minutes)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: locations, error: locError } = await supabase
+        .from('rider_locations')
+        .select('*')
+        .in('rider_id', onlineRiders.map(r => r.id))
+        .gt('updated_at', fiveMinutesAgo);
+
+      if (locError || !locations || locations.length === 0) {
+        console.log('No rider locations found for auto-assignment');
+        return;
+      }
+
+      // 3. Find the closest one to the shop
+      let closestRiderId = null;
+      let minDistance = Infinity;
+
+      locations.forEach(loc => {
+        const dist = calculateDistance(shop.latitude || TEMBISA_COORDS.lat, shop.longitude || TEMBISA_COORDS.lng, Number(loc.latitude), Number(loc.longitude));
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestRiderId = loc.rider_id;
+        }
+      });
+
+      if (closestRiderId) {
+        // 4. Assign
+        const { error: assignError } = await supabase
+          .from('orders')
+          .update({ 
+            rider_id: closestRiderId, 
+            delivery_status: 'rider_assigned',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', orderId);
+        
+        if (assignError) throw assignError;
+
+        await supabase
+          .from('rider_profiles')
+          .update({ current_order_id: orderId })
+          .eq('id', closestRiderId);
+
+        console.log(`Auto-assigned rider ${closestRiderId} to order ${orderId}`);
+        triggerHaptic([100, 50, 100]);
+        toast.success(`Rider auto-assigned to Order #${orderId.slice(0, 5)}`, {
+          description: "Finding closest available delivery partner."
+        });
+      }
+    } catch (err) {
+      console.error('Auto-assignment failed:', err);
+    }
+  };
+
   const handleMenuImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     try {
@@ -7233,6 +7751,30 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       setMenuImgUrl(url);
     } catch (err: any) {
       showAlert('Upload Error', err.message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleShopLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !shop) return;
+    try {
+      setIsUploading(true);
+      const file = e.target.files[0];
+      // Note: uploadAvatar already handles compression via compressImage
+      const url = await uploadAvatar(file, shop.id);
+      
+      const { error: updateError } = await supabase
+        .from('shops')
+        .update({ logo_url: url })
+        .eq('id', shop.id);
+        
+      if (updateError) throw updateError;
+      
+      setShop({ ...shop, logo: url });
+      showAlert('Success', 'Profile photo updated! We compressed it to save you space. 🚀');
+    } catch (err: any) {
+      showAlert('Logo Update Error', err.message);
     } finally {
       setIsUploading(false);
     }
@@ -7368,7 +7910,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         const formattedShop: Shop = {
           id: String(shopData.id),
           name: shopData.name,
-          logo: shopData.logo_url || `https://picsum.photos/seed/${shopData.id}/200/200`,
+          logo: shopData.logo_url || DEFAULT_SHOP_LOGO,
           rating: Number(shopData.rating) || 4.5,
           description: shopData.description || "",
           address: shopData.location || "",
@@ -7494,6 +8036,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       if (newStatus === 'ready' && currentOrder?.is_delivery) {
         finalStatus = 'ready';
         deliveryStatus = 'finding_rider';
+        autoAssignClosestRider(orderId);
       }
 
       const updateData: any = { 
@@ -7596,6 +8139,37 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   };
 
   const weeklyStats = getWeeklyStats();
+
+  const toggleItemAvailability = async (itemId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('menu_items')
+        .update({ is_available: !currentStatus })
+        .eq('id', itemId);
+      
+      if (error) throw error;
+      
+      // Update local state
+      setShop(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          menu: prev.menu.map(item => item.id === itemId ? { ...item, is_available: !currentStatus } : item)
+        };
+      });
+      triggerHaptic(50);
+    } catch (err: any) {
+      showAlert('Error', 'Failed to update stock: ' + err.message);
+    }
+  };
+
+  const popularItemName = useMemo(() => {
+    const counts: Record<string, number> = {};
+    orders.forEach(o => {
+      counts[o.product_name] = (counts[o.product_name] || 0) + (o.quantity || 1);
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
+  }, [orders]);
 
   const generateFlyer = async () => {
     if (!shop) return;
@@ -7864,11 +8438,22 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                         </div>
                         <div className="flex items-center gap-2">
                           <button 
+                            onClick={() => toggleItemAvailability(item.id, !!item.is_available)}
+                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all active:scale-95 cursor-pointer ${
+                              item.is_available 
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                                : 'bg-red-100 text-red-700 hover:bg-red-200'
+                            }`}
+                          >
+                            {item.is_available ? 'In Stock' : 'Sold Out'}
+                          </button>
+                          <button 
                             onClick={() => { setEditingItem(item); setIsEditingMenu(true); }}
                             className="p-2 text-slate-400 hover:text-orange-500 transition-colors cursor-pointer"
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
+
                           <button 
                             onClick={() => deleteMenuItem(item.id)}
                             className="p-2 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
@@ -7929,6 +8514,11 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5">
                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total Orders</p>
                 <p className="text-2xl font-black">{orders.length}</p>
+              </div>
+              <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5">
+                <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Most Popular</p>
+                <p className="text-xl font-black truncate">{popularItemName}</p>
+                <p className="text-[10px] text-primary font-bold uppercase mt-1 tracking-tighter">Bestseller</p>
               </div>
               <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5">
                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Avg. Rating</p>
@@ -8153,6 +8743,51 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         ) : activeTab === 'settings' ? (
           <div className="space-y-4">
             <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
+              <h3 className="font-bold text-lg mb-4">Shop Profile</h3>
+              <p className="text-xs text-slate-500 mb-6">Manage how your shop appears to customers.</p>
+              
+              <div className="flex flex-col items-center gap-6 mb-6">
+                <div className="relative group">
+                  <div className="size-32 rounded-3xl overflow-hidden border-4 border-white dark:border-slate-800 shadow-xl relative">
+                    <img 
+                      src={shop.logo || DEFAULT_SHOP_LOGO} 
+                      alt={shop.name} 
+                      className="w-full h-full object-cover" 
+                    />
+                    {isUploading && (
+                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                        <Loader2 className="w-8 h-8 text-white animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <label className="absolute -bottom-2 -right-2 p-3 bg-primary text-white rounded-2xl shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all">
+                    <Camera className="w-5 h-5" />
+                    <input type="file" className="hidden" accept="image/*" onChange={handleShopLogoUpload} disabled={isUploading} />
+                  </label>
+                </div>
+                <div className="text-center">
+                  <p className="font-bold text-sm">{shop.name}</p>
+                  <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Shop ID: {shop.id.slice(0, 8)}</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Shop Description</label>
+                    <textarea 
+                      defaultValue={shop.description || ''}
+                      rows={3}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 mt-1 text-sm font-medium resize-none focus:border-primary/30 transition-colors"
+                      placeholder="Tell customers what makes your joint legendary..."
+                    />
+                 </div>
+                 <button className="w-full py-3 bg-slate-900 dark:bg-orange-600 text-white font-bold rounded-xl active:scale-95 transition-all text-sm uppercase tracking-widest">
+                    Save Profile Changes
+                 </button>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm">
               <h3 className="font-bold text-lg mb-4">Shop Location</h3>
               <p className="text-xs text-slate-500 mb-4">Update your shop's coordinates so customers can find you on the map.</p>
               
@@ -8272,36 +8907,51 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             </button>
           </div>
         ) : (
-          filteredOrders.map((order) => (
-            <motion.div 
-              layout
-              key={order.id} 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/5 shadow-sm overflow-hidden"
-            >
-              <div className="p-4 border-b border-primary/5 flex justify-between items-start">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-slate-400">#{order.id.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${getStatusColor(order.status, order.delivery_status)}`}>
-                      {order.status === 'pending' && <Clock className="w-3 h-3" />}
-                      {order.status === 'confirmed' && <CheckCircle2 className="w-3 h-3" />}
-                      {order.status === 'preparing' && <Loader2 className="w-3 h-3 animate-spin" />}
-                      {order.status === 'ready' && <Package className="w-3 h-3" />}
-                      {order.status === 'completed' && <CheckCircle2 className="w-3 h-3" />}
-                      {order.status === 'cancelled' && <XCircle className="w-3 h-3" />}
-                      {order.delivery_status ? order.delivery_status.replace('_', ' ') : order.status}
-                    </span>
-                    {order.is_delivery && (
-                      <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
-                        <Navigation className="w-2 h-2" />
-                        Rider Required
+          filteredOrders.map((order) => {
+            const dist = (order.latitude && order.longitude && shop.latitude && shop.longitude) 
+              ? calculateDistance(shop.latitude, shop.longitude, order.latitude, order.longitude)
+              : null;
+            const zone = dist !== null ? (dist > 3 ? 'B' : 'A') : null;
+            const zoneFee = zone === 'A' ? 5 : 10;
+
+            return (
+              <motion.div 
+                layout
+                key={order.id} 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/5 shadow-sm overflow-hidden"
+              >
+                <div className="p-4 border-b border-primary/5 flex justify-between items-start">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-slate-400">#{order.id.slice(0, 8)}</span>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${getStatusColor(order.status, order.delivery_status)}`}>
+                        {order.status === 'pending' && <Clock className="w-3 h-3" />}
+                        {order.status === 'confirmed' && <CheckCircle2 className="w-3 h-3" />}
+                        {order.status === 'preparing' && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {order.status === 'ready' && <Package className="w-3 h-3" />}
+                        {order.status === 'completed' && <CheckCircle2 className="w-3 h-3" />}
+                        {order.status === 'cancelled' && <XCircle className="w-3 h-3" />}
+                        {order.delivery_status ? order.delivery_status.replace('_', ' ') : order.status}
                       </span>
-                    )}
-                  </div>
-                  <h3 className="font-bold text-lg">{order.customer_name}</h3>
+                      {order.is_delivery && (
+                        <>
+                          <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                            <Navigation className="w-2 h-2" />
+                            Rider Required
+                          </span>
+                          {zone && (
+                            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border ${zone === 'A' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>
+                              Zone {zone} - R{zoneFee} {dist && `(${dist.toFixed(1)}km)`}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <h3 className="font-bold text-lg">{order.customer_name}</h3>
+
                   <div className="flex items-center gap-1.5 text-xs text-slate-500">
                     <Clock className="w-3.5 h-3.5" />
                     <span>{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -8390,9 +9040,10 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 </a>
               </div>
             </motion.div>
-          ))
-        )}
-      </main>
+          );
+        })
+      )}
+    </main>
 
       <nav className="bg-white dark:bg-slate-900 border-t border-primary/10 px-4 py-4 flex justify-between items-center sticky bottom-0">
         <button 
@@ -8620,7 +9271,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   );
 }
 
-function AdminOrdersScreen({ onBack, showAlert, showConfirm }: { 
+function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm }: { 
+  shops: Shop[],
   onBack: () => void,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void
@@ -8848,7 +9500,14 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
               <p className="text-slate-500 font-medium">No orders found</p>
             </div>
           ) : (
-            filteredOrders.map((order) => (
+            filteredOrders.map((order) => {
+              const shop = shops.find(s => s.id === order.shop_id);
+              const dist = (order.latitude && order.longitude && shop?.latitude && shop?.longitude) 
+                ? calculateDistance(shop.latitude, shop.longitude, order.latitude, order.longitude)
+                : null;
+              const zone = dist !== null ? (dist > 3 ? 'B' : 'A') : null;
+
+              return (
               <div 
                 key={order.id} 
                 className={`bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-sm border transition-all cursor-pointer ${
@@ -8866,13 +9525,19 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                   </span>
                 </div>
                 {order.is_delivery && (
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
                       <Navigation className="w-2 h-2" />
                       Rider Needed (R{order.delivery_fee})
                     </span>
+                    {zone && (
+                      <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border ${zone === 'A' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>
+                        Zone {zone} {dist && `(${dist.toFixed(1)}km)`}
+                      </span>
+                    )}
                   </div>
                 )}
+
                 
                 {/* Collapsed View: Address */}
                 {expandedOrderId !== order.id && (
@@ -9036,9 +9701,10 @@ function AdminOrdersScreen({ onBack, showAlert, showConfirm }: {
                   )}
                 </div>
               </div>
-            ))
-          )}
-        </main>
+            );
+          })
+        )}
+      </main>
 
         {/* Cancellation Confirmation Modal */}
         {orderToCancel && (
@@ -9129,9 +9795,23 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<string>('All');
+
+  const filteredOrders = useMemo(() => {
+    if (filterStatus === 'All') return orders;
+    return orders.filter(o => {
+      if (filterStatus === 'Pending') return o.status === 'pending' || o.status === 'confirmed';
+      if (filterStatus === 'Ready') return o.status === 'ready';
+      if (filterStatus === 'Delivered') return o.status === 'completed';
+      if (filterStatus === 'Cancelled') return o.status === 'cancelled';
+      return true;
+    });
+  }, [orders, filterStatus]);
 
   const handleCancelOrder = async (orderId: string) => {
     try {
+      setIsCancelling(true);
       const { error } = await supabase
         .from('orders')
         .update({ status: 'cancelled' })
@@ -9142,6 +9822,8 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
     } catch (error: any) {
       console.error('Error cancelling order:', error);
       showAlert('Error', `Failed to cancel order: ${error.message}`);
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -9218,6 +9900,22 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
         </header>
 
         <main className="flex-1 p-4 max-w-screen-xl mx-auto w-full flex flex-col gap-4">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {['All', 'Pending', 'Ready', 'Delivered', 'Cancelled'].map(status => (
+              <button
+                key={status}
+                onClick={() => setFilterStatus(status)}
+                className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                  filterStatus === status 
+                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' 
+                    : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-100 dark:border-slate-700'
+                }`}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+
           {loading ? (
             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -9232,7 +9930,7 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                 </div>
               ))}
             </div>
-          ) : orders.length === 0 ? (
+          ) : filteredOrders.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-primary/20 rounded-full scale-150 blur-3xl opacity-30 animate-pulse"></div>
@@ -9243,19 +9941,25 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                   <Plus className="w-6 h-6" />
                 </div>
               </div>
-              <h3 className="text-2xl font-black mb-3 text-slate-900 dark:text-white leading-tight">No cravings yet?</h3>
-              <p className="text-slate-500 dark:text-slate-400 text-sm mb-10 max-w-[240px] leading-relaxed font-semibold">Your delicious journey starts with your first order. Ready to discover Tembisa's best flavors?</p>
-              <button 
-                onClick={onBack}
-                className="group bg-primary text-white font-black py-4 px-10 rounded-[28px] shadow-2xl shadow-primary/30 transition-all active:scale-95 cursor-pointer flex items-center gap-3"
-              >
-                <span>Find Good Food</span>
-                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </button>
+              <h3 className="text-2xl font-black mb-3 text-slate-900 dark:text-white leading-tight">No {filterStatus !== 'All' ? filterStatus.toLowerCase() : ''} cravings?</h3>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-10 max-w-[240px] leading-relaxed font-semibold">
+                {filterStatus === 'All' 
+                  ? "Your delicious journey starts with your first order. Ready to discover Tembisa's best flavors?"
+                  : `You don't have any orders with status "${filterStatus}" at the moment.`}
+              </p>
+              {filterStatus === 'All' && (
+                <button 
+                  onClick={onBack}
+                  className="group bg-primary text-white font-black py-4 px-10 rounded-[28px] shadow-2xl shadow-primary/30 transition-all active:scale-95 cursor-pointer flex items-center gap-3"
+                >
+                  <span>Find Good Food</span>
+                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {orders.map((order) => (
+              {filteredOrders.map((order) => (
                 <div key={order.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-3 group hover:border-orange-500/20 transition-all">
                   <div className="flex justify-between items-start">
                     <div>
@@ -9422,13 +10126,20 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
               <div className="flex flex-col gap-3">
                 <button 
                   onClick={() => handleCancelOrder(cancellingOrderId)}
-                  className="w-full py-3.5 bg-rose-600 text-white font-bold rounded-xl shadow-lg shadow-rose-600/20 active:scale-95 transition-all cursor-pointer"
+                  disabled={isCancelling}
+                  className={`w-full py-3.5 flex items-center justify-center gap-2 font-bold rounded-xl shadow-lg transition-all active:scale-95 cursor-pointer ${isCancelling ? 'bg-slate-400 text-white cursor-wait shadow-none' : 'bg-rose-600 text-white shadow-rose-600/20'}`}
                 >
-                  Yes, Cancel Order
+                  {isCancelling ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Cancelling...</span>
+                    </>
+                  ) : 'Yes, Cancel Order'}
                 </button>
                 <button 
                   onClick={() => setCancellingOrderId(null)}
-                  className="w-full py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded-xl active:scale-95 transition-all cursor-pointer"
+                  disabled={isCancelling}
+                  className="w-full py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded-xl active:scale-95 transition-all cursor-pointer disabled:opacity-50"
                 >
                   No, Keep It
                 </button>
@@ -9497,9 +10208,14 @@ function ReviewScreen({
           <button
             onClick={handleSubmit}
             disabled={submitting}
-            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-orange-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-orange-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
           >
-            {submitting ? 'Submitting...' : 'Submit Review'}
+            {submitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Submitting...</span>
+              </>
+            ) : 'Submit Review'}
           </button>
           <button
             onClick={onSnooze}

@@ -15,11 +15,15 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+import { LanguageProvider } from './contexts/LanguageContext.tsx';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
-      <Analytics />
+      <LanguageProvider>
+        <App />
+        <Analytics />
+      </LanguageProvider>
     </ErrorBoundary>
   </StrictMode>,
 );
