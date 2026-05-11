@@ -25,13 +25,17 @@
     <meta property="twitter:description" content="Order the best local flavors in Tembisa. Support local, eat legendary." />
     <meta property="twitter:image" content="https://picsum.photos/seed/localeats/1200/630" />
 
-    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
     <script>
-      window.OneSignalDeferred = window.OneSignalDeferred || [];
-      OneSignalDeferred.push(async function(OneSignal) {
-        // Only initialize OneSignal if we are on the production domain or allowLocalhost is set.
-        // We skip initialization in the AI Studio preview to prevent Service Worker fetch interception errors.
-        if (!window.location.hostname.includes('run.app')) {
+      // Only initialize OneSignal if we are on the production domain or allowLocalhost is set.
+      // We skip initialization in the AI Studio preview to prevent Service Worker fetch interception errors.
+      if (!window.location.hostname.includes('run.app')) {
+        const script = document.createElement('script');
+        script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+        script.defer = true;
+        document.head.appendChild(script);
+
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        OneSignalDeferred.push(async function(OneSignal) {
           await OneSignal.init({
             appId: "9b7e9074-b5ad-4f31-b2a5-6d9fa1a31aa2",
             notifyButton: {
@@ -39,17 +43,17 @@
             },
             allowLocalhostAsSecureOrigin: true
           });
-        } else {
-          // Unregister any active service workers in preview to fix fetch errors
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function(registrations) {
-              for(let registration of registrations) {
-                registration.unregister();
-              }
-            });
-          }
+        });
+      } else {
+        // Unregister any active service workers in preview to fix fetch errors
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for(let registration of registrations) {
+              registration.unregister();
+            }
+          });
         }
-      });
+      }
     </script>
   </head>
   <body>
