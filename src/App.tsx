@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, Dispatch, SetStateAction, useEffect, useCallback, useMemo, useRef, ChangeEvent, FormEvent } from 'react';
+import { useState, Dispatch, SetStateAction, useEffect, useCallback, useMemo, useRef, ChangeEvent, FormEvent, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 import L from 'leaflet';
-import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, Circle } from 'react-leaflet';
 
 // Fix for default marker icons in react-leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -124,7 +124,8 @@ import {
   SlidersHorizontal,
   Languages,
   HelpCircle,
-  ShieldCheck
+  ShieldCheck,
+  Apple
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -232,6 +233,7 @@ type Shop = {
   address: string;
   menu: MenuItem[];
   category: string;
+  cuisine_type?: string;
   distance?: number;
   owner_id?: string;
   opening_time?: string;
@@ -262,17 +264,18 @@ const hashString = (str: string) => {
 
 const handleSupabaseError = (error: any, action: string, showAlert: (title: string, msg: string) => void) => {
   console.error(`Supabase error during ${action}:`, error);
-  if (error?.code === 'PGRST204') {
-    const colName = error.message.includes("'") ? error.message.split("'")[1] : 'recent';
-    showAlert('Database Sync Delay', `The database is taking a moment to sync new columns (like '${colName}'). Please wait a moment and try again. If it persists, run "NOTIFY pgrst, 'reload schema';" in the Supabase SQL Editor.`);
+  if (error?.code === 'PGRST204' || error?.code === 'PGRST200') {
+    showAlert('Updating Store Info', 'We are currently updating our store lists to bring you the latest menus. Please try again in a few seconds.');
   } else if (error?.message === 'Failed to fetch' || error?.message?.includes('Network Error')) {
-    showAlert('Connection Issue', 'Could not connect to the server. Please check your internet connection.');
+    showAlert('Connection Issue', 'We are having trouble connecting to the server. Please check your internet connection and try again.');
   } else if (error?.code === '23505') {
-    showAlert('Duplicate Entry', 'This record already exists in the database.');
+    showAlert('Already Exists', 'This information is already saved in your profile.');
   } else if (error?.code === '42501' || error?.message?.includes('permission denied')) {
-    showAlert('Access Denied', 'You do not have permission to perform this action. Please check your account privileges.');
+    showAlert('Access Needed', 'It looks like you do not have permission for this action. Please sign in again.');
+  } else if (error?.code === 'PGRST301') {
+    showAlert('Session Timed Out', 'Your session has expired for security. Please refresh the page to continue.');
   } else {
-    showAlert('Error', `Failed to ${action}: ${error?.message || 'Unknown error occurred'}`);
+    showAlert('Something Went Wrong', `We encountered an issue while trying to ${action}. Please try again later.`);
   }
   return error;
 };
@@ -420,14 +423,27 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
   const ShopMarker = () => {
     if (!shopCoords) return null;
     return (
-      <Marker position={shopCoords} icon={L.divIcon({
-        className: 'custom-shop-icon',
-        html: `<div class="bg-primary p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 28]
-      })}>
-        <Popup>Store Location</Popup>
-      </Marker>
+      <>
+        <Marker position={shopCoords} icon={L.divIcon({
+          className: 'custom-shop-icon',
+          html: `<div class="bg-primary p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center relative"><div class="absolute inset-0 bg-primary rounded-full animate-ping opacity-25"></div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 28]
+        })}>
+          <Popup>Store Location</Popup>
+        </Marker>
+        <Circle 
+          center={shopCoords}
+          radius={6000} // 6km radius
+          pathOptions={{
+            color: '#f97316',
+            dashArray: '10, 10',
+            fillColor: '#fb923c',
+            fillOpacity: 0.1,
+            weight: 2
+          }}
+        />
+      </>
     );
   };
 
@@ -581,11 +597,24 @@ function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { l
         <DraggableMarker />
         
         {shopCoords && (
-          <Marker position={shopCoords} icon={shopIcon}>
-            <Popup>
-              <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
-            </Popup>
-          </Marker>
+          <>
+            <Marker position={shopCoords} icon={shopIcon}>
+              <Popup>
+                <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
+              </Popup>
+            </Marker>
+            <Circle 
+              center={shopCoords}
+              radius={6000}
+              pathOptions={{
+                color: '#f97316',
+                dashArray: '10, 10',
+                fillColor: '#fb923c',
+                fillOpacity: 0.1,
+                weight: 2
+              }}
+            />
+          </>
         )}
         
         <ChangeView center={coords} shopCenter={shopCoords} />
@@ -644,14 +673,17 @@ const BlurUpImage = ({ src, alt, className, blurHash = "https://picsum.photos/se
     : `https://images.weserv.nl/?url=${encodeURIComponent(src)}&output=webp&q=80&w=800`;
   
   return (
-    <div className={`relative overflow-hidden ${className}`}>
+    <div className={`relative overflow-hidden ${className} bg-slate-100 dark:bg-slate-800`}>
       {!isLoaded && (
-        <img 
-          src={blurHash} 
-          alt={alt} 
-          className={`w-full h-full object-cover transition-opacity duration-500 opacity-100`}
-          referrerPolicy="no-referrer"
-        />
+        <>
+          <img 
+            src={blurHash} 
+            alt={alt} 
+            className={`w-full h-full object-cover transition-opacity duration-500 opacity-100 blur-lg scale-110`}
+            referrerPolicy="no-referrer"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+        </>
       )}
       <img 
         src={webpSrc} 
@@ -668,7 +700,7 @@ const BlurUpImage = ({ src, alt, className, blurHash = "https://picsum.photos/se
   );
 };
 
-const TrustBadge = ({ shop }: { shop: Shop }) => {
+const TrustBadge = memo(({ shop }: { shop: Shop }) => {
   const status = getShopStatus(shop);
   const eta = shop.delivery_eta || "25-35 min";
   
@@ -688,7 +720,142 @@ const TrustBadge = ({ shop }: { shop: Shop }) => {
       </div>
     </div>
   );
-};
+});
+
+const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: { 
+  shop: Shop, 
+  isFollowed: boolean, 
+  onStoreInfo: (id: string) => void,
+  triggerHaptic: (pattern?: number | number[]) => void
+}) => {
+  const status = getShopStatus(shop);
+  return (
+    <motion.div 
+      layout
+      variants={{
+        hidden: { opacity: 0, y: 15, scale: 0.98 },
+        show: { 
+          opacity: 1, 
+          y: 0, 
+          scale: 1,
+          transition: {
+            type: 'spring',
+            damping: 25,
+            stiffness: 300
+          }
+        }
+      }}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.98 }}
+      onClick={() => {
+        triggerHaptic();
+        onStoreInfo(shop.id);
+      }}
+      className={`flex items-center gap-4 p-4 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 rounded-[28px] transition-colors cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm hover:shadow-lg hover:border-orange-200 dark:hover:border-orange-500/30`}
+    >
+      {/* Shop Logo (WhatsApp Circle Style) */}
+      <div className="relative shrink-0">
+        <div className={`w-15 h-15 rounded-full overflow-hidden border-2 p-0.5 ${status.isOpen ? 'border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.2)]' : 'border-slate-300 dark:border-slate-700'}`}>
+          <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full rounded-full object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
+        </div>
+        {status.isOpen && (
+          <div className="absolute bottom-0.5 right-0.5 w-4 h-4 bg-green-500 border-2 border-white dark:border-slate-900 rounded-full"></div>
+        )}
+      </div>
+
+      {/* Shop Info (Chat Preview Style) */}
+      <div className="flex-1 min-w-0 py-1">
+        <div className="flex justify-between items-center mb-0.5">
+          <h4 className="text-[16px] font-black text-slate-900 dark:text-white truncate pr-2 group-hover:text-orange-600 transition-colors">{shop.name}</h4>
+          <div className="flex items-center gap-1 shrink-0 bg-slate-50 dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-100 dark:border-slate-700">
+            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+            <span className="text-[11px] font-black text-slate-900 dark:text-white">{shop.rating}</span>
+          </div>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <p className="text-[13px] text-slate-500 dark:text-slate-400 line-clamp-1 flex-1 font-medium italic opacity-80">
+            {shop.category} • {shop.description}
+          </p>
+          {isFollowed && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 500 }}
+            >
+              <Heart className="w-4 h-4 text-orange-500 fill-current ml-2 shrink-0 opacity-80" />
+            </motion.div>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-2 mt-2 overflow-hidden">
+          <TrustBadge shop={shop} />
+          {!status.isOpen && (
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap bg-slate-100/50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">Opens {status.nextOpeningTime || 'Soon'}</span>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+});
+
+const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen }: { 
+  item: MenuItem, 
+  shop: Shop, 
+  addToCart: (item: MenuItem, shopId: string, quantity?: number) => void,
+  showAlert: (title: string, message: string) => void,
+  setCurrentScreen: (screen: any) => void
+}) => {
+  return (
+    <motion.div 
+      variants={{
+        hidden: { opacity: 0, y: 10, scale: 0.98 },
+        show: { opacity: 1, y: 0, scale: 1 }
+      }}
+      whileHover={{ scale: 1.01 }}
+      whileTap={{ scale: 0.98 }}
+      className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all cursor-pointer shadow-sm"
+      onClick={() => {
+        const status = getShopStatus(shop);
+        if (!status.isOpen) {
+          showAlert('Closed', `This store is currently closed. ${status.message}`);
+          return;
+        }
+        addToCart(item, shop.id, 1);
+        setCurrentScreen('checkout');
+      }}
+    >
+      <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
+        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
+      </div>
+      <div className="flex-1 flex flex-col justify-between py-0.5">
+        <div className="flex justify-between items-start">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h4 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-600 transition-colors">{item.name}</h4>
+              {item.customizations && item.customizations.length > 0 && (
+                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 rounded text-[8px] font-black text-orange-600 uppercase tracking-tighter" title="Customizable">
+                  <Sparkles className="w-2.5 h-2.5" />
+                  <span>Customizable</span>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{item.description || 'Freshly prepared local favourite'}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between mt-auto">
+          <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
+          <div 
+            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700'}`}
+          >
+            <span>{getShopStatus(shop).isOpen ? 'Buy' : 'Closed'}</span>
+            {getShopStatus(shop).isOpen && <Plus className="w-3 h-3" />}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+});
 
 type UserProfile = {
   id?: string;
@@ -896,10 +1063,44 @@ type SignUpData = {
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
   const [previousScreen, setPreviousScreen] = useState<Screen | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(true);
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
+    const saved = localStorage.getItem('userProfile');
+    return saved ? JSON.parse(saved) : {
+      fullName: '',
+      email: '',
+      phone: '',
+      city: SUPPORTED_CITY,
+      address: '',
+      country: 'South Africa',
+      role: 'user'
+    };
+  });
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    const saved = localStorage.getItem('favorites');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('dark_mode');
+    // Default to false (light mode) if nothing is saved
+    if (saved === null) return false;
+    return saved === 'true';
+  });
+  const [pendingReview, setPendingReview] = useState<PendingReview | null>(() => {
+    const saved = localStorage.getItem('pending_review');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [minRating, setMinRating] = useState(0);
+  const [showOnlyOpen, setShowOnlyOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // Connectivity monitoring
   useEffect(() => {
@@ -935,7 +1136,7 @@ export default function App() {
       clearInterval(interval);
     };
   }, []);
-  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+
   const [shops, setShops] = useState<Shop[]>(() => {
     const saved = localStorage.getItem('cached_shops');
     return saved ? JSON.parse(saved) : [];
@@ -952,6 +1153,23 @@ export default function App() {
     message: '',
     type: 'alert'
   });
+
+  const [processingState, setProcessingState] = useState<'idle' | 'saving' | 'success'>('idle');
+
+  const runWithProcessing = async <T,>(action: () => Promise<T>, successCallback?: () => void, loadingLabel?: string) => {
+    setProcessingState('saving');
+    try {
+      await action();
+      setProcessingState('success');
+      setTimeout(() => {
+        setProcessingState('idle');
+        if (successCallback) successCallback();
+      }, 1200); // Slightly faster feedback loop
+    } catch (err) {
+      setProcessingState('idle');
+      throw err;
+    }
+  };
 
   const showAlert = (title: string, message: string) => {
     setModal({ isOpen: true, title, message, type: 'alert' });
@@ -1027,9 +1245,7 @@ export default function App() {
     setLoadingShops(true);
     setFetchError(null);
     try {
-      console.log('Fetching shops data...');
-      
-      // Fetch all shops (removed strict is_active filter for demo stability)
+      // Fetch all shops
       const { data: shopsData, error: shopsError } = await supabase
         .from('shops')
         .select('*');
@@ -1038,9 +1254,9 @@ export default function App() {
         console.error('Shops fetch error:', shopsError);
         // If table doesn't exist, we'll handle it gracefully
         if (shopsError.code === '42P01') {
-          setFetchError("Database tables not found. Please run the SQL setup script.");
+          setFetchError("We're currently setting up our kitchen. Please check back in a few minutes!");
         } else {
-          setFetchError(shopsError.message);
+          setFetchError("We couldn't load the stores right now. Give it a moment and try again.");
         }
         setLoadingShops(false);
         return;
@@ -1048,7 +1264,6 @@ export default function App() {
 
       console.log(`Total shops found: ${shopsData?.length || 0}`);
 
-      console.log('Fetching menu items...');
       const { data: menuData, error: menuError } = await supabase
         .from('menu_items')
         .select('*')
@@ -1125,13 +1340,13 @@ export default function App() {
       let errorMessage = err.message || 'Failed to connect to the server';
       
       if (isNetworkError) {
-        errorMessage = 'Network Error: We couldn\'t connect to the server. Please check your internet connection or disable ad-blockers.';
+        errorMessage = 'Check Your Connection: We\'re having trouble reaching the store. Please ensure your internet is working.';
       } else if (err.status === 401 || err.status === 403) {
-        errorMessage = 'Authentication Error: Please log in again.';
+        errorMessage = 'Please Sign In: We need you to log in again to keep your information secure.';
       } else if (err.status === 404) {
-        errorMessage = 'Configuration Error: We couldn\'t find what you were looking for.';
+        errorMessage = 'Not Found: We couldn\'t find the store or items you were looking for.';
       } else if (err.code === 'PGRST301') {
-        errorMessage = 'Database Error: JWT expired or invalid. Try refreshing the page.';
+        errorMessage = 'Session Expired: Your security token has timed out. A quick refresh should fix it!';
       }
       
       if (retries > 0) {
@@ -1180,6 +1395,18 @@ export default function App() {
       { timeout: 15000, enableHighAccuracy: false }
     );
   }, []);
+
+  useEffect(() => {
+    if (searchQuery.length > 1) {
+      const filtered = shops
+        .map(s => s.name)
+        .filter(name => name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .slice(0, 5);
+      setSuggestions(filtered);
+    } else {
+      setSuggestions([]);
+    }
+  }, [searchQuery, shops]);
 
   const requestNotificationPermission = useCallback(async () => {
     if (!("Notification" in window)) {
@@ -1240,12 +1467,30 @@ export default function App() {
     }
   }, []);
 
-  const handleUpdateProfile = async (data: Partial<UserProfile>, showSuccess = true) => {
+  const cancelOrder = useCallback(async (orderId: string, reason: string) => {
+    await runWithProcessing(async () => {
+      const { error } = await supabase
+        .from('orders')
+        .update({ 
+          status: 'cancelled', 
+          cancellation_reason: reason,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId);
+
+      if (error) throw error;
+      
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o));
+      setNotification({ message: 'Order cancelled successfully', type: 'info' });
+    });
+  }, [runWithProcessing, setNotification]);
+
+  const handleUpdateProfile = async (data: any, showSuccess: boolean = true, successCallback?: () => void) => {
     const updated = { ...userProfile, ...data };
     setUserProfile(updated);
     
     if (session?.user?.id) {
-      try {
+      const action = async () => {
         const { error } = await supabase.from('profiles').upsert({
           user_id: session.user.id,
           fullName: updated.fullName,
@@ -1262,11 +1507,20 @@ export default function App() {
           updated_at: new Date().toISOString()
         });
         if (error) throw error;
-        if (showSuccess) {
-          setNotification({ message: '✨ Profile and location data successfully saved!', type: 'success' });
+      };
+
+      if (showSuccess) {
+        await runWithProcessing(action, () => {
+          if (successCallback) successCallback();
+        });
+      } else {
+        // Just do the action without the success tick overlay if asked
+        try {
+          await action();
+          if (successCallback) successCallback();
+        } catch (err: any) {
+          setNotification({ message: 'Error saving profile: ' + err.message, type: 'error' });
         }
-      } catch (err: any) {
-        setNotification({ message: 'Error saving profile: ' + err.message, type: 'error' });
       }
     }
   };
@@ -1351,8 +1605,6 @@ export default function App() {
           filter: `user_id=eq.${session.user.id}`
         },
         (payload) => {
-          console.log('Real-time order update received:', payload);
-          
           if (payload.eventType === 'INSERT') {
             setOrders(prev => [payload.new as Order, ...prev]);
             return;
@@ -1366,8 +1618,8 @@ export default function App() {
             
             if (oldStatus !== newStatus) {
               const shop = shops.find(s => s.id === payload.new.shop_id);
-              const title = `Order ${newStatus.toUpperCase()}`;
-              let message = `Your order from ${shop?.name || 'Local Shop'} is now ${newStatus}.`;
+              const title = `Store Update`;
+              let message = `Your order from ${shop?.name || 'the shop'} is now ${newStatus}.`;
               
               if (newStatus === 'preparing') message = `Chef at ${shop?.name} is preparing your food! 🍳`;
               if (newStatus === 'ready') message = `🔥 Your order from ${shop?.name} is READY for collection!`;
@@ -1377,25 +1629,49 @@ export default function App() {
               // Special handling for "ready" status - High visibility UI
               if (newStatus === 'ready') {
                 const isDelivery = payload.new.is_delivery;
-                toast.success(`Your order from ${shop?.name} is ready!`, {
-                  description: isDelivery ? "Our rider is on the way to collect it. 🚚" : "Your order is ready for pickup! 🏃‍♂️",
-                  duration: 8000,
+                toast.success(`🔥 YOUR ORDER IS READY!`, {
+                  description: isDelivery 
+                    ? `Order from ${shop?.name} is ready for the driver! 🚚` 
+                    : `Run! ${shop?.name} has your order ready for pickup! 🏃‍♂️`,
+                  duration: 10000,
                   position: 'top-center',
                   style: {
-                    background: '#22c55e',
+                    background: '#059669', // Emerald 600
                     color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '24px',
-                    padding: '16px',
-                    boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)'
+                    border: '4px solid #10b981',
+                    borderRadius: '28px',
+                    padding: '20px',
+                    fontSize: '18px',
+                    fontWeight: '900',
+                    boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.5)',
+                    textTransform: 'uppercase'
                   }
                 });
 
-                // Audio Alert
-                playNotificationSound();
+                // Audio Alert - Using a more distinct built-in beep pattern if possible or the existing playNotificationSound
+                if (typeof window !== 'undefined') {
+                  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                  const oscillator = audioCtx.createOscillator();
+                  const gainNode = audioCtx.createGain();
+                  
+                  oscillator.type = 'sine';
+                  oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+                  
+                  gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+                  gainNode.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.1);
+                  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1);
+                  
+                  oscillator.connect(gainNode);
+                  gainNode.connect(audioCtx.destination);
+                  
+                  oscillator.start();
+                  oscillator.stop(audioCtx.currentTime + 1);
+                }
 
                 // Haptic Pulse (Double vibration)
-                triggerHaptic([100, 50, 100]);
+                if (navigator.vibrate) {
+                  navigator.vibrate([100, 50, 100, 50, 200]);
+                }
               }
 
               // Trigger browser notification if permission granted
@@ -1532,17 +1808,6 @@ export default function App() {
   }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
 
 
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    const saved = localStorage.getItem('favorites');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('dark_mode');
-    // Default to false (light mode) if nothing is saved
-    if (saved === null) return false;
-    return saved === 'true';
-  });
-
   useEffect(() => {
     localStorage.setItem('favorites', JSON.stringify(favorites));
     
@@ -1578,7 +1843,7 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  const toggleFavorite = async (shopId: string) => {
+  const toggleFavorite = useCallback(async (shopId: string) => {
     if (!session) {
       showAlert('Login Required', 'Please sign in or create an account to follow stores.');
       setPreviousScreen(currentScreen);
@@ -1611,11 +1876,7 @@ export default function App() {
         }
       }
     }
-  };
-  const [pendingReview, setPendingReview] = useState<PendingReview | null>(() => {
-    const saved = localStorage.getItem('pending_review');
-    return saved ? JSON.parse(saved) : null;
-  });
+  }, [session, favorites, currentScreen, showAlert, shops, userProfile.fullName, triggerHaptic, setFavorites, setPreviousScreen, setCurrentScreen]);
 
   useEffect(() => {
     if (pendingReview) {
@@ -1666,7 +1927,23 @@ export default function App() {
     }
   }, []);
 
-  const addToCart = (item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '') => {
+  const addToCart = useCallback((item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '') => {
+    // Check if cart has items from a different shop
+    if (cart.length > 0 && cart.some(i => i.shopId !== shopId)) {
+      const existingShopName = shops.find(s => s.id === cart[0].shopId)?.name || 'another shop';
+      showConfirm(
+        "Start New Cart?",
+        `You already have items from ${existingShopName} in your cart. Would you like to clear your current cart and start a new one from this shop?`,
+        () => {
+          triggerHaptic([100, 50, 100]); // Stronger pulse for clear
+          setCart([{ ...item, shopId, quantity, specialInstructions }]);
+          setNotification({ message: `Started new cart with ${item.name}`, type: 'success' });
+          setTimeout(() => setNotification(null), 2000);
+        }
+      );
+      return;
+    }
+
     triggerHaptic([50, 30, 50]); // Premium double-pulse haptic
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions);
@@ -1677,9 +1954,9 @@ export default function App() {
     });
     setNotification({ message: `Added ${quantity}x ${item.name} to cart`, type: 'success' });
     setTimeout(() => setNotification(null), 2000);
-  };
+  }, [cart, shops, showConfirm, triggerHaptic, setNotification, setCart]);
 
-  const removeFromCart = (itemId: string, shopId: string) => {
+  const removeFromCart = useCallback((itemId: string, shopId: string) => {
     triggerHaptic();
     setCart(prev => {
       const existing = prev.find(i => i.id === itemId && i.shopId === shopId);
@@ -1688,9 +1965,9 @@ export default function App() {
       }
       return prev.filter(i => !(i.id === itemId && i.shopId === shopId));
     });
-  };
+  }, [triggerHaptic, setCart]);
 
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     showConfirm(
       "Clear Cart",
       "Are you sure you want to remove all items from your cart?",
@@ -1701,19 +1978,7 @@ export default function App() {
         setTimeout(() => setNotification(null), 2000);
       }
     );
-  };
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('userProfile');
-    return saved ? JSON.parse(saved) : {
-      fullName: '',
-      email: '',
-      phone: '',
-      city: SUPPORTED_CITY,
-      address: '',
-      country: 'South Africa',
-      role: 'user'
-    };
-  });
+  }, [showConfirm, triggerHaptic, setCart, setNotification]);
 
   useEffect(() => {
     localStorage.setItem('userProfile', JSON.stringify(userProfile));
@@ -1774,6 +2039,50 @@ export default function App() {
       <AnimatePresence mode="wait">
       <div className="relative">
         <Toaster position="top-center" expand={true} richColors closeButton />
+        
+        {/* Global Saving/Success Overlay */}
+        <AnimatePresence>
+          {processingState !== 'idle' && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[9999] flex items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-md"
+            >
+              <div className="flex flex-col items-center gap-6">
+                {processingState === 'saving' ? (
+                  <div className="relative">
+                    <div className="w-20 h-20 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-primary animate-pulse" />
+                    </div>
+                  </div>
+                ) : (
+                  <motion.div 
+                    initial={{ scale: 0.5, rotate: -45 }}
+                    animate={{ scale: 1, rotate: 0 }}
+                    className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-2xl shadow-green-500/40 border-4 border-white dark:border-slate-800"
+                  >
+                    <Check className="w-14 h-14 text-white" strokeWidth={5} />
+                  </motion.div>
+                )}
+                <motion.div 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  className="text-center"
+                >
+                  <p className="text-2xl font-black uppercase tracking-tighter text-slate-900 dark:text-white">
+                    {processingState === 'saving' ? 'Processing...' : 'Done!'}
+                  </p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest mt-1">
+                    {processingState === 'saving' ? 'Please wait a moment' : 'Changes Saved Successfully'}
+                  </p>
+                </motion.div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Global Notification Toast */}
         <AnimatePresence>
           {notification && (
@@ -1904,16 +2213,23 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <motion.div
-        key={currentScreen}
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -20 }}
-        transition={{ duration: 0.2 }}
-        className="h-full w-full"
-      >
-        {currentScreen === 'splash' && (
-          <SplashScreen onNext={() => setCurrentScreen('signup')} onLogin={() => setCurrentScreen('login')} onGuestBrowse={() => setCurrentScreen('home')} />
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentScreen}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+            className="h-full w-full"
+          >
+            {currentScreen === 'splash' && (
+          <SplashScreen 
+            onNext={() => setCurrentScreen('signup')} 
+            onLogin={() => setCurrentScreen('login')} 
+            onGuestBrowse={() => setCurrentScreen('home')} 
+            session={session}
+            userProfile={userProfile}
+          />
         )}
         {currentScreen === 'signup' && (
           <SignUpScreen 
@@ -1939,6 +2255,7 @@ export default function App() {
             onNext={() => setCurrentScreen('success')} 
             onBack={() => setCurrentScreen('signup')} 
             setNotification={setNotification}
+            runWithProcessing={runWithProcessing}
           />
         )}
         {currentScreen === 'success' && (
@@ -1949,8 +2266,9 @@ export default function App() {
             userProfile={userProfile}
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onSave={async (data) => {
-              await handleUpdateProfile(data);
-              setCurrentScreen(previousScreen || 'home');
+              await handleUpdateProfile(data, true, () => {
+                setCurrentScreen(previousScreen || 'home');
+              });
             }} 
             setNotification={setNotification}
           />
@@ -2009,6 +2327,7 @@ export default function App() {
           <OrderTrackingScreen 
             orders={orders}
             shops={shops}
+            showAlert={showAlert}
             onBack={() => setCurrentScreen(previousScreen || 'home')}
           />
         )}
@@ -2137,8 +2456,13 @@ export default function App() {
             onContactUs={() => { setPreviousScreen('settings'); setCurrentScreen('contact'); }}
             onUpdateProfile={handleUpdateProfile}
             isDarkMode={isDarkMode}
-            onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+            onToggleDarkMode={() => {
+              setIsDarkMode(!isDarkMode);
+              triggerHaptic(10);
+            }}
             setNotification={setNotification}
+            showAlert={showAlert}
+            showConfirm={showConfirm}
           />
         )}
         {currentScreen === 'admin-orders' && (
@@ -2147,6 +2471,7 @@ export default function App() {
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             showAlert={showAlert}
             showConfirm={showConfirm}
+            runWithProcessing={runWithProcessing}
           />
         )}
         {currentScreen === 'shop-dashboard' && (
@@ -2158,6 +2483,7 @@ export default function App() {
             showConfirm={showConfirm}
             showPrompt={showPrompt}
             triggerHaptic={triggerHaptic}
+            runWithProcessing={runWithProcessing}
           />
         )}
         {currentScreen === 'rider-dashboard' && (
@@ -2166,14 +2492,16 @@ export default function App() {
             showAlert={showAlert}
             showConfirm={showConfirm}
             triggerHaptic={triggerHaptic}
+            runWithProcessing={runWithProcessing}
           />
         )}
         {currentScreen === 'profile' && (
           <ProfileScreen 
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onSave={async (data) => {
-              await handleUpdateProfile(data);
-              setCurrentScreen(previousScreen || 'home');
+              await handleUpdateProfile(data, true, () => {
+                setCurrentScreen(previousScreen || 'home');
+              });
             }} 
             userProfile={userProfile}
             onLogout={async () => {
@@ -2224,6 +2552,9 @@ export default function App() {
             showAlert={showAlert}
             showConfirm={showConfirm}
             userLocation={userLocation}
+            runWithProcessing={runWithProcessing}
+            setPreviousScreen={setPreviousScreen}
+            setCurrentScreen={setCurrentScreen}
           />
         )}
         {currentScreen === 'order-success' && (
@@ -2239,6 +2570,7 @@ export default function App() {
           />
         )}
       </motion.div>
+    </AnimatePresence>
 
       {/* Global Floating Checkout Button */}
       <AnimatePresence>
@@ -2281,13 +2613,24 @@ export default function App() {
   );
 }
 
-function SplashScreen({ onNext, onLogin, onGuestBrowse }: { onNext: () => void, onLogin: () => void, onGuestBrowse: () => void }) {
+function SplashScreen({ onNext, onLogin, onGuestBrowse, session, userProfile }: { onNext: () => void, onLogin: () => void, onGuestBrowse: () => void, session: any, userProfile: any }) {
   useEffect(() => {
     // Professional welcome chime on launch
     const jingle = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
     jingle.volume = 0.3;
     jingle.play().catch(e => console.log("Autoplay prevented:", e));
-  }, []);
+
+    // Auto-transition logic for persistent sessions
+    const timeout = setTimeout(() => {
+      if (session) {
+        // If we have a session AND profile data is mostly filled, skip to home
+        // Otherwise wait for login
+        onGuestBrowse(); // Skip to home for session
+      }
+    }, 2000); // 2 second brand immersion then skip if auth'd
+
+    return () => clearTimeout(timeout);
+  }, [session]);
 
   const playClick = () => {
     // Professional crisp click sound
@@ -2640,7 +2983,13 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
   );
 }
 
-function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { onNext: () => void, onBack: () => void, signupData: SignUpData, setNotification: (n: NotificationState) => void }) {
+function SetupPasswordScreen({ onNext, onBack, signupData, setNotification, runWithProcessing }: { 
+  onNext: () => void, 
+  onBack: () => void, 
+  signupData: SignUpData, 
+  setNotification: (n: NotificationState) => void,
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
+}) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -2660,8 +3009,7 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
       return;
     }
 
-    setLoading(true);
-    try {
+    await runWithProcessing(async () => {
       const { data, error } = await supabase.auth.signUp({
         email: signupData.email,
         password,
@@ -2677,21 +3025,16 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification }: { 
 
       // Manually sync to profiles table in case trigger isn't set up
       if (data.user) {
-        await supabase.from('profiles').upsert({
+        const { error: profileError } = await supabase.from('profiles').upsert({
           user_id: data.user.id,
           fullName: signupData.fullName,
           email: signupData.email,
           phone: signupData.phone,
           updated_at: new Date().toISOString()
         });
+        if (profileError) throw profileError;
       }
-
-      onNext();
-    } catch (error: any) {
-      setNotification({ message: error.message, type: 'error' });
-    } finally {
-      setLoading(false);
-    }
+    }, onNext);
   };
 
   return (
@@ -3152,6 +3495,23 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-4 mb-8">
+              <button 
+                onClick={() => setNotification({ message: 'Google login coming soon!', type: 'info' })}
+                className="flex items-center justify-center gap-3 py-3.5 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-sm hover:bg-slate-50 transition-all font-bold text-sm active:scale-95"
+              >
+                <img src="https://www.google.com/favicon.ico" className="w-4 h-4 grayscale opacity-70" alt="Google" />
+                <span>Google</span>
+              </button>
+              <button 
+                onClick={() => setNotification({ message: 'Apple login coming soon!', type: 'info' })}
+                className="flex items-center justify-center gap-3 py-3.5 bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-sm hover:bg-slate-50 transition-all font-bold text-sm active:scale-95"
+              >
+                <Apple className="w-4 h-4 text-slate-400" />
+                <span>Apple</span>
+              </button>
+            </div>
+
             {/* Form Fields */}
             <div className="flex flex-col gap-5">
           <label className="flex flex-col w-full">
@@ -3258,6 +3618,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
             </button>
           </div>
         </div>
+        </div>
         {/* Footer Redirect */}
         <div className="mt-auto pb-10 px-6 text-center">
           <p className="text-slate-500 dark:text-slate-400 text-sm">
@@ -3272,7 +3633,6 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
       </div>
     </div>
   </div>
-</div>
   );
 }
 
@@ -3313,14 +3673,14 @@ function LoginSuccessScreen({ onHome, onViewProfile, onBack }: { onHome: () => v
   );
 }
 
-interface ShopCardProps {
+interface HorizontalShopCardProps {
   key?: string | number;
   shop: Shop;
   onClick: () => void;
   userLocation: { lat: number; lng: number } | null;
 }
 
-const ShopCard = ({ shop, onClick, userLocation }: ShopCardProps) => {
+const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardProps) => {
   return (
     <div 
       onClick={shop.isOpen !== false ? onClick : undefined}
@@ -3383,63 +3743,90 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   
-  const activeOrders = orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled' && o.status !== 'delivered');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestions = useMemo(() => {
+    if (searchQuery.length < 2) return [];
+    return shops
+      .filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .map(s => s.name)
+      .slice(0, 5);
+  }, [shops, searchQuery]);
 
-  const categories = ['All', 'Favorites', 'Nearby', ...new Set(shops.map(s => s.category))];
+  const activeOrders = useMemo(() => orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled' && o.status !== 'delivered'), [orders]);
 
-  const filteredShops = shops.filter(shop => {
-    const query = searchQuery.trim().toLowerCase();
-    const shopText = `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
-    const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
-    
-    let matchesCategory = false;
-    if (selectedCategory === 'All') {
-      matchesCategory = true;
-    } else if (selectedCategory === 'Favorites') {
-      matchesCategory = favorites.includes(shop.id);
-    } else if (selectedCategory === 'Nearby') {
-      matchesCategory = true; // We'll sort these
-    } else {
-      matchesCategory = shop.category === selectedCategory;
-    }
-    
-    const matchesRating = shop.rating >= minRating;
-    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-    
-    return matchesSearch && matchesCategory && matchesRating && matchesOpen;
-  });
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
 
-  const sortedShops = [...filteredShops].sort((a, b) => {
-    // Smart Sort Logic: Prioritize Open -> Specials -> Distance -> Rating
-    const statusA = getShopStatus(a);
-    const statusB = getShopStatus(b);
+  const categories = useMemo(() => {
+    const base = ['All', 'Favorites', 'Nearby'];
+    const types = shops.map(s => s.category);
+    const cuisines = shops.map(s => s.cuisine_type).filter(Boolean);
+    return Array.from(new Set([...base, ...types, ...cuisines] as string[]));
+  }, [shops]);
 
-    // 1. Prioritize Open shops
-    if (statusA.isOpen && !statusB.isOpen) return -1;
-    if (!statusA.isOpen && statusB.isOpen) return 1;
-
-    // 2. Prioritize "Local Eats Special"
-    if (a.is_special && !b.is_special) return -1;
-    if (!a.is_special && b.is_special) return 1;
-
-    // 3. Distance Sort (Nearby Priority)
-    if (userLocation) {
-      const aLat = (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng = (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat = (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng = (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+  const filteredShops = useMemo(() => {
+    return shops.filter(shop => {
+      const query = searchQuery.trim().toLowerCase();
+      const shopText = `${shop.name} ${shop.description} ${shop.category} ${shop.cuisine_type || ''}`.toLowerCase();
+      const matchesSearch = query === '' || query.split(/\s+/).every(term => shopText.includes(term));
       
-      const distA = Math.sqrt(Math.pow(aLat - userLocation.lat, 2) + Math.pow(aLng - userLocation.lng, 2));
-      const distB = Math.sqrt(Math.pow(bLat - userLocation.lat, 2) + Math.pow(bLng - userLocation.lng, 2));
-      if (Math.abs(distA - distB) > 0.001) return distA - distB;
-    }
+      let matchesCategory = false;
+      if (selectedCategory === 'All') {
+        matchesCategory = true;
+      } else if (selectedCategory === 'Favorites') {
+        matchesCategory = favorites.includes(shop.id);
+      } else if (selectedCategory === 'Nearby') {
+        matchesCategory = true; // We'll sort these
+      } else {
+        matchesCategory = shop.category === selectedCategory || shop.cuisine_type === selectedCategory;
+      }
+      
+      const matchesRating = shop.rating >= minRating;
+      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+      
+      return matchesSearch && matchesCategory && matchesRating && matchesOpen;
+    });
+  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen]);
 
-    // 4. Rating Sort
-    return b.rating - a.rating;
-  });
+  const sortedShops = useMemo(() => {
+    return [...filteredShops].sort((a, b) => {
+      // Smart Sort Logic: Prioritize Open -> Specials -> Distance -> Rating
+      const statusA = getShopStatus(a);
+      const statusB = getShopStatus(b);
 
-  const recentShopIds = [...new Set(orders.map(o => o.shop_id))].slice(0, 5);
-  const recentShops = recentShopIds.map(id => shops.find(s => s.id === id)).filter(Boolean) as Shop[];
+      // 1. Prioritize Open shops
+      if (statusA.isOpen && !statusB.isOpen) return -1;
+      if (!statusA.isOpen && statusB.isOpen) return 1;
+
+      // 2. Prioritize "Local Eats Special"
+      if (a.is_special && !b.is_special) return -1;
+      if (!a.is_special && b.is_special) return 1;
+
+      // 3. Distance Sort (Nearby Priority)
+      if (userLocation) {
+        const aLat = (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
+        const aLng = (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
+        const bLat = (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
+        const bLng = (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+        
+        const distA = Math.sqrt(Math.pow(aLat - userLocation.lat, 2) + Math.pow(aLng - userLocation.lng, 2));
+        const distB = Math.sqrt(Math.pow(bLat - userLocation.lat, 2) + Math.pow(bLng - userLocation.lng, 2));
+        if (Math.abs(distA - distB) > 0.001) return distA - distB;
+      }
+
+      // 4. Rating Sort
+      return b.rating - a.rating;
+    });
+  }, [filteredShops, userLocation]);
+
+  const recentShops = useMemo(() => {
+    const ids = [...new Set(orders.map(o => o.shop_id))].slice(0, 5);
+    return ids.map(id => shops.find(s => s.id === id)).filter(Boolean) as Shop[];
+  }, [orders, shops]);
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -3475,17 +3862,31 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
           <div className="h-8 w-32 bg-gray-200 dark:bg-slate-800 rounded-lg animate-pulse"></div>
           <div className="h-10 w-10 bg-gray-200 dark:bg-slate-800 rounded-full animate-pulse"></div>
         </header>
-        <main className="p-4 space-y-6">
-          <div className="h-12 w-full bg-gray-200 dark:bg-slate-800 rounded-2xl animate-pulse"></div>
-          <div className="flex gap-2 overflow-x-hidden">
-            {[1,2,3,4].map(i => <div key={i} className="h-8 w-20 bg-gray-200 dark:bg-slate-800 rounded-full animate-pulse shrink-0"></div>)}
+        <main className="p-4 space-y-8 animate-in fade-in duration-500">
+          <div className="h-10 w-full bg-slate-100 dark:bg-slate-800 rounded-2xl relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
           </div>
-          <div className="space-y-4">
+          <div className="flex gap-2 overflow-x-hidden">
+            {[1,2,3,4,5].map(i => (
+              <div key={i} className="h-10 w-24 bg-slate-100 dark:bg-slate-800 rounded-full shrink-0 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-6">
             {[1,2,3].map(i => (
-              <div key={i} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl shadow-sm space-y-3 border border-gray-100 dark:border-slate-800">
-                <div className="h-40 w-full bg-gray-100 dark:bg-slate-800 rounded-xl animate-pulse"></div>
-                <div className="h-6 w-3/4 bg-gray-100 dark:bg-slate-800 rounded animate-pulse"></div>
-                <div className="h-4 w-1/2 bg-gray-100 dark:bg-slate-800 rounded animate-pulse"></div>
+              <div key={i} className="bg-white dark:bg-slate-900/50 p-5 rounded-[32px] border border-slate-100 dark:border-slate-800 space-y-4">
+                <div className="h-44 w-full bg-slate-100 dark:bg-slate-800 rounded-[24px] relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-6 w-2/3 bg-slate-100 dark:bg-slate-800 rounded-lg relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                  </div>
+                  <div className="h-4 w-1/3 bg-slate-100 dark:bg-slate-800 rounded-lg relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -3818,6 +4219,13 @@ NOTIFY pgrst, 'reload schema';`}
     </header>
 
       <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
+        <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">{greeting},</p>
+          <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">
+            {userProfile.fullName ? userProfile.fullName.split(' ')[0] : 'Legend'}! 👋
+          </h2>
+        </div>
+
         {activeOrders.length > 0 && (
           <div className="mb-6 animate-in slide-in-from-top-4 duration-500">
             <button 
@@ -3839,9 +4247,60 @@ NOTIFY pgrst, 'reload schema';`}
           </div>
         )}
 
+        {/* Order Again Carousel */}
+        {recentShops.length > 0 && (
+          <section className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter flex items-center gap-2 italic">
+                Order Again
+                <div className="w-1.5 h-1.5 bg-orange-500 rounded-full"></div>
+              </h3>
+              <button 
+                onClick={onOrderHistory}
+                className="text-[10px] font-black text-orange-600 uppercase tracking-widest hover:underline px-2 py-1 bg-orange-50 dark:bg-orange-900/10 rounded-lg"
+              >
+                View History
+              </button>
+            </div>
+            
+            <div className="relative">
+              <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-4 px-4">
+                {recentShops.map((shop) => (
+                  <motion.div 
+                    key={`again-${shop.id}`}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => onStoreInfo(shop.id)}
+                    className="flex-shrink-0 w-[140px] group cursor-pointer"
+                  >
+                    <div className="relative mb-3">
+                      <div className="aspect-square rounded-[32px] overflow-hidden border border-slate-100 dark:border-slate-800 shadow-sm transition-all group-hover:shadow-md group-hover:border-orange-200 dark:group-hover:border-orange-900/30">
+                        <BlurUpImage 
+                          src={shop.logo || DEFAULT_SHOP_LOGO} 
+                          alt={shop.name} 
+                          className="w-full h-full object-cover p-4 bg-slate-50 dark:bg-slate-800/50" 
+                        />
+                      </div>
+                      <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-white dark:bg-slate-900 rounded-2xl shadow-lg flex items-center justify-center border border-slate-50 dark:border-slate-800">
+                        <RotateCcw className="w-4 h-4 text-orange-500" />
+                      </div>
+                    </div>
+                    <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate uppercase tracking-tight text-center px-1">
+                      {shop.name}
+                    </h4>
+                    <div className="flex items-center justify-center gap-1 mt-1">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{shop.delivery_eta || '30m'}</span>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* SearchSection */}
         <section className="mb-4">
-              <div className="relative group">
+              <div className="relative group/search flex-1">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Search className="h-5 w-5 text-gray-400 dark:text-slate-500" />
                 </div>
@@ -3850,8 +4309,50 @@ NOTIFY pgrst, 'reload schema';`}
                   placeholder="Search for the best Tembisa Kotas..." 
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                  onFocus={() => searchQuery.length > 1 && setShowSuggestions(true)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setShowSuggestions(e.target.value.length > 1);
+                  }}
                 />
+                
+                {showSuggestions && suggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
+                    {suggestions.map((s, idx) => (
+                      <button 
+                        key={idx}
+                        onClick={() => {
+                          setSearchQuery(s);
+                          setShowSuggestions(false);
+                        }}
+                        className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-bold border-b border-white/5 last:border-none flex items-center gap-2"
+                      >
+                        <History className="w-3 h-3 text-slate-400" />
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {showSuggestions && suggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
+                    {suggestions.map((s, idx) => (
+                      <button 
+                        key={idx}
+                        onClick={() => {
+                          setSearchQuery(s);
+                          setShowSuggestions(false);
+                        }}
+                        className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-bold border-b border-white/5 last:border-none flex items-center gap-2"
+                      >
+                        <History className="w-3 h-3 text-slate-400" />
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <button 
                   onClick={() => setSelectedCategory(selectedCategory === 'Favorites' ? 'All' : 'Favorites')}
                   className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all cursor-pointer ${selectedCategory === 'Favorites' ? 'bg-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-orange-500'}`}
@@ -3948,66 +4449,40 @@ NOTIFY pgrst, 'reload schema';`}
               </section>
             )}
 
-            {/* Followed Stores */}
+            {/* Local Merchants */}
             <section className="mb-24">
-              <div className="flex items-center justify-between mb-2 px-1">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Local Merchants</h3>
-                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2 py-0.5 rounded-full">{sortedShops.length} Online</span>
+              <div className="flex items-center justify-between mb-4 px-1">
+                <div className="flex flex-col">
+                  <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-0.5">Local Merchants</h3>
+                  <div className="h-1 w-8 bg-orange-600 rounded-full"></div>
+                </div>
+                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">{sortedShops.length} Online</span>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sortedShops.map((shop, index) => {
-                  const isFollowed = favorites.includes(shop.id);
-                  const status = getShopStatus(shop);
-                  
-                  return (
-                    <div 
-                      key={shop.id}
-                      onClick={() => {
-                        triggerHaptic();
-                        onStoreInfo(shop.id);
-                      }}
-                      className={`flex items-center gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-2xl transition-all cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm`}
-                    >
-                      {/* Shop Logo (WhatsApp Circle Style) */}
-                      <div className="relative shrink-0">
-                        <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${status.isOpen ? 'border-green-500' : 'border-slate-300 dark:border-slate-700'}`}>
-                          <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full object-cover" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
-                        </div>
-                        {status.isOpen && (
-                          <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white dark:border-slate-900 rounded-full"></div>
-                        )}
-                      </div>
-
-                      {/* Shop Info (Chat Preview Style) */}
-                      <div className="flex-1 min-w-0 py-1">
-                        <div className="flex justify-between items-center mb-0.5">
-                          <h4 className="text-[15px] font-black text-slate-900 dark:text-white truncate pr-2">{shop.name}</h4>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                            <span className="text-[11px] font-black text-slate-900 dark:text-white">{shop.rating}</span>
-                          </div>
-                        </div>
-                        
-                        <div className="flex justify-between items-center">
-                          <p className="text-[13px] text-slate-500 dark:text-slate-400 line-clamp-1 flex-1">
-                            {shop.category} • {shop.description}
-                          </p>
-                          {isFollowed && (
-                            <Heart className="w-3 h-3 text-red-500 fill-current ml-2 shrink-0 opacity-60" />
-                          )}
-                        </div>
-                        
-                        <div className="flex items-center gap-2 mt-1.5 overflow-hidden">
-                          <TrustBadge shop={shop} />
-                          {!status.isOpen && (
-                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Opens {status.nextOpeningTime || 'Soon'}</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <motion.div 
+                layout
+                initial="hidden"
+                animate="show"
+                variants={{
+                  hidden: { opacity: 0 },
+                  show: {
+                    opacity: 1,
+                    transition: {
+                      staggerChildren: 0.1
+                    }
+                  }
+                }}
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+              >
+                {sortedShops.map((shop) => (
+                  <ShopCard 
+                    key={shop.id}
+                    shop={shop}
+                    isFollowed={favorites.includes(shop.id)}
+                    onStoreInfo={onStoreInfo}
+                    triggerHaptic={triggerHaptic}
+                  />
+                ))}
+              </motion.div>
             </section>
 
             {sortedShops.length === 0 && (
@@ -4083,7 +4558,7 @@ NOTIFY pgrst, 'reload schema';`}
     );
 }
 
-function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm, userLocation }: { 
+function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm, userLocation, runWithProcessing, setPreviousScreen, setCurrentScreen }: { 
   userProfile: UserProfile, 
   session: Session | null, 
   shops: Shop[], 
@@ -4094,8 +4569,11 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   setCart: Dispatch<SetStateAction<CartItem[]>>, 
   setNotification: Dispatch<SetStateAction<any>>,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
-  userLocation: { lat: number, lng: number } | null
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmText?: string, cancelText?: string) => void,
+  userLocation: { lat: number, lng: number } | null,
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>,
+  setPreviousScreen: (screen: Screen | null) => void,
+  setCurrentScreen: (screen: Screen) => void
 }) {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
@@ -4175,6 +4653,20 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const totalAmount = deliveryType === 'delivery' ? subtotal + deliveryFee : subtotal;
   
   const handleConfirm = async () => {
+    if (!session) {
+      showConfirm(
+        'Welcome to LocalEats!',
+        'Please sign in or create an account to finish your order and track it live.',
+        () => {
+          setPreviousScreen('checkout');
+          setCurrentScreen('login');
+        },
+        'Sign In / Up',
+        'Maybe Later'
+      );
+      return;
+    }
+
     if (!userProfile.fullName || !userProfile.phone) {
       onIncompleteProfile();
       return;
@@ -4236,51 +4728,48 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     }
 
     try {
-      const orderData = cart.map(item => ({
-        user_id: session?.user?.id,
-        shop_id: item.shopId,
-        customer_name: userProfile.fullName,
-        phone: userProfile.phone,
-        email: userProfile.email,
-        city: SUPPORTED_CITY,
-        address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
-        country: userProfile.country,
-        product_name: item.name,
-        product_variant: '',
-        quantity: item.quantity,
-        price: item.price * item.quantity,
-        notes: item.specialInstructions || '',
-        status: 'pending',
-        payment_method: paymentMethod,
-        is_delivery: deliveryType === 'delivery',
-        delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
-        delivery_status: 'none',
-        latitude: currentLat,
-        longitude: currentLng
-      }));
+      await runWithProcessing(async () => {
+        const orderData = cart.map(item => ({
+          user_id: session?.user?.id,
+          shop_id: item.shopId,
+          customer_name: userProfile.fullName,
+          phone: userProfile.phone,
+          email: userProfile.email,
+          city: SUPPORTED_CITY,
+          address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
+          country: userProfile.country,
+          product_name: item.name,
+          product_variant: '',
+          quantity: item.quantity,
+          price: item.price * item.quantity,
+          notes: item.specialInstructions || '',
+          status: 'pending',
+          payment_method: paymentMethod,
+          is_delivery: deliveryType === 'delivery',
+          delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
+          delivery_status: 'none',
+          latitude: currentLat,
+          longitude: currentLng
+        }));
 
-      console.log('Submitting order with delivery info:', orderData);
-      const { data, error } = await supabase.from('orders').insert(orderData).select();
-      
-      if (error) {
-        console.error('Supabase insert error:', error);
-        throw error;
-      }
-      
-      if (isClosed) {
-        setNotification({ 
-          message: `Order submitted! Note: ${primaryShop.name} is currently closed.`, 
-          type: 'info' 
-        });
-      } else {
-        setNotification({ message: 'Order successfully placed!', type: 'success' });
-      }
-      
-      onConfirm();
-    } catch (error: any) {
-      handleSupabaseError(error, 'place order', showAlert);
-    } finally {
+        console.log('Submitting order with delivery info:', orderData);
+        const { error } = await supabase.from('orders').insert(orderData).select();
+        
+        if (error) {
+          console.error('Supabase insert error:', error);
+          throw error;
+        }
+      }, onConfirm);
+    } catch (err: any) {
+      console.error('Checkout failed:', err);
       setLoading(false);
+      //showAlert is available in CheckoutScreen props
+      showAlert('Checkout Failed', err.message || 'An unexpected error occurred while placing your order.');
+    } finally {
+      // We don't necessarily want to setLoading(false) here if it succeeded, 
+      // because onConfirm will navigate away. 
+      // But if we stay on this page (e.g. error), we want it false.
+      // The catch block already handles the error case.
     }
   };
 
@@ -4312,9 +4801,29 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           {/* Order Summary Section */}
           <section>
             <h3 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] pb-3 pt-2">Order Summary</h3>
-            <div className="flex flex-col gap-4">
+            <motion.div 
+              initial="hidden"
+              animate="show"
+              variants={{
+                hidden: { opacity: 0 },
+                show: {
+                  opacity: 1,
+                  transition: {
+                    staggerChildren: 0.1
+                  }
+                }
+              }}
+              className="flex flex-col gap-4"
+            >
               {cart.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-4 bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                <motion.div 
+                  key={idx}
+                  variants={{
+                    hidden: { opacity: 0, x: -10 },
+                    show: { opacity: 1, x: 0 }
+                  }}
+                  className="flex items-center gap-4 bg-white dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm"
+                >
                   <div className="bg-center bg-no-repeat aspect-square bg-cover rounded-lg size-16 shrink-0" style={{ backgroundImage: `url("${item.image || DEFAULT_MENU_IMAGE}")` }}>
                   </div>
                   <div className="flex flex-col justify-center flex-1">
@@ -4327,7 +4836,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   <div className="shrink-0">
                     <p className="text-primary text-base font-bold leading-normal">R {(item.price * item.quantity).toFixed(2)}</p>
                   </div>
-                </div>
+                </motion.div>
               ))}
               
               {deliveryType === 'delivery' && (
@@ -4364,7 +4873,31 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   </div>
                 </div>
               )}
-            </div>
+
+              {/* Total Calculation Display */}
+              <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-4 space-y-2 mt-2 border border-slate-100 dark:border-slate-800">
+                <div className="flex justify-between items-center text-xs text-slate-500 font-bold uppercase tracking-widest">
+                  <span>Subtotal</span>
+                  <span>R {subtotal.toFixed(2)}</span>
+                </div>
+                {deliveryType === 'delivery' && (
+                  <div className="flex justify-between items-center text-xs text-slate-500 font-bold uppercase tracking-widest">
+                    <span className="flex items-center gap-1">
+                      Delivery Fee
+                      {distance !== null && distance > ZONE_A_LIMIT && (
+                        <span className="text-[8px] bg-amber-100 text-amber-600 px-1 py-0.5 rounded">Zone B</span>
+                      )}
+                    </span>
+                    <span>R {deliveryFee.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="h-px bg-slate-200 dark:bg-slate-800 my-1"></div>
+                <div className="flex justify-between items-center text-lg font-black text-slate-900 dark:text-white">
+                  <span>Total Amount</span>
+                  <span className="text-orange-600">R {totalAmount.toFixed(2)}</span>
+                </div>
+              </div>
+            </motion.div>
           </section>
 
           {/* Delivery Options */}
@@ -5746,54 +6279,30 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                  </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <motion.div 
+                initial="hidden"
+                animate="show"
+                variants={{
+                  hidden: { opacity: 0 },
+                  show: {
+                    opacity: 1,
+                    transition: {
+                      staggerChildren: 0.05
+                    }
+                  }
+                }}
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+              >
                 {filteredMenu.length > 0 ? (
                   filteredMenu.map((item) => (
-                    <div key={item.id} className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all">
-                      <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
-                        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`} />
-                      </div>
-                      <div className="flex-1 flex flex-col justify-between py-0.5">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-tight">{item.name}</h4>
-                              {item.customizations && item.customizations.length > 0 && (
-                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 rounded text-[8px] font-black text-orange-600 uppercase tracking-tighter" title="Customizable">
-                                  <Sparkles className="w-2.5 h-2.5" />
-                                  <span>Customizable</span>
-                                </div>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{item.description || 'Freshly prepared local favourite'}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between mt-auto">
-                          <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const status = getShopStatus(shop);
-                              if (!status.isOpen) {
-                                showAlert('Closed', `This store is currently closed. ${status.message}`);
-                                return;
-                              }
-                              if (!session) {
-                                showAlert('Login Required', 'Please sign in to place an order.');
-                                onSignUp();
-                                return;
-                              }
-                              addToCart(item, shop.id, 1);
-                              setCurrentScreen('checkout');
-                            }}
-                            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 active:scale-95 cursor-pointer'}`}
-                          >
-                            <span>{getShopStatus(shop).isOpen ? 'Buy' : 'Closed'}</span>
-                            {getShopStatus(shop).isOpen && <Plus className="w-3 h-3" />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                    <MenuItemCard 
+                      key={item.id}
+                      item={item}
+                      shop={shop}
+                      addToCart={addToCart}
+                      showAlert={showAlert}
+                      setCurrentScreen={setCurrentScreen}
+                    />
                   ))
                 ) : (
                   <div className="py-12 text-center">
@@ -5804,7 +6313,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     <p className="text-xs text-slate-500 mt-1">Try searching for something else</p>
                   </div>
                 )}
-              </div>
+              </motion.div>
             </div>
           )}
 
@@ -6644,7 +7153,39 @@ function ChangeView({ center }: { center: { lat: number, lng: number } }) {
   return null;
 }
 
-function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops: Shop[], onBack: () => void }) {
+function OrderTrackingScreen({ orders, shops, onBack, showAlert }: { orders: Order[], shops: Shop[], onBack: () => void, showAlert: (title: string, message: string) => void }) {
+  const [cancellationModal, setCancellationModal] = useState<{ isOpen: boolean, orderId: string | null }>({ isOpen: false, orderId: null });
+  const [cancelReason, setCancelReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelOrder = async () => {
+    if (!cancellationModal.orderId || !cancelReason.trim()) return;
+    
+    setIsCancelling(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ 
+          status: 'cancelled', 
+          delivery_status: 'cancelled',
+          cancellation_reason: cancelReason,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', cancellationModal.orderId);
+
+      if (error) throw error;
+
+      showAlert("Order Cancelled", "Your order has been cancelled successfully.");
+      setCancellationModal({ isOpen: false, orderId: null });
+      setCancelReason("");
+      onBack();
+    } catch (err: any) {
+      showAlert("Cancellation Error", err.message);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const getStatusStep = (status: string) => {
     switch(status) {
       case 'pending': return 1;
@@ -6789,15 +7330,98 @@ function OrderTrackingScreen({ orders, shops, onBack }: { orders: Order[], shops
                     <p className="text-[10px] text-slate-500">Estimated time: 15-20 mins</p>
                   </div>
                 </div>
+
+                {/* Cancel Order Action */}
+                {['pending', 'confirmed'].includes(order.status) && (
+                  <button 
+                    onClick={() => setCancellationModal({ isOpen: true, orderId: order.id })}
+                    className="w-full py-3 bg-red-50 dark:bg-red-500/10 text-red-600 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 border border-red-200/50 dark:border-red-900/30 transition-all active:scale-95 hover:bg-red-100"
+                  >
+                    <Ban className="w-4 h-4" />
+                    Cancel Order
+                  </button>
+                )}
               </div>
             );
           })
         )}
       </main>
+
+      {/* Cancellation Modal */}
+      <AnimatePresence>
+        {cancellationModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isCancelling && setCancellationModal({ isOpen: false, orderId: null })}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-[32px] p-6 relative z-10 shadow-2xl border border-slate-100 dark:border-slate-800"
+            >
+              <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-2xl flex items-center justify-center text-red-600 mb-4 mx-auto">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white text-center mb-1">Cancel Order?</h3>
+              <p className="text-[10px] text-slate-500 text-center mb-6 uppercase tracking-widest font-bold">Please tell us why you want to cancel</p>
+              
+              <div className="space-y-3 mb-6">
+                {["Mistake in order", "Distance is too far", "Changed my mind", "Waiting too long", "Other"].map(reason => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => setCancelReason(reason)}
+                    className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold border transition-all ${
+                      cancelReason.startsWith(reason) 
+                        ? 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30 text-red-600' 
+                        : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+                {cancelReason.startsWith("Other") && (
+                  <textarea 
+                    autoFocus
+                    placeholder="Type details here..."
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-xs font-medium focus:ring-2 focus:ring-red-500 outline-none mt-2"
+                    rows={2}
+                    onChange={(e) => setCancelReason(`Other: ${e.target.value}`)}
+                  />
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={!cancelReason || isCancelling}
+                  onClick={handleCancelOrder}
+                  className="w-full py-4 bg-red-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-red-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isCancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
+                  Confirm Cancellation
+                </button>
+                <button
+                  disabled={isCancelling}
+                  formNoValidate
+                  onClick={() => setCancellationModal({ isOpen: false, orderId: null })}
+                  className="w-full py-3 bg-white dark:bg-slate-900 text-slate-500 font-bold text-[10px] uppercase tracking-widest active:scale-95 transition-all"
+                >
+                  Go Back
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
-function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, onUpdateProfile, isDarkMode, onToggleDarkMode, setNotification }: { 
+function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, onUpdateProfile, isDarkMode, onToggleDarkMode, setNotification, showAlert, showConfirm }: { 
   userProfile: UserProfile, 
   setUserProfile: Dispatch<SetStateAction<UserProfile>>, 
   onBack: () => void, 
@@ -6811,7 +7435,9 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   onUpdateProfile: (data: Partial<UserProfile>, showSuccess?: boolean) => void,
   isDarkMode: boolean, 
   onToggleDarkMode: () => void, 
-  setNotification: (n: NotificationState) => void 
+  setNotification: (n: NotificationState) => void,
+  showAlert: (title: string, message: string) => void,
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void
 }) {
   const [uploading, setUploading] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -7115,7 +7741,18 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
 
         {/* Logout Button */}
         <div className="pt-4">
-          <button onClick={onLogout} className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-bold hover:shadow-xl transition-all flex items-center justify-center space-x-2 cursor-pointer active:scale-95">
+          <button 
+            onClick={() => {
+              showConfirm(
+                "Logout?",
+                "Are you sure you want to log out of your account?",
+                () => onLogout(),
+                "Yes, Logout",
+                "Stay Logged In"
+              );
+            }} 
+            className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-bold hover:shadow-xl transition-all flex items-center justify-center space-x-2 cursor-pointer active:scale-95"
+          >
             <LogOut className="w-5 h-5" />
             <span>{t('logout')}</span>
           </button>
@@ -7163,11 +7800,12 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   );
 }
 
-function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic }: { 
+function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, runWithProcessing }: { 
   onBack: () => void, 
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void,
-  triggerHaptic: (pattern?: number | number[]) => void
+  triggerHaptic: (pattern?: number | number[]) => void,
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
 }) {
   const [riderProfile, setRiderProfile] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
@@ -7324,8 +7962,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic }:
   const updateDeliveryStatus = async (status: string, deliveryStatus: string) => {
     if (!activeOrder) return;
 
-    setLoading(true);
-    try {
+    await runWithProcessing(async () => {
       const { error: orderErr } = await supabase
         .from('orders')
         .update({ status, delivery_status: deliveryStatus })
@@ -7345,14 +7982,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic }:
           .eq('id', riderProfile.id);
         if (riderErr) throw riderErr;
       }
-
-      showAlert('Success', `Order marked as ${deliveryStatus.replace('_', ' ')}`);
-      fetchRiderData();
-    } catch (err: any) {
-      showAlert('Error', err.message);
-    } finally {
-      setLoading(false);
-    }
+    }, fetchRiderData);
   };
 
   if (loading && !riderProfile) {
@@ -7610,14 +8240,15 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic }:
   );
 }
 
-function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic }: { 
+function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic, runWithProcessing }: { 
   onBack: () => void, 
   orderAcceptedModal: { isOpen: boolean, productName: string, ownerMessage: string }, 
   setOrderAcceptedModal: Dispatch<SetStateAction<{ isOpen: boolean, productName: string, ownerMessage: string }>>,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
   showPrompt: (title: string, message: string, onConfirm: (value: string) => void, defaultValue?: string) => void,
-  triggerHaptic: (pattern?: number | number[]) => void
+  triggerHaptic: (pattern?: number | number[]) => void,
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -7794,23 +8425,20 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       is_available: true
     };
 
-    try {
+    await runWithProcessing(async () => {
       if (editingItem) {
         const { error } = await supabase.from('menu_items').update(itemData).eq('id', editingItem.id);
         if (error) throw error;
-        showAlert('Success', 'Menu item updated!');
       } else {
         const { error } = await supabase.from('menu_items').insert([itemData]);
         if (error) throw error;
-        showAlert('Success', 'Menu item added!');
       }
+    }, () => {
       setIsEditingMenu(false);
       setEditingItem(null);
       // Refresh shop data to get new menu
       window.location.reload(); 
-    } catch (err: any) {
-      showAlert('Error', err.message);
-    }
+    });
   };
 
   const deleteMenuItem = async (itemId: string) => {
@@ -8011,7 +8639,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
-    try {
+    
+    await runWithProcessing(async () => {
       // Fetch current order to get existing history and delivery info
       const { data: currentOrder, error: fetchError } = await supabase
         .from('orders')
@@ -8053,17 +8682,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         .eq('id', orderId);
 
       if (error) throw error;
-      
+    }, () => {
       if (newStatus === 'cancelled') {
-        showAlert('Success', 'Order cancelled and customer notified.');
         setCancellationModal({ isOpen: false, orderId: null });
         setCancellationReason("");
       }
-    } catch (err: unknown) {
-      console.error('Error updating order status:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      showAlert("Update Failed", errorMessage);
-    }
+    });
   };
 
   const getStatusColor = (status: string, deliveryStatus?: string) => {
@@ -8775,13 +9399,27 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                  <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest ml-1">Shop Description</label>
                     <textarea 
+                      id="shop-desc-input"
                       defaultValue={shop.description || ''}
                       rows={3}
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 mt-1 text-sm font-medium resize-none focus:border-primary/30 transition-colors"
                       placeholder="Tell customers what makes your joint legendary..."
                     />
                  </div>
-                 <button className="w-full py-3 bg-slate-900 dark:bg-orange-600 text-white font-bold rounded-xl active:scale-95 transition-all text-sm uppercase tracking-widest">
+                 <button 
+                   onClick={async () => {
+                     const desc = (document.getElementById('shop-desc-input') as HTMLTextAreaElement)?.value;
+                     await runWithProcessing(async () => {
+                       const { error } = await supabase
+                         .from('shops')
+                         .update({ description: desc })
+                         .eq('id', shop.id);
+                       if (error) throw error;
+                       setShop({ ...shop, description: desc });
+                     });
+                   }}
+                   className="w-full py-3 bg-slate-900 dark:bg-orange-600 text-white font-bold rounded-xl active:scale-95 transition-all text-sm uppercase tracking-widest cursor-pointer"
+                 >
                     Save Profile Changes
                  </button>
               </div>
@@ -9271,11 +9909,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   );
 }
 
-function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm }: { 
+function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProcessing }: { 
   shops: Shop[],
   onBack: () => void,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -9342,7 +9981,8 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm }: {
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
-    try {
+    
+    await runWithProcessing(async () => {
       // Fetch current order to get existing history and delivery info
       const { data: currentOrder, error: fetchError } = await supabase
         .from('orders')
@@ -9378,12 +10018,7 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm }: {
         .eq('id', orderId);
       
       if (error) throw error;
-      fetchOrders(); // Refresh list
-    } catch (error: unknown) {
-      console.error('Error updating order status:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      showAlert('Error', errorMessage);
-    }
+    }, fetchOrders);
   };
 
   const getStatusColor = (status: string, deliveryStatus?: string) => {
@@ -9810,21 +10445,41 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
   }, [orders, filterStatus]);
 
   const handleCancelOrder = async (orderId: string) => {
-    try {
-      setIsCancelling(true);
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'cancelled' })
-        .eq('id', orderId);
+    showConfirm(
+      "Cancel Order",
+      "Are you sure you want to cancel this order? Please tell us why.",
+      async () => {
+        const reason = await new Promise<string | null>((resolve) => {
+          // In a real app we'd show another modal, here we use the one prompt pattern or select from list
+          // For simplicity in this demo, we'll use a standard prompt or the existing cancel modal logic
+          const r = prompt("Reason for cancellation:");
+          resolve(r);
+        });
 
-      if (error) throw error;
-      setCancellingOrderId(null);
-    } catch (error: any) {
-      console.error('Error cancelling order:', error);
-      showAlert('Error', `Failed to cancel order: ${error.message}`);
-    } finally {
-      setIsCancelling(false);
-    }
+        if (!reason) return;
+
+        try {
+          setIsCancelling(true);
+          const { error } = await supabase
+            .from('orders')
+            .update({ 
+              status: 'cancelled',
+              cancellation_reason: reason,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', orderId);
+
+          if (error) throw error;
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled', cancellation_reason: reason } : o));
+          showAlert("Success", "Order cancelled successfully.");
+        } catch (error: any) {
+          console.error('Error cancelling order:', error);
+          showAlert('Error', `Failed to cancel order: ${error.message}`);
+        } finally {
+          setIsCancelling(false);
+        }
+      }
+    );
   };
 
   useEffect(() => {
