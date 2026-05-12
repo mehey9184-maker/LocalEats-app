@@ -125,7 +125,8 @@ import {
   Languages,
   HelpCircle,
   ShieldCheck,
-  Apple
+  Apple,
+  ExternalLink 
 } from 'lucide-react';
 import { supabase, supabaseUrl, APP_URL } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -151,7 +152,7 @@ type StatusHistoryItem = {
   timestamp: string;
 };
 
-const SUPPORTED_CITY = 'Tembisa';
+const SUPPORTED_CITIES = ['Tembisa', 'Kaalfontein', 'Ivory Park'];
 
 type Order = {
   id: string;
@@ -168,6 +169,7 @@ type Order = {
   quantity: number;
   price: number;
   notes: string;
+  delivery_instructions?: string;
   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
   delivery_fee?: number;
@@ -250,7 +252,7 @@ type Shop = {
 };
 
 const APP_VERSION = "2.4.1 (1024)";
-const TEMBISA_COORDS = { lat: -25.9964, lng: 28.2268 };
+const DEFAULT_COORDS = { lat: -25.9964, lng: 28.2268 };
 
 const hashString = (str: string) => {
   let hash = 0;
@@ -325,7 +327,7 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
 
     setLoading(true);
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' ' + SUPPORTED_CITY)}&limit=5`);
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' South Africa')}&limit=5`);
       const data = await response.json();
       setResults(data);
       setShowResults(true);
@@ -622,6 +624,18 @@ function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { l
       <div className="absolute bottom-2 left-2 right-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[10px] text-center z-[1000] pointer-events-none font-medium">
         Drag pin to your exact delivery point
       </div>
+      <div className="absolute top-2 right-12 z-[1000] flex gap-2">
+        <a 
+          href={`https://www.openstreetmap.org/edit#map=18/${coords.lat}/${coords.lng}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-white/90 dark:bg-slate-800/90 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm text-slate-600 dark:text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
+          title="Open in OpenStreetMap (Fallback)"
+        >
+          <ExternalLink className="w-3 h-3" />
+          <span className="text-[10px] font-bold uppercase tracking-widest leading-none">OSM Fallback</span>
+        </a>
+      </div>
     </div>
   );
 }
@@ -799,12 +813,13 @@ const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: {
   );
 });
 
-const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen }: { 
+const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen, onSelect }: { 
   item: MenuItem, 
   shop: Shop, 
-  addToCart: (item: MenuItem, shopId: string, quantity?: number) => void,
+  addToCart?: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string, selectedCustomizations?: {name: string, price: number}[]) => void,
   showAlert: (title: string, message: string) => void,
-  setCurrentScreen: (screen: any) => void
+  setCurrentScreen?: (screen: any) => void,
+  onSelect?: (item: MenuItem) => void
 }) => {
   return (
     <motion.div 
@@ -821,8 +836,16 @@ const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen 
           showAlert('Closed', `This store is currently closed. ${status.message}`);
           return;
         }
-        addToCart(item, shop.id, 1);
-        setCurrentScreen('checkout');
+        if (!item.is_available) {
+          showAlert('Out of Stock', 'This item is currently unavailable.');
+          return;
+        }
+        if (onSelect) {
+          onSelect(item);
+        } else if (addToCart && setCurrentScreen) {
+          addToCart(item, shop.id, 1);
+          setCurrentScreen('checkout');
+        }
       }}
     >
       <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
@@ -1074,7 +1097,7 @@ export default function App() {
       fullName: '',
       email: '',
       phone: '',
-      city: SUPPORTED_CITY,
+      city: SUPPORTED_CITIES[0],
       address: '',
       country: 'South Africa',
       role: 'user'
@@ -1275,7 +1298,7 @@ export default function App() {
       }
 
       const formattedShops: Shop[] = (shopsData || []).map(s => {
-        // Generate deterministic mock coordinates if missing for Tembisa area
+        // Generate deterministic mock coordinates if missing for default area
         const shopHash = hashString(String(s.id));
         const deterministicLat = -25.9964 + (shopHash % 100) * 0.0002 - 0.01;
         const deterministicLng = 28.2268 + (shopHash % 100) * 0.0003 - 0.015;
@@ -1298,8 +1321,8 @@ export default function App() {
           reviewCount: 12 + (shopHash % 88), // Mock review count
           prepTime: "15-20 min", // Mock prep time
           isOpen: isOpen,
-          description: s.description || "Local Tembisa Flavours",
-          address: s.location || "Tembisa",
+          description: s.description || "Local Flavours",
+          address: s.location || "Local Eats",
           category: s.category || "Kota",
           owner_id: s.owner_id,
           opening_time: s.opening_time,
@@ -1383,7 +1406,7 @@ export default function App() {
         // Notification removed to keep it in the background as requested
       },
       (error) => {
-        console.warn("Error getting location:", error);
+        console.warn("Error getting location:", error.message);
         let errorMsg = "Could not get your location.";
         if (error.code === error.PERMISSION_DENIED) {
           errorMsg = "Location access denied. Using default location.";
@@ -1453,7 +1476,7 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      console.error('Error fetching user profile:', err);
+      if (err.message !== 'Failed to fetch') { console.error('Error fetching user profile:', err); }
       // Specifically catch network errors
       const isNetworkError = err.message === 'Failed to fetch' || err.name === 'TypeError';
       
@@ -1491,7 +1514,7 @@ export default function App() {
     
     if (session?.user?.id) {
       const action = async () => {
-        const { error } = await supabase.from('profiles').upsert({
+        const payload: any = {
           user_id: session.user.id,
           fullName: updated.fullName,
           email: updated.email,
@@ -1501,12 +1524,35 @@ export default function App() {
           country: updated.country,
           role: updated.role,
           photo_url: updated.photoURL,
-          latitude: updated.latitude,
-          longitude: updated.longitude,
           language: updated.language || 'en',
           updated_at: new Date().toISOString()
-        });
-        if (error) throw error;
+        };
+
+        // Only include location if available and likely to be in schema
+        if (updated.latitude !== undefined && updated.longitude !== undefined) {
+          payload.latitude = updated.latitude;
+          payload.longitude = updated.longitude;
+        }
+
+        const { error } = await supabase.from('profiles').upsert(payload);
+        
+        if (error) {
+          // If columns are missing, try one more time without them
+          if (error.code === 'PGRST204' || error.message?.includes('column')) {
+            console.warn('Profiles table missing columns, retrying without location/extended fields');
+            const safePayload = {
+              user_id: session.user.id,
+              fullName: updated.fullName,
+              email: updated.email,
+              phone: updated.phone,
+              updated_at: new Date().toISOString()
+            };
+            const { error: retryError } = await supabase.from('profiles').upsert(safePayload);
+            if (retryError) throw retryError;
+            return;
+          }
+          throw error;
+        }
       };
 
       if (showSuccess) {
@@ -1728,7 +1774,7 @@ export default function App() {
                 });
               }
 
-              if (newStatus === 'picked_up') {
+              if (newStatus === 'completed') {
                 setPendingReview({
                   orderId: payload.new.id,
                   shopId: payload.new.shop_id,
@@ -1815,10 +1861,15 @@ export default function App() {
     if (session?.user?.id) {
       const syncFavorites = async () => {
         try {
-          await supabase
+          const { error } = await supabase
             .from('profiles')
             .update({ favorites })
             .eq('user_id', session.user.id);
+          
+          if (error && (error.code === 'PGRST204' || error.message?.includes('column'))) {
+             console.warn('Profiles table missing favorites column, skipping sync');
+             return;
+          }
         } catch (err) {
           console.error('Error syncing favorites:', err);
         }
@@ -1916,18 +1967,18 @@ export default function App() {
         (error) => {
           // Only warn if it's not a permission issue to keep console clean
           if (error.code !== error.PERMISSION_DENIED) {
-            console.warn('Geolocation error, using Tembisa fallback:', error.message);
+            console.warn('Geolocation error, using fallback:', error.message);
           }
-          setUserLocation(TEMBISA_COORDS);
+          setUserLocation(DEFAULT_COORDS);
         },
-        { timeout: 15000, enableHighAccuracy: false }
+        { timeout: 15000, enableHighAccuracy: true }
       );
     } else {
-      setUserLocation(TEMBISA_COORDS);
+      setUserLocation(DEFAULT_COORDS);
     }
   }, []);
 
-  const addToCart = useCallback((item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '') => {
+  const addToCart = useCallback((item: MenuItem, shopId: string, quantity: number = 1, specialInstructions: string = '', selectedCustomizations: {name: string, price: number}[] = []) => {
     // Check if cart has items from a different shop
     if (cart.length > 0 && cart.some(i => i.shopId !== shopId)) {
       const existingShopName = shops.find(s => s.id === cart[0].shopId)?.name || 'another shop';
@@ -1936,7 +1987,7 @@ export default function App() {
         `You already have items from ${existingShopName} in your cart. Would you like to clear your current cart and start a new one from this shop?`,
         () => {
           triggerHaptic([100, 50, 100]); // Stronger pulse for clear
-          setCart([{ ...item, shopId, quantity, specialInstructions }]);
+          setCart([{ ...item, shopId, quantity, specialInstructions, selectedCustomizations }]);
           setNotification({ message: `Started new cart with ${item.name}`, type: 'success' });
           setTimeout(() => setNotification(null), 2000);
         }
@@ -1946,11 +1997,19 @@ export default function App() {
 
     triggerHaptic([50, 30, 50]); // Premium double-pulse haptic
     setCart(prev => {
-      const existing = prev.find(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions);
+      // Find matching item with same ID, instructions, and customizations
+      const isSameCustomization = (a: {name: string, price: number}[], b: {name: string, price: number}[]) => {
+        if (a.length !== b.length) return false;
+        const sortedA = [...a].sort((x, y) => x.name.localeCompare(y.name));
+        const sortedB = [...b].sort((x, y) => x.name.localeCompare(y.name));
+        return sortedA.every((val, index) => val.name === sortedB[index].name && val.price === sortedB[index].price);
+      };
+      
+      const existing = prev.find(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions && isSameCustomization(i.selectedCustomizations || [], selectedCustomizations));
       if (existing) {
-        return prev.map(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions ? { ...i, quantity: i.quantity + quantity } : i);
+        return prev.map(i => i.id === item.id && i.shopId === shopId && i.specialInstructions === specialInstructions && isSameCustomization(i.selectedCustomizations || [], selectedCustomizations) ? { ...i, quantity: i.quantity + quantity } : i);
       }
-      return [...prev, { ...item, shopId, quantity, specialInstructions }];
+      return [...prev, { ...item, shopId, quantity, specialInstructions, selectedCustomizations }];
     });
     setNotification({ message: `Added ${quantity}x ${item.name} to cart`, type: 'success' });
     setTimeout(() => setNotification(null), 2000);
@@ -1988,27 +2047,45 @@ export default function App() {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
-          const { error } = await supabase
-            .from('profiles')
-            .upsert({
-              user_id: session.user.id,
-              fullName: userProfile.fullName,
-              email: userProfile.email,
-              phone: userProfile.phone,
-              city: userProfile.city,
-              address: userProfile.address,
-              country: userProfile.country,
-              role: userProfile.role,
-              photo_url: userProfile.photoURL,
-              latitude: userProfile.latitude,
-              longitude: userProfile.longitude,
-              language: userProfile.language || 'en',
-              favorites: favorites,
-              updated_at: new Date().toISOString()
-            });
+          const payload: any = {
+            user_id: session.user.id,
+            fullName: userProfile.fullName,
+            email: userProfile.email,
+            phone: userProfile.phone,
+            city: userProfile.city,
+            address: userProfile.address,
+            country: userProfile.country,
+            role: userProfile.role,
+            photo_url: userProfile.photoURL,
+            language: userProfile.language || 'en',
+            favorites: favorites,
+            updated_at: new Date().toISOString()
+          };
+
+          if (userProfile.latitude !== undefined && userProfile.longitude !== undefined) {
+            payload.latitude = userProfile.latitude;
+            payload.longitude = userProfile.longitude;
+          }
+
+          const { error } = await supabase.from('profiles').upsert(payload);
+
           if (error) {
-            console.error('Error syncing profile to Supabase:', error);
-            if (error.code === 'PGRST204') {
+            if (error.message !== 'Failed to fetch') { console.error('Error syncing profile to Supabase:', error); }
+            if (error.code === 'PGRST204' || error.message?.includes('column')) {
+              // Graceful degradation: sync only essential fields known to exist
+              const safePayload = {
+                user_id: session.user.id,
+                fullName: userProfile.fullName,
+                email: userProfile.email,
+                phone: userProfile.phone,
+                updated_at: new Date().toISOString()
+              };
+              try {
+                await supabase.from('profiles').upsert(safePayload);
+              } catch (e) {
+                console.warn('Silent failure in safe profile sync fallback');
+              }
+              
               const colName = error.message.includes("'") ? error.message.split("'")[1] : 'field';
               setNotification({ 
                 message: `⚠️ Database syncing new profile fields (like '${colName}'). Wait a few minutes or reload DB schema.`, 
@@ -2351,26 +2428,63 @@ export default function App() {
                 setCurrentScreen('home');
               }
             }}
-            onSubmit={async (rating, comment) => {
-              // Fix Issue 19: Save review to Supabase
+            onSubmit={async (rating, comment, riderRating, riderComment) => {
               try {
-                const { error } = await supabase.from('reviews').insert({
+                // 1. Save Shop Review
+                const { error: shopErr } = await supabase.from('reviews').insert({
                   shop_id: pendingReview.shopId,
+                  order_id: pendingReview.orderId,
                   user_name: userProfile.fullName || 'Anonymous',
                   rating,
                   comment,
                   created_at: new Date().toISOString()
                 });
                 
-                if (error) throw error;
+                if (shopErr) throw shopErr;
+
+                // 2. Save Rider Review if exists
+                const { data: order } = await supabase
+                  .from('orders')
+                  .select('rider_id')
+                  .eq('id', pendingReview.orderId)
+                  .single();
+
+                if (order?.rider_id && riderRating) {
+                  await supabase
+                    .from('orders')
+                    .update({
+                      rider_rating: riderRating,
+                      rider_rating_comment: riderComment
+                    })
+                    .eq('id', pendingReview.orderId);
+
+                  // Update rider profile average rating
+                  const { data: rider } = await supabase
+                    .from('rider_profiles')
+                    .select('rating, rating_count')
+                    .eq('id', order.rider_id)
+                    .single();
+
+                  if (rider) {
+                    const currentRating = rider.rating || 5;
+                    const currentCount = rider.rating_count || 0;
+                    const newCount = currentCount + 1;
+                    const newRating = ((currentRating * currentCount) + riderRating) / newCount;
+
+                    await supabase
+                      .from('rider_profiles')
+                      .update({
+                        rating: Number(newRating.toFixed(1)),
+                        rating_count: newCount
+                      })
+                      .eq('id', order.rider_id);
+                  }
+                }
                 
-                showAlert('Review Submitted', 'Thank you for your review! 🔥');
+                showAlert('Feedback Submitted', 'Thank you for helping us improve! 🔥');
               } catch (err) {
                 console.error('Error saving review:', err);
-                setNotification({
-                  message: 'Review saved locally, but failed to sync with server.',
-                  type: 'info'
-                });
+                showAlert('Error', 'Failed to save your review.');
               }
               
               setPendingReview(null);
@@ -3136,7 +3250,7 @@ function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: ()
             Account Created Successfully!
           </h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg font-normal leading-relaxed mb-10 px-2">
-            Welcome to <span className="text-primary font-semibold">LocalEats</span>! You are now ready to order the best Kotas in Tembisa.
+            Please check your email and <span className="text-primary font-semibold">verify your account</span> to order the best Kotas in your area.
           </p>
           {/* Action Area */}
           <div className="w-full flex flex-col gap-4">
@@ -3315,16 +3429,19 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
               </div>
             </label>
 
-            <label className="block opacity-60">
-              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">City (Only Serving Tembisa)</span>
+            <label className="block">
+              <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">City</span>
               <div className="relative">
                 <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input 
-                  value={SUPPORTED_CITY}
-                  disabled
-                  className="w-full rounded-2xl text-slate-400 border-2 border-slate-100 dark:border-slate-900 bg-slate-100 dark:bg-slate-950 h-14 pl-12 pr-4 text-base font-medium cursor-not-allowed" 
-                  type="text"
-                />
+                <select 
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none appearance-none" 
+                >
+                  {SUPPORTED_CITIES.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </div>
             </label>
 
@@ -3400,39 +3517,18 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
 function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: NotificationState) => void }) {
   const [identifier, setIdentifier] = useState(() => localStorage.getItem('remembered_identifier') || '');
   const [password, setPassword] = useState('');
-  const [loginType, setLoginType] = useState<'email' | 'phone'>('email');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_identifier'));
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!identifier || !password) {
-      setNotification({ message: `Please enter both ${loginType} and password`, type: 'error' });
+      setNotification({ message: `Please enter both email and password`, type: 'error' });
       return;
     }
     setLoading(true);
     try {
-      let loginEmail = identifier;
-      if (loginType === 'phone') {
-        // Look up email by phone in profiles table
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('email')
-          .eq('phone', identifier)
-          .maybeSingle();
-        
-        if (profileError) throw profileError;
-        if (profile) {
-          loginEmail = profile.email;
-        } else {
-          // Fallback: try to see if identifier itself is an email even if type is phone
-          if (!identifier.includes('@')) {
-            throw new Error('No account found with this phone number. Please use email.');
-          }
-        }
-      }
-      
-      const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
+      const { error } = await supabase.auth.signInWithPassword({ email: identifier, password });
       if (error) throw error;
       
       if (rememberMe) {
@@ -3477,24 +3573,6 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
               </button>
             </div>
           
-            {/* Login Type Toggle */}
-            <div className="mb-6">
-              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                <button 
-                  onClick={() => setLoginType('email')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'email' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
-                >
-                  Email
-                </button>
-                <button 
-                  onClick={() => setLoginType('phone')}
-                  className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${loginType === 'phone' ? 'bg-white dark:bg-slate-700 text-primary shadow-sm' : 'text-slate-500'}`}
-                >
-                  Phone
-                </button>
-              </div>
-            </div>
-
             <div className="grid grid-cols-2 gap-4 mb-8">
               <button 
                 onClick={() => setNotification({ message: 'Google login coming soon!', type: 'info' })}
@@ -3515,22 +3593,15 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
             {/* Form Fields */}
             <div className="flex flex-col gap-5">
           <label className="flex flex-col w-full">
-            <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">{loginType === 'email' ? 'Email' : 'Phone Number'}</p>
+            <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">Email</p>
             <div className="relative">
-              {loginType === 'email' ? (
-                <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              ) : (
-                <Smartphone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              )}
+              <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 value={identifier}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setIdentifier(loginType === 'phone' ? formatSAPhone(val) : val);
-                }}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all" 
-                placeholder={loginType === 'email' ? "Enter your email" : "e.g. +27 71 234 5678"} 
-                type={loginType === 'email' ? "email" : "tel"}
+                placeholder="Enter your email" 
+                type="email"
               />
             </div>
           </label>
@@ -3722,7 +3793,7 @@ const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardP
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50 dark:border-slate-800/50">
           <div className="flex items-center gap-1">
             <MapPin className="w-3 h-3 text-gray-400" />
-            <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate">{shop.distance ? `${shop.distance.toFixed(1)} km` : (shop.address || 'Tembisa')}</span>
+            <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate">{shop.distance ? `${shop.distance.toFixed(1)} km` : (shop.address || 'Local')}</span>
           </div>
           <div className="flex items-center gap-1">
             <Clock className="w-3 h-3 text-orange-500" />
@@ -3952,7 +4023,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
                   const { data: newShops, error: seedError } = await supabase
                     .from('shops')
                     .insert([
-                      { name: 'Tembisa Kota King', description: 'The best Khas-Khas in Tembisa', location: 'Winnie Mandela Zone 1', category: 'Kota', rating: 4.8, is_active: true },
+                      { name: 'Local Kota King', description: 'The best Khas-Khas in your local area', location: 'Winnie Mandela Zone 1', category: 'Kota', rating: 4.8, is_active: true },
                       { name: 'Mama\'s Kitchen', description: 'Home-style African cuisine', location: 'Oakmoor', category: 'Traditional', rating: 4.6, is_active: true },
                       { name: 'The Grill Master', description: 'Flame-grilled chicken and steaks', location: 'Hospital View', category: 'Grill', rating: 4.7, is_active: true }
                     ])
@@ -4096,8 +4167,12 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_fee numeric DEFAULT 0,
   latitude numeric,
   longitude numeric,
+  location GEOGRAPHY(POINT),
+  delivery_instructions text,
   rider_id uuid,
   delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed')),
+  rider_rating integer CHECK (rider_rating >= 1 AND rider_rating <= 5),
+  rider_rating_comment text,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
@@ -4113,6 +4188,7 @@ CREATE TABLE IF NOT EXISTS rider_profiles (
   current_lat numeric,
   current_lng numeric,
   rating numeric DEFAULT 5.0,
+  rating_count integer DEFAULT 0,
   created_at timestamptz DEFAULT now()
 );
 
@@ -4121,15 +4197,49 @@ CREATE TABLE IF NOT EXISTS rider_locations (
   rider_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   latitude numeric NOT NULL,
   longitude numeric NOT NULL,
+  location GEOGRAPHY(POINT),
   updated_at timestamptz DEFAULT now()
 );
 
--- 9. Insert demo data
+-- 9. Enable Row Level Security (Secure the Map)
+ALTER TABLE public.rider_locations ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Anyone can read rider locations" ON public.rider_locations;
+CREATE POLICY "Anyone can read rider locations" ON public.rider_locations FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Riders can update their own location" ON public.rider_locations;
+CREATE POLICY "Riders can update their own location" ON public.rider_locations FOR ALL USING (auth.uid() = rider_id);
+
+-- 10. Enable Spatial Geotagging (Optional but makes map perfectly accurate tracking with PostGIS)
+-- Note: Ignore any RLS warnings for spatial_ref_sys in the Supabase Dashboard. You cannot and should not modify it.
+CREATE EXTENSION IF NOT EXISTS postgis;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS location GEOGRAPHY(POINT);
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS location GEOGRAPHY(POINT);
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivery_instructions text;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS rider_rating integer;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS rider_rating_comment text;
+ALTER TABLE public.rider_profiles ADD COLUMN IF NOT EXISTS rating_count integer DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION update_location_column() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+    NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::GEOGRAPHY;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS auto_update_rider_location ON public.rider_locations;
+CREATE TRIGGER auto_update_rider_location BEFORE INSERT OR UPDATE OF latitude, longitude ON public.rider_locations FOR EACH ROW EXECUTE FUNCTION update_location_column();
+  
+DROP TRIGGER IF EXISTS auto_update_order_location ON public.orders;
+CREATE TRIGGER auto_update_order_location BEFORE INSERT OR UPDATE OF latitude, longitude ON public.orders FOR EACH ROW EXECUTE FUNCTION update_location_column();
+
+-- 11. Insert demo data
 INSERT INTO shops (name, description, location, category, rating, is_active)
 VALUES 
-('Tembisa Kota King', 'The best Khas-Khas in Tembisa', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
+('Local Kota King', 'The best Khas-Khas in your local area', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
 ('Mama''s Kitchen', 'Home-style African cuisine', 'Oakmoor', 'Traditional', 4.6, true),
-('The Grill Master', 'Flame-grilled chicken and steaks', 'Hospital View', 'Grill', 4.7, true);-- 10. Reload PostgREST schema cache
+('The Grill Master', 'Flame-grilled chicken and steaks', 'Hospital View', 'Grill', 4.7, true);-- 12. Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';`}
               </pre>
             </div>
@@ -4168,7 +4278,7 @@ NOTIFY pgrst, 'reload schema';`}
           </div>
           <div className="flex items-center gap-1.5 ml-1 mt-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
-            <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-800 dark:text-slate-200">Serving Tembisa Only</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.1em] text-slate-800 dark:text-slate-200">Serving Local Flavours</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -4306,7 +4416,7 @@ NOTIFY pgrst, 'reload schema';`}
                 </div>
                 <input 
                   className="block w-full pl-10 pr-12 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500" 
-                  placeholder="Search for the best Tembisa Kotas..." 
+                  placeholder="Search for the best local Kotas..." 
                   type="text"
                   value={searchQuery}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
@@ -4578,6 +4688,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
   const [deliveryType, setDeliveryType] = useState<'collection' | 'delivery'>('collection');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState<{ address: string, lat: number, lng: number } | null>(() => {
     const cached = localStorage.getItem('delivery_location');
     if (cached) return JSON.parse(cached);
@@ -4649,7 +4760,10 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     }
   }, [deliveryLocation, primaryShop]);
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const subtotal = cart.reduce((sum, item) => {
+    const customizationsTotal = (item.selectedCustomizations || []).reduce((acc, c) => acc + Number(c.price), 0);
+    return sum + ((item.price + customizationsTotal) * item.quantity);
+  }, 0);
   const totalAmount = deliveryType === 'delivery' ? subtotal + deliveryFee : subtotal;
   
   const handleConfirm = async () => {
@@ -4709,13 +4823,13 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     let currentLat = deliveryType === 'delivery' ? deliveryLocation?.lat : null;
     let currentLng = deliveryType === 'delivery' ? deliveryLocation?.lng : null;
 
-    // Capture precise geolocation if requested
-    if (deliveryType === 'delivery' && navigator.geolocation) {
+    // Capture precise geolocation only if we don't already have coordinates from the map pin/search
+    if (deliveryType === 'delivery' && (!currentLat || !currentLng) && navigator.geolocation) {
       try {
         const position = await new Promise<GeolocationPosition>((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
             enableHighAccuracy: true,
-            timeout: 5000,
+            timeout: 15000,
             maximumAge: 0
           });
         });
@@ -4729,34 +4843,50 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
     try {
       await runWithProcessing(async () => {
-        const orderData = cart.map(item => ({
-          user_id: session?.user?.id,
-          shop_id: item.shopId,
-          customer_name: userProfile.fullName,
-          phone: userProfile.phone,
-          email: userProfile.email,
-          city: SUPPORTED_CITY,
-          address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
-          country: userProfile.country,
-          product_name: item.name,
-          product_variant: '',
-          quantity: item.quantity,
-          price: item.price * item.quantity,
-          notes: item.specialInstructions || '',
-          status: 'pending',
-          payment_method: paymentMethod,
-          is_delivery: deliveryType === 'delivery',
-          delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
-          delivery_status: 'none',
-          latitude: currentLat,
-          longitude: currentLng
-        }));
+        const orderData = cart.map(item => {
+          const customizationsString = item.selectedCustomizations?.map(c => `${c.name} (+R${Number(c.price).toFixed(2)})`).join(', ') || '';
+          const customizationsTotal = (item.selectedCustomizations || []).reduce((acc, c) => acc + Number(c.price), 0);
+          return {
+            user_id: session?.user?.id,
+            shop_id: item.shopId,
+            customer_name: userProfile.fullName,
+            phone: userProfile.phone,
+            email: userProfile.email,
+            city: userProfile.city,
+            address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
+            country: userProfile.country,
+            product_name: item.name,
+            product_variant: customizationsString,
+            quantity: item.quantity,
+            price: (item.price + customizationsTotal) * item.quantity,
+            notes: item.specialInstructions || '',
+            delivery_instructions: deliveryInstructions,
+            status: 'pending',
+            payment_method: paymentMethod,
+            is_delivery: deliveryType === 'delivery',
+            delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
+            delivery_status: 'none',
+            latitude: currentLat,
+            longitude: currentLng
+          };
+        });
 
         console.log('Submitting order with delivery info:', orderData);
         const { error } = await supabase.from('orders').insert(orderData).select();
         
         if (error) {
           console.error('Supabase insert error:', error);
+          // Fallback if latitude/longitude columns are missing
+          if (error.code === 'PGRST204' || error.message?.includes('column')) {
+             console.warn('Orders table missing columns, retrying without latitude/longitude');
+             const safeOrderData = orderData.map((d: any) => {
+               const { latitude, longitude, ...rest } = d;
+               return rest;
+             });
+             const { error: retryError } = await supabase.from('orders').insert(safeOrderData).select();
+             if (retryError) throw retryError;
+             return;
+          }
           throw error;
         }
       }, onConfirm);
@@ -4832,9 +4962,16 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                     {item.specialInstructions && (
                       <p className="text-orange-600 text-[10px] font-medium leading-normal mt-1 italic line-clamp-2">Note: {item.specialInstructions}</p>
                     )}
+                    {item.selectedCustomizations && item.selectedCustomizations.length > 0 && (
+                      <p className="text-slate-500 text-[10px] font-medium leading-normal mt-1 italic line-clamp-2">
+                        {item.selectedCustomizations.map(c => `${c.name} (+R${Number(c.price).toFixed(2)})`).join(', ')}
+                      </p>
+                    )}
                   </div>
-                  <div className="shrink-0">
-                    <p className="text-primary text-base font-bold leading-normal">R {(item.price * item.quantity).toFixed(2)}</p>
+                  <div className="shrink-0 text-right">
+                    <p className="text-primary text-base font-bold leading-normal">
+                      R {((item.price + (item.selectedCustomizations || []).reduce((acc, c) => acc + Number(c.price), 0)) * item.quantity).toFixed(2)}
+                    </p>
                   </div>
                 </motion.div>
               ))}
@@ -4985,6 +5122,35 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                     localStorage.setItem('delivery_location', JSON.stringify(data));
                   }} 
                 />
+
+                <div className="space-y-1.5 animate-in slide-in-from-top-2 duration-500">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Delivery Instructions (Optional)</label>
+                  <textarea
+                    placeholder="e.g. Green gate next to the Spaza shop, or no house number - use the pinned location."
+                    value={deliveryInstructions}
+                    onChange={(e) => setDeliveryInstructions(e.target.value)}
+                    rows={2}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
+                  />
+                  <p className="text-[9px] text-slate-400 italic leading-tight pl-1">
+                    Help our riders find you in areas like Kaalfontein with specific landmarks.
+                  </p>
+                </div>
+
+                {deliveryLocation && (
+                  <div className="mt-4">
+                    <p className="text-xs text-slate-500 mb-2 font-bold uppercase tracking-wider">Fine-tune Location (Drag Pin)</p>
+                    <LocationPickerMap 
+                      coords={{ lat: deliveryLocation.lat, lng: deliveryLocation.lng }}
+                      onCoordsChange={(c) => {
+                        const newLoc = { ...deliveryLocation, lat: c.lat, lng: c.lng };
+                        setDeliveryLocation(newLoc);
+                        localStorage.setItem('delivery_location', JSON.stringify(newLoc));
+                      }}
+                      shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
+                    />
+                  </div>
+                )}
                 
                 {deliveryLocation && (
                   <div className="flex flex-col gap-3">
@@ -5206,7 +5372,7 @@ function OrderSuccessScreen({ onHome, cart, shops, triggerHaptic }: { onHome: ()
                 </div>
                 <div className="text-center">
                   <h3 className="text-2xl font-black uppercase tracking-tight italic mb-2">Love LocalEats?</h3>
-                  <p className="text-white/60 text-sm font-medium leading-relaxed px-4">Your support helps Tembisa merchants thrive. Rate us on the App Store!</p>
+                  <p className="text-white/60 text-sm font-medium leading-relaxed px-4">Your support helps local merchants thrive. Rate us on the App Store!</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {[1, 2, 3, 4, 5].map(i => (
@@ -5329,7 +5495,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
-            <h2 className="font-['Plus_Jakarta_Sans'] text-3xl font-extrabold tracking-tight text-[#2d2f31] dark:text-white mb-2">Tembisa Flavor</h2>
+            <h2 className="font-['Plus_Jakarta_Sans'] text-3xl font-extrabold tracking-tight text-[#2d2f31] dark:text-white mb-2">Local Flavor</h2>
             <p className="text-[#5a5c5e] dark:text-slate-400 text-lg">Discover the finest local Kota spots.</p>
           </div>
           <div className="relative group">
@@ -5338,7 +5504,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             </div>
             <input 
               className="w-full h-14 pl-12 pr-4 bg-[#ffffff] dark:bg-slate-900 rounded-lg border-none focus:ring-2 focus:ring-[#9c3f00] shadow-[0_8px_32px_rgba(45,47,49,0.06)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none" 
-              placeholder="Search stores in Tembisa..." 
+              placeholder="Search stores nearby..." 
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -5496,11 +5662,11 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
               loading="lazy"
               allowFullScreen
               referrerPolicy="no-referrer-when-downgrade"
-              src={`https://www.google.com/maps/embed/v1/search?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyA-fake-key'}&q=Kota+shops+in+Tembisa+South+Africa&center=${userLocation?.lat || -25.9964},${userLocation?.lng || 28.2268}&zoom=14`}
+              src={`https://www.google.com/maps/embed/v1/search?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyA-fake-key'}&q=Kota+shops&center=${userLocation?.lat || -25.9964},${userLocation?.lng || 28.2268}&zoom=14`}
             ></iframe>
             <div className="absolute bottom-6 left-6 right-6 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
               <p className="text-xs font-bold text-slate-900 dark:text-white mb-1">Interactive Map</p>
-              <p className="text-[10px] text-slate-500">Showing top rated Kota spots near you in Tembisa.</p>
+              <p className="text-[10px] text-slate-500">Showing top rated Kota spots near you.</p>
             </div>
           </section>
         )}
@@ -5861,26 +6027,79 @@ function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification,
   );
 }
 
-const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | null, isOpen: boolean, onClose: () => void, onConfirm: (quantity: number, specialInstructions: string) => void }) => {
+const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | null, isOpen: boolean, onClose: () => void, onConfirm: (quantity: number, specialInstructions: string, selectedCustomizations: {name: string, price: number}[]) => void }) => {
   const [quantity, setQuantity] = useState(1);
   const [specialInstructions, setSpecialInstructions] = useState('');
+  const [selectedCustomizations, setSelectedCustomizations] = useState<{name: string, price: number}[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setQuantity(1);
+      setSpecialInstructions('');
+      setSelectedCustomizations([]);
+    }
+  }, [isOpen]);
 
   if (!item || !isOpen) return null;
 
+  const basePrice = item.price;
+  const customizationsTotal = selectedCustomizations.reduce((sum, c) => sum + Number(c.price), 0);
+  const totalPrice = (basePrice + customizationsTotal) * quantity;
+
+  const toggleCustomization = (customization: {name: string, price: number}) => {
+    setSelectedCustomizations(prev => {
+      const exists = prev.find(c => c.name === customization.name);
+      if (exists) {
+        return prev.filter(c => c.name !== customization.name);
+      } else {
+        return [...prev, customization];
+      }
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh] animate-in slide-in-from-bottom-10 duration-500">
         <div className="flex justify-between items-start mb-6">
-          <div className="flex-1">
+          <div className="flex-1 pr-4">
             <h3 className="text-2xl font-black text-slate-900 dark:text-white leading-tight">{item.name}</h3>
-            <p className="text-orange-600 font-black text-lg mt-1">{item.displayPrice}</p>
+            {item.description && <p className="text-sm text-slate-500 mt-2 leading-relaxed">{item.description}</p>}
+            <p className="text-orange-600 font-black text-lg mt-2">{item.displayPrice}</p>
           </div>
-          <button onClick={onClose} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
+          <button onClick={onClose} className="p-2 shrink-0 bg-slate-100 dark:bg-slate-800 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="flex flex-col items-center gap-6 py-4">
+        <div className="flex flex-col gap-6 py-4">
+          {item.customizations && item.customizations.length > 0 && (
+            <div className="w-full bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 block">Customize Your Order</label>
+              <div className="space-y-3">
+                {item.customizations.map((customization, idx) => {
+                  const isSelected = selectedCustomizations.some(c => c.name === customization.name);
+                  return (
+                    <label key={idx} className="flex items-center justify-between cursor-pointer group">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-orange-600 border-orange-600' : 'border-slate-300 dark:border-slate-600 group-hover:border-orange-500'}`}>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{customization.name}</span>
+                      </div>
+                      <span className="text-sm font-bold text-slate-500">+ R{Number(customization.price).toFixed(2)}</span>
+                      <input 
+                        type="checkbox" 
+                        className="hidden"
+                        checked={isSelected}
+                        onChange={() => toggleCustomization(customization)}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="w-full">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Special Instructions</label>
             <textarea
@@ -5896,14 +6115,14 @@ const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | 
             <div className="flex items-center gap-8">
               <button 
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700"
+                className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
               >
                 <Minus className="w-8 h-8" />
               </button>
               <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">{quantity}</span>
               <button 
                 onClick={() => setQuantity(quantity + 1)}
-                className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all"
+                className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all cursor-pointer"
               >
                 <Plus className="w-8 h-8" />
               </button>
@@ -5913,11 +6132,11 @@ const QuantityModal = ({ item, isOpen, onClose, onConfirm }: { item: MenuItem | 
 
         <div className="mt-8 flex gap-4">
           <button 
-            onClick={() => onConfirm(quantity, specialInstructions)}
-            className="flex-1 h-16 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3"
+            onClick={() => onConfirm(quantity, specialInstructions, selectedCustomizations)}
+            className="flex-1 h-16 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer"
           >
             <ShoppingBag className="w-6 h-6" />
-            <span>Add to Basket • R{(item.price * quantity).toFixed(2)}</span>
+            <span>Add to Basket • R{totalPrice.toFixed(2)}</span>
           </button>
         </div>
       </div>
@@ -5936,7 +6155,7 @@ function RestaurantSchema({ shop }: { shop: Shop }) {
     "address": {
       "@type": "PostalAddress",
       "streetAddress": shop.address,
-      "addressLocality": "Tembisa",
+      "addressLocality": "Local",
       "addressRegion": "Gauteng",
       "addressCountry": "ZA"
     },
@@ -6030,7 +6249,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   userProfile: UserProfile | null, 
   session: Session | null, 
   onSignUp: () => void, 
-  addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void,
+  addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string, selectedCustomizations?: {name: string, price: number}[]) => void,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
   setCurrentScreen: (screen: Screen) => void
@@ -6299,9 +6518,8 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                       key={item.id}
                       item={item}
                       shop={shop}
-                      addToCart={addToCart}
+                      onSelect={(item) => setSelectedItemForQuantity(item)}
                       showAlert={showAlert}
-                      setCurrentScreen={setCurrentScreen}
                     />
                   ))
                 ) : (
@@ -6547,9 +6765,9 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         item={selectedItemForQuantity}
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
-        onConfirm={(quantity, specialInstructions) => {
+        onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
           if (selectedItemForQuantity) {
-            addToCart(selectedItemForQuantity, shop.id, quantity, specialInstructions);
+            addToCart(selectedItemForQuantity, shop.id, quantity, specialInstructions, selectedCustomizations);
             setSelectedItemForQuantity(null);
           }
         }}
@@ -7020,7 +7238,7 @@ function RealTimeRiderTracking({ order, shop }: { order: Order, shop?: Shop }) {
     return () => { supabase.removeChannel(channel); };
   }, [order.rider_id, order.id]);
 
-  const storeCoords = shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS;
+  const storeCoords = shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : DEFAULT_COORDS;
   const deliveryCoords = order.latitude && order.longitude ? { lat: order.latitude, lng: order.longitude } : null;
 
   if (!order.rider_id) {
@@ -7814,6 +8032,8 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
   const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
   const [riderLocation, setRiderLocation] = useState<{lat: number, lng: number} | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [manualLocation, setManualLocation] = useState('');
+  const [isUpdatingManual, setIsUpdatingManual] = useState(false);
 
   const fetchRiderData = useCallback(async () => {
     try {
@@ -7911,31 +8131,36 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
       if (!navigator.geolocation) return;
 
       navigator.geolocation.getCurrentPosition(async (pos) => {
-        const { latitude, longitude } = pos.coords;
-        
-        const { error } = await supabase
-          .from('rider_locations')
-          .upsert({
-            rider_id: riderProfile.id,
-            latitude,
-            longitude,
-            updated_at: new Date().toISOString()
-          });
+        try {
+          const { latitude, longitude } = pos.coords;
+          
+          const { error } = await supabase
+            .from('rider_locations')
+            .upsert({
+              rider_id: riderProfile.id,
+              latitude,
+              longitude,
+              updated_at: new Date().toISOString()
+            });
 
-        if (error) {
-          console.error('Location update failed:', error);
-          setGpsError('Sync Error');
-        } else {
-          setLastLocationUpdate(Date.now());
-          setRiderLocation({ lat: latitude, lng: longitude });
-          setGpsError(null);
+          if (error) {
+            console.error('Location update failed:', error);
+            setGpsError('Sync Error');
+          } else {
+            setLastLocationUpdate(Date.now());
+            setRiderLocation({ lat: latitude, lng: longitude });
+            setGpsError(null);
+          }
+        } catch (err) {
+          console.error('Error in location sync task:', err);
+          setGpsError('Sync Connection Failed');
         }
       }, (err) => {
         console.error('Geolocation error:', err);
         setGpsError(err.message || 'GPS Signal Lost');
       }, {
         enableHighAccuracy: true,
-        timeout: 5000,
+        timeout: 15000,
         maximumAge: 0
       });
     };
@@ -7945,6 +8170,37 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
 
     return () => clearInterval(interval);
   }, [riderProfile?.is_online, activeOrder?.id, activeOrder?.delivery_status, riderProfile?.id]);
+
+  const handleManualLocationSubmit = async () => {
+    if (!manualLocation.trim() || !riderProfile) return;
+    setIsUpdatingManual(true);
+    try {
+      const results = await searchAddress(manualLocation);
+      if (results && results.length > 0) {
+        const { lat, lng } = results[0];
+        const { error } = await supabase
+          .from('rider_locations')
+          .upsert({
+            rider_id: riderProfile.id,
+            latitude: lat,
+            longitude: lng,
+            updated_at: new Date().toISOString()
+          });
+
+        if (error) throw error;
+        setRiderLocation({ lat, lng });
+        setManualLocation('');
+        setLastLocationUpdate(Date.now());
+        showAlert('Location Updated', 'Your location has been manually updated.');
+      } else {
+        showAlert('Not Found', 'Could not find that address. Please be more specific.');
+      }
+    } catch (err: any) {
+      showAlert('Update Failed', err.message);
+    } finally {
+      setIsUpdatingManual(false);
+    }
+  };
 
   const toggleOnline = async () => {
     const { error } = await supabase
@@ -8020,9 +8276,9 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
            </p>
            <button 
              onClick={toggleOnline}
-             className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${riderProfile.is_online ? 'bg-green-50 text-green-600 border-green-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
+             className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${riderProfile.is_online ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}
            >
-             {riderProfile.is_online ? 'Go Offline' : 'Go Online'}
+             {riderProfile.is_online ? 'Take a Break (Offline)' : 'Start Shift (Online)'}
            </button>
         </div>
       </header>
@@ -8169,34 +8425,81 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
                   </button>
                </div>
 
-               {/* Mini Map */}
-               {activeOrder.latitude && activeOrder.longitude && (
-                 <div className="h-48 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-10 shadow-inner">
-                   <MapContainer 
-                     center={{ lat: activeOrder.latitude, lng: activeOrder.longitude }} 
-                     zoom={14} 
-                     scrollWheelZoom={false} 
-                     style={{ height: '100%', width: '100%' }}
-                   >
-                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                     {/* Destination Marker */}
-                     <Marker position={{ lat: activeOrder.latitude, lng: activeOrder.longitude }} />
-                     
-                     {/* Rider Location Marker */}
-                     {riderProfile?.is_online && riderLocation && (
-                       <Marker 
-                         position={riderLocation}
-                         icon={L.divIcon({
-                           className: 'custom-rider-icon',
-                           html: `<div class="bg-indigo-600 p-1 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
-                           iconSize: [28, 28],
-                           iconAnchor: [14, 28]
-                         })} 
-                       />
-                     )}
-                   </MapContainer>
+               {/* Manual Location Access */}
+               <div className="bg-white dark:bg-slate-900/50 p-4 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
+                 <div className="flex items-center gap-2">
+                   <div className="size-8 bg-indigo-50 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600">
+                     <LocateFixed className="w-4 h-4" />
+                   </div>
+                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Manual Location Fix</p>
                  </div>
-               )}
+                 <div className="flex gap-2">
+                   <input 
+                     type="text"
+                     placeholder="Enter nearest street..."
+                     value={manualLocation}
+                     onChange={(e) => setManualLocation(e.target.value)}
+                     className="flex-grow bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2 text-[10px] outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
+                   />
+                   <button 
+                     onClick={handleManualLocationSubmit}
+                     disabled={isUpdatingManual}
+                     className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest active:scale-95 transition-all disabled:opacity-50"
+                   >
+                     {isUpdatingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Set'}
+                   </button>
+                 </div>
+               </div>
+
+                {/* Tracking Progress */}
+                <div className="bg-white dark:bg-slate-900/50 p-4 rounded-3xl border border-slate-100 dark:border-slate-800">
+                  <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">
+                    <span>Active Route</span>
+                    <span className="text-primary">Live Now</span>
+                  </div>
+                  <div className="h-48 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-10 shadow-inner">
+                    <MapContainer 
+                      center={{ lat: activeOrder.latitude, lng: activeOrder.longitude }} 
+                      zoom={14} 
+                      scrollWheelZoom={false} 
+                      style={{ height: '100%', width: '100%' }}
+                    >
+                      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                      <RecenterMap coords={riderLocation || { lat: activeOrder.latitude, lng: activeOrder.longitude }} />
+                      
+                      {/* Destination Marker */}
+                      <Marker position={{ lat: activeOrder.latitude, lng: activeOrder.longitude }}>
+                        <Popup>Delivery: {activeOrder.customer_name}</Popup>
+                      </Marker>
+                      
+                      {/* Shop Marker */}
+                      {orderShop && (
+                        <Marker 
+                          position={{ lat: orderShop.latitude || 0, lng: orderShop.longitude || 0 }}
+                          icon={L.divIcon({
+                            className: 'custom-shop-icon',
+                            html: `<div class="bg-orange-600 p-1.5 rounded-xl border-2 border-white shadow-lg flex items-center justify-center text-white"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>`,
+                            iconSize: [28, 28],
+                            iconAnchor: [14, 28]
+                          })}
+                        />
+                      )}
+                      
+                      {/* Rider Location Marker */}
+                      {riderProfile?.is_online && riderLocation && (
+                        <Marker 
+                          position={riderLocation}
+                          icon={L.divIcon({
+                            className: 'custom-rider-icon',
+                            html: `<div class="bg-indigo-600 p-1 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+                            iconSize: [28, 28],
+                            iconAnchor: [14, 28]
+                          })} 
+                        />
+                      )}
+                    </MapContainer>
+                  </div>
+                </div>
 
                {/* Action Buttons */}
                <div className="space-y-3">
@@ -8224,14 +8527,14 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
                       >
                         {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
                         Confirm Delivery
-                      </button>
-                    </div>
-                  )}
-               </div>
-            </div>
-          )}
-        </section>
-      </main>
+                    </button>
+                  </div>
+                )}
+             </div>
+          </div>
+        )}
+      </section>
+    </main>
 
       <div className="p-4 bg-white dark:bg-[#221610] border-t border-primary/10">
         <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-[0.2em]">LocalEats Rider Fleet v2.4.0</p>
@@ -8303,6 +8606,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
 
   const [isUploading, setIsUploading] = useState(false);
   const [menuImgUrl, setMenuImgUrl] = useState('');
+  const [editingItemAvailable, setEditingItemAvailable] = useState<boolean>(true);
+  const [editingItemCustomizations, setEditingItemCustomizations] = useState<{name: string, price: number}[]>([]);
 
   const autoAssignClosestRider = async (orderId: string) => {
     if (!shop) return;
@@ -8338,7 +8643,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       let minDistance = Infinity;
 
       locations.forEach(loc => {
-        const dist = calculateDistance(shop.latitude || TEMBISA_COORDS.lat, shop.longitude || TEMBISA_COORDS.lng, Number(loc.latitude), Number(loc.longitude));
+        const dist = calculateDistance(shop.latitude || DEFAULT_COORDS.lat, shop.longitude || DEFAULT_COORDS.lng, Number(loc.latitude), Number(loc.longitude));
         if (dist < minDistance) {
           minDistance = dist;
           closestRiderId = loc.rider_id;
@@ -8411,6 +8716,14 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
     }
   };
 
+  const handleEditItem = (item: MenuItem | null) => {
+    setEditingItem(item);
+    setEditingItemAvailable(item ? item.is_available ?? true : true);
+    setEditingItemCustomizations(item ? item.customizations || [] : []);
+    setMenuImgUrl(item ? item.image_url || '' : '');
+    setIsEditingMenu(true);
+  };
+
   const saveMenuItem = async (e: FormEvent) => {
     e.preventDefault();
     if (!shop) return;
@@ -8421,8 +8734,9 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
       name: formData.get('name') as string,
       price: parseFloat(formData.get('price') as string),
       description: formData.get('description') as string,
-      image_url: menuImgUrl || (formData.get('image_url') as string) || (editingItem?.image_url) || DEFAULT_MENU_IMAGE,
-      is_available: true
+      image_url: menuImgUrl || DEFAULT_MENU_IMAGE,
+      is_available: editingItemAvailable,
+      customizations: editingItemCustomizations
     };
 
     await runWithProcessing(async () => {
@@ -8992,9 +9306,9 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                       const { error: shopErr } = await supabase
                         .from('shops')
                         .insert({
-                          name: "My Tembisa Shop",
+                          name: "My Local Shop",
                           description: "Freshly prepared Kotas and more",
-                          location: "Tembisa",
+                          location: "Local Area",
                           category: "Kota",
                           rating: 5.0,
                           owner_id: user.id,
@@ -9039,7 +9353,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             <div className="flex items-center justify-between px-1">
               <h3 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest">Menu Items</h3>
               <button 
-                onClick={() => { setEditingItem(null); setIsEditingMenu(true); }}
+                onClick={() => handleEditItem(null)}
                 className="bg-orange-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" /> Add New Item
@@ -9072,7 +9386,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                             {item.is_available ? 'In Stock' : 'Sold Out'}
                           </button>
                           <button 
-                            onClick={() => { setEditingItem(item); setIsEditingMenu(true); }}
+                            onClick={() => handleEditItem(item)}
                             className="p-2 text-slate-400 hover:text-orange-500 transition-colors cursor-pointer"
                           >
                             <Edit2 className="w-4 h-4" />
@@ -9194,7 +9508,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
 
               {/* Mini Map */}
               <div className="h-64 w-full rounded-2xl overflow-hidden border border-slate-100 dark:border-slate-800 relative z-10">
-                <MapContainer center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS} zoom={13} style={{ height: '100%', width: '100%' }}>
+                <MapContainer center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : DEFAULT_COORDS} zoom={13} style={{ height: '100%', width: '100%' }}>
                   <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                   {shop?.latitude && shop?.longitude && <Marker position={{ lat: shop.latitude, lng: shop.longitude }} />}
                   {riders.map(rider => riderLocations[rider.id] && (
@@ -9204,7 +9518,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                       </div>
                     </Marker>
                   ))}
-                  <ChangeView center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : TEMBISA_COORDS} />
+                  <ChangeView center={shop?.latitude && shop?.longitude ? { lat: shop.latitude, lng: shop.longitude } : DEFAULT_COORDS} />
                 </MapContainer>
               </div>
 
@@ -9620,7 +9934,12 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 </div>
                 {order.notes && (
                   <div className="mt-3 p-2 bg-orange-50 dark:bg-orange-500/10 rounded-lg border border-orange-100 dark:border-orange-500/20">
-                    <p className="text-xs text-orange-700 dark:text-orange-400 font-medium italic">"{order.notes}"</p>
+                    <p className="text-xs text-orange-700 dark:text-orange-400 font-medium italic">Note: "{order.notes}"</p>
+                  </div>
+                )}
+                {order.delivery_instructions && (
+                  <div className="mt-2 p-2 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
+                    <p className="text-xs text-indigo-700 dark:text-indigo-400 font-medium font-mono text-[10px]">📍 {order.delivery_instructions}</p>
                   </div>
                 )}
               </div>
@@ -9883,6 +10202,75 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                     </div>
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Available in Stock</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-widest">Show or hide on menu</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setEditingItemAvailable(!editingItemAvailable)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${editingItemAvailable ? 'bg-orange-600' : 'bg-slate-300 dark:bg-slate-600'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editingItemAvailable ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+                
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Customizations</label>
+                    <button 
+                      type="button"
+                      onClick={() => setEditingItemCustomizations([...editingItemCustomizations, { name: '', price: 0 }])}
+                      className="text-[10px] font-bold text-orange-600 uppercase tracking-widest hover:text-orange-700 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> Add Option
+                    </button>
+                  </div>
+                  {editingItemCustomizations.length > 0 && (
+                    <div className="space-y-2 bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                      {editingItemCustomizations.map((customization, idx) => (
+                        <div key={idx} className="flex gap-2 items-center">
+                          <input 
+                            type="text" 
+                            placeholder="e.g. Extra Cheese"
+                            value={customization.name}
+                            onChange={(e) => {
+                              const newC = [...editingItemCustomizations];
+                              newC[idx].name = e.target.value;
+                              setEditingItemCustomizations(newC);
+                            }}
+                            className="flex-grow w-1/2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                          />
+                          <input 
+                            type="number" 
+                            step="0.01"
+                            placeholder="Price"
+                            value={customization.price}
+                            onChange={(e) => {
+                              const newC = [...editingItemCustomizations];
+                              newC[idx].price = parseFloat(e.target.value) || 0;
+                              setEditingItemCustomizations(newC);
+                            }}
+                            className="w-24 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                          />
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              const newC = editingItemCustomizations.filter((_, i) => i !== idx);
+                              setEditingItemCustomizations(newC);
+                            }}
+                            className="p-2 shrink-0 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Description</label>
                   <textarea 
@@ -10290,6 +10678,18 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
                       </div>
                     )}
 
+                    {order.delivery_instructions && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Navigation className="w-4 h-4 text-indigo-600" />
+                          <p className="text-[10px] uppercase tracking-widest text-slate-400 font-black">Delivery Directions</p>
+                        </div>
+                        <p className="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/10 p-3 rounded-xl border border-indigo-100/50 dark:border-indigo-800/30 font-medium font-mono text-[10px]">
+                          {order.delivery_instructions}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between pt-4 border-t border-slate-50 dark:border-slate-800/50">
                       <div className="text-[9px] text-slate-400 font-medium">
                         REF: {order.id.toString().toUpperCase().slice(-8)} • {new Date(order.created_at).toLocaleString()}
@@ -10599,7 +10999,7 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
               <h3 className="text-2xl font-black mb-3 text-slate-900 dark:text-white leading-tight">No {filterStatus !== 'All' ? filterStatus.toLowerCase() : ''} cravings?</h3>
               <p className="text-slate-500 dark:text-slate-400 text-sm mb-10 max-w-[240px] leading-relaxed font-semibold">
                 {filterStatus === 'All' 
-                  ? "Your delicious journey starts with your first order. Ready to discover Tembisa's best flavors?"
+                  ? "Your delicious journey starts with your first order. Ready to discover the best local flavors?"
                   : `You don't have any orders with status "${filterStatus}" at the moment.`}
               </p>
               {filterStatus === 'All' && (
@@ -10722,6 +11122,13 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
                     </p>
                   </div>
                 )}
+                {order.delivery_instructions && (
+                  <div className="bg-indigo-50 dark:bg-indigo-900/10 p-2 rounded-lg border border-indigo-100 dark:border-indigo-900/30">
+                    <p className="text-indigo-700 dark:text-indigo-400 text-[10px] font-medium italic">
+                      <span className="font-bold not-italic">📍 Directions:</span> {order.delivery_instructions}
+                    </p>
+                  </div>
+                )}
 
                 {/* Status History Timeline */}
                 {order.status_history && order.status_history.length > 0 && (
@@ -10814,71 +11221,106 @@ function ReviewScreen({
 }: { 
   pendingReview: PendingReview, 
   onSnooze: () => void, 
-  onSubmit: (rating: number, comment: string) => void 
+  onSubmit: (rating: number, comment: string, riderRating?: number, riderComment?: string) => void 
 }) {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState('');
+  const [riderRating, setRiderRating] = useState(5);
+  const [riderComment, setRiderComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     setSubmitting(true);
-    // Simulate API call
-    setTimeout(() => {
-      onSubmit(rating, comment);
+    try {
+      await onSubmit(rating, comment, riderRating, riderComment);
+    } finally {
       setSubmitting(false);
-    }, 1000);
+    }
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl p-6">
-      <div className="flex-grow flex flex-col justify-center space-y-8">
+    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl p-6 overflow-y-auto">
+      <div className="flex-grow flex flex-col space-y-8 py-10">
         <div className="text-center space-y-2">
-          <div className="bg-orange-100 dark:bg-orange-900/20 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <MessageSquare className="w-10 h-10 text-orange-600" />
+          <div className="bg-orange-100 dark:bg-orange-900/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+            <MessageSquare className="w-8 h-8 text-orange-600" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white leading-tight">How was your {pendingReview.productName}?</h1>
-          <p className="text-gray-500 dark:text-slate-400">Your feedback helps us improve!</p>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white leading-tight uppercase tracking-tight">Rate your Experience</h1>
+          <p className="text-gray-500 dark:text-slate-400 text-sm">Your feedback helps the local fleet improve!</p>
         </div>
 
-        <div className="flex justify-center gap-2">
-          {[1, 2, 3, 4, 5].map((star) => (
-            <button
-              key={star}
-              onClick={() => setRating(star)}
-              className={`p-2 transition-transform active:scale-90 ${rating >= star ? 'text-orange-500' : 'text-gray-300'}`}
-            >
-              <Star className={`w-10 h-10 ${rating >= star ? 'fill-current' : ''}`} />
-            </button>
-          ))}
+        {/* Shop Review */}
+        <div className="space-y-4 bg-slate-50 dark:bg-slate-900/50 p-6 rounded-[32px] border border-slate-100 dark:border-slate-800">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Food & Shop Experience</p>
+          <h2 className="text-lg font-bold text-center">{pendingReview.productName}</h2>
+          <div className="flex justify-center gap-2">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button
+                key={star}
+                onClick={() => setRating(star)}
+                className="p-1 transition-transform active:scale-90"
+              >
+                <Star 
+                  className={`w-8 h-8 ${star <= rating ? 'fill-orange-500 text-orange-500' : 'text-slate-300'}`} 
+                />
+              </button>
+            ))}
+          </div>
+          <textarea
+            placeholder="How was the food?"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-orange-500 transition-all min-h-[80px] resize-none"
+          />
         </div>
 
-        <textarea
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Write a comment (optional)..."
-          className="w-full p-4 bg-gray-50 rounded-2xl border-none ring-1 ring-gray-200 focus:ring-2 focus:ring-orange-500 outline-none min-h-[120px] transition-all text-sm"
-        />
-
-        <div className="space-y-3">
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-orange-200 transition-all active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Submitting...</span>
-              </>
-            ) : 'Submit Review'}
-          </button>
-          <button
-            onClick={onSnooze}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-4 rounded-2xl transition-all active:scale-95 cursor-pointer"
-          >
-            Later
-          </button>
+        {/* Rider Review */}
+        <div className="space-y-4 bg-indigo-50/50 dark:bg-indigo-900/10 p-6 rounded-[32px] border border-indigo-100/50 dark:border-indigo-800/30">
+          <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest text-center">Rider & Delivery</p>
+          <div className="flex flex-col items-center">
+             <div className="size-12 bg-indigo-100 dark:bg-indigo-900 rounded-full flex items-center justify-center text-indigo-600 mb-2">
+               <Bike className="w-6 h-6" />
+             </div>
+             <p className="text-xs font-bold">Rate your delivery partner</p>
+          </div>
+          <div className="flex justify-center gap-2">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <button
+                key={star}
+                onClick={() => setRiderRating(star)}
+                className="p-1 transition-transform active:scale-90"
+              >
+                <Star 
+                  className={`w-8 h-8 ${star <= riderRating ? 'fill-indigo-500 text-indigo-500' : 'text-slate-300'}`} 
+                />
+              </button>
+            ))}
+          </div>
+          <textarea
+            placeholder="Speed, politeness, handling..."
+            value={riderComment}
+            onChange={(e) => setRiderComment(e.target.value)}
+            className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500 transition-all min-h-[80px] resize-none"
+          />
         </div>
+      </div>
+
+      <div className="sticky bottom-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md pt-4 pb-6 flex flex-col gap-3">
+        <button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="w-full bg-slate-900 dark:bg-white text-white dark:text-black py-4 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all disabled:opacity-50"
+        >
+          {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <ChevronRight className="w-5 h-5" />}
+          Submit Reviews
+        </button>
+        <button
+          onClick={onSnooze}
+          disabled={submitting}
+          className="w-full text-slate-400 text-xs font-bold uppercase tracking-widest py-2"
+        >
+          Rate Later
+        </button>
       </div>
     </div>
   );

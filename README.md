@@ -1,4 +1,4 @@
-# LocalEats - Tembisa's Legendary Kota Joints
+# LocalEats - Local's Legendary Kota Joints
 
 A comprehensive food discovery and ordering app for local legendary Kota joints, featuring user authentication, profile setup, and a seamless checkout experience.
 
