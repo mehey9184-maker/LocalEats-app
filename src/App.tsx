@@ -33,6 +33,7 @@ import {
   Bell, 
   X, 
   CheckCircle, 
+  Target,
   Info, 
   Utensils, 
   User, 
@@ -1334,9 +1335,16 @@ export default function App() {
 
       if (shopsError) {
         console.error('Shops fetch error:', shopsError);
+        
+        const isNetwork = (shopsError.message && shopsError.message.toLowerCase().includes('failed to fetch')) || 
+                        (shopsError.details && shopsError.details.toLowerCase().includes('failed to fetch')) ||
+                        shopsError.code === 'PGRST301';
+
         // If table doesn't exist, we'll handle it gracefully
         if (shopsError.code === '42P01') {
           setFetchError("We're currently setting up our kitchen. Please check back in a few minutes!");
+        } else if (isNetwork) {
+          setFetchError("Connection problem: We could not reach the server. Please check your internet connection.");
         } else {
           setFetchError("We couldn't load the stores right now. Give it a moment and try again.");
         }
@@ -1414,7 +1422,8 @@ export default function App() {
       localStorage.setItem('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
       setLoadingShops(false);
     } catch (err: any) {
-      const isNetworkError = err.message === 'Failed to fetch' || err.name === 'TypeError' || (err.message && err.message.toLowerCase().includes('network'));
+      const errStr = (err?.message || String(err)).toLowerCase();
+      const isNetworkError = errStr.includes('failed to fetch') || errStr.includes('network error') || errStr.includes('load failed') || err?.name === 'TypeError' || (err.message && err.message.toLowerCase().includes('network'));
       
       // Only log errors that are not network-related, or log them only on final failure
       if (!isNetworkError || retries === 0) {
@@ -1424,7 +1433,7 @@ export default function App() {
       let errorMessage = err.message || 'Failed to connect to the server';
       
       if (isNetworkError) {
-        errorMessage = 'Check Your Connection: We\'re having trouble reaching the store. Please ensure your internet is working.';
+        errorMessage = 'Check Your Connection: We\'re having trouble reaching the store. Please ensure your internet is working or check your ad-blocker.';
       } else if (err.status === 401 || err.status === 403) {
         errorMessage = 'Please Sign In: We need you to log in again to keep your information secure.';
       } else if (err.status === 404) {
@@ -1581,9 +1590,12 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      if (err.message !== 'Failed to fetch') { console.error('Error fetching user profile:', err); }
-      // Specifically catch network errors
-      const isNetworkError = err.message === 'Failed to fetch' || err.name === 'TypeError';
+      const errStr = (err?.message || String(err)).toLowerCase();
+      const isNetworkError = errStr.includes('failed to fetch') || errStr.includes('network error') || errStr.includes('load failed') || err?.name === 'TypeError';
+      
+      if (!isNetworkError) { 
+        console.error('Error fetching user profile:', err); 
+      }
       
       if (isNetworkError && retries > 0) {
         console.log(`Retrying fetchUserProfile... (${retries} retries left)`);
@@ -4840,25 +4852,33 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
   const [deliveryType, setDeliveryType] = useState<'collection' | 'delivery'>('collection');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
-  const [deliveryLocation, setDeliveryLocation] = useState<{ address: string, lat: number, lng: number } | null>(() => {
+  
+  // Refactored state objects for precision and spatial data
+  const [deliveryAddressText, setDeliveryAddressText] = useState<string>(() => {
     const cached = localStorage.getItem('delivery_location');
-    if (cached) return JSON.parse(cached);
+    if (cached) return JSON.parse(cached).address;
+    return userProfile.address || '';
+  });
+  
+  const [deliveryCoordinates, setDeliveryCoordinates] = useState<{ type: "Point", coordinates: [number, number] } | null>(() => {
+    const cached = localStorage.getItem('delivery_location');
+    if (cached) {
+      const data = JSON.parse(cached);
+      return { type: "Point", coordinates: [Number(data.lng.toFixed(6)), Number(data.lat.toFixed(6))] };
+    }
     if (userLocation) {
-      return {
-        address: 'Current Location',
-        lat: userLocation.lat,
-        lng: userLocation.lng
-      };
+      return { type: "Point", coordinates: [Number(userLocation.lng.toFixed(6)), Number(userLocation.lat.toFixed(6))] };
     }
     if (userProfile.latitude && userProfile.longitude) {
-      return { 
-        address: userProfile.address, 
-        lat: userProfile.latitude, 
-        lng: userProfile.longitude 
-      };
+      return { type: "Point", coordinates: [Number(userProfile.longitude.toFixed(6)), Number(userProfile.latitude.toFixed(6))] };
     }
     return null;
   });
+
+  // SPATIAL AUTHORITY: The delivery_coordinates object is the source of truth for rider navigation.
+  // Address text is secondary. We enforce a 6-decimal precision "Visual Pin Confirmation" 
+  // to ensure riders are routed to the exact gate or door, not a street centroid.
+  const [isLocationConfirmed, setIsLocationConfirmed] = useState<boolean>(false);
   const [distance, setDistance] = useState<number | null>(null);
   const [deliveryFee, setDeliveryFee] = useState<number>(5.00);
   
@@ -4868,23 +4888,24 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const ZONE_B_FEE = 10.00;
 
   useEffect(() => {
-    if (!deliveryLocation && userLocation && deliveryType === 'delivery') {
-      setDeliveryLocation({
-        address: 'Current Location (GPS)',
-        lat: userLocation.lat,
-        lng: userLocation.lng
+    if (!deliveryCoordinates && userLocation && deliveryType === 'delivery') {
+      setDeliveryCoordinates({
+        type: "Point",
+        coordinates: [Number(userLocation.lng.toFixed(6)), Number(userLocation.lat.toFixed(6))]
       });
+      setDeliveryAddressText('Current Location (GPS)');
     }
-  }, [userLocation, deliveryType, deliveryLocation]);
+  }, [userLocation, deliveryType, deliveryCoordinates]);
 
   const primaryShopId = cart.length > 0 ? cart[0].shopId : (shops[0]?.id || '');
   const primaryShop = shops.find(s => s.id === primaryShopId) || shops[0];
 
   useEffect(() => {
-    if (deliveryLocation && primaryShop.latitude && primaryShop.longitude) {
+    if (deliveryCoordinates && primaryShop.latitude && primaryShop.longitude) {
+      const [lng, lat] = deliveryCoordinates.coordinates;
       const dist = calculateDistance(
-        deliveryLocation.lat, 
-        deliveryLocation.lng, 
+        lat, 
+        lng, 
         primaryShop.latitude, 
         primaryShop.longitude
       );
@@ -4909,7 +4930,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         setDeliveryFee(ZONE_A_FEE);
       }
     }
-  }, [deliveryLocation, primaryShop]);
+  }, [deliveryCoordinates, primaryShop]);
 
   const subtotal = cart.reduce((sum, item) => {
     const customizationsTotal = (item.selectedCustomizations || []).reduce((acc, c) => acc + Number(c.price), 0);
@@ -4943,8 +4964,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     }
 
     if (deliveryType === 'delivery') {
-      if (!deliveryLocation) {
-        showAlert('Location Needed', 'Please search and confirm your delivery location on the map.');
+      if (!isLocationConfirmed || !deliveryCoordinates) {
+        showAlert('Location Confirmation Required', 'Please drag the pin to your exact door and tap "Confirm Location" on the map.');
         return;
       }
       if (distance !== null && distance > ZONE_B_LIMIT) {
@@ -4976,41 +4997,14 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
       navigator.vibrate([10, 30, 10]); // Premium double-tap feel for confirmation
     }
 
-    let currentLat = deliveryType === 'delivery' ? deliveryLocation?.lat : null;
-    let currentLng = deliveryType === 'delivery' ? deliveryLocation?.lng : null;
+    let currentLat = deliveryType === 'delivery' ? deliveryCoordinates?.coordinates[1] : null;
+    let currentLng = deliveryType === 'delivery' ? deliveryCoordinates?.coordinates[0] : null;
 
-    // Capture precise geolocation only if we don't already have coordinates from the map pin/search
-    if (deliveryType === 'delivery' && (!currentLat || !currentLng)) {
-      if (navigator.geolocation) {
-        try {
-          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              enableHighAccuracy: true,
-              timeout: 10000,
-              maximumAge: 0
-            });
-          });
-          currentLat = position.coords.latitude;
-          currentLng = position.coords.longitude;
-          console.log('Captured precise delivery location:', { lat: currentLat, lng: currentLng });
-        } catch (err) {
-          console.warn('Geolocation capture failed, falling back to manual address coords:', err);
-          // Try userProfile as ultimate fallback
-          currentLat = currentLat || userProfile.latitude || null;
-          currentLng = currentLng || userProfile.longitude || null;
-        }
-      } else {
-        // No geolocation support, try profile
-        currentLat = userProfile.latitude || null;
-        currentLng = userProfile.longitude || null;
-      }
-
-      // If STILL null and delivery, we cannot proceed
-      if (!currentLat || !currentLng) {
-        setLoading(false);
-        setNotification({ message: "Delivery Location Required. Please use the map to pinpoint your exact address.", type: 'error' });
-        return;
-      }
+    // Validation Gate: Ensure precise geolocation captured/confirmed
+    if (deliveryType === 'delivery' && (!currentLat || !currentLng || !isLocationConfirmed)) {
+      setLoading(false);
+      setNotification({ message: "Visual Pin Confirmation Required. Please confirm your exact spot on the map.", type: 'error' });
+      return;
     }
 
     try {
@@ -5025,7 +5019,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             phone: userProfile.phone,
             email: userProfile.email,
             city: userProfile.city,
-            address: deliveryType === 'delivery' ? deliveryLocation?.address : userProfile.address,
+            address: deliveryType === 'delivery' ? deliveryAddressText : userProfile.address,
             country: userProfile.country,
             product_name: item.name,
             product_variant: customizationsString,
@@ -5039,7 +5033,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
             delivery_status: 'none',
             latitude: currentLat,
-            longitude: currentLng
+            longitude: currentLng,
+            delivery_coordinates: deliveryType === 'delivery' ? deliveryCoordinates : null
           };
         });
 
@@ -5050,9 +5045,9 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           console.error('Supabase insert error:', error);
           // Fallback if latitude/longitude columns are missing
           if (error.code === 'PGRST204' || error.message?.includes('column')) {
-             console.warn('Orders table missing columns, retrying without latitude/longitude');
+             console.warn('Orders table missing columns, retrying without spatial data');
              const safeOrderData = orderData.map((d: any) => {
-               const { latitude, longitude, ...rest } = d;
+               const { latitude, longitude, delivery_coordinates, ...rest } = d;
                return rest;
              });
              const { error: retryError } = await supabase.from('orders').insert(safeOrderData).select();
@@ -5286,11 +5281,16 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   )}
                 </div>
                 <AddressSearch 
-                  initialAddress={deliveryLocation?.address}
-                  initialCoords={deliveryLocation ? { lat: deliveryLocation.lat, lng: deliveryLocation.lng } : undefined}
+                  initialAddress={deliveryAddressText}
+                  initialCoords={deliveryCoordinates ? { lat: deliveryCoordinates.coordinates[1], lng: deliveryCoordinates.coordinates[0] } : undefined}
                   shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
                   onSelect={(data) => {
-                    setDeliveryLocation(data);
+                    setDeliveryAddressText(data.address);
+                    setDeliveryCoordinates({ 
+                      type: "Point", 
+                      coordinates: [Number(data.lng.toFixed(6)), Number(data.lat.toFixed(6))] 
+                    });
+                    setIsLocationConfirmed(false);
                     localStorage.setItem('delivery_location', JSON.stringify(data));
                   }} 
                 />
@@ -5309,22 +5309,79 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   </p>
                 </div>
 
-                {deliveryLocation && (
-                  <div className="mt-4">
-                    <p className="text-xs text-slate-500 mb-2 font-bold uppercase tracking-wider">Fine-tune Location (Drag Pin)</p>
-                    <LocationPickerMap 
-                      coords={{ lat: deliveryLocation.lat, lng: deliveryLocation.lng }}
-                      onCoordsChange={(c) => {
-                        const newLoc = { ...deliveryLocation, lat: c.lat, lng: c.lng };
-                        setDeliveryLocation(newLoc);
-                        localStorage.setItem('delivery_location', JSON.stringify(newLoc));
-                      }}
-                      shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
-                    />
+                {deliveryCoordinates && (
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Fine-tune Location (Drag Pin)</p>
+                      {isLocationConfirmed && (
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
+                          <Target className="w-3 h-3 text-green-600" />
+                          <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
+                            {deliveryCoordinates.coordinates[1].toFixed(6)}, {deliveryCoordinates.coordinates[0].toFixed(6)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="relative group">
+                      <LocationPickerMap 
+                        coords={{ lat: deliveryCoordinates.coordinates[1], lng: deliveryCoordinates.coordinates[0] }}
+                        onCoordsChange={(c) => {
+                          setDeliveryCoordinates({
+                            type: "Point",
+                            coordinates: [Number(c.lng.toFixed(6)), Number(c.lat.toFixed(6))]
+                          });
+                          setIsLocationConfirmed(false); // Re-confirm needed after dragging
+                        }}
+                        shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
+                      />
+                      
+                      {!isLocationConfirmed && (
+                        <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse">
+                          <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
+                            PIN UNLOCKED: PLEASE CONFIRM SPOT
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {!isLocationConfirmed ? (
+                      <button
+                        onClick={() => {
+                          setIsLocationConfirmed(true);
+                          toast.success("Spatial Authority Locked!", {
+                            description: " RIDER WILL NAVIGATE TO PIN, NOT ADDRESS."
+                          });
+                          if ("vibrate" in navigator) navigator.vibrate(50);
+                        }}
+                        className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-orange-600/20 flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"
+                      >
+                        <CheckCircle className="w-5 h-5" />
+                        Confirm Exact Delivery Spot
+                      </button>
+                    ) : (
+                      <div className="bg-green-50 dark:bg-green-950/20 border border-green-100 dark:border-green-900/30 p-3 rounded-2xl flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="size-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                            <CheckCircle className="w-5 h-5 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black text-green-800 dark:text-green-400 uppercase tracking-widest leading-none">Location Secured</p>
+                            <p className="text-[8px] font-medium text-green-600 dark:text-green-500 mt-1 uppercase">Spatial Authority Established</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setIsLocationConfirmed(false)}
+                          className="text-[10px] font-black text-slate-400 hover:text-orange-600 uppercase tracking-widest underline decoration-2 underline-offset-4 decoration-orange-500/30"
+                        >
+                          Change Pin
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
                 
-                {deliveryLocation && (
+                {deliveryCoordinates && (
                   <div className="flex flex-col gap-3">
                       <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/30 p-3 rounded-xl flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -5364,7 +5421,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                     </div>
                 )}
 
-                {!deliveryLocation && !userProfile.address && (
+                {!deliveryCoordinates && !userProfile.address && (
                   <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-800/30 flex items-start gap-3">
                     <Info className="w-5 h-5 text-blue-600 shrink-0" />
                     <p className="text-xs text-blue-800 dark:text-blue-400 leading-relaxed font-medium">
@@ -5448,21 +5505,30 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             </div>
           </section>
           
-          <div className="mt-4 mb-10">
+          <div className="mt-4 mb-20">
             <button 
               onClick={handleConfirm}
-              disabled={loading || cart.length === 0}
-              className="w-full bg-primary hover:bg-primary-dark text-white font-bold py-4 rounded-2xl shadow-xl shadow-primary/20 flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:scale-100 cursor-pointer"
+              disabled={loading || cart.length === 0 || (deliveryType === 'delivery' && !isLocationConfirmed)}
+              className={`w-full font-black py-4 rounded-2xl shadow-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:scale-100 cursor-pointer ${
+                loading || (deliveryType === 'delivery' && !isLocationConfirmed)
+                  ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed shadow-none'
+                  : 'bg-orange-600 hover:bg-orange-700 text-white shadow-orange-600/20'
+              }`}
             >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>Place Order</span>
-                  <ArrowRight className="w-5 h-5" />
+                  <ShoppingBag className="w-5 h-5" />
+                  {deliveryType === 'delivery' && !isLocationConfirmed ? 'Confirm Spot on Map' : `Place Order (R ${totalAmount.toFixed(2)})`}
                 </>
               )}
             </button>
+            <p className="text-[10px] text-center text-slate-400 mt-4 font-bold uppercase tracking-widest leading-relaxed px-4">
+              {deliveryType === 'delivery' 
+                ? '📍 Precise Pin required for perfect delivery' 
+                : '⚡ Ready for pickup in ~20 mins'}
+            </p>
           </div>
         </div>
       </div>
