@@ -306,6 +306,7 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [markerPos, setMarkerPos] = useState<{lat: number, lng: number} | null>(initialCoords || null);
+  const [isConfirmed, setIsConfirmed] = useState(true);
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -318,8 +319,50 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const handleConfirm = () => {
+    if (markerPos) {
+      onSelect({ address: query, lat: markerPos.lat, lng: markerPos.lng });
+      setIsConfirmed(true);
+      toast.success("Location confirmed!");
+    }
+  };
+
   const handleSearch = async (val: string) => {
     setQuery(val);
+    
+    // Check if it's a URL
+    if (val.includes('maps.google.com') || val.includes('goo.gl/maps') || val.includes('maps.app.goo.gl')) {
+      const coordsRegex = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
+      const llRegex = /ll=(-?\d+\.\d+),(-?\d+\.\d+)/;
+      const qRegex = /q=(-?\d+\.\d+),(-?\d+\.\d+)/;
+      
+      const match = val.match(coordsRegex) || val.match(llRegex) || val.match(qRegex);
+      
+      if (match) {
+        const lat = parseFloat(match[1]);
+        const lng = parseFloat(match[2]);
+        setMarkerPos({ lat, lng });
+        setQuery("Location from Google Maps Link");
+        setIsConfirmed(false);
+        setShowResults(false);
+        toast("Link detected! Please confirm your location.");
+        return;
+      }
+      
+      // If it's a shortened URL and we don't have coords yet, try to extract text before the URL
+      if (val.includes('http')) {
+        const linkIndex = val.indexOf('http');
+        if (linkIndex > 5) {
+          const textBeforeMatch = val.substring(0, linkIndex).trim();
+          if (textBeforeMatch.length > 3) {
+            setQuery(textBeforeMatch);
+            // Continue with normal search using the text before the link
+            val = textBeforeMatch;
+          }
+        }
+      }
+    }
+
     if (val.length < 3) {
       setResults([]);
       return;
@@ -354,12 +397,13 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
           const address = data.display_name;
           setQuery(address);
           setMarkerPos({ lat: latitude, lng: longitude });
-          onSelect({ address, lat: latitude, lng: longitude });
+          setIsConfirmed(false);
           setShowResults(false);
         } catch (error) {
           console.error('Reverse geocoding error:', error);
           setMarkerPos({ lat: latitude, lng: longitude });
-          onSelect({ address: `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, lat: latitude, lng: longitude });
+          setQuery(`GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+          setIsConfirmed(false);
         } finally {
           setLoading(false);
         }
@@ -367,9 +411,10 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
       (error) => {
         console.error('Geolocation error:', error);
         setLoading(false);
-        alert('Failed to get your current location. Please search manually.');
+        const errorMsg = error.code === error.TIMEOUT ? 'Location request timed out. High accuracy GPS might be slow.' : 'Failed to get your current location.';
+        alert(`${errorMsg} Please search manually or use the map.`);
       },
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
     );
   };
 
@@ -382,6 +427,7 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
           if (marker != null) {
             const newPos = marker.getLatLng();
             setMarkerPos(newPos);
+            setIsConfirmed(false);
             
             // Real-time distance calculation for UX feedback
             if (shopCoords) {
@@ -400,8 +446,6 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
                 });
               }
             }
-            
-            onSelect({ address: query, lat: newPos.lat, lng: newPos.lng });
           }
         },
       }),
@@ -450,14 +494,9 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
   };
 
   const handleSelect = (res: any) => {
-    const data = {
-      address: res.display_name,
-      lat: parseFloat(res.lat),
-      lng: parseFloat(res.lon)
-    };
     setQuery(res.display_name);
-    setMarkerPos({ lat: data.lat, lng: data.lng });
-    onSelect(data);
+    setMarkerPos({ lat: parseFloat(res.lat), lng: parseFloat(res.lon) });
+    setIsConfirmed(false);
     setShowResults(false);
   };
 
@@ -470,7 +509,7 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
           onFocus={() => query.length >= 3 && setShowResults(true)}
-          placeholder="Start typing your street address..."
+          placeholder="Search address or paste Google Maps link..."
           className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl py-4 pl-10 pr-12 text-sm focus:ring-2 focus:ring-orange-500 transition-all outline-none font-bold"
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -513,12 +552,12 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
 
       <div className="h-56 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0 shadow-lg">
         <MapContainer 
-          center={markerPos || { lat: -26.01, lng: 28.21 }} 
+          center={markerPos || DEFAULT_COORDS} 
           zoom={15} 
           style={{ height: '100%', width: '100%' }}
         >
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <RecenterMap coords={markerPos || { lat: -26.01, lng: 28.21 }} />
+          <RecenterMap coords={markerPos || DEFAULT_COORDS} />
           <DraggableMarker />
           <ShopMarker />
         </MapContainer>
@@ -531,6 +570,16 @@ function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: 
       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center animate-pulse">
         📍 Drag the pin to your door for perfect deliveries
       </p>
+
+      {markerPos && !isConfirmed && (
+        <button
+          onClick={handleConfirm}
+          className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-[0.1em] shadow-xl shadow-orange-600/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 animate-in slide-in-from-bottom-4 mt-2"
+        >
+          <CheckCircle className="w-5 h-5 text-white" />
+          Confirm Selected Location
+        </button>
+      )}
     </div>
   );
 }
@@ -626,7 +675,7 @@ function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { l
       </div>
       <div className="absolute top-2 right-12 z-[1000] flex gap-2">
         <a 
-          href={`https://www.openstreetmap.org/edit#map=18/${coords.lat}/${coords.lng}`}
+          href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
           target="_blank"
           rel="noopener noreferrer"
           className="bg-white/90 dark:bg-slate-800/90 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm text-slate-600 dark:text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
@@ -836,7 +885,7 @@ const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen,
           showAlert('Closed', `This store is currently closed. ${status.message}`);
           return;
         }
-        if (!item.is_available) {
+        if (item.is_available === false) {
           showAlert('Out of Stock', 'This item is currently unavailable.');
           return;
         }
@@ -869,10 +918,10 @@ const MenuItemCard = memo(({ item, shop, addToCart, showAlert, setCurrentScreen,
         <div className="flex items-center justify-between mt-auto">
           <p className="font-black text-orange-600 text-sm">{item.displayPrice}</p>
           <div 
-            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700'}`}
+            className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${(!getShopStatus(shop).isOpen || item.is_available === false) ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' : 'bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700'}`}
           >
-            <span>{getShopStatus(shop).isOpen ? 'Buy' : 'Closed'}</span>
-            {getShopStatus(shop).isOpen && <Plus className="w-3 h-3" />}
+            <span>{!getShopStatus(shop).isOpen ? 'Closed' : item.is_available === false ? 'Sold Out' : 'Buy'}</span>
+            {getShopStatus(shop).isOpen && item.is_available !== false && <Plus className="w-3 h-3" />}
           </div>
         </div>
       </div>
@@ -1090,7 +1139,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('userProfile');
     return saved ? JSON.parse(saved) : {
@@ -1124,41 +1173,6 @@ export default function App() {
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-
-  // Connectivity monitoring
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    
-    // Heartbeat check for Supabase connectivity
-    const checkSupabase = async () => {
-      try {
-        const { error } = await supabase.from('shops').select('id').limit(1);
-        if (error) {
-          // If it's a network error specifically, mark as offline
-          if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-            setIsOnline(false);
-          }
-        } else {
-          setIsOnline(true);
-        }
-      } catch (err) {
-        setIsOnline(false);
-      }
-    };
-
-    const interval = setInterval(checkSupabase, 30000); // Check every 30s
-    checkSupabase();
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-      clearInterval(interval);
-    };
-  }, []);
 
   const [shops, setShops] = useState<Shop[]>(() => {
     const saved = localStorage.getItem('cached_shops');
@@ -1217,7 +1231,7 @@ export default function App() {
   });
 
   const [notification, setNotification] = useState<NotificationState>(null);
-  const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(DEFAULT_COORDS);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     const saved = localStorage.getItem('app_notifications');
     return saved ? JSON.parse(saved) : [];
@@ -1258,6 +1272,40 @@ export default function App() {
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
+  // PERSISTENCE SYNCING
+  useEffect(() => {
+    localStorage.setItem('userProfile', JSON.stringify(userProfile));
+  }, [userProfile]);
+
+  useEffect(() => {
+    localStorage.setItem('cart', JSON.stringify(cart));
+  }, [cart]);
+
+  useEffect(() => {
+    localStorage.setItem('favorites', JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    localStorage.setItem('app_notifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  useEffect(() => {
+    localStorage.setItem('dark_mode', String(isDarkMode));
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    if (pendingReview) {
+      localStorage.setItem('pending_review', JSON.stringify(pendingReview));
+    } else {
+      localStorage.removeItem('pending_review');
+    }
+  }, [pendingReview]);
+
   const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
     if ("vibrate" in navigator) {
       navigator.vibrate(pattern);
@@ -1267,6 +1315,17 @@ export default function App() {
   const fetchShopsData = useCallback(async (retries = 3) => {
     setLoadingShops(true);
     setFetchError(null);
+
+    // Load from cache first if offline or to show immediate results
+    if (!navigator.onLine) {
+      const cached = localStorage.getItem('cached_shops');
+      if (cached) {
+        setShops(JSON.parse(cached));
+        setLoadingShops(false);
+        return;
+      }
+    }
+
     try {
       // Fetch all shops
       const { data: shopsData, error: shopsError } = await supabase
@@ -1289,8 +1348,7 @@ export default function App() {
 
       const { data: menuData, error: menuError } = await supabase
         .from('menu_items')
-        .select('*')
-        .eq('is_available', true);
+        .select('*');
 
       if (menuError) {
         console.error('Menu items fetch error:', menuError);
@@ -1328,8 +1386,8 @@ export default function App() {
           opening_time: s.opening_time,
           closing_time: s.closing_time,
           phone: s.phone || "+27 12 345 6789",
-          latitude: s.latitude || deterministicLat,
-          longitude: s.longitude || deterministicLng,
+          latitude: s.latitude || DEFAULT_COORDS.lat,
+          longitude: s.longitude || DEFAULT_COORDS.lng,
           images: (s as any).images || [
             DEFAULT_SHOP_LOGO,
             "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
@@ -1343,7 +1401,10 @@ export default function App() {
               name: m.name,
               price: Number(m.price),
               displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || DEFAULT_MENU_IMAGE
+              image: m.image_url || DEFAULT_MENU_IMAGE,
+              description: m.description || "",
+              is_available: m.is_available !== false,
+              customizations: m.customizations || []
             }))
         };
       }).sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
@@ -1391,6 +1452,47 @@ export default function App() {
     }
   }, []);
 
+  // Connectivity monitoring consolidated
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setNotification({ message: "Back online! Syncing your data... 🍟", type: 'success' });
+      fetchShopsData();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setNotification({ message: "You're offline. Some features may be limited.", type: 'info' });
+    };
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    // Heartbeat check for Supabase connectivity
+    const checkSupabase = async () => {
+      try {
+        const { error } = await supabase.from('shops').select('id').limit(1);
+        if (error) {
+          if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+            setIsOnline(false);
+          }
+        } else {
+          setIsOnline(true);
+        }
+      } catch (err) {
+        setIsOnline(false);
+      }
+    };
+
+    const interval = setInterval(checkSupabase, 30000); // Check every 30s
+    checkSupabase();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(interval);
+    };
+  }, [fetchShopsData]);
+
   const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setNotification({ message: "Geolocation is not supported by your browser", type: 'info' });
@@ -1407,13 +1509,16 @@ export default function App() {
       },
       (error) => {
         console.warn("Error getting location:", error.message);
-        let errorMsg = "Could not get your location.";
+        let errorMsg = "Could not get your location automatically.";
         if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = "Location access denied. Using default location.";
+          errorMsg = "Location access denied. Please set address manually.";
         } else if (error.code === error.TIMEOUT) {
-          errorMsg = "Location request timed out. Using default location.";
+          errorMsg = "Location timed out. Using default (Koffiefontein area). Search manually for better accuracy.";
         }
-        setNotification({ message: errorMsg, type: 'info' });
+        setNotification({ 
+          message: errorMsg, 
+          type: 'info' 
+        });
       },
       { timeout: 15000, enableHighAccuracy: false }
     );
@@ -2360,6 +2465,7 @@ export default function App() {
             shops={shops}
             loadingShops={loadingShops}
             fetchError={fetchError}
+            isOnline={isOnline}
             onSettings={() => { setPreviousScreen(currentScreen); setCurrentScreen('settings'); }} 
             onProfile={() => { setPreviousScreen(currentScreen); setCurrentScreen('profile'); }} 
             onCheckout={() => { setPreviousScreen(currentScreen); setCurrentScreen('checkout'); }} 
@@ -2508,6 +2614,7 @@ export default function App() {
             showAlert={showAlert}
             setCurrentScreen={setCurrentScreen}
             triggerHaptic={triggerHaptic}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'explore' && (
@@ -2526,6 +2633,7 @@ export default function App() {
             toggleFavorite={toggleFavorite}
             showAlert={showAlert}
             triggerHaptic={triggerHaptic}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'store-info' && (
@@ -2536,6 +2644,7 @@ export default function App() {
             }} 
             shop={shops.find(s => s.id === selectedStoreId) || shops[0]} 
             isFavorite={favorites.includes(selectedStoreId || '')}
+            isOnline={isOnline}
             onToggleFavorite={() => {
               if (!session) {
                 setNotification({ 
@@ -2577,6 +2686,7 @@ export default function App() {
             setNotification={setNotification}
             showAlert={showAlert}
             showConfirm={showConfirm}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'admin-orders' && (
@@ -2586,6 +2696,7 @@ export default function App() {
             showAlert={showAlert}
             showConfirm={showConfirm}
             runWithProcessing={runWithProcessing}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'shop-dashboard' && (
@@ -2598,6 +2709,7 @@ export default function App() {
             showPrompt={showPrompt}
             triggerHaptic={triggerHaptic}
             runWithProcessing={runWithProcessing}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'rider-dashboard' && (
@@ -2607,6 +2719,7 @@ export default function App() {
             showConfirm={showConfirm}
             triggerHaptic={triggerHaptic}
             runWithProcessing={runWithProcessing}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'profile' && (
@@ -2640,6 +2753,7 @@ export default function App() {
             }}
             setNotification={setNotification}
             triggerHaptic={triggerHaptic}
+            isOnline={isOnline}
           />
         )}
         {currentScreen === 'contact' && (
@@ -2654,6 +2768,7 @@ export default function App() {
             userProfile={userProfile}
             session={session}
             shops={shops}
+            isOnline={isOnline}
             onBack={() => setCurrentScreen(previousScreen || 'home')} 
             onConfirm={() => setCurrentScreen('order-success')} 
             onIncompleteProfile={() => {
@@ -2681,6 +2796,7 @@ export default function App() {
             userProfile={userProfile} 
             showAlert={showAlert}
             showConfirm={showConfirm}
+            isOnline={isOnline}
           />
         )}
       </motion.div>
@@ -3805,7 +3921,7 @@ const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardP
   );
 };
 
-function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, currentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion, triggerHaptic }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, currentScreen: Screen, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string, triggerHaptic: (pattern?: number | number[]) => void }) {
+function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, currentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion, triggerHaptic, isOnline }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, currentScreen: Screen, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string, triggerHaptic: (pattern?: number | number[]) => void, isOnline: boolean }) {
   const { t } = useTranslation();
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -4471,6 +4587,40 @@ NOTIFY pgrst, 'reload schema';`}
                 </button>
               </div>
             </section>
+        
+        {/* Location Display & Manual Fix */}
+        <section className="mb-8 mt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+          <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-[32px] border border-slate-100 dark:border-slate-800 flex items-center justify-between shadow-sm">
+             <div className="flex items-center gap-3 overflow-hidden">
+               <div className="size-10 bg-orange-100 dark:bg-orange-500/20 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
+                 <MapPin className="w-5 h-5" />
+               </div>
+               <div className="min-w-0 pr-2">
+                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 leading-none mb-1">Delivering To</p>
+                 <p className="text-[13px] font-black text-slate-900 dark:text-white truncate">
+                   {userProfile.address || (userLocation?.lat === -28.68 ? "Koffiefontein (Default)" : "Current Location")}
+                 </p>
+               </div>
+             </div>
+             <div className="flex gap-2 shrink-0">
+               <button 
+                 onClick={onProfile}
+                 className="bg-white dark:bg-slate-900 px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 active:scale-95 transition-all shadow-sm cursor-pointer"
+               >
+                 Set
+               </button>
+               <a 
+                 href="https://www.openstreetmap.org/edit#map=16/-28.68000/24.68000"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 className="size-10 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-orange-600 transition-colors shadow-sm cursor-pointer"
+                 title="OSM Fallback"
+               >
+                 <Map className="w-4 h-4" />
+               </a>
+             </div>
+          </div>
+        </section>
 
             {/* Category Filters */}
             <section className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2">
@@ -4668,7 +4818,7 @@ NOTIFY pgrst, 'reload schema';`}
     );
 }
 
-function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm, userLocation, runWithProcessing, setPreviousScreen, setCurrentScreen }: { 
+function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onIncompleteProfile, cart, setCart, setNotification, showAlert, showConfirm, userLocation, runWithProcessing, setPreviousScreen, setCurrentScreen, isOnline }: { 
   userProfile: UserProfile, 
   session: Session | null, 
   shops: Shop[], 
@@ -4683,7 +4833,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   userLocation: { lat: number, lng: number } | null,
   runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>,
   setPreviousScreen: (screen: Screen | null) => void,
-  setCurrentScreen: (screen: Screen) => void
+  setCurrentScreen: (screen: Screen) => void,
+  isOnline: boolean
 }) {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card_machine'>('cash');
@@ -4767,6 +4918,11 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const totalAmount = deliveryType === 'delivery' ? subtotal + deliveryFee : subtotal;
   
   const handleConfirm = async () => {
+    if (!isOnline) {
+      showAlert('Offline Mode', 'You are currently offline. Please check your internet connection to place your order. 🍗');
+      return;
+    }
+
     if (!session) {
       showConfirm(
         'Welcome to LocalEats!',
@@ -4824,20 +4980,36 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     let currentLng = deliveryType === 'delivery' ? deliveryLocation?.lng : null;
 
     // Capture precise geolocation only if we don't already have coordinates from the map pin/search
-    if (deliveryType === 'delivery' && (!currentLat || !currentLng) && navigator.geolocation) {
-      try {
-        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0
+    if (deliveryType === 'delivery' && (!currentLat || !currentLng)) {
+      if (navigator.geolocation) {
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 0
+            });
           });
-        });
-        currentLat = position.coords.latitude;
-        currentLng = position.coords.longitude;
-        console.log('Captured precise delivery location:', { lat: currentLat, lng: currentLng });
-      } catch (err) {
-        console.warn('Geolocation capture failed, falling back to manual address coords:', err);
+          currentLat = position.coords.latitude;
+          currentLng = position.coords.longitude;
+          console.log('Captured precise delivery location:', { lat: currentLat, lng: currentLng });
+        } catch (err) {
+          console.warn('Geolocation capture failed, falling back to manual address coords:', err);
+          // Try userProfile as ultimate fallback
+          currentLat = currentLat || userProfile.latitude || null;
+          currentLng = currentLng || userProfile.longitude || null;
+        }
+      } else {
+        // No geolocation support, try profile
+        currentLat = userProfile.latitude || null;
+        currentLng = userProfile.longitude || null;
+      }
+
+      // If STILL null and delivery, we cannot proceed
+      if (!currentLat || !currentLng) {
+        setLoading(false);
+        setNotification({ message: "Delivery Location Required. Please use the map to pinpoint your exact address.", type: 'error' });
+        return;
       }
     }
 
@@ -5412,7 +5584,7 @@ function OrderSuccessScreen({ onHome, cart, shops, triggerHaptic }: { onHome: ()
   );
 }
 
-function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert, setCurrentScreen, triggerHaptic }: { 
+function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, onSelectShop, userLocation, showAlert, setCurrentScreen, triggerHaptic, isOnline }: { 
   shops: Shop[], 
   onHome: () => void, 
   onExplore: () => void, 
@@ -5422,7 +5594,8 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
   userLocation: { lat: number, lng: number } | null,
   showAlert: (title: string, message: string) => void,
   setCurrentScreen: (screen: Screen) => void,
-  triggerHaptic: (pattern?: number | number[]) => void
+  triggerHaptic: (pattern?: number | number[]) => void,
+  isOnline: boolean
 }) {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
@@ -5655,6 +5828,14 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
           </section>
         ) : (
           <section className="px-6 h-[500px] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 relative">
+            {!isOnline && (
+              <div className="absolute inset-0 z-10 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+                <WifiOff className="w-12 h-12 text-slate-400 mb-4" />
+                <h3 className="text-lg font-bold">Map Unavailable Offline</h3>
+                <p className="text-sm text-slate-500 max-w-xs">Interactive maps require an active internet connection. Please check your signal.</p>
+                <button onClick={() => setViewMode('list')} className="mt-6 px-6 py-2 bg-primary text-white rounded-xl font-bold">View List Instead</button>
+              </div>
+            )}
             <iframe
               width="100%"
               height="100%"
@@ -5814,12 +5995,12 @@ function AddressPicker({
 
       <div className="h-48 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 relative z-0">
         <MapContainer 
-          center={markerPos || { lat: -26.01, lng: 28.21 }} 
+          center={markerPos || DEFAULT_COORDS} 
           zoom={13} 
           style={{ height: '100%', width: '100%' }}
         >
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <RecenterMap coords={markerPos || { lat: -26.01, lng: 28.21 }} />
+          <RecenterMap coords={markerPos || DEFAULT_COORDS} />
           <DraggableMarker />
         </MapContainer>
         {!markerPos && (
@@ -5835,13 +6016,14 @@ function AddressPicker({
   );
 }
 
-function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification, triggerHaptic }: { 
+function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification, triggerHaptic, isOnline }: { 
   onBack: () => void, 
   onSave: (data: Partial<UserProfile>) => void, 
   userProfile: UserProfile, 
   onLogout: () => void, 
   setNotification: (n: NotificationState) => void,
-  triggerHaptic: (pattern?: number | number[]) => void 
+  triggerHaptic: (pattern?: number | number[]) => void,
+  isOnline: boolean
 }) {
   const [fullName, setFullName] = useState(userProfile.fullName);
   const [phone, setPhone] = useState(formatSAPhone(userProfile.phone));
@@ -5854,6 +6036,10 @@ function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification,
   const { t } = useTranslation();
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!isOnline) {
+      setNotification({ message: 'No internet connection. Cannot upload photo.', type: 'error' });
+      return;
+    }
     try {
       setUploading(true);
       if (!event.target.files || event.target.files.length === 0) {
@@ -5872,6 +6058,10 @@ function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification,
   };
 
   const handleUpdateProfile = () => {
+    if (!isOnline) {
+      setNotification({ message: 'No internet connection. Cannot save profile changes.', type: 'error' });
+      return;
+    }
     if (!fullName.trim()) {
       setNotification({ message: 'Name cannot be empty', type: 'error' });
       return;
@@ -6241,7 +6431,7 @@ const ImageCarousel = ({ images }: { images: string[] }) => {
   );
 };
 
-function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm, setCurrentScreen }: { 
+function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfile, session, onSignUp, addToCart, showAlert, showConfirm, setCurrentScreen, isOnline }: { 
   onBack: () => void, 
   shop: Shop, 
   isFavorite: boolean, 
@@ -6252,7 +6442,8 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string, selectedCustomizations?: {name: string, price: number}[]) => void,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
-  setCurrentScreen: (screen: Screen) => void
+  setCurrentScreen: (screen: Screen) => void,
+  isOnline: boolean
 }) {
   const [activeTab, setActiveTab] = useState<'menu' | 'reviews' | 'info'>('menu');
   const [searchQuery, setSearchQuery] = useState('');
@@ -6299,6 +6490,10 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   );
 
   const handleSubmitReview = async () => {
+    if (!isOnline) {
+      showAlert('Offline Mode', 'Connectivity is down. We cannot post your review right now. Please try again when back online! 🍻');
+      return;
+    }
     if (!newComment.trim() || !userProfile) return;
     setIsSubmittingReview(true);
     try {
@@ -6802,7 +6997,7 @@ function MapRecenter({ center }: { center: [number, number] }) {
   return null;
 }
 
-function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo, favorites, toggleFavorite, showAlert, triggerHaptic }: { 
+function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocation, onStoreInfo, favorites, toggleFavorite, showAlert, triggerHaptic, isOnline }: { 
   shops: Shop[], 
   onHome: () => void, 
   onDiscover: () => void, 
@@ -6812,7 +7007,8 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
   favorites: string[], 
   toggleFavorite: (id: string) => void,
   showAlert: (title: string, message: string) => void,
-  triggerHaptic: (pattern?: number | number[]) => void
+  triggerHaptic: (pattern?: number | number[]) => void,
+  isOnline: boolean
 }) {
   const { t } = useTranslation();
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -6970,7 +7166,22 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       </div>
 
       {/* Map Container */}
-      <div className="flex-grow relative z-10">
+      <div className="flex-grow relative z-10 overflow-hidden">
+        {!isOnline && (
+          <div className="absolute inset-0 z-20 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+             <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-6 shadow-sm border border-slate-200 dark:border-slate-800">
+               <WifiOff className="w-10 h-10" />
+             </div>
+             <h3 className="text-2xl font-black uppercase tracking-tight mb-2">Maps Unavailable</h3>
+             <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
+               Interactive maps require an active data connection to stream tiles. Switch to List view to browse cached shops.
+             </p>
+             <button onClick={onHome} className="mt-8 px-8 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center gap-2 active:scale-95 transition-all">
+                <Home className="w-4 h-4" />
+                Return Home
+             </button>
+          </div>
+        )}
         <MapContainer center={mapCenter} zoom={14} scrollWheelZoom={true} className="h-full w-full">
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -7639,7 +7850,7 @@ function OrderTrackingScreen({ orders, shops, onBack, showAlert }: { orders: Ord
     </div>
   );
 }
-function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, onUpdateProfile, isDarkMode, onToggleDarkMode, setNotification, showAlert, showConfirm }: { 
+function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfile, onOrderHistory, onAdminOrders, onShopDashboard, onRiderDashboard, onContactUs, onUpdateProfile, isDarkMode, onToggleDarkMode, setNotification, showAlert, showConfirm, isOnline }: { 
   userProfile: UserProfile, 
   setUserProfile: Dispatch<SetStateAction<UserProfile>>, 
   onBack: () => void, 
@@ -7655,7 +7866,8 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   onToggleDarkMode: () => void, 
   setNotification: (n: NotificationState) => void,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void,
+  isOnline: boolean
 }) {
   const [uploading, setUploading] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -7663,6 +7875,10 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   const { t, language, setLanguage } = useTranslation();
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    if (!isOnline) {
+      setNotification({ message: 'No internet connection. Cannot upload photo.', type: 'error' });
+      return;
+    }
     try {
       setUploading(true);
       if (!event.target.files || event.target.files.length === 0) {
@@ -8018,12 +8234,13 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   );
 }
 
-function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, runWithProcessing }: { 
+function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, runWithProcessing, isOnline }: { 
   onBack: () => void, 
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void, confirmLabel?: string, cancelLabel?: string) => void,
   triggerHaptic: (pattern?: number | number[]) => void,
-  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>,
+  isOnline: boolean
 }) {
   const [riderProfile, setRiderProfile] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
@@ -8045,6 +8262,21 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
         .select('*')
         .eq('id', session.user.id)
         .maybeSingle();
+
+      if (profileErr) {
+        if (!isOnline) {
+          const cached = localStorage.getItem(`rider_profile_${session.user.id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            setRiderProfile(parsed.profile);
+            setActiveOrder(parsed.order);
+            setOrderShop(parsed.shop);
+          }
+          setLoading(false);
+          return;
+        }
+        throw profileErr;
+      }
 
       if (!profile) {
         setLoading(false);
@@ -8078,6 +8310,16 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
       } else {
         setActiveOrder(null);
         setOrderShop(null);
+      }
+
+      // Add caching after all data is fetched successfully
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (currentSession?.user) {
+        localStorage.setItem(`rider_profile_${currentSession.user.id}`, JSON.stringify({
+          profile,
+          order: activeOrder,
+          shop: orderShop
+        }));
       }
     } catch (err) {
       console.error('Error fetching rider data:', err);
@@ -8217,6 +8459,10 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
 
   const updateDeliveryStatus = async (status: string, deliveryStatus: string) => {
     if (!activeOrder) return;
+    if (!isOnline) {
+      showAlert('Offline Mode', 'Cannot update delivery status while offline. Please check your connection.');
+      return;
+    }
 
     await runWithProcessing(async () => {
       const { error: orderErr } = await supabase
@@ -8543,7 +8789,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
   );
 }
 
-function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic, runWithProcessing }: { 
+function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal, showAlert, showConfirm, showPrompt, triggerHaptic, runWithProcessing, isOnline }: { 
   onBack: () => void, 
   orderAcceptedModal: { isOpen: boolean, productName: string, ownerMessage: string }, 
   setOrderAcceptedModal: Dispatch<SetStateAction<{ isOpen: boolean, productName: string, ownerMessage: string }>>,
@@ -8551,7 +8797,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
   showPrompt: (title: string, message: string, onConfirm: (value: string) => void, defaultValue?: string) => void,
   triggerHaptic: (pattern?: number | number[]) => void,
-  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>,
+  isOnline: boolean
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -8833,6 +9080,14 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           .maybeSingle();
 
         if (shopError) {
+          if (!isOnline) {
+            const cachedShop = localStorage.getItem(`cached_shop_${user.id}`);
+            const cachedOrders = localStorage.getItem(`cached_shop_orders_${user.id}`);
+            if (cachedShop) setShop(JSON.parse(cachedShop));
+            if (cachedOrders) setOrders(JSON.parse(cachedOrders));
+            setLoading(false);
+            return;
+          }
           console.error('Shop fetch error:', shopError);
           throw shopError;
         }
@@ -8867,6 +9122,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
         };
 
         setShop(formattedShop);
+        localStorage.setItem(`cached_shop_${user.id}`, JSON.stringify(formattedShop));
 
         if (shopData) {
           // 2. Initial fetch of orders for this shop
@@ -8878,12 +9134,19 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
             .order('created_at', { ascending: false });
 
           if (ordersError) {
+            if (!isOnline) {
+              const cachedOrders = localStorage.getItem(`cached_shop_orders_${user.id}`);
+              if (cachedOrders) setOrders(JSON.parse(cachedOrders));
+              setLoading(false);
+              return;
+            }
             console.error('Orders fetch error:', ordersError);
             throw ordersError;
           }
           
           console.log(`Found ${ordersData?.length || 0} orders for this shop.`);
           setOrders((ordersData || []) as Order[]);
+          localStorage.setItem(`cached_shop_orders_${user.id}`, JSON.stringify(ordersData || []));
 
           // 3. Subscribe to real-time updates for THIS shop
           channel = supabase
@@ -8930,6 +9193,10 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   }, []);
 
   const updateOrderStatus = async (orderId: string, newStatus: string, reason?: string) => {
+    if (!isOnline) {
+      showAlert('Connection Issue', 'You appear to be offline. Status updates require a connection to notify the customer.');
+      return;
+    }
     if (newStatus === 'cancelled' && !reason) {
       setCancellationModal({ isOpen: true, orderId });
       return;
@@ -9376,14 +9643,14 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                         </div>
                         <div className="flex items-center gap-2">
                           <button 
-                            onClick={() => toggleItemAvailability(item.id, !!item.is_available)}
+                            onClick={() => toggleItemAvailability(item.id, item.is_available !== false)}
                             className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter transition-all active:scale-95 cursor-pointer ${
-                              item.is_available 
+                              item.is_available !== false 
                                 ? 'bg-green-100 text-green-700 hover:bg-green-200' 
                                 : 'bg-red-100 text-red-700 hover:bg-red-200'
                             }`}
                           >
-                            {item.is_available ? 'In Stock' : 'Sold Out'}
+                            {item.is_available !== false ? 'In Stock' : 'Sold Out'}
                           </button>
                           <button 
                             onClick={() => handleEditItem(item)}
@@ -9938,8 +10205,17 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   </div>
                 )}
                 {order.delivery_instructions && (
-                  <div className="mt-2 p-2 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
+                  <div className="mt-2 p-2 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg border border-indigo-100 dark:border-indigo-500/20 flex items-center justify-between">
                     <p className="text-xs text-indigo-700 dark:text-indigo-400 font-medium font-mono text-[10px]">📍 {order.delivery_instructions}</p>
+                    {order.latitude && order.longitude && (
+                      <button 
+                        onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.latitude},${order.longitude}`, '_blank')}
+                        className="p-1.5 bg-white dark:bg-slate-800 rounded-md shadow-sm text-indigo-600 hover:text-indigo-800 transition-colors"
+                        title="View on Map"
+                      >
+                        <Navigation className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -10297,12 +10573,13 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   );
 }
 
-function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProcessing }: { 
+function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProcessing, isOnline }: { 
   shops: Shop[],
   onBack: () => void,
   showAlert: (title: string, message: string) => void,
   showConfirm: (title: string, message: string, onConfirm: () => void) => void,
-  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>
+  runWithProcessing: (action: () => Promise<void>, successCallback?: () => void) => Promise<void>,
+  isOnline: boolean
 }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -10352,11 +10629,19 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
         .select('*')
         .order('created_at', { ascending: false });
       
-      if (error) throw error;
+      if (error) {
+        if (!isOnline) {
+          const cached = localStorage.getItem('admin_cached_orders');
+          if (cached) setOrders(JSON.parse(cached));
+          setLoading(false);
+          return;
+        }
+        throw error;
+      }
       setOrders((data || []) as Order[]);
+      localStorage.setItem('admin_cached_orders', JSON.stringify(data || []));
     } catch (error: any) {
       console.error('Error fetching orders:', error);
-      // We don't have a local error state in AdminOrdersScreen, but we can log it clearly
       if (error.message === 'Failed to fetch') {
         console.error('Network Error: Please check your internet connection.');
       }
@@ -10366,6 +10651,10 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
   };
 
   const updateOrderStatus = async (status: string, orderId: string, message?: string) => {
+    if (!isOnline) {
+      showAlert('Connection Issue', 'You appear to be offline. Status updates require a connection to notify the customer.');
+      return;
+    }
     if ("vibrate" in navigator) {
       navigator.vibrate(10); // Subtle feedback for status change
     }
@@ -10564,9 +10853,22 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
                 
                 {/* Collapsed View: Address */}
                 {expandedOrderId !== order.id && (
-                  <div className="flex items-center gap-2 text-xs text-slate-400 mt-2">
-                    <MapPin className="w-3.5 h-3.5" />
-                    <p className="truncate">{order.address}, {order.city}</p>
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center gap-2 text-xs text-slate-400 min-w-0">
+                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                      <p className="truncate">{order.address}, {order.city}</p>
+                    </div>
+                    {order.latitude && order.longitude && (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.latitude},${order.longitude}`, '_blank');
+                        }}
+                        className="p-1 text-primary hover:bg-primary/10 rounded transition-colors"
+                      >
+                        <Navigation className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -10820,18 +11122,52 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
   );
 }
 
-function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfirm }: { 
+function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfirm, isOnline }: { 
   session: Session | null, 
   onBack: () => void, 
   userProfile: UserProfile,
   showAlert: (title: string, message: string) => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
+  isOnline: boolean
 }) {
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>(() => {
+    const saved = localStorage.getItem('cached_orders');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [loading, setLoading] = useState(true);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('All');
+
+  const fetchOrders = useCallback(async () => {
+    if (!session) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        if (!isOnline) {
+          setLoading(false);
+          return;
+        }
+        throw error;
+      }
+      setOrders(data || []);
+      localStorage.setItem('cached_orders', JSON.stringify(data || []));
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [session, isOnline]);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [fetchOrders]);
 
   const filteredOrders = useMemo(() => {
     if (filterStatus === 'All') return orders;
@@ -10845,6 +11181,10 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
   }, [orders, filterStatus]);
 
   const handleCancelOrder = async (orderId: string) => {
+    if (!isOnline) {
+      showAlert('Offline Mode', 'Cannot cancel order while offline. Please check your connection.');
+      return;
+    }
     showConfirm(
       "Cancel Order",
       "Are you sure you want to cancel this order? Please tell us why.",
