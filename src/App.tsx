@@ -1360,6 +1360,13 @@ export default function App() {
 
       if (menuError) {
         console.error('Menu items fetch error:', menuError);
+        const isNetwork = (menuError.message && menuError.message.toLowerCase().includes('failed to fetch')) || 
+                        (menuError.details && menuError.details.toLowerCase().includes('failed to fetch')) ||
+                        menuError.code === 'PGRST301';
+        
+        if (isNetwork) {
+          throw new Error('FAILED_TO_FETCH_MENU');
+        }
         throw menuError;
       }
 
@@ -1432,7 +1439,7 @@ export default function App() {
       
       let errorMessage = err.message || 'Failed to connect to the server';
       
-      if (isNetworkError) {
+      if (isNetworkError || err.message === 'FAILED_TO_FETCH_MENU') {
         errorMessage = 'Check Your Connection: We\'re having trouble reaching the store. Please ensure your internet is working or check your ad-blocker.';
       } else if (err.status === 401 || err.status === 403) {
         errorMessage = 'Please Sign In: We need you to log in again to keep your information secure.';

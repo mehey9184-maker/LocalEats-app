@@ -1,0 +1,145 @@
+// ==========================================
+// SPATIAL AUTHORITY & VISUAL PIN CONFIRMATION
+// ==========================================
+
+/**
+ * COMPONENT: LocationPickerMap
+ * This component handles the visual fine-tuning of the delivery location.
+ * It enforces "Spatial Authority" by ensuring the latitude and longitude
+ * are captured with 6-decimal precision through a manual pin drop.
+ */
+function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { 
+  coords: { lat: number, lng: number }, 
+  onCoordsChange: (c: { lat: number, lng: number }) => void, 
+  shopCoords?: { lat: number, lng: number } 
+}) {
+  function DraggableMarker() {
+    const markerRef = useRef<any>(null);
+    const eventHandlers = useCallback(() => ({
+      dragend() {
+        const marker = markerRef.current;
+        if (marker != null) {
+          const newPos = marker.getLatLng();
+          onCoordsChange({ lat: newPos.lat, lng: newPos.lng });
+        }
+      },
+    }), [onCoordsChange]);
+
+    return (
+      <Marker
+        draggable={true}
+        eventHandlers={eventHandlers()}
+        position={coords}
+        ref={markerRef}
+      >
+        <Popup minWidth={90}>
+          <div className="text-center">
+            <p className="font-bold text-xs uppercase tracking-tight">Delivery Point</p>
+            <p className="text-[10px] text-slate-500 font-medium">Drag to adjust precisely to your gate/door</p>
+          </div>
+        </Popup>
+      </Marker>
+    );
+  }
+
+  function ChangeView({ center, shopCenter }: { center: any, shopCenter?: any }) {
+    const map = useMap();
+    useEffect(() => {
+      if (shopCenter) {
+        const bounds = L.latLngBounds([center, shopCenter]);
+        map.fitBounds(bounds, { padding: [30, 30] });
+      } else {
+        map.setView(center, 12);
+        map.panTo(center);
+      }
+    }, [center, shopCenter, map]);
+    return null;
+  }
+
+  return (
+    <div className="h-48 w-full rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 relative z-10">
+      <MapContainer center={coords} zoom={16} scrollWheelZoom={false} className="h-full w-full">
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        <DraggableMarker />
+        {shopCoords && (
+          <Marker position={shopCoords} icon={shopIcon}>
+            <Popup>Store Location</Popup>
+          </Marker>
+        )}
+        <ChangeView center={coords} shopCenter={shopCoords} />
+      </MapContainer>
+    </div>
+  );
+}
+
+/**
+ * LOGIC: Checkout State & Validation
+ * Enforcing that a user MUST confirm the pin location before placing an order.
+ */
+
+// 1. STATE DEFINITION
+const [deliveryCoordinates, setDeliveryCoordinates] = useState<{ type: "Point", coordinates: [number, number] } | null>(null);
+const [isLocationConfirmed, setIsLocationConfirmed] = useState<boolean>(false);
+
+// 2. RENDERING THE UI
+{deliveryCoordinates && (
+  <div className="mt-4 space-y-3">
+    <div className="flex items-center justify-between">
+      <p className="text-xs text-slate-500 font-bold uppercase tracking-wider">Fine-tune Location (Drag Pin)</p>
+      {isLocationConfirmed && (
+        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 rounded-md">
+          <Target className="w-3 h-3 text-green-600" />
+          <span className="text-[9px] font-mono font-bold text-green-600">
+            {deliveryCoordinates.coordinates[1].toFixed(6)}, {deliveryCoordinates.coordinates[0].toFixed(6)}
+          </span>
+        </div>
+      )}
+    </div>
+    
+    <div className="relative">
+      <LocationPickerMap 
+        coords={{ lat: deliveryCoordinates.coordinates[1], lng: deliveryCoordinates.coordinates[0] }}
+        onCoordsChange={(c) => {
+          setDeliveryCoordinates({ type: "Point", coordinates: [c.lng, c.lat] });
+          setIsLocationConfirmed(false); // Reset confirmation on drag
+        }}
+      />
+      
+      {!isLocationConfirmed && (
+        <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse">
+          <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
+            PIN UNLOCKED: PLEASE CONFIRM SPOT
+          </p>
+        </div>
+      )}
+    </div>
+    
+    {!isLocationConfirmed ? (
+      <button
+        onClick={() => setIsLocationConfirmed(true)}
+        className="w-full py-4 bg-orange-600 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg"
+      >
+        Confirm Exact Delivery Spot
+      </button>
+    ) : (
+      <div className="bg-green-50 border border-green-100 p-3 rounded-2xl flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CheckCircle className="w-5 h-5 text-green-600" />
+          <p className="text-[10px] font-black text-green-800 uppercase">Location Secured</p>
+        </div>
+        <button onClick={() => setIsLocationConfirmed(false)} className="text-[10px] font-black text-slate-400 uppercase underline">Change Pin</button>
+      </div>
+    )}
+  </div>
+)}
+
+// 3. FINAL VALIDATION (Inside handleConfirm)
+if (deliveryType === 'delivery') {
+  if (!isLocationConfirmed || !deliveryCoordinates) {
+    showAlert('Location Confirmation Required', 'Please drag the pin to your exact door and tap "Confirm Location" on the map.');
+    return;
+  }
+}
