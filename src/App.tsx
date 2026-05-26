@@ -134,657 +134,12 @@ import { Session } from '@supabase/supabase-js';
 import { LocalEatsLogo } from './components/LocalEatsLogo';
 import jsPDF from 'jspdf';
 import { useTranslation } from './contexts/LanguageContext';
+import { Screen, AppNotification, StatusHistoryItem, Order, PendingReview, MenuItem, CartItem, Review, Shop } from './types';
+import { hashString, handleSupabaseError, calculateDistance, getShopStatus, SUPPORTED_CITIES, APP_VERSION, DEFAULT_COORDS, DEFAULT_MENU_IMAGE, DEFAULT_SHOP_LOGO } from './utils';
 
-type Screen = 'splash' | 'signup' | 'login' | 'verify' | 'setup-pin' | 'setup-password' | 'success' | 'complete-profile' | 'login-success' | 'home' | 'settings' | 'profile' | 'checkout' | 'order-success' | 'discover' | 'explore' | 'store-info' | 'admin-orders' | 'order-history' | 'shop-dashboard' | 'rider-dashboard' | 'review' | 'order-tracking' | 'notifications' | 'contact';
-
-type AppNotification = {
-  id: string;
-  title: string;
-  message: string;
-  type: 'order' | 'promo' | 'system' | 'follow';
-  timestamp: number;
-  read: boolean;
-  orderId?: string;
-  data?: any;
-};
-
-type StatusHistoryItem = {
-  status: string;
-  timestamp: string;
-};
-
-const SUPPORTED_CITIES = ['Tembisa', 'Kaalfontein', 'Ivory Park'];
-
-type Order = {
-  id: string;
-  user_id: string;
-  shop_id: string;
-  customer_name: string;
-  phone: string;
-  email: string;
-  city: string;
-  address: string;
-  country: string;
-  product_name: string;
-  product_variant: string;
-  quantity: number;
-  price: number;
-  notes: string;
-  delivery_instructions?: string;
-  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
-  is_delivery?: boolean;
-  delivery_fee?: number;
-  rider_id?: string;
-  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled' | 'delivery' | 'collection' | 'ready' | 'pending' | 'preparing' | 'confirmed' | 'completed';
-  created_at: string;
-  status_history?: StatusHistoryItem[];
-  owner_message?: string;
-  cancellation_reason?: string;
-  payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine';
-  special_instructions?: string;
-  customizations?: { name: string, price: number }[];
-  latitude?: number;
-  longitude?: number;
-};
-
-type PendingReview = {
-  orderId: string;
-  shopId: string;
-  productName: string;
-  snoozeCount: number;
-  nextReminder?: number;
-};
-
-type MenuItem = {
-  id: string;
-  name: string;
-  price: number;
-  displayPrice: string;
-  image: string;
-  image_url?: string;
-  description?: string;
-  customizations?: { name: string, price: number }[];
-  is_available?: boolean;
-};
-
-type CartItem = {
-  id: string;
-  shopId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  image: string;
-  specialInstructions?: string;
-  selectedCustomizations?: { name: string, price: number }[];
-};
-
-type Review = {
-  id: string;
-  shop_id: string;
-  userName: string;
-  rating: number;
-  comment: string;
-  createdAt: string;
-};
-
-type Shop = {
-  id: string;
-  name: string;
-  logo: string;
-  rating: number;
-  description: string;
-  address: string;
-  menu: MenuItem[];
-  category: string;
-  cuisine_type?: string;
-  distance?: number;
-  owner_id?: string;
-  opening_time?: string;
-  closing_time?: string;
-  latitude?: number;
-  longitude?: number;
-  delivery_eta?: string;
-  is_special?: boolean;
-  phone?: string;
-  reviewCount?: number;
-  prepTime?: string;
-  isOpen?: boolean;
-  images?: string[];
-};
-
-const APP_VERSION = "2.4.1 (1024)";
-const DEFAULT_COORDS = { lat: -25.9964, lng: 28.2268 };
-
-const hashString = (str: string) => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return Math.abs(hash);
-};
-
-const handleSupabaseError = (error: any, action: string, showAlert: (title: string, msg: string) => void) => {
-  console.error(`Supabase error during ${action}:`, error);
-  if (error?.code === 'PGRST204' || error?.code === 'PGRST200') {
-    showAlert('Updating Store Info', 'We are currently updating our store lists to bring you the latest menus. Please try again in a few seconds.');
-  } else if (error?.message === 'Failed to fetch' || error?.message?.includes('Network Error')) {
-    showAlert('Connection Issue', 'We are having trouble connecting to the server. Please check your internet connection and try again.');
-  } else if (error?.code === '23505') {
-    showAlert('Already Exists', 'This information is already saved in your profile.');
-  } else if (error?.code === '42501' || error?.message?.includes('permission denied')) {
-    showAlert('Access Needed', 'It looks like you do not have permission for this action. Please sign in again.');
-  } else if (error?.code === 'PGRST301') {
-    showAlert('Session Timed Out', 'Your session has expired for security. Please refresh the page to continue.');
-  } else {
-    showAlert('Something Went Wrong', `We encountered an issue while trying to ${action}. Please try again later.`);
-  }
-  return error;
-};
-
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; // Radius of the earth in km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; // Distance in km
-  return d;
-};
-
-function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: { 
-  onSelect: (data: { address: string, lat: number, lng: number }) => void, 
-  initialAddress?: string,
-  initialCoords?: { lat: number, lng: number },
-  shopCoords?: { lat: number, lng: number }
-}) {
-  const [query, setQuery] = useState(initialAddress || '');
-  const [results, setResults] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [markerPos, setMarkerPos] = useState<{lat: number, lng: number} | null>(initialCoords || null);
-  const [isConfirmed, setIsConfirmed] = useState(true);
-  const searchRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
-        setShowResults(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleConfirm = () => {
-    if (markerPos) {
-      onSelect({ address: query, lat: markerPos.lat, lng: markerPos.lng });
-      setIsConfirmed(true);
-      toast.success("Location confirmed!");
-    }
-  };
-
-  const handleSearch = async (val: string) => {
-    setQuery(val);
-    
-    // Check if it's a URL
-    if (val.includes('maps.google.com') || val.includes('goo.gl/maps') || val.includes('maps.app.goo.gl')) {
-      const coordsRegex = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
-      const llRegex = /ll=(-?\d+\.\d+),(-?\d+\.\d+)/;
-      const qRegex = /q=(-?\d+\.\d+),(-?\d+\.\d+)/;
-      
-      const match = val.match(coordsRegex) || val.match(llRegex) || val.match(qRegex);
-      
-      if (match) {
-        const lat = parseFloat(match[1]);
-        const lng = parseFloat(match[2]);
-        setMarkerPos({ lat, lng });
-        setQuery("Location from Google Maps Link");
-        setIsConfirmed(false);
-        setShowResults(false);
-        toast("Link detected! Please confirm your location.");
-        return;
-      }
-      
-      // If it's a shortened URL and we don't have coords yet, try to extract text before the URL
-      if (val.includes('http')) {
-        const linkIndex = val.indexOf('http');
-        if (linkIndex > 5) {
-          const textBeforeMatch = val.substring(0, linkIndex).trim();
-          if (textBeforeMatch.length > 3) {
-            setQuery(textBeforeMatch);
-            // Continue with normal search using the text before the link
-            val = textBeforeMatch;
-          }
-        }
-      }
-    }
-
-    if (val.length < 3) {
-      setResults([]);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' South Africa')}&limit=5`);
-      const data = await response.json();
-      setResults(data);
-      setShowResults(true);
-    } catch (error) {
-      console.error('Nominatim error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser');
-      return;
-    }
-
-    setLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
-          const data = await response.json();
-          const address = data.display_name;
-          setQuery(address);
-          setMarkerPos({ lat: latitude, lng: longitude });
-          setIsConfirmed(false);
-          setShowResults(false);
-        } catch (error) {
-          console.error('Reverse geocoding error:', error);
-          setMarkerPos({ lat: latitude, lng: longitude });
-          setQuery(`GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
-          setIsConfirmed(false);
-        } finally {
-          setLoading(false);
-        }
-      },
-      (error) => {
-        console.error('Geolocation error:', error);
-        setLoading(false);
-        const errorMsg = error.code === error.TIMEOUT ? 'Location request timed out. High accuracy GPS might be slow.' : 'Failed to get your current location.';
-        alert(`${errorMsg} Please search manually or use the map.`);
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
-    );
-  };
-
-  const DraggableMarker = () => {
-    const markerRef = useRef<any>(null);
-    const eventHandlers = useMemo(
-      () => ({
-        dragend() {
-          const marker = markerRef.current;
-          if (marker != null) {
-            const newPos = marker.getLatLng();
-            setMarkerPos(newPos);
-            setIsConfirmed(false);
-            
-            // Real-time distance calculation for UX feedback
-            if (shopCoords) {
-              const dist = calculateDistance(shopCoords.lat, shopCoords.lng, newPos.lat, newPos.lng);
-              if (dist > 6) {
-                toast.error("Outside Delivery Range", {
-                  description: `Store is ${dist.toFixed(1)}km away. Max range is 6km.`,
-                  id: 'distance-warning',
-                  duration: 4000
-                });
-              } else if (dist > 3) {
-                toast.warning("Entering +R5 Delivery Zone", {
-                  description: "A distance surcharge applies beyond 3km.",
-                  id: 'distance-warning',
-                  duration: 3000
-                });
-              }
-            }
-          }
-        },
-      }),
-      [query],
-    );
-
-    return markerPos ? (
-      <Marker
-        draggable={true}
-        eventHandlers={eventHandlers}
-        position={markerPos}
-        ref={markerRef}
-      >
-        <Popup minWidth={90}>
-          <span>Delivery point</span>
-        </Popup>
-      </Marker>
-    ) : null;
-  };
-
-  const ShopMarker = () => {
-    if (!shopCoords) return null;
-    return (
-      <>
-        <Marker position={shopCoords} icon={L.divIcon({
-          className: 'custom-shop-icon',
-          html: `<div class="bg-primary p-1.5 rounded-full border-2 border-white shadow-lg flex items-center justify-center relative"><div class="absolute inset-0 bg-primary rounded-full animate-ping opacity-25"></div><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 28]
-        })}>
-          <Popup>Store Location</Popup>
-        </Marker>
-        <Circle 
-          center={shopCoords}
-          radius={6000} // 6km radius
-          pathOptions={{
-            color: '#f97316',
-            dashArray: '10, 10',
-            fillColor: '#fb923c',
-            fillOpacity: 0.1,
-            weight: 2
-          }}
-        />
-      </>
-    );
-  };
-
-  const handleSelect = (res: any) => {
-    setQuery(res.display_name);
-    setMarkerPos({ lat: parseFloat(res.lat), lng: parseFloat(res.lon) });
-    setIsConfirmed(false);
-    setShowResults(false);
-  };
-
-  return (
-    <div className="relative w-full space-y-4" ref={searchRef}>
-      <div className="relative">
-        <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => handleSearch(e.target.value)}
-          onFocus={() => query.length >= 3 && setShowResults(true)}
-          placeholder="Search address or paste Google Maps link..."
-          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl py-4 pl-10 pr-12 text-sm focus:ring-2 focus:ring-orange-500 transition-all outline-none font-bold"
-        />
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-          {loading ? (
-            <Loader2 className="w-5 h-5 animate-spin text-orange-600 mr-1" />
-          ) : (
-            <button
-              onClick={handleCurrentLocation}
-              type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 hover:bg-orange-100 dark:bg-orange-500/10 dark:hover:bg-orange-500/20 rounded-lg text-orange-600 transition-colors cursor-pointer mr-1"
-              title="Use current location"
-            >
-              <LocateFixed className="w-4 h-4" />
-              <span className="text-xs font-bold whitespace-nowrap">Locate Me</span>
-            </button>
-          )}
-        </div>
-
-        {showResults && results.length > 0 && (
-          <div className="absolute z-[100] top-full mt-2 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-            {results.map((res, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => handleSelect(res)}
-                className="w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100 dark:border-slate-800 last:border-0 transition-colors flex items-start gap-3 cursor-pointer"
-              >
-                <div className="bg-orange-100 dark:bg-orange-900/30 p-2 rounded-lg shrink-0">
-                  <MapPin className="w-4 h-4 text-orange-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight mb-1">{res.display_name.split(',')[0]}</p>
-                  <p className="text-[10px] text-slate-500 line-clamp-2 uppercase tracking-widest">{res.display_name}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="h-56 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0 shadow-lg">
-        <MapContainer 
-          center={markerPos || DEFAULT_COORDS} 
-          zoom={15} 
-          style={{ height: '100%', width: '100%' }}
-        >
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <RecenterMap coords={markerPos || DEFAULT_COORDS} />
-          <DraggableMarker />
-          <ShopMarker />
-        </MapContainer>
-        {!markerPos && (
-          <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-950/20 backdrop-blur-[2px] flex items-center justify-center p-4 text-center">
-            <p className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-widest leading-relaxed max-w-[180px]">Select your address to confirm delivery point on map</p>
-          </div>
-        )}
-      </div>
-      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center animate-pulse">
-        📍 Drag the pin to your door for perfect deliveries
-      </p>
-
-      {markerPos && !isConfirmed && (
-        <button
-          onClick={handleConfirm}
-          className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-[0.1em] shadow-xl shadow-orange-600/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 animate-in slide-in-from-bottom-4 mt-2"
-        >
-          <CheckCircle className="w-5 h-5 text-white" />
-          Confirm Selected Location
-        </button>
-      )}
-    </div>
-  );
-}
-
-function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { lat: number, lng: number }, onCoordsChange: (c: { lat: number, lng: number }) => void, shopCoords?: { lat: number, lng: number } }) {
-  function DraggableMarker() {
-    const markerRef = useRef<any>(null);
-    const eventHandlers = useCallback(() => ({
-      dragend() {
-        const marker = markerRef.current;
-        if (marker != null) {
-          const newPos = marker.getLatLng();
-          onCoordsChange({ lat: newPos.lat, lng: newPos.lng });
-        }
-      },
-    }), [onCoordsChange]);
-
-    return (
-      <Marker
-        draggable={true}
-        eventHandlers={eventHandlers()}
-        position={coords}
-        ref={markerRef}
-      >
-        <Popup minWidth={90}>
-          <div className="text-center">
-            <p className="font-bold text-xs">Delivery Point</p>
-            <p className="text-[10px] text-slate-500">Drag to adjust precisely</p>
-          </div>
-        </Popup>
-      </Marker>
-    );
-  }
-
-  function ChangeView({ center, shopCenter }: { center: any, shopCenter?: any }) {
-    const map = useMap();
-    
-    useEffect(() => {
-      if (shopCenter) {
-        // Fit bounds to show both markers
-        const bounds = L.latLngBounds([center, shopCenter]);
-        map.fitBounds(bounds, { padding: [30, 30] });
-      } else {
-        map.setView(center, 12); // Slightly zoomed out to see context
-        map.panTo(center);
-      }
-    }, [center, shopCenter, map]);
-    
-    return null;
-  }
-
-  const shopIcon = L.divIcon({
-    html: `<div class="bg-orange-600 p-2 rounded-full border-2 border-white shadow-lg text-white flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
-    className: '',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-  });
-
-  return (
-    <div className="h-48 w-full rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 relative z-10">
-      <MapContainer center={coords} zoom={16} scrollWheelZoom={false} className="h-full w-full">
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <DraggableMarker />
-        
-        {shopCoords && (
-          <>
-            <Marker position={shopCoords} icon={shopIcon}>
-              <Popup>
-                <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
-              </Popup>
-            </Marker>
-            <Circle 
-              center={shopCoords}
-              radius={6000}
-              pathOptions={{
-                color: '#f97316',
-                dashArray: '10, 10',
-                fillColor: '#fb923c',
-                fillOpacity: 0.1,
-                weight: 2
-              }}
-            />
-          </>
-        )}
-        
-        <ChangeView center={coords} shopCenter={shopCoords} />
-      </MapContainer>
-      <div className="absolute bottom-2 left-2 right-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[10px] text-center z-[1000] pointer-events-none font-medium">
-        Drag pin to your exact delivery point
-      </div>
-      <div className="absolute top-2 right-12 z-[1000] flex gap-2">
-        <a 
-          href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="bg-white/90 dark:bg-slate-800/90 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm text-slate-600 dark:text-slate-400 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
-          title="Open in OpenStreetMap (Fallback)"
-        >
-          <ExternalLink className="w-3 h-3" />
-          <span className="text-[10px] font-bold uppercase tracking-widest leading-none">OSM Fallback</span>
-        </a>
-      </div>
-    </div>
-  );
-}
-
-function getShopStatus(shop: Shop): { isOpen: boolean, message: string, warning?: boolean, nextOpeningTime?: string } {
-  if (!shop.opening_time || !shop.closing_time) return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
-  
-  const now = new Date();
-  const currentTime = now.getHours() * 60 + now.getMinutes();
-  
-  const [openHours, openMinutes] = shop.opening_time.split(':').map(Number);
-  const [closeHours, closeMinutes] = shop.closing_time.split(':').map(Number);
-  
-  const openTime = openHours * 60 + openMinutes;
-  const closeTime = closeHours * 60 + closeMinutes;
-  
-  let isOpen = false;
-  if (closeTime > openTime) {
-    isOpen = currentTime >= openTime && currentTime <= closeTime;
-  } else {
-    isOpen = currentTime >= openTime || currentTime <= closeTime;
-  }
-
-  if (!isOpen) return { isOpen: false, message: 'Closed', nextOpeningTime: shop.opening_time };
-
-  // Calculate time until closing
-  let minutesUntilClose = 0;
-  if (closeTime > currentTime) {
-    minutesUntilClose = closeTime - currentTime;
-  } else if (closeTime < openTime) {
-    // Overnight case
-    minutesUntilClose = (1440 - currentTime) + closeTime;
-  }
-
-  if (minutesUntilClose > 0 && minutesUntilClose <= 30) {
-    return { isOpen: true, message: `Closing soon (${minutesUntilClose}m)`, warning: true, nextOpeningTime: undefined };
-  }
-
-  return { isOpen: true, message: 'Open Now', nextOpeningTime: undefined };
-}
-
-const BlurUpImage = ({ src, alt, className, blurHash = "https://picsum.photos/seed/blur/10/10" }: { src: string, alt: string, className?: string, blurHash?: string }) => {
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [error, setError] = useState(false);
-  
-  // Proxy through weserv for WebP conversion and optimization
-  const webpSrc = src.startsWith('data:') || error
-    ? src 
-    : `https://images.weserv.nl/?url=${encodeURIComponent(src)}&output=webp&q=80&w=800`;
-  
-  return (
-    <div className={`relative overflow-hidden ${className} bg-slate-100 dark:bg-slate-800`}>
-      {!isLoaded && (
-        <>
-          <img 
-            src={blurHash} 
-            alt={alt} 
-            className={`w-full h-full object-cover transition-opacity duration-500 opacity-100 blur-lg scale-110`}
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
-        </>
-      )}
-      <img 
-        src={webpSrc} 
-        alt={alt} 
-        onLoad={() => setIsLoaded(true)}
-        onError={() => {
-          if (!error) setError(true);
-        }}
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-      />
-    </div>
-  );
-};
-
-const TrustBadge = memo(({ shop }: { shop: Shop }) => {
-  const status = getShopStatus(shop);
-  const eta = shop.delivery_eta || "25-35 min";
-  
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-2">
-      <div className={`px-2 py-0.5 rounded-md flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider ${status.isOpen ? (status.warning ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600') : 'bg-gray-100 text-gray-500'}`}>
-        <div className={`w-1 h-1 rounded-full ${status.isOpen ? (status.warning ? 'bg-orange-500 animate-pulse' : 'bg-green-500') : 'bg-gray-400'}`}></div>
-        {status.message}
-      </div>
-      <div className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider">
-        <Clock className="w-2.5 h-2.5" />
-        {eta}
-      </div>
-      <div className="px-2 py-0.5 rounded-md bg-yellow-50 text-yellow-700 flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider">
-        <Star className="w-2.5 h-2.5 fill-yellow-500 text-yellow-500" />
-        {shop.rating} Verified
-      </div>
-    </div>
-  );
-});
+import { AddressSearch, LocationPickerMap } from './components/MapComponents';
+import { BlurUpImage } from './components/BlurUpImage';
+import { TrustBadge } from './components/TrustBadge';
 
 const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: { 
   shop: Shop, 
@@ -966,9 +321,6 @@ const validateSAPhone = (phone: string) => {
 };
 
 const DEFAULT_AVATAR_URL = "https://ui-avatars.com/api/?name=User&background=orange&color=fff&size=64&format=webp";
-const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
-const DEFAULT_SHOP_LOGO = "/logo.png"; // Using the uploaded logo as default
-
 async function searchAddress(query: string) {
   if (!query || query.length < 3) return [];
   try {
@@ -2353,20 +1705,22 @@ export default function App() {
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
-              className="bg-slate-900 dark:bg-red-600 text-white text-[10px] py-2 px-4 text-center font-bold flex items-center justify-center gap-2 z-[250] sticky top-0 shadow-lg border-b border-white/10"
+              className="bg-red-650 dark:bg-red-700 text-white text-xs py-3 px-4 text-center font-black flex items-center justify-center gap-2 z-[250] sticky top-0 shadow-lg border-b border-red-500"
             >
               <div className="flex items-center gap-2">
-                <WifiOff className="w-3.5 h-3.5 animate-pulse" />
-                <span className="uppercase tracking-widest">Connective Problem Detected</span>
+                <WifiOff className="w-4 h-4 animate-bounce" />
+                <span className="uppercase tracking-wider">You are offline. Intermittent connection or poor signal.</span>
               </div>
               <button 
-                onClick={() => {
+                onClick={async () => {
                   triggerHaptic();
-                  fetchShopsData();
+                  toast.info("Retrying connection to store servers...");
+                  await fetchShopsData();
                 }} 
-                className="ml-3 bg-white/20 px-3 py-1 rounded-full text-[9px] hover:bg-white/30 transition-colors uppercase font-black"
+                className="ml-4 bg-white text-red-600 hover:bg-slate-50 px-3 py-1 bg-white text-red-600 font-extrabold text-[10px] rounded-full transition-all active:scale-95 shadow-sm flex items-center gap-1 cursor-pointer"
               >
-                Retry Reconnect
+                <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                Retry Connection
               </button>
             </motion.div>
           )}
@@ -2899,7 +2253,7 @@ function SplashScreen({ onNext, onLogin, onGuestBrowse, session, userProfile }: 
   };
 
   return (
-    <main className="relative min-h-screen w-full flex flex-col overflow-hidden font-sans antialiased text-brand-dark bg-white dark:bg-[#221610] dark:text-white">
+    <main className="relative min-h-screen w-full flex flex-col overflow-hidden font-sans antialiased text-brand-dark bg-white dark:bg-slate-950 dark:text-white">
       {/* Background Image Section */}
       <section className="absolute inset-0 z-0">
         <img
@@ -2937,19 +2291,23 @@ function SplashScreen({ onNext, onLogin, onGuestBrowse, session, userProfile }: 
 
           {/* Action Row */}
           <div className="flex flex-col sm:flex-row gap-4 w-full">
-            <button 
+            <motion.button 
+              whileHover={{ y: -2, scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
               onClick={handleGetStarted}
-              className="flex-1 bg-brand-orange text-white py-4 px-8 rounded-2xl font-bold text-lg hover:bg-orange-600 transition-all shadow-xl shadow-orange-950/20 active:scale-[0.98] flex items-center justify-center space-x-2 cursor-pointer"
+              className="flex-1 bg-brand-orange text-white py-4 px-8 rounded-2xl font-bold text-lg hover:bg-orange-600 transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
               <span>Get Started</span>
               <ArrowRight className="h-5 w-5" />
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.96 }}
               onClick={() => { playClick(); onGuestBrowse(); }}
-              className="px-8 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-2xl font-bold transition-all active:scale-[0.95] cursor-pointer"
+              className="px-8 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-2xl font-bold transition-all cursor-pointer"
             >
               Explore as Guest
-            </button>
+            </motion.button>
           </div>
 
           {/* Small Footer */}
@@ -2992,7 +2350,7 @@ function SignUpScreen({ onNext, onLogin, setNotification }: { onNext: (data: Sig
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
         <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
           <div className="flex items-center justify-center">
@@ -3142,7 +2500,7 @@ function VerifyScreen({ phone, onNext, onBack }: { phone: string, onNext: () => 
   };
 
   return (
-    <div className="font-display bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+    <div className="font-display bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
         <header className="flex items-center p-4">
           <button onClick={onBack} className="size-10 flex items-center justify-center rounded-full hover:bg-primary/10 transition-colors cursor-pointer">
@@ -3287,9 +2645,9 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification, runW
   };
 
   return (
-    <div className="font-display bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+    <div className="font-display bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
-        <header className="flex items-center p-4 bg-white dark:bg-[#221610] border-b border-primary/10">
+        <header className="flex items-center p-4 bg-white dark:bg-slate-950 border-b border-primary/10">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </button>
@@ -3353,10 +2711,10 @@ function SetupPasswordScreen({ onNext, onBack, signupData, setNotification, runW
 
 function SuccessScreen({ onCompleteProfile, onExplore }: { onCompleteProfile: () => void, onExplore: () => void }) {
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 antialiased">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 antialiased">
       <div className="relative flex h-screen w-full flex-col overflow-x-hidden">
         {/* Top Navigation */}
-        <header className="flex items-center justify-between p-4 bg-white dark:bg-[#221610]">
+        <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-950">
           <button onClick={onExplore} className="flex items-center justify-center h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 cursor-pointer">
             <X className="w-6 h-6" />
           </button>
@@ -3471,10 +2829,10 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
   };
 
   return (
-    <div className="bg-white dark:bg-[#1a110c] font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
       <div className="flex-1 flex flex-col w-full max-w-screen-xl mx-auto overflow-x-hidden pb-24 relative">
         {/* Top App Bar */}
-        <div className="flex items-center bg-white dark:bg-[#1a110c] p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
+        <div className="flex items-center bg-white dark:bg-slate-950 p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
           <button onClick={onBack} className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </button>
@@ -3626,7 +2984,7 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
         </div>
         
         {/* Sticky Save Button Container */}
-        <div className="fixed bottom-0 left-0 right-0 p-6 bg-white/80 dark:bg-[#1a110c]/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
+        <div className="fixed bottom-0 left-0 right-0 p-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
           <button 
             onClick={handleSave}
             disabled={isSaving}
@@ -3685,7 +3043,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-sans text-slate-900 dark:text-slate-100 min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
         <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
           {/* Logo Section */}
@@ -3844,7 +3202,7 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
 
 function LoginSuccessScreen({ onHome, onViewProfile, onBack }: { onHome: () => void, onViewProfile: () => void, onBack: () => void }) {
   return (
-    <div className="bg-white dark:bg-[#221610] font-display antialiased min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-display antialiased min-h-screen">
       <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <div className="flex items-center p-4 justify-between">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/10 transition-colors cursor-pointer">
@@ -3888,9 +3246,11 @@ interface HorizontalShopCardProps {
 
 const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardProps) => {
   return (
-    <div 
+    <motion.div 
+      whileHover={shop.isOpen !== false ? { y: -4, scale: 1.01 } : undefined}
+      whileTap={shop.isOpen !== false ? { scale: 0.98 } : undefined}
       onClick={shop.isOpen !== false ? onClick : undefined}
-      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all group ${shop.isOpen !== false ? 'cursor-pointer hover:shadow-xl active:scale-[0.98]' : 'opacity-60 grayscale-[0.5]'}`}
+      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all group ${shop.isOpen !== false ? 'cursor-pointer hover:shadow-xl' : 'opacity-60 grayscale-[0.5]'}`}
     >
       <div className="h-36 w-full rounded-2xl overflow-hidden relative">
         <BlurUpImage 
@@ -3936,7 +3296,7 @@ const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardP
           </div>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
 
@@ -4063,7 +3423,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
 
   if (loadingShops && shops.length === 0) {
     return (
-      <div className="bg-gray-50 dark:bg-[#221610] min-h-screen flex flex-col max-w-md mx-auto shadow-2xl">
+      <div className="bg-gray-50 dark:bg-slate-950 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl">
         <header className="bg-white dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between shadow-sm border-b border-gray-100 dark:border-slate-800">
           <div className="h-8 w-32 bg-gray-200 dark:bg-slate-800 rounded-lg animate-pulse"></div>
           <div className="h-10 w-10 bg-gray-200 dark:bg-slate-800 rounded-full animate-pulse"></div>
@@ -4103,7 +3463,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
 
   if (shops.length === 0 && !loadingShops) {
     return (
-      <div className="bg-white dark:bg-[#221610] h-screen flex flex-col items-center justify-center p-6 text-center">
+      <div className="bg-white dark:bg-slate-950 h-screen flex flex-col items-center justify-center p-6 text-center">
         <div className="relative mb-8">
           <div className="absolute inset-0 bg-orange-50 dark:bg-orange-900/20 rounded-full scale-150 blur-3xl opacity-50"></div>
           <Store className="w-24 h-24 text-orange-500 relative z-10" />
@@ -4393,7 +3753,7 @@ NOTIFY pgrst, 'reload schema';`}
   }
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
       {isUpdateAvailable && (
         <button
           onClick={() => window.location.reload()}
@@ -4406,7 +3766,7 @@ NOTIFY pgrst, 'reload schema';`}
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
         <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex flex-col bg-gradient-to-br from-[#c0cbf8] to-[#d5e2fa] dark:from-[#1e293b] dark:to-[#0f172a] w-[300px] h-[86px] pl-6 pt-3 font-bold rounded-[24px] border-[0.9px] border-white/40 shadow-xl shadow-indigo-500/10 overflow-hidden scale-90 sm:scale-100 origin-left ring-4 ring-white/50 dark:ring-black/20">
+          <div className="flex flex-col bg-slate-50 dark:bg-slate-900 w-[300px] h-[86px] pl-6 pt-3 font-bold rounded-[24px] border border-orange-100 dark:border-slate-800 shadow-xl shadow-orange-950/5 overflow-hidden scale-90 sm:scale-100 origin-left ring-4 ring-white/50 dark:ring-black/20">
           <div className="flex items-center gap-1">
             <LocalEatsLogo width={120} height={32} />
             <span className="text-[8px] text-slate-500 dark:text-slate-400 opacity-50 ml-1">v{appVersion}</span>
@@ -4645,13 +4005,15 @@ NOTIFY pgrst, 'reload schema';`}
             <section className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2">
               <div className="flex gap-2">
                 {categories.map(cat => (
-                  <button
+                  <motion.button
                     key={cat}
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.95 }}
                     onClick={() => setSelectedCategory(cat)}
-                    className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? 'bg-orange-500 text-white shadow-md shadow-orange-200 dark:shadow-none' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? 'bg-orange-500 text-white shadow-md shadow-orange-600/15' : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
                   >
                     {cat}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
               
@@ -4735,8 +4097,25 @@ NOTIFY pgrst, 'reload schema';`}
                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-0.5">Local Merchants</h3>
                   <div className="h-1 w-8 bg-orange-600 rounded-full"></div>
                 </div>
-                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">{sortedShops.length} Online</span>
+                {loadingShops ? (
+                  <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-full border border-amber-100 dark:border-amber-900/40">
+                    <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
+                    <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest animate-pulse">Syncing...</span>
+                  </div>
+                ) : (
+                  <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">{sortedShops.length} Online</span>
+                )}
               </div>
+
+              {loadingShops && (
+                <div className="mx-1 mb-4 bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100/70 dark:border-orange-900/40 py-3 px-4 rounded-2xl flex items-center justify-between gap-3 text-orange-850 dark:text-orange-400 text-xs font-semibold animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-orange-600 animate-spin" />
+                    <span>Updating Spaza shop inventories and active menus with Supabase...</span>
+                  </div>
+                  <span className="text-[8px] bg-orange-500 text-white font-black px-1.5 py-0.5 rounded uppercase">Live</span>
+                </div>
+              )}
               <motion.div 
                 layout
                 initial="hidden"
@@ -4788,7 +4167,7 @@ NOTIFY pgrst, 'reload schema';`}
 
       {/* BottomNavigation */}
       <div className="bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 sticky bottom-0 z-40">
-        <nav className="max-w-screen-xl mx-auto px-3 sm:px-6 py-2 pb-6 flex justify-around items-center bg-[#d5e2fa] dark:bg-[#d5e2fa]/10 rounded-[12px] border-[3px] border-indigo-200/30 inset-shadow-sm shadow-inner transition-all transform active:scale-98">
+        <nav className="max-w-screen-xl mx-auto px-3 sm:px-6 py-2 pb-6 flex justify-around items-center bg-slate-100 dark:bg-slate-800/80 rounded-[12px] border-[3px] border-indigo-200/30 inset-shadow-sm shadow-inner transition-all transform active:scale-98">
           <button className="flex flex-col items-center gap-1 text-slate-700 dark:text-slate-300 cursor-pointer">
           <div className="p-1 rounded-xl bg-orange-500/10 dark:bg-orange-500/10">
             <Home className="w-6 h-6" />
@@ -5078,10 +4457,10 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   };
 
   return (
-    <main className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto w-full max-w-md mx-auto flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
+    <main className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
+      <div className="relative flex h-auto w-full max-w-md mx-auto flex-col bg-white dark:bg-slate-950 overflow-x-hidden shadow-xl">
         {/* Header */}
-        <div className="flex items-center bg-white dark:bg-[#221610] p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center bg-white dark:bg-slate-950 p-4 pb-2 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800">
           <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </div>
@@ -5239,25 +4618,18 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
               <button 
                 onClick={() => {
-                  if (distance !== null && distance > ZONE_B_LIMIT) {
-                    showAlert('Too Far', `Store is ${distance.toFixed(1)}km away. Bicycle delivery is limited to ${ZONE_B_LIMIT}km.`);
-                    return;
-                  }
                   setDeliveryType('delivery');
                 }}
-                disabled={distance !== null && distance > ZONE_B_LIMIT}
                 className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
-                  distance !== null && distance > ZONE_B_LIMIT 
-                    ? 'bg-rose-50/50 border-rose-100 dark:border-rose-900/20 grayscale opacity-40 cursor-not-allowed' 
-                    : deliveryType === 'delivery' 
-                      ? 'border-orange-600 bg-orange-600 text-white shadow-lg' 
-                      : 'border-slate-100 dark:border-slate-800'
+                  deliveryType === 'delivery' 
+                    ? 'border-orange-600 bg-orange-600 text-white shadow-lg' 
+                    : 'border-slate-100 dark:border-slate-800'
                 }`}
               >
                 <div className="relative">
                   <Navigation className={`w-8 h-8 ${deliveryType === 'delivery' ? '' : 'text-slate-400'}`} />
                   {distance !== null && distance > ZONE_B_LIMIT && (
-                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] font-black px-1 rounded-full">!</span>
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] font-black px-1 rounded-full animate-bounce">!</span>
                   )}
                 </div>
                 <div className="text-center">
@@ -5361,10 +4733,15 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                           });
                           if ("vibrate" in navigator) navigator.vibrate(50);
                         }}
-                        className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-orange-600/20 flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2"
+                        disabled={distance !== null && distance > ZONE_B_LIMIT}
+                        className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 animate-in slide-in-from-bottom-2 transition-all ${
+                          distance !== null && distance > ZONE_B_LIMIT
+                            ? 'bg-rose-100 dark:bg-rose-950/20 text-rose-400 dark:text-rose-500 cursor-not-allowed border border-rose-200 dark:border-rose-900/10 shadow-none'
+                            : 'bg-orange-600 hover:bg-orange-700 text-white shadow-lg shadow-orange-600/20 active:scale-95 cursor-pointer'
+                        }`}
                       >
                         <CheckCircle className="w-5 h-5" />
-                        Confirm Exact Delivery Spot
+                        {distance !== null && distance > ZONE_B_LIMIT ? 'UNSERVICEABLE AREA' : 'Confirm Exact Delivery Spot'}
                       </button>
                     ) : (
                       <div className="bg-green-50 dark:bg-green-950/20 border border-green-100 dark:border-green-900/30 p-3 rounded-2xl flex items-center justify-between">
@@ -5557,7 +4934,7 @@ function OrderSuccessScreen({ onHome, cart, shops, triggerHaptic }: { onHome: ()
   const shopDisplay = shopNames.length > 1 ? "multiple stores" : (shopNames[0] || "the store");
 
   return (
-    <div className="bg-white dark:bg-[#1a110c] font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col items-center justify-center p-6 text-center">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col items-center justify-center p-6 text-center">
       <div className="max-w-2xl mx-auto w-full flex flex-col items-center py-12">
         <div className="relative mb-12 flex items-center justify-center">
           <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
@@ -5902,25 +5279,80 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
         ) : (
           <section className="px-6 h-[500px] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 relative">
             {!isOnline && (
-              <div className="absolute inset-0 z-10 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+              <div className="absolute inset-0 z-[1001] bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
                 <WifiOff className="w-12 h-12 text-slate-400 mb-4" />
                 <h3 className="text-lg font-bold">Map Unavailable Offline</h3>
                 <p className="text-sm text-slate-500 max-w-xs">Interactive maps require an active internet connection. Please check your signal.</p>
                 <button onClick={() => setViewMode('list')} className="mt-6 px-6 py-2 bg-primary text-white rounded-xl font-bold">View List Instead</button>
               </div>
             )}
-            <iframe
-              width="100%"
-              height="100%"
-              style={{ border: 0 }}
-              loading="lazy"
-              allowFullScreen
-              referrerPolicy="no-referrer-when-downgrade"
-              src={`https://www.google.com/maps/embed/v1/search?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyA-fake-key'}&q=Kota+shops&center=${userLocation?.lat || -25.9964},${userLocation?.lng || 28.2268}&zoom=14`}
-            ></iframe>
-            <div className="absolute bottom-6 left-6 right-6 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20">
-              <p className="text-xs font-bold text-slate-900 dark:text-white mb-1">Interactive Map</p>
-              <p className="text-[10px] text-slate-500">Showing top rated Kota spots near you.</p>
+            <div className="h-full w-full relative z-10">
+              <MapContainer 
+                center={userLocation || DEFAULT_COORDS} 
+                zoom={14} 
+                scrollWheelZoom={true} 
+                className="h-full w-full"
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                
+                {userLocation && (
+                  <Marker position={userLocation} icon={userIcon}>
+                    <Popup>
+                      <p className="font-extrabold text-xs text-blue-600 text-center m-0">Your Spot</p>
+                    </Popup>
+                  </Marker>
+                )}
+
+                {sortedShops.map((shop) => {
+                  const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
+                  const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
+                  const dist = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
+                  const status = getShopStatus(shop);
+                  
+                  return (
+                    <Marker 
+                      key={shop.id} 
+                      position={{ lat: sLat, lng: sLng }} 
+                      icon={shopIcon}
+                    >
+                      <Popup minWidth={200}>
+                        <div className="p-1">
+                          <p className="font-black text-xs text-slate-800 m-0 mb-1">{shop.name}</p>
+                          <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">{shop.description}</p>
+                          <div className="flex items-center justify-between text-[10px] mb-2.5 border-t pt-1.5 border-slate-100 dark:border-slate-800">
+                            <span className="font-bold text-amber-500">★ {shop.rating}</span>
+                            {dist !== null && <span className="text-slate-500 font-semibold">{dist.toFixed(1)} km</span>}
+                            <span className={`font-extrabold ${status.isOpen ? 'text-green-600' : 'text-slate-400'}`}>
+                              {status.isOpen ? 'Open Now' : 'Closed'}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              triggerHaptic();
+                              onSelectShop(shop.id);
+                            }}
+                            className="w-full py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold uppercase tracking-widest text-[9px] rounded-lg transition-colors cursor-pointer text-center block"
+                          >
+                            Open Menu
+                          </button>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  );
+                })}
+                
+                <MapRecenter center={[userLocation?.lat || -25.9964, userLocation?.lng || 28.2268]} />
+              </MapContainer>
+            </div>
+            <div className="absolute bottom-6 left-6 right-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20 z-[1000] pointer-events-none">
+              <p className="text-xs font-black text-slate-900 dark:text-white mb-1 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="size-2 bg-orange-500 rounded-full animate-ping"></span>
+                Interactive Leaflet Map
+              </p>
+              <p className="text-[10px] text-slate-500 font-medium">Showing top-rated Spaza Kota shops near you. Click pins to explore OTA menus instantly.</p>
             </div>
           </section>
         )}
@@ -6145,9 +5577,9 @@ function ProfileScreen({ onBack, onSave, userProfile, onLogout, setNotification,
   };
 
   return (
-    <div className="bg-white dark:bg-[#1a110c] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
       {/* Header */}
-      <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-[#1a110c] z-10">
+      <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10">
         <button onClick={onBack} className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer">
           <ArrowLeft className="w-6 h-6" />
         </button>
@@ -6603,7 +6035,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl overflow-x-hidden">
+    <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
       
       {/* Immersive Header with Carousel */}
@@ -6676,7 +6108,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         <div className="h-4"></div>
         
         {/* Sticky Action Tabs & Buttons */}
-        <div className="sticky top-0 z-40 bg-white/95 dark:bg-[#221610]/95 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
+        <div className="sticky top-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
           <div className="flex gap-3 mb-4">
             <button 
               onClick={() => {
@@ -7064,9 +6496,11 @@ const userIcon = new L.Icon({
 
 function MapRecenter({ center }: { center: [number, number] }) {
   const map = useMap();
+  const lat = center[0];
+  const lng = center[1];
   useEffect(() => {
-    map.setView(center);
-  }, [center, map]);
+    map.setView([lat, lng]);
+  }, [lat, lng, map]);
   return null;
 }
 
@@ -7142,7 +6576,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
       : [-25.9964, 28.2268];
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
       {/* Search & Filter Header Overlay */}
       <div className="absolute top-6 left-4 right-4 z-[1000] flex flex-col gap-3">
         <div className="max-w-lg md:mx-auto w-full">
@@ -7173,7 +6607,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
           <motion.div 
             initial={false}
             animate={{ height: isFilterOpen ? 'auto' : 0, opacity: isFilterOpen ? 1 : 0 }}
-            className="overflow-hidden bg-white/95 dark:bg-[#221610]/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
+            className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
           >
             <div className="p-6 flex flex-col gap-6">
               {/* Category Toggles */}
@@ -7317,7 +6751,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-[#221610] rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-24"
+            className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-slate-950 rounded-t-[32px] bottom-sheet p-6 pb-24"
           >
             <div className="relative">
               <div className="w-12 h-1.5 bg-gray-200 dark:bg-slate-700 rounded-full mx-auto mb-6 cursor-pointer" onClick={() => setSelectedShopId(null)}></div>
@@ -7390,7 +6824,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
 
       {/* Bottom Navigation */}
       <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pointer-events-none">
-        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-[#d5e2fa]/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-2xl pointer-events-auto transition-all">
+        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-2xl pointer-events-auto transition-all">
           <button onClick={onHome} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
           <div className="p-1 group-hover:scale-110 transition-transform">
             <Home className="w-6 h-6" />
@@ -7417,8 +6851,8 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
 
 function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { notifications: AppNotification[], onBack: () => void, onRead: (id: string) => void, onDelete: (id: string) => void }) {
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
@@ -7479,11 +6913,13 @@ function NotificationsScreen({ notifications, onBack, onRead, onDelete }: { noti
 
 function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
   const map = useMap();
+  const lat = coords?.lat;
+  const lng = coords?.lng;
   useEffect(() => {
-    if (coords) {
-      map.setView(coords, map.getZoom());
+    if (lat !== undefined && lng !== undefined) {
+      map.setView({ lat, lng }, map.getZoom());
     }
-  }, [coords, map]);
+  }, [lat, lng, map]);
   return null;
 }
 
@@ -7649,9 +7085,13 @@ function RealTimeRiderTracking({ order, shop }: { order: Order, shop?: Shop }) {
 
 function ChangeView({ center }: { center: { lat: number, lng: number } }) {
   const map = useMap();
+  const lat = center?.lat;
+  const lng = center?.lng;
   useEffect(() => {
-    map.setView(center, 13);
-  }, [center, map]);
+    if (lat !== undefined && lng !== undefined) {
+      map.setView({ lat, lng }, 13);
+    }
+  }, [lat, lng, map]);
   return null;
 }
 
@@ -7701,8 +7141,8 @@ function OrderTrackingScreen({ orders, shops, onBack, showAlert }: { orders: Ord
   const activeOrders = orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
@@ -7991,7 +7431,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
       {/* Hidden File Input */}
       <input
         type="file"
@@ -8004,7 +7444,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
       />
       
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
@@ -8562,7 +8002,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
 
   if (loading && !riderProfile) {
     return (
-      <div className="h-screen bg-slate-50 dark:bg-[#221610] flex flex-col items-center justify-center p-8 text-center">
+      <div className="h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
         <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
         <p className="font-bold">Accessing Rider Fleet...</p>
       </div>
@@ -8571,7 +8011,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
 
   if (!riderProfile) {
     return (
-      <div className="h-screen bg-slate-50 dark:bg-[#221610] flex flex-col items-center justify-center p-8 text-center">
+      <div className="h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
         <XCircle className="w-16 h-16 text-slate-300 mb-4" />
         <h2 className="text-xl font-bold mb-2">Rider Profile Not Found</h2>
         <p className="text-sm text-slate-500 mb-6">You need to be registered as a rider to access this dashboard.</p>
@@ -8581,8 +8021,8 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
   }
 
   return (
-    <div className="bg-slate-50 dark:bg-[#221610] min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl">
-      <header className="p-4 flex items-center justify-between sticky top-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md z-50 border-b border-primary/10">
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl">
+      <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
         <button onClick={onBack} className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"><ArrowLeft className="w-6 h-6" /></button>
         <div className="flex flex-col items-center">
           <h1 className="font-black uppercase tracking-tighter text-xl">Rider Dashboard</h1>
@@ -8855,7 +8295,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
       </section>
     </main>
 
-      <div className="p-4 bg-white dark:bg-[#221610] border-t border-primary/10">
+      <div className="p-4 bg-white dark:bg-slate-950 border-t border-primary/10">
         <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-[0.2em]">LocalEats Rider Fleet v2.4.0</p>
       </div>
     </div>
@@ -9488,8 +8928,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="max-w-screen-xl mx-auto px-4 py-4 flex items-center justify-between">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer hover:text-orange-600 transition-colors">
             <ChevronLeft className="w-6 h-6" />
@@ -10801,9 +10241,9 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
   });
 
   return (
-    <div className="bg-white dark:bg-[#221610] font-sans text-slate-900 dark:text-slate-100 min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden shadow-2xl">
-        <header className="flex items-center p-4 bg-white dark:bg-[#221610] sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
+        <header className="flex items-center p-4 bg-white dark:bg-slate-950 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
           <button onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer">
             <ArrowLeft className="w-6 h-6" />
           </button>
@@ -11119,7 +10559,7 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
         {/* Cancellation Confirmation Modal */}
         {orderToCancel && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-[#221610] w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-full flex items-center justify-center mb-4 mx-auto">
                 <XCircle className="w-6 h-6" />
               </div>
@@ -11151,7 +10591,7 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
         {/* Order Confirmation Modal (with Message) */}
         {orderToConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-[#221610] w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-4 mx-auto">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
@@ -11352,9 +10792,9 @@ function OrderHistoryScreen({ session, onBack, userProfile, showAlert, showConfi
   }, [session]);
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex h-auto min-h-screen w-full flex-col bg-white dark:bg-[#221610] overflow-x-hidden shadow-xl">
-        <header className="bg-white dark:bg-[#221610] border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
+      <div className="relative flex h-auto min-h-screen w-full flex-col bg-white dark:bg-slate-950 overflow-x-hidden shadow-xl">
+        <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
           <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
             <div onClick={onBack} className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer transition-colors hover:text-orange-500">
               <ArrowLeft className="w-6 h-6" />
@@ -11652,7 +11092,7 @@ function ReviewScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl p-6 overflow-y-auto">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl p-6 overflow-y-auto">
       <div className="flex-grow flex flex-col space-y-8 py-10">
         <div className="text-center space-y-2">
           <div className="bg-orange-100 dark:bg-orange-900/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -11718,7 +11158,7 @@ function ReviewScreen({
         </div>
       </div>
 
-      <div className="sticky bottom-0 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md pt-4 pb-6 flex flex-col gap-3">
+      <div className="sticky bottom-0 glass-effect pt-4 pb-6 flex flex-col gap-3">
         <button
           onClick={handleSubmit}
           disabled={submitting}
@@ -11777,8 +11217,8 @@ function ContactScreen({ onBack, userProfile, showAlert }: { onBack: () => void,
   };
 
   return (
-    <div className="bg-white dark:bg-[#221610] text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-[#221610]/80 backdrop-blur-md border-b border-primary/10">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="px-4 py-4 flex items-center">
           <button onClick={onBack} className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer transition-transform active:scale-95">
             <ArrowLeft className="w-6 h-6" />

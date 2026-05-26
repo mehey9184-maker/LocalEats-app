@@ -28,7 +28,7 @@
     <script>
       // Only initialize OneSignal if we are on the production domain or allowLocalhost is set.
       // We skip initialization in the AI Studio preview to prevent Service Worker fetch interception errors.
-      if (!window.location.hostname.includes('run.app')) {
+      if (!window.location.hostname.includes('run.app') && !window.location.hostname.includes('localhost')) {
         const script = document.createElement('script');
         script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
         script.defer = true;
@@ -45,15 +45,33 @@
           });
         });
       } else {
-        // Unregister any active service workers in preview to fix fetch errors
+        // Unregister any active service workers in preview to fix fetch errors and remove broken service worker registrations
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.getRegistrations().then(function(registrations) {
             for(let registration of registrations) {
               registration.unregister();
+              console.log('Unregistered development Service Worker:', registration);
+            }
+          });
+        }
+        // Force-clear browser cache collections created by the development service worker
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            for (let name of names) {
+              caches.delete(name);
+              console.log('Cleared development SW Cache Storage:', name);
             }
           });
         }
       }
+
+      // Global Error Debugging - Logs only, removed intrusive visual overlay
+      window.addEventListener('error', function(e) {
+        console.error('Runtime App Crash Detected:', e.message, 'At:', e.filename, e.lineno, e.colno, 'Stack:', e.error ? e.error.stack : 'N/A');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        console.error('Unhandled Promise Rejection, Reason:', e.reason);
+      });
     </script>
   </head>
   <body>

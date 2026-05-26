@@ -5,7 +5,7 @@ import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import './index.css';
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.location.hostname.includes('run.app') && !window.location.hostname.includes('localhost')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').then(registration => {
       console.log('SW registered: ', registration);
