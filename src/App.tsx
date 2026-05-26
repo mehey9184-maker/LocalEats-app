@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, Circle } from 'react-leaflet';
+import MarkerClusterGroup from 'react-leaflet-cluster';
 
 // Fix for default marker icons in react-leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
@@ -140,6 +141,8 @@ import { hashString, handleSupabaseError, calculateDistance, getShopStatus, SUPP
 import { AddressSearch, LocationPickerMap } from './components/MapComponents';
 import { BlurUpImage } from './components/BlurUpImage';
 import { TrustBadge } from './components/TrustBadge';
+import { AppHelp } from './components/AppHelp';
+import { OnboardingTour } from './components/OnboardingTour';
 
 const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: { 
   shop: Shop, 
@@ -2210,6 +2213,9 @@ export default function App() {
           </motion.button>
         )}
       </AnimatePresence>
+
+      <AppHelp />
+      <OnboardingTour />
     </div>
     </AnimatePresence>
     </div>
@@ -5212,7 +5218,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
                     <div className="flex justify-between items-start mb-4">
                       <div className="flex gap-4">
                         <div className="w-12 h-12 rounded-full bg-[#ffc69f] dark:bg-orange-500/20 flex items-center justify-center text-[#904800] dark:text-orange-400 font-bold text-xl overflow-hidden">
-                          <img src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
                         </div>
                         <div>
                           <h3 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h3>
@@ -5367,7 +5373,7 @@ function DiscoverScreen({ shops, onHome, onExplore, favorites, toggleFavorite, o
             {shops.slice(0, 2).map(shop => (
               <div key={shop.id} className="flex-none w-[85vw] max-w-[320px] snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center">
                 <div className="w-32 h-32 rounded-full overflow-hidden mb-4 border-4 border-white dark:border-slate-700 shadow-lg">
-                  <img className="w-full h-full object-cover" alt={shop.name} src={shop.logo || DEFAULT_SHOP_LOGO} referrerPolicy="no-referrer"/>
+                  <BlurUpImage src={shop.logo || DEFAULT_SHOP_LOGO} alt={shop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`} />
                 </div>
                 <h4 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">{shop.name}</h4>
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">"{shop.description}"</p>
@@ -6044,11 +6050,11 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
           <ImageCarousel images={shop.images} />
         ) : (
           <div className="w-full h-full relative">
-            <img 
+            <BlurUpImage 
                src={shop.logo} 
                alt={shop.name} 
                className="w-full h-full object-cover"
-               referrerPolicy="no-referrer"
+               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-[#221610] via-black/20 to-transparent"></div>
           </div>
@@ -6702,32 +6708,38 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             </Marker>
           )}
 
-          {filteredShops.map((shop) => {
-            const isFollowed = favorites.includes(shop.id);
-            return (
-              <Marker 
-                key={shop.id} 
-                position={[shop.latitude || -25.9964, shop.longitude || 28.2268]} 
-                icon={shopIcon}
-                eventHandlers={{
-                  click: () => setSelectedShopId(shop.id),
-                }}
-              >
-                <Popup>
-                  <div className="p-1">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <p className="font-bold text-sm">{shop.name}</p>
-                      {isFollowed && <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />}
+          <MarkerClusterGroup
+            chunkedLoading
+            maxClusterRadius={40}
+            spiderfyOnMaxZoom={true}
+          >
+            {filteredShops.map((shop) => {
+              const isFollowed = favorites.includes(shop.id);
+              return (
+                <Marker 
+                  key={shop.id} 
+                  position={[shop.latitude || -25.9964, shop.longitude || 28.2268]} 
+                  icon={shopIcon}
+                  eventHandlers={{
+                    click: () => setSelectedShopId(shop.id),
+                  }}
+                >
+                  <Popup>
+                    <div className="p-1">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <p className="font-bold text-sm">{shop.name}</p>
+                        {isFollowed && <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                        <span className="text-xs">{shop.rating}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                      <span className="text-xs">{shop.rating}</span>
-                    </div>
-                  </div>
-                </Popup>
-              </Marker>
-            );
-          })}
+                  </Popup>
+                </Marker>
+              );
+            })}
+          </MarkerClusterGroup>
         </MapContainer>
 
         {/* Floating Action Buttons */}
@@ -6766,7 +6778,7 @@ function ExploreScreen({ shops, onHome, onDiscover, userLocation, onRequestLocat
             <div className="flex justify-between items-start mb-4">
               <div className="flex gap-4">
                 <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md">
-                  <img src={activeShop.logo || DEFAULT_SHOP_LOGO} alt={activeShop.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <BlurUpImage src={activeShop.logo || DEFAULT_SHOP_LOGO} alt={activeShop.name} className="w-full h-full" blurHash={`https://picsum.photos/seed/${activeShop.id}/10/10?blur=10`} />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -7173,7 +7185,7 @@ function OrderTrackingScreen({ orders, shops, onBack, showAlert }: { orders: Ord
                 <div className="flex justify-between items-start">
                   <div className="flex items-center space-x-3">
                     <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm">
-                      <img src={shop?.logo || DEFAULT_SHOP_LOGO} alt={shop?.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <BlurUpImage src={shop?.logo || DEFAULT_SHOP_LOGO} alt={shop?.name || 'Shop'} className="w-full h-full" blurHash={`https://picsum.photos/seed/${shop?.id || 'shop'}/10/10?blur=10`} />
                     </div>
                     <div>
                       <h3 className="font-bold text-slate-900 dark:text-white text-base">{shop?.name || 'Local Shop'}</h3>
@@ -9149,7 +9161,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   return (
                     <div key={item.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 shadow-sm flex flex-col space-y-3">
                       <div className="flex items-center gap-3">
-                        <img src={item.image_url || DEFAULT_MENU_IMAGE} alt={item.name} className="w-12 h-12 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
+                        <BlurUpImage src={item.image_url || DEFAULT_MENU_IMAGE} alt={item.name} className="w-12 h-12 rounded-xl shrink-0" blurHash={`https://picsum.photos/seed/${item.id || 'menu'}/10/10?blur=10`} />
                         <div className="flex-grow">
                           <p className="font-bold text-sm">{item.name}</p>
                           <p className="font-bold text-primary text-xs">R{item.price}</p>
@@ -9467,10 +9479,11 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               <div className="flex flex-col items-center gap-6 mb-6">
                 <div className="relative group">
                   <div className="size-32 rounded-3xl overflow-hidden border-4 border-white dark:border-slate-800 shadow-xl relative">
-                    <img 
+                    <BlurUpImage 
                       src={shop.logo || DEFAULT_SHOP_LOGO} 
                       alt={shop.name} 
                       className="w-full h-full object-cover" 
+                      blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                     />
                     {isUploading && (
                       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
@@ -9975,7 +9988,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                          {isUploading ? (
                            <Loader2 className="w-5 h-5 animate-spin text-orange-600" />
                          ) : menuImgUrl || editingItem?.image_url ? (
-                           <img src={menuImgUrl || editingItem?.image_url || DEFAULT_MENU_IMAGE} className="w-full h-full object-cover rounded-lg" />
+                           <BlurUpImage src={menuImgUrl || editingItem?.image_url || DEFAULT_MENU_IMAGE} alt="Menu Item" className="w-full h-full rounded-lg" blurHash={`https://picsum.photos/seed/${editingItem?.id || 'new'}/10/10?blur=10`} />
                          ) : (
                            <Camera className="w-5 h-5 text-slate-400" />
                          )}
