@@ -75,6 +75,20 @@ export function AppHelp() {
                     </div>
                   </div>
                 </div>
+
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
+                    // Give a tiny frame delay so help closes beautifully before tour runs
+                    setTimeout(() => {
+                      window.dispatchEvent(new CustomEvent('localeats_restart_tour'));
+                    }, 200);
+                  }}
+                  className="w-full py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-orange-600 hover:text-white dark:hover:bg-orange-600 text-slate-700 dark:text-slate-200 rounded-2xl font-bold text-sm tracking-wide transition-all active:scale-95 text-center mt-2 flex items-center justify-center gap-2"
+                >
+                  <ChevronRight className="w-4 h-4 animate-pulse" />
+                  Restart Welcome Walkthrough
+                </button>
               </div>
             </motion.div>
           </>

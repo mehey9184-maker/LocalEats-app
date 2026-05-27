@@ -25,12 +25,26 @@ export function OnboardingTour() {
   const [currentStep, setCurrentStep] = useState(0);
 
   useEffect(() => {
+    const handleRestart = () => {
+      setCurrentStep(0);
+      setIsOpen(true);
+    };
+
+    window.addEventListener('localeats_restart_tour', handleRestart);
+
     const hasSeenTour = localStorage.getItem('localeats_tour_seen');
     if (!hasSeenTour) {
       // Small delay so it feels natural and doesn't instantly block the UI
       const timer = setTimeout(() => setIsOpen(true), 1500);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        window.removeEventListener('localeats_restart_tour', handleRestart);
+      };
     }
+
+    return () => {
+      window.removeEventListener('localeats_restart_tour', handleRestart);
+    };
   }, []);
 
   const completeTour = () => {
