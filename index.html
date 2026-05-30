@@ -65,9 +65,52 @@
         }
       }
 
-      // Global Error Debugging - Logs only, removed intrusive visual overlay
+      // Global Error Debugging - Automated self-healing with infinite reload loop protection
       window.addEventListener('error', function(e) {
         console.error('Runtime App Crash Detected:', e.message, 'At:', e.filename, e.lineno, e.colno, 'Stack:', e.error ? e.error.stack : 'N/A');
+        
+        try {
+          // Prevent infinite reload loops using a sessionStorage-backed throttle gate
+          var lastHealed = sessionStorage.getItem('localeats_last_healing_time');
+          var now = Date.now();
+          if (lastHealed && (now - parseInt(lastHealed, 10)) < 15000) {
+            console.warn('Frequent crashing detected. Automatic self-healing reload halted to prevent loop.');
+            return;
+          }
+          sessionStorage.setItem('localeats_last_healing_time', now.toString());
+          
+          console.warn('Initiating automated self-healing protocol... clearing site storage and refreshing');
+          
+          // 1. Reset Local & Session Storage (re-saving throttle key)
+          localStorage.clear();
+          sessionStorage.clear();
+          sessionStorage.setItem('localeats_last_healing_time', now.toString());
+          
+          // 2. Deregister Service Workers which may hold poisoned cache structures
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+              for (var i = 0; i < registrations.length; i++) {
+                registrations[i].unregister();
+              }
+            });
+          }
+          
+          // 3. Wipe and clear Cache Storage
+          if ('caches' in window) {
+            caches.keys().then(function(names) {
+              for (var i = 0; i < names.length; i++) {
+                caches.delete(names[i]);
+              }
+            });
+          }
+          
+          // 4. Force hard reload from server
+          setTimeout(function() {
+            window.location.reload();
+          }, 600);
+        } catch (err) {
+          console.error('Self-healing routine error:', err);
+        }
       });
       window.addEventListener('unhandledrejection', function(e) {
         console.error('Unhandled Promise Rejection, Reason:', e.reason);
