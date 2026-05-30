@@ -1452,13 +1452,11 @@ export default function App() {
           });
         },
         (error) => {
-          // Only warn if it's not a permission issue to keep console clean
-          if (error.code !== error.PERMISSION_DENIED) {
-            console.warn('Geolocation error, using fallback:', error.message);
-          }
+          // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
+          console.info('Using default coordinates fallback:', error.message);
           setUserLocation(DEFAULT_COORDS);
         },
-        { timeout: 15000, enableHighAccuracy: true }
+        { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 }
       );
     } else {
       setUserLocation(DEFAULT_COORDS);
@@ -11591,6 +11589,20 @@ function OrderHistoryScreen({
   const [cancelReason, setCancelReason] = useState("");
   const [customReasonText, setCustomReasonText] = useState("");
 
+  // Search & advanced filter states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterShop, setFilterShop] = useState("All");
+  const [filterDate, setFilterDate] = useState("All");
+
+  // Support/Help query states
+  const [supportOrder, setSupportOrder] = useState<any | null>(null);
+  const [issueType, setIssueType] = useState("");
+  const [issueDesc, setIssueDesc] = useState("");
+  const [isSendingIssue, setIsSendingIssue] = useState(false);
+
+  // Reorder Preview configurations
+  const [reorderPreviewItem, setReorderPreviewItem] = useState<any | null>(null);
+
   const fetchOrders = useCallback(async () => {
     if (!session) return;
     setLoading(true);
@@ -11621,16 +11633,91 @@ function OrderHistoryScreen({
     fetchOrders();
   }, [fetchOrders]);
 
+  // Aggregate veteran diner statistics
+  const stats = useMemo(() => {
+    const completedOrders = orders.filter(o => o.status === 'completed');
+    const totalSpent = completedOrders.reduce((sum, o) => sum + (o.price || 0) + (o.delivery_fee || 0), 0);
+    const totalOrdersCount = completedOrders.length;
+    
+    const shopCounts: { [key: string]: number } = {};
+    completedOrders.forEach(o => {
+      shopCounts[o.shop_id] = (shopCounts[o.shop_id] || 0) + 1;
+    });
+    
+    let favoriteShopId = "";
+    let maxCount = 0;
+    Object.entries(shopCounts).forEach(([sid, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        favoriteShopId = sid;
+      }
+    });
+
+    const favoriteShopObj = shops.find(s => s.id === favoriteShopId);
+    const favoriteShopName = favoriteShopObj ? favoriteShopObj.name : 'None yet';
+
+    let milestone = "Casual Diner";
+    if (totalOrdersCount >= 15) {
+      milestone = "Gold Legend 👑";
+    } else if (totalOrdersCount >= 8) {
+      milestone = "Silver Connoisseur 🌟";
+    } else if (totalOrdersCount >= 3) {
+      milestone = "Active Eater 🔥";
+    }
+
+    return { 
+      totalSpent, 
+      totalOrdersCount, 
+      favoriteShopName, 
+      milestone
+    };
+  }, [orders, shops]);
+
+  // List of unique shops ordered from to populate filters
+  const orderedShopsList = useMemo(() => {
+    const sids = Array.from(new Set(orders.map(o => o.shop_id)));
+    return shops.filter(s => sids.includes(s.id));
+  }, [orders, shops]);
+
+  // Combined filters: Status + Search Input + Shop Selected + Date range selected
   const filteredOrders = useMemo(() => {
-    if (filterStatus === 'All') return orders;
     return orders.filter(o => {
-      if (filterStatus === 'Pending') return o.status === 'pending' || o.status === 'confirmed';
-      if (filterStatus === 'Ready') return o.status === 'ready';
-      if (filterStatus === 'Delivered') return o.status === 'completed';
-      if (filterStatus === 'Cancelled') return o.status === 'cancelled';
+      // 1. Filter status
+      if (filterStatus !== 'All') {
+        const isPendingGroup = filterStatus === 'Pending' && (o.status === 'pending' || o.status === 'confirmed');
+        const isReadyGroup = filterStatus === 'Ready' && o.status === 'ready';
+        const isDeliveredGroup = filterStatus === 'Delivered' && o.status === 'completed';
+        const isCancelledGroup = filterStatus === 'Cancelled' && o.status === 'cancelled';
+        if (!isPendingGroup && !isReadyGroup && !isDeliveredGroup && !isCancelledGroup) return false;
+      }
+
+      // 2. Filter search query text
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const itemName = (o.product_name || '').toLowerCase();
+        const orderId = (o.id || '').toString().toLowerCase();
+        const shop = shops.find(s => s.id === o.shop_id);
+        const shopName = (shop?.name || '').toLowerCase();
+        if (!itemName.includes(query) && !orderId.includes(query) && !shopName.includes(query)) return false;
+      }
+
+      // 3. Filter restaurant shop
+      if (filterShop !== 'All' && o.shop_id !== filterShop) return false;
+
+      // 4. Filter date range
+      if (filterDate !== 'All') {
+        const orderDate = new Date(o.created_at);
+        const now = new Date();
+        const diffTime = Math.abs(now.getTime() - orderDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (filterDate === '7days' && diffDays > 7) return false;
+        if (filterDate === '30days' && diffDays > 30) return false;
+        if (filterDate === '90days' && diffDays > 90) return false;
+      }
+
       return true;
     });
-  }, [orders, filterStatus]);
+  }, [orders, filterStatus, searchQuery, filterShop, filterDate, shops]);
 
   const handleCancelOrderSubmit = async () => {
     if (!cancellingOrderId) return;
@@ -11676,11 +11763,30 @@ function OrderHistoryScreen({
     }
   };
 
-  const handleReorder = (order: any) => {
+  // Reorder confirmation flow
+  const handleReorderClick = (order: any) => {
     triggerHaptic?.(10);
     const shop = shops.find(s => s.id === order.shop_id);
-    
-    let menuItem: MenuItem = {
+    let originalMenuItem: MenuItem | undefined = undefined;
+    if (shop) {
+      originalMenuItem = shop.menu?.find(m => m.name.toLowerCase() === order.product_name.toLowerCase() || m.id === order.product_variant);
+    }
+
+    setReorderPreviewItem({
+      order,
+      shop,
+      originalItem: originalMenuItem,
+      quantity: order.quantity || 1,
+      specialInstructions: order.notes || order.special_instructions || "",
+      price: originalMenuItem ? originalMenuItem.price : order.price
+    });
+  };
+
+  const handleConfirmReorder = () => {
+    if (!reorderPreviewItem) return;
+    const { order, shop, originalItem, quantity, specialInstructions } = reorderPreviewItem;
+
+    let menuItem: MenuItem = originalItem || {
       id: order.product_variant || order.product_name,
       name: order.product_name,
       price: order.price,
@@ -11689,19 +11795,51 @@ function OrderHistoryScreen({
       customizations: order.customizations || []
     };
 
-    if (shop) {
-      const originalItem = shop.menu?.find(m => m.name.toLowerCase() === order.product_name.toLowerCase() || m.id === order.product_variant);
-      if (originalItem) {
-        menuItem = originalItem;
-      }
-    }
-
     if (addToCart) {
-      addToCart(menuItem, order.shop_id, order.quantity, order.notes || order.special_instructions, order.customizations || []);
+      addToCart(menuItem, order.shop_id, quantity, specialInstructions, order.customizations || []);
+      triggerHaptic?.([50, 30, 50]);
       showAlert("Reordered!", `"${order.product_name}" has been added to your cart.`);
+      setReorderPreviewItem(null);
       if (setCurrentScreen) {
         setCurrentScreen('checkout');
       }
+    }
+  };
+
+  // Support ticket submissions to DB
+  const handleSupportSubmit = async () => {
+    if (!supportOrder || !issueType) return;
+    if (!issueDesc.trim()) {
+      showAlert("Details Required", "Please provide a description of the issue.");
+      return;
+    }
+    
+    setIsSendingIssue(true);
+    triggerHaptic?.(10);
+    try {
+      const shopName = shops.find(s => s.id === supportOrder.shop_id)?.name || "Kitchen";
+      const subject = `[ORDER SUPPORT] ID: #${supportOrder.id.toString().slice(-6)} (${shopName})`;
+      const completeMessage = `Issue Type: ${issueType}\n\nDetails:\n${issueDesc}\n\nOrder Info:\nProduct: ${supportOrder.product_name} x${supportOrder.quantity}\nTotal: R ${(supportOrder.price + (supportOrder.delivery_fee || 0)).toFixed(2)}`;
+      
+      const { error } = await supabase.from('contact_messages').insert([{
+        name: userProfile.fullName || userProfile.email || 'Loyal Client',
+        email: userProfile.email || session?.user?.email || 'client@localeats.co.za',
+        message: `${subject}\n\n${completeMessage}`,
+        user_id: session?.user?.id || null,
+        created_at: new Date().toISOString()
+      }]);
+
+      if (error) throw error;
+      
+      showAlert("Report Received", "Your support ticket has been created! Our support team will get in touch soon.");
+      setSupportOrder(null);
+      setIssueType("");
+      setIssueDesc("");
+    } catch (err: any) {
+      console.error("Error submitting issue:", err);
+      showAlert("Error", `Failed to send issue details: ${err.message}`);
+    } finally {
+      setIsSendingIssue(false);
     }
   };
 
@@ -11773,6 +11911,102 @@ function OrderHistoryScreen({
         </header>
 
         <main className="flex-1 p-4 max-w-screen-xl mx-auto w-full flex flex-col gap-4">
+          {/* Veteran Dashboard Summary Card */}
+          {!loading && orders.length > 0 && (
+            <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-orange-950/80 text-white p-5 rounded-3xl border border-slate-200/5 dark:border-slate-800/80 shadow-xl flex flex-col gap-4 animate-in fade-in slide-in-from-top duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Diner Profile</p>
+                  <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-1.5 mt-0.5">
+                    {userProfile.fullName || 'Loyal Diner'} 
+                    <span className="text-[10px] bg-orange-600/20 border border-orange-500/30 text-orange-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">{stats.milestone}</span>
+                  </h3>
+                </div>
+                <div className="size-10 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-center justify-center text-orange-500">
+                  <BarChart3 className="w-5 h-5 animate-pulse" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5 pt-3 border-t border-slate-800/60">
+                <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40">
+                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
+                    <Banknote className="w-3 h-3 text-emerald-500" /> Spendings
+                  </span>
+                  <span className="text-xs font-black text-white mt-1">R {stats.totalSpent.toFixed(2)}</span>
+                </div>
+                <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40">
+                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
+                    <ShoppingBag className="w-3 h-3 text-orange-500" /> Count
+                  </span>
+                  <span className="text-xs font-black text-white mt-1">{stats.totalOrdersCount} Completed</span>
+                </div>
+                <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40 overflow-hidden">
+                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none overflow-hidden truncate whitespace-nowrap">
+                    <Heart className="w-3 h-3 text-rose-500" /> Fav Spot
+                  </span>
+                  <span className="text-[10px] font-black text-orange-400 mt-1 truncate max-w-full leading-none">{stats.favoriteShopName}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Advanced Search & Filtering Utilities */}
+          {!loading && orders.length > 0 && (
+            <div className="flex flex-col gap-2.5 bg-slate-50 dark:bg-slate-900/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800/80">
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search orders, items, or shops..."
+                  className="w-full bg-white dark:bg-slate-950 pl-10 pr-4 py-2.5 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button 
+                    type="button"
+                    onClick={() => setSearchQuery("")} 
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-0.5">
+                {/* Shop Filter */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">Filter by Shop</label>
+                  <select
+                    value={filterShop}
+                    onChange={(e) => setFilterShop(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300"
+                  >
+                    <option value="All">All Shops</option>
+                    {orderedShopsList.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Date range Filter */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">Date Range</label>
+                  <select
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300"
+                  >
+                    <option value="All">All Time</option>
+                    <option value="7days">Last 7 Days</option>
+                    <option value="30days">Last 30 Days</option>
+                    <option value="90days">Last 90 Days</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
             {['All', 'Pending', 'Ready', 'Delivered', 'Cancelled'].map(status => (
               <button
@@ -11802,6 +12036,24 @@ function OrderHistoryScreen({
                   </div>
                 </div>
               ))}
+            </div>
+          ) : orders.length > 0 && filteredOrders.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in duration-300">
+              <SearchX className="w-12 h-12 text-slate-400 mb-3" />
+              <h4 className="text-base font-black text-slate-800 dark:text-white mb-1">No matches found</h4>
+              <p className="text-xs text-slate-500 max-w-xs mb-6 font-semibold">Try modifying your query search criteria, selecting another tab, or clearing the custom shop filter.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setFilterShop("All");
+                  setFilterDate("All");
+                  setFilterStatus("All");
+                }}
+                className="px-5 py-2.5 bg-orange-100 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-orange-200 transition-all active:scale-95"
+              >
+                Reset All Filters
+              </button>
             </div>
           ) : filteredOrders.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
@@ -11884,16 +12136,31 @@ function OrderHistoryScreen({
                     </div>
                   )}
 
-                  {['completed', 'cancelled'].includes(order.status) && addToCart && (
-                    <div className="flex justify-end pt-1">
+                  {['completed', 'cancelled'].includes(order.status) && (
+                    <div className="flex justify-end items-center gap-2 pt-1 border-t border-slate-50 dark:border-slate-800/60 mt-1">
                       <button 
                         type="button"
-                        onClick={() => handleReorder(order)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black uppercase tracking-widest rounded-lg border border-orange-100 dark:border-orange-505/30 transition-colors cursor-pointer shadow-sm active:scale-95"
+                        onClick={() => {
+                          setIssueType("");
+                          setIssueDesc("");
+                          setSupportOrder(order);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-808/80 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-widest rounded-lg border border-slate-100 dark:border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95"
                       >
-                        <ShoppingBag className="w-4 h-4" />
-                        Order Again
+                        <HelpCircle className="w-3.5 h-3.5" />
+                        Get Help
                       </button>
+
+                      {addToCart && (
+                        <button 
+                          type="button"
+                          onClick={() => handleReorderClick(order)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black uppercase tracking-widest rounded-lg border border-orange-100 dark:border-orange-500/30 transition-colors cursor-pointer shadow-sm active:scale-95"
+                        >
+                          <ShoppingBag className="w-4 h-4" />
+                          Order Again
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -12088,6 +12355,160 @@ function OrderHistoryScreen({
                   className="w-full py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold rounded-xl active:scale-95 transition-all cursor-pointer disabled:opacity-50 text-[10px] uppercase tracking-widest"
                 >
                   No, Keep It
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Reorder Modal */}
+        {reorderPreviewItem && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-805 shadow-2xl relative animate-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Reorder Item</p>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white leading-tight mt-0.5">{reorderPreviewItem.order.product_name}</h3>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">{reorderPreviewItem.shop?.name || "Local Kitchen"}</p>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setReorderPreviewItem(null)}
+                  className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 my-2">
+                {/* Quantity adjustments */}
+                <div className="flex justify-between items-center p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-808">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-500">Quantity</span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={reorderPreviewItem.quantity <= 1}
+                      onClick={() => setReorderPreviewItem((prev: any) => ({...prev, quantity: prev.quantity - 1}))}
+                      className="size-8 rounded-xl bg-white dark:bg-slate-900 flex items-center justify-center text-xs font-bold border border-slate-100 dark:border-slate-800 hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-30"
+                    >
+                      -
+                    </button>
+                    <span className="text-xs font-extrabold text-slate-900 dark:text-white select-none w-5 text-center">{reorderPreviewItem.quantity}</span>
+                    <button
+                      type="button"
+                      onClick={() => setReorderPreviewItem((prev: any) => ({...prev, quantity: prev.quantity + 1}))}
+                      className="size-8 rounded-xl bg-white dark:bg-slate-900 flex items-center justify-center text-xs font-bold border border-slate-100 dark:border-slate-800 hover:bg-slate-100 transition-all cursor-pointer"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* Special Instructions */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Special Instructions</label>
+                  <textarea
+                    placeholder="E.g., No onions, extra garlic, spicy, sauce on the side..."
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-2xl p-3.5 text-xs font-semibold focus:ring-2 focus:ring-orange-500 outline-none text-slate-900 dark:text-white resize-none"
+                    rows={3}
+                    value={reorderPreviewItem.specialInstructions || ""}
+                    onChange={(e) => setReorderPreviewItem((prev: any) => ({...prev, specialInstructions: e.target.value}))}
+                  />
+                </div>
+
+                {/* Total price preview */}
+                <div className="flex justify-between items-center py-2 border-t border-dashed border-slate-200 dark:border-slate-800">
+                  <span className="text-xs font-bold text-slate-500">Subtotal Price</span>
+                  <span className="text-sm font-black text-orange-600 dark:text-orange-400">R {(reorderPreviewItem.price * reorderPreviewItem.quantity).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2.5 mt-3">
+                <button
+                  type="button"
+                  onClick={handleConfirmReorder}
+                  className="w-full py-4 bg-orange-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-lg shadow-orange-600/10 hover:shadow-orange-600/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  Add to Cart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReorderPreviewItem(null)}
+                  className="w-full py-3 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/40 font-bold rounded-xl text-[10px] uppercase tracking-widest transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Support Ticket Modal */}
+        {supportOrder && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-808 shadow-2xl relative animate-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Past Order Issue</p>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white leading-tight mt-0.5">Report #{(supportOrder.id || '').toString().slice(-6)} Issue</h3>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">Item: {supportOrder.product_name}</p>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setSupportOrder(null)}
+                  className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4 my-2">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Issue Type</label>
+                  <select
+                    value={issueType}
+                    onChange={(e) => setIssueType(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-xl p-3 text-xs font-bold focus:ring-2 focus:ring-orange-500 outline-none text-slate-800 dark:text-slate-200"
+                  >
+                    <option value="">-- Choose what went wrong --</option>
+                    <option value="cold_food">Food arrived cold / stale</option>
+                    <option value="missing_items">Missing toppings or items</option>
+                    <option value="wrong_item">Received the wrong item</option>
+                    <option value="delivery_delay">Extremely delayed delivery</option>
+                    <option value="other">Other issue</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Description of Issue</label>
+                  <textarea
+                    placeholder="Explain what happened so our fleet support team can resolve it..."
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-805 rounded-2xl p-3.5 text-xs font-semibold focus:ring-2 focus:ring-orange-500 outline-none text-slate-900 dark:text-white resize-none"
+                    rows={4}
+                    value={issueDesc}
+                    onChange={(e) => setIssueDesc(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2.5 mt-3">
+                <button
+                  type="button"
+                  onClick={handleSupportSubmit}
+                  disabled={isSendingIssue || !issueType}
+                  className="w-full py-4 bg-orange-600 hover:bg-orange-700 disabled:opacity-40 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5"
+                >
+                  {isSendingIssue && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>{isSendingIssue ? 'Sending Report...' : 'Submit Support Ticket'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSupportOrder(null)}
+                  disabled={isSendingIssue}
+                  className="w-full py-3 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/40 font-bold rounded-xl text-[10px] uppercase tracking-widest transition-all"
+                >
+                  Cancel
                 </button>
               </div>
             </div>
