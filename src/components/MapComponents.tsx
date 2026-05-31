@@ -144,7 +144,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
 
   const handleCurrentLocation = () => {
     if (!navigator.geolocation) {
-      alert('Geolocation is not supported by your browser');
+      toast.error('Geolocation is not supported by your browser. Please search and select your location manually!');
       return;
     }
 
@@ -171,7 +171,10 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
       },
       (error) => {
         console.error('Geolocation error:', error);
-        alert('Could not get your location. Please ensure location services are enabled.');
+        toast.error('Could not auto-retrieve your current location. Please type and search your address manually!', {
+          duration: 5000,
+          description: "Location services may be disabled or blocked by your browser container."
+        });
         setLoading(false);
       },
       { timeout: 10000, enableHighAccuracy: true }

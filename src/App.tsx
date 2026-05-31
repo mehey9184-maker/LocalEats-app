@@ -496,6 +496,36 @@ type SignUpData = {
   fullName: string;
 };
 
+const safeLocalStorageGet = (key: string, fallback: any) => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return fallback;
+    return JSON.parse(saved);
+  } catch (err) {
+    console.warn(`[SafeStorage] Failed parsing or getting item for key "${key}", reverting to fallback.`, err);
+    return fallback;
+  }
+};
+
+const safeLocalStorageSet = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err: any) {
+    console.error(`[SafeStorage] Uncaught error saving "${key}" to localStorage:`, err);
+    if (err.name === 'QuotaExceededError' || err.code === 22) {
+      try {
+        console.warn('[SafeStorage] Quota exceeded. Evicting non-essential cache databases and retrying...');
+        localStorage.removeItem('cached_shops');
+        localStorage.removeItem('cached_orders');
+        localStorage.removeItem('admin_cached_orders');
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.error('[SafeStorage] Recovery eviction failed to clear sufficient quota.', retryErr);
+      }
+    }
+  }
+};
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
   const [previousScreen, setPreviousScreen] = useState<Screen | null>(null);
@@ -504,9 +534,9 @@ export default function App() {
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('userProfile');
-    return saved ? JSON.parse(saved) : {
+    return safeLocalStorageGet('userProfile', {
       fullName: '',
       email: '',
       phone: '',
@@ -514,21 +544,25 @@ export default function App() {
       address: '',
       country: 'South Africa',
       role: 'user'
-    };
+    });
   });
+
   const [favorites, setFavorites] = useState<string[]>(() => {
-    const saved = localStorage.getItem('favorites');
-    return saved ? JSON.parse(saved) : [];
+    return safeLocalStorageGet('favorites', []);
   });
+
   const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('dark_mode');
-    // Default to false (light mode) if nothing is saved
-    if (saved === null) return false;
-    return saved === 'true';
+    try {
+      const saved = localStorage.getItem('dark_mode');
+      if (saved === null) return false;
+      return saved === 'true';
+    } catch {
+      return false;
+    }
   });
+
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(() => {
-    const saved = localStorage.getItem('pending_review');
-    return saved ? JSON.parse(saved) : null;
+    return safeLocalStorageGet('pending_review', null);
   });
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -539,14 +573,12 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>(() => {
-    const saved = localStorage.getItem('cached_shops');
-    return saved ? JSON.parse(saved) : [];
+    return safeLocalStorageGet('cached_shops', []);
   });
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem('cart');
-    return saved ? JSON.parse(saved) : [];
+    return safeLocalStorageGet('cart', []);
   });
   const [modal, setModal] = useState<ModalState>({
     isOpen: false,
@@ -597,8 +629,7 @@ export default function App() {
   const [notification, setNotification] = useState<NotificationState>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number, lng: number } | null>(DEFAULT_COORDS);
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('app_notifications');
-    return saved ? JSON.parse(saved) : [];
+    return safeLocalStorageGet('app_notifications', []);
   });
   const [orders, setOrders] = useState<Order[]>([]);
 
@@ -633,40 +664,52 @@ export default function App() {
     return () => window.removeEventListener('click', handleFirstInteraction);
   }, [audioInitialized]);
 
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const cartCount = cart.reduce((sum, item) => sum + (item?.quantity || 0), 0);
+  const cartTotal = cart.reduce((sum, item) => sum + ((item?.price || 0) * (item?.quantity || 0)), 0);
 
   // PERSISTENCE SYNCING
   useEffect(() => {
-    localStorage.setItem('userProfile', JSON.stringify(userProfile));
+    safeLocalStorageSet('userProfile', JSON.stringify(userProfile));
   }, [userProfile]);
 
   useEffect(() => {
-    localStorage.setItem('cart', JSON.stringify(cart));
+    safeLocalStorageSet('cart', JSON.stringify(cart));
   }, [cart]);
 
   useEffect(() => {
-    localStorage.setItem('favorites', JSON.stringify(favorites));
+    safeLocalStorageSet('favorites', JSON.stringify(favorites));
   }, [favorites]);
 
   useEffect(() => {
-    localStorage.setItem('app_notifications', JSON.stringify(notifications));
+    safeLocalStorageSet('app_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
   useEffect(() => {
-    localStorage.setItem('dark_mode', String(isDarkMode));
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
+    safeLocalStorageSet('dark_mode', String(isDarkMode));
+    try {
+      const root = window.document.documentElement;
+      const body = window.document.body;
+      if (isDarkMode) {
+        root.classList.add('dark');
+        body.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+        body.classList.remove('dark');
+      }
+    } catch (e) {
+      console.warn("DOM Dark class toggle failed:", e);
     }
   }, [isDarkMode]);
 
   useEffect(() => {
     if (pendingReview) {
-      localStorage.setItem('pending_review', JSON.stringify(pendingReview));
+      safeLocalStorageSet('pending_review', JSON.stringify(pendingReview));
     } else {
-      localStorage.removeItem('pending_review');
+      try {
+        localStorage.removeItem('pending_review');
+      } catch (e) {
+        console.warn("localStorage remove item error:", e);
+      }
     }
   }, [pendingReview]);
 
@@ -682,11 +725,15 @@ export default function App() {
 
     // Load from cache first if offline or to show immediate results
     if (!navigator.onLine) {
-      const cached = localStorage.getItem('cached_shops');
-      if (cached) {
-        setShops(JSON.parse(cached));
-        setLoadingShops(false);
-        return;
+      try {
+        const cached = safeLocalStorageGet('cached_shops', null);
+        if (cached) {
+          setShops(cached);
+          setLoadingShops(false);
+          return;
+        }
+      } catch (e) {
+        console.warn("Retreiving shops from cache offline failed:", e);
       }
     }
 
@@ -789,7 +836,7 @@ export default function App() {
 
       console.log(`Successfully fetched ${formattedShops.length} shops.`);
       setShops(formattedShops);
-      localStorage.setItem('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
+      safeLocalStorageSet('cached_shops', JSON.stringify(formattedShops)); // Instant-Load Caching
       setLoadingShops(false);
     } catch (err: any) {
       const errStr = (err?.message || String(err)).toLowerCase();
@@ -1106,11 +1153,11 @@ export default function App() {
           const mData = await mResponse.json();
           if (mData && mData.version) {
             setAppVersion(mData.version);
-            const lastKnownVersion = localStorage.getItem('last_known_version');
+            const lastKnownVersion = safeLocalStorageGet('last_known_version', null);
             if (lastKnownVersion && lastKnownVersion !== mData.version) {
               setIsUpdateAvailable(true);
             }
-            localStorage.setItem('last_known_version', mData.version);
+            safeLocalStorageSet('last_known_version', mData.version);
           }
         }
       } catch (e) {
@@ -1342,9 +1389,7 @@ export default function App() {
 
 
   useEffect(() => {
-    localStorage.setItem('favorites', JSON.stringify(favorites));
-    
-    // Sync favorites to profiles table if session exists
+    // Sync favorites to profiles table if session exists (Storage is managed by top hook)
     if (session?.user?.id) {
       const syncFavorites = async () => {
         try {
@@ -1364,22 +1409,6 @@ export default function App() {
       syncFavorites();
     }
   }, [favorites, session]);
-
-  useEffect(() => {
-    console.log('Applying theme. Dark mode:', isDarkMode);
-    localStorage.setItem('dark_mode', isDarkMode.toString());
-    
-    const root = window.document.documentElement;
-    const body = window.document.body;
-    
-    if (isDarkMode) {
-      root.classList.add('dark');
-      body.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-      body.classList.remove('dark');
-    }
-  }, [isDarkMode]);
 
   const toggleFavorite = useCallback(async (shopId: string) => {
     if (!session) {
@@ -1417,30 +1446,21 @@ export default function App() {
   }, [session, favorites, currentScreen, showAlert, shops, userProfile.fullName, triggerHaptic, setFavorites, setPreviousScreen, setCurrentScreen]);
 
   useEffect(() => {
-    if (pendingReview) {
-      localStorage.setItem('pending_review', JSON.stringify(pendingReview));
+    // Handle review reminder timer only (Storage is managed by top hook)
+    if (pendingReview && pendingReview.nextReminder) {
+      const now = Date.now();
+      const delay = Math.max(0, pendingReview.nextReminder - now);
       
-      if (pendingReview.nextReminder) {
-        const now = Date.now();
-        const delay = Math.max(0, pendingReview.nextReminder - now);
-        
-        if (delay === 0) {
+      if (delay === 0) {
+        setCurrentScreen('review');
+      } else {
+        const timer = setTimeout(() => {
           setCurrentScreen('review');
-        } else {
-          const timer = setTimeout(() => {
-            setCurrentScreen('review');
-          }, delay);
-          return () => clearTimeout(timer);
-        }
+        }, delay);
+        return () => clearTimeout(timer);
       }
-    } else {
-      localStorage.removeItem('pending_review');
     }
   }, [pendingReview]);
-
-  useEffect(() => {
-    localStorage.setItem('cart', JSON.stringify(cart));
-  }, [cart]);
     
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -3025,10 +3045,22 @@ function CompleteProfileScreen({ userProfile, onBack, onSave, setNotification }:
 }
 
 function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => void, onSignUp: () => void, setNotification: (n: NotificationState) => void }) {
-  const [identifier, setIdentifier] = useState(() => localStorage.getItem('remembered_identifier') || '');
+  const [identifier, setIdentifier] = useState(() => {
+    try {
+      return localStorage.getItem('remembered_identifier') || '';
+    } catch {
+      return '';
+    }
+  });
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_identifier'));
+  const [rememberMe, setRememberMe] = useState(() => {
+    try {
+      return !!localStorage.getItem('remembered_identifier');
+    } catch {
+      return false;
+    }
+  });
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -3041,10 +3073,14 @@ function LoginScreen({ onLogin, onSignUp, setNotification }: { onLogin: () => vo
       const { error } = await supabase.auth.signInWithPassword({ email: identifier, password });
       if (error) throw error;
       
-      if (rememberMe) {
-        localStorage.setItem('remembered_identifier', identifier);
-      } else {
-        localStorage.removeItem('remembered_identifier');
+      try {
+        if (rememberMe) {
+          localStorage.setItem('remembered_identifier', identifier);
+        } else {
+          localStorage.removeItem('remembered_identifier');
+        }
+      } catch (e) {
+        console.warn("Credential storage persist error:", e);
       }
       
       onLogin();
@@ -3411,8 +3447,8 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
     return ids.map(id => shops.find(s => s.id === id)).filter(Boolean) as Shop[];
   }, [orders, shops]);
 
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const cartCount = cart.reduce((sum, item) => sum + (item?.quantity || 0), 0);
+  const cartTotal = cart.reduce((sum, item) => sum + ((item?.price || 0) * (item?.quantity || 0)), 0);
 
   if (fetchError && shops.length === 0) {
     return (
@@ -4267,16 +4303,29 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
   // Refactored state objects for precision and spatial data
   const [deliveryAddressText, setDeliveryAddressText] = useState<string>(() => {
-    const cached = localStorage.getItem('delivery_location');
-    if (cached) return JSON.parse(cached).address;
+    try {
+      const cached = localStorage.getItem('delivery_location');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.address) return parsed.address;
+      }
+    } catch (e) {
+      console.warn("Error parsing cached delivery address:", e);
+    }
     return userProfile.address || '';
   });
   
   const [deliveryCoordinates, setDeliveryCoordinates] = useState<{ type: "Point", coordinates: [number, number] } | null>(() => {
-    const cached = localStorage.getItem('delivery_location');
-    if (cached) {
-      const data = JSON.parse(cached);
-      return { type: "Point", coordinates: [Number(data.lng.toFixed(6)), Number(data.lat.toFixed(6))] };
+    try {
+      const cached = localStorage.getItem('delivery_location');
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (data && typeof data.lng === 'number' && typeof data.lat === 'number') {
+          return { type: "Point", coordinates: [Number(data.lng.toFixed(6)), Number(data.lat.toFixed(6))] };
+        }
+      }
+    } catch (e) {
+      console.warn("Error parsing cached delivery coordinates:", e);
     }
     if (userLocation) {
       return { type: "Point", coordinates: [Number(userLocation.lng.toFixed(6)), Number(userLocation.lat.toFixed(6))] };
@@ -4358,7 +4407,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         () => {
           const newCart = cart.filter((_, i) => i !== idx);
           setCart(newCart);
-          localStorage.setItem('cart', JSON.stringify(newCart));
+          safeLocalStorageSet('cart', JSON.stringify(newCart));
           toast.success("Item removed from cart");
           if (newCart.length === 0) {
             onBack();
@@ -4368,7 +4417,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     } else {
       const newCart = cart.map((c, i) => i === idx ? { ...c, quantity: newQty } : c);
       setCart(newCart);
-      localStorage.setItem('cart', JSON.stringify(newCart));
+      safeLocalStorageSet('cart', JSON.stringify(newCart));
     }
   };
 
@@ -4381,7 +4430,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
       () => {
         const newCart = cart.filter((_, i) => i !== idx);
         setCart(newCart);
-        localStorage.setItem('cart', JSON.stringify(newCart));
+        safeLocalStorageSet('cart', JSON.stringify(newCart));
         toast.success("Item removed");
         if (newCart.length === 0) {
           onBack();
@@ -4409,7 +4458,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     const usedLocalKey = session?.user?.id 
       ? `used_promo_codes_${session.user.id}` 
       : `used_promo_codes_guest`;
-    const usedLocal = JSON.parse(localStorage.getItem(usedLocalKey) || '[]');
+    const usedLocal = safeLocalStorageGet(usedLocalKey, []);
     if (usedLocal.includes(code)) {
       setPromoError(`You have already redeemed the promo code "${code}" previously!`);
       setPromoStatus('already_used');
@@ -4480,7 +4529,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           if (hasUsed) {
             // Sync back to local storage
             const updatedLocal = Array.from(new Set([...usedLocal, code]));
-            localStorage.setItem(usedLocalKey, JSON.stringify(updatedLocal));
+            safeLocalStorageSet(usedLocalKey, JSON.stringify(updatedLocal));
             setPromoError(`Our database shows you have already redeemed "${code}" on a previous order!`);
             setPromoStatus('already_used');
             setAppliedPromo(null);
@@ -4613,7 +4662,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
       const usedLocalKey = session?.user?.id 
         ? `used_promo_codes_${session.user.id}` 
         : `used_promo_codes_guest`;
-      const usedLocal = JSON.parse(localStorage.getItem(usedLocalKey) || '[]');
+      const usedLocal = safeLocalStorageGet(usedLocalKey, []);
       if (usedLocal.includes(code)) {
         setLoading(false);
         showAlert('Coupon Already Redeemed', `You have already redeemed the promo code "${code}". It is restricted to one use per customer.`);
@@ -4634,7 +4683,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             );
             if (hasUsed) {
               const updatedLocal = Array.from(new Set([...usedLocal, code]));
-              localStorage.setItem(usedLocalKey, JSON.stringify(updatedLocal));
+              safeLocalStorageSet(usedLocalKey, JSON.stringify(updatedLocal));
               setLoading(false);
               showAlert('Coupon Already Redeemed', `Our records show you have already redeemed "${code}". Each promo code is restricted to one use per customer.`);
               setAppliedPromo(null);
@@ -4749,10 +4798,10 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                const usedLocalKey = session?.user?.id 
                  ? `used_promo_codes_${session.user.id}` 
                  : `used_promo_codes_guest`;
-               const usedLocal = JSON.parse(localStorage.getItem(usedLocalKey) || '[]');
+               const usedLocal = safeLocalStorageGet(usedLocalKey, []);
                if (!usedLocal.includes(appliedPromo.code)) {
                  usedLocal.push(appliedPromo.code);
-                 localStorage.setItem(usedLocalKey, JSON.stringify(usedLocal));
+                 safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
                }
              }
              return;
@@ -4765,10 +4814,10 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           const usedLocalKey = session?.user?.id 
             ? `used_promo_codes_${session.user.id}` 
             : `used_promo_codes_guest`;
-          const usedLocal = JSON.parse(localStorage.getItem(usedLocalKey) || '[]');
+          const usedLocal = safeLocalStorageGet(usedLocalKey, []);
           if (!usedLocal.includes(appliedPromo.code)) {
             usedLocal.push(appliedPromo.code);
-            localStorage.setItem(usedLocalKey, JSON.stringify(usedLocal));
+            safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
           }
         }
       }, onConfirm);
@@ -4796,7 +4845,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             onClick={() => {
               showConfirm('Clear Cart', 'Do you want to clear all items and start fresh?', () => {
                 setCart([]);
-                localStorage.setItem('cart', JSON.stringify([]));
+                safeLocalStorageSet('cart', JSON.stringify([]));
                 onBack();
               });
             }}
@@ -4893,7 +4942,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   });
                   // Address chosen! Instantly auto-confirm so checking out has zero click friction
                   setIsLocationConfirmed(true);
-                  localStorage.setItem('delivery_location', JSON.stringify(data));
+                  safeLocalStorageSet('delivery_location', JSON.stringify(data));
                   toast.success("Delivery Address confirmed!", {
                     description: " RIDER WILL NAVIGATE DIRECTLY TO PIN LOCATION."
                   });
@@ -11579,8 +11628,7 @@ function OrderHistoryScreen({
   triggerHaptic?: (pattern?: number | number[]) => void
 }) {
   const [orders, setOrders] = useState<any[]>(() => {
-    const saved = localStorage.getItem('cached_orders');
-    return saved ? JSON.parse(saved) : [];
+    return safeLocalStorageGet('cached_orders', []);
   });
   const [loading, setLoading] = useState(true);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
@@ -11621,7 +11669,7 @@ function OrderHistoryScreen({
         throw error;
       }
       setOrders(data || []);
-      localStorage.setItem('cached_orders', JSON.stringify(data || []));
+      safeLocalStorageSet('cached_orders', JSON.stringify(data || []));
     } catch (error) {
       console.error('Error fetching orders:', error);
     } finally {
