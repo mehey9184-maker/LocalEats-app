@@ -64,6 +64,7 @@ export type MenuItem = {
   image: string;
   image_url?: string;
   description?: string;
+  category?: string;
   customizations?: { name: string, price: number }[];
   is_available?: boolean;
 };

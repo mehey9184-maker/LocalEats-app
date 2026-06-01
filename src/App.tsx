@@ -828,6 +828,7 @@ export default function App() {
               displayPrice: `R${Number(m.price).toFixed(2)}`,
               image: m.image_url || DEFAULT_MENU_IMAGE,
               description: m.description || "",
+              category: m.category || "Main Course",
               is_available: m.is_available !== false,
               customizations: m.customizations || []
             }))
@@ -4336,8 +4337,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     return null;
   });
 
-  // Automatically mark location confirmed upon selection or if default exists, bypassing the dual-step frustration!
-  const [isLocationConfirmed, setIsLocationConfirmed] = useState<boolean>(true);
+  // Enforce spatial authority and precision validation via visual map pin confirmation
+  const [isLocationConfirmed, setIsLocationConfirmed] = useState<boolean>(false);
   const [distance, setDistance] = useState<number | null>(null);
   const [deliveryFee, setDeliveryFee] = useState<number>(5.00);
   
@@ -4353,7 +4354,7 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         coordinates: [Number(userLocation.lng.toFixed(6)), Number(userLocation.lat.toFixed(6))]
       });
       setDeliveryAddressText('Current Location (GPS)');
-      setIsLocationConfirmed(true);
+      setIsLocationConfirmed(false);
     }
   }, [userLocation, deliveryType, deliveryCoordinates]);
 
@@ -4940,12 +4941,10 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                     type: "Point", 
                     coordinates: [Number(data.lng.toFixed(6)), Number(data.lat.toFixed(6))] 
                   });
-                  // Address chosen! Instantly auto-confirm so checking out has zero click friction
-                  setIsLocationConfirmed(true);
+                  // Reset location confirmation to force visual pin check on the map below
+                  setIsLocationConfirmed(false);
                   safeLocalStorageSet('delivery_location', JSON.stringify(data));
-                  toast.success("Delivery Address confirmed!", {
-                    description: " RIDER WILL NAVIGATE DIRECTLY TO PIN LOCATION."
-                  });
+                  toast.info("Address loaded! Please confirm your exact pin location on the map below.");
                 }} 
               />
 
@@ -4964,12 +4963,14 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center justify-between">
                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Pin Precision Control Map</p>
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
-                      <Target className="w-3 h-3 text-green-600" />
-                      <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
-                        {deliveryCoordinates.coordinates[1].toFixed(5)}, {deliveryCoordinates.coordinates[0].toFixed(5)}
-                      </span>
-                    </div>
+                    {isLocationConfirmed && (
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
+                        <Target className="w-3 h-3 text-green-600" />
+                        <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
+                          {deliveryCoordinates.coordinates[1].toFixed(6)}, {deliveryCoordinates.coordinates[0].toFixed(6)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   
                   <div className="relative">
@@ -4980,11 +4981,38 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                           type: "Point",
                           coordinates: [Number(c.lng.toFixed(6)), Number(c.lat.toFixed(6))]
                         });
-                        setIsLocationConfirmed(true); // Persist autoconfirm on dragging too for comfort
+                        setIsLocationConfirmed(false); // Reset confirmation on drag to force re-confirm
                       }}
                       shopCoords={primaryShop.latitude && primaryShop.longitude ? { lat: primaryShop.latitude, lng: primaryShop.longitude } : undefined}
                     />
+                    
+                    {!isLocationConfirmed && (
+                      <div className="absolute inset-0 bg-slate-900/10 dark:bg-slate-950/20 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse z-[1000]">
+                        <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
+                          PIN UNLOCKED: PLEASE CONFIRM SPOT
+                        </p>
+                      </div>
+                    )}
                   </div>
+
+                  {!isLocationConfirmed ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsLocationConfirmed(true)}
+                      className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Target className="w-4 h-4" />
+                      <span>Confirm Exact Delivery Spot</span>
+                    </button>
+                  ) : (
+                    <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 p-3 rounded-2xl flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <p className="text-[10px] font-black text-green-800 dark:text-green-400 uppercase tracking-wider">Location Secured</p>
+                      </div>
+                      <button type="button" onClick={() => setIsLocationConfirmed(false)} className="text-[10px] font-black text-slate-400 hover:text-orange-600 dark:text-slate-500 dark:hover:text-orange-400 uppercase underline cursor-pointer">Change Pin</button>
+                    </div>
+                  )}
                   
                   {/* Visual distance range helper badge */}
                   <div className="flex flex-col gap-2">
@@ -6559,6 +6587,170 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [tableMissing, setTableMissing] = useState(false);
   const [selectedItemForQuantity, setSelectedItemForQuantity] = useState<MenuItem | null>(null);
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState<string>('All');
+  const [collapsedCategories, setCollapsedCategories] = useState<{ [key: string]: boolean }>({});
+  const [selectedStarFilter, setSelectedStarFilter] = useState<number | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const isScrollingRef = useRef(false);
+
+  // Memoized filtered reviews list to avoid unnecessary recalculations
+  const filteredReviews = useMemo(() => {
+    if (selectedStarFilter === null) return reviews;
+    return reviews.filter(r => r.rating === selectedStarFilter);
+  }, [reviews, selectedStarFilter]);
+
+  // Determine if the store is open or closed based on current hour
+  const getStoreStatus = () => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const isOpen = currentHour >= 8 && currentHour < 20;
+    return {
+      isOpen,
+      text: isOpen ? 'Open' : 'Closed',
+      hours: '08:00 - 20:00',
+      closingText: isOpen ? 'Closes at 20:00' : 'Opens at 08:00'
+    };
+  };
+
+  const storeStatus = getStoreStatus();
+
+  const filteredMenu = shop.menu.filter(item => 
+    item.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  // Group filteredMenu by category
+  const groupedMenu = useMemo(() => {
+    const groups: { [key: string]: MenuItem[] } = {};
+    
+    filteredMenu.forEach(item => {
+      const cat = (item.category || "Main Course").trim();
+      if (!groups[cat]) {
+        groups[cat] = [];
+      }
+      groups[cat].push(item);
+    });
+    
+    return groups;
+  }, [filteredMenu]);
+
+  // Extract unique visible categories
+  const visibleCategories = useMemo(() => {
+    const categoriesWithItems = Object.keys(groupedMenu);
+    if (categoriesWithItems.length > 0) {
+      return ['All', ...categoriesWithItems];
+    }
+    return [];
+  }, [groupedMenu]);
+
+  // Map category keywords to premium food emojis
+  const getCategoryEmoji = (category: string) => {
+    const catLower = category.toLowerCase();
+    if (catLower.includes('egg') || catLower.includes('breakfast')) return '🍳';
+    if (catLower.includes('bread') || catLower.includes('toast')) return '🍞';
+    if (catLower.includes('sandwich') || catLower.includes('burger') || catLower.includes('sub')) return '🥪';
+    if (catLower.includes('beverage') || catLower.includes('drink') || catLower.includes('coffee') || catLower.includes('juice')) return '🥤';
+    if (catLower.includes('dessert') || catLower.includes('sweet') || catLower.includes('cake')) return '🍰';
+    if (catLower.includes('pizza')) return '🍕';
+    if (catLower.includes('salad') || catLower.includes('healthy')) return '🥗';
+    if (catLower.includes('chicken') || catLower.includes('wing') || catLower.includes('meat')) return '🍗';
+    if (catLower.includes('pasta') || catLower.includes('noodle')) return '🍝';
+    if (catLower.includes('traditional') || catLower.includes('local') || catLower.includes('kota')) return '🇿🇦';
+    return '🍽️';
+  };
+
+  const handleCategoryClick = (category: string) => {
+    isScrollingRef.current = true;
+    setSelectedMenuCategory(category);
+    if ("vibrate" in navigator) navigator.vibrate(5);
+    
+    if (category === 'All') {
+      const topElement = document.getElementById('store-menu-search');
+      if (topElement) {
+        topElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } else {
+      const element = document.getElementById(`category-sec-${category.replace(/\s+/g, '-')}`);
+      if (element) {
+        const yOffset = -180; // Offset perfectly accommodates sticky top bar heights and padding
+        const y = element.getBoundingClientRect().top + window.pageYOffset + yOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      }
+    }
+
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 850);
+  };
+
+  // Center selected active button in the horizontally scrolling category tab bar
+  useEffect(() => {
+    const activeBtn = document.getElementById(`cat-btn-${selectedMenuCategory.replace(/\s+/g, '-')}`);
+    if (activeBtn) {
+      activeBtn.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center'
+      });
+    }
+  }, [selectedMenuCategory]);
+
+  // Handle window scroll-to-bottom fallback to highlight the last category
+  useEffect(() => {
+    if (activeTab !== 'menu' || visibleCategories.length <= 2) return;
+
+    const handleWindowScroll = () => {
+      if (isScrollingRef.current) return;
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 30) {
+        const categoriesWithItems = visibleCategories.filter(c => c !== 'All');
+        if (categoriesWithItems.length > 0) {
+          setSelectedMenuCategory(categoriesWithItems[categoriesWithItems.length - 1]);
+        }
+      }
+    };
+
+    window.addEventListener('scroll', handleWindowScroll);
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, [activeTab, visibleCategories]);
+
+  // Automatically update selected category highlighting on scroll
+  useEffect(() => {
+    if (activeTab !== 'menu' || visibleCategories.length <= 1) return;
+    
+    const categoryIDs = visibleCategories.filter(c => c !== 'All').map(c => `category-sec-${c.replace(/\s+/g, '-')}`);
+    
+    const observerOptions = {
+      root: null,
+      rootMargin: '-140px 0px -55% 0px',
+      threshold: 0
+    };
+    
+    const observerCallback = (entries: IntersectionObserverEntry[]) => {
+      if (isScrollingRef.current) return;
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = entry.target.id;
+          const matchingCategory = visibleCategories.find(c => `category-sec-${c.replace(/\s+/g, '-')}` === id);
+          if (matchingCategory) {
+            setSelectedMenuCategory(matchingCategory);
+          }
+        }
+      });
+    };
+    
+    const observer = new IntersectionObserver(observerCallback, observerOptions);
+    
+    categoryIDs.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    
+    return () => {
+      categoryIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) observer.unobserve(el);
+      });
+    };
+  }, [activeTab, visibleCategories]);
 
   const fetchReviews = useCallback(async () => {
     setLoadingReviews(true);
@@ -6588,10 +6780,6 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   useEffect(() => {
     fetchReviews();
   }, [fetchReviews]);
-
-  const filteredMenu = shop.menu.filter(item => 
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   const handleSubmitReview = async () => {
     if (!isOnline) {
@@ -6687,9 +6875,13 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
 
         <div className="absolute bottom-6 left-6 right-6 z-10">
           <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="bg-orange-600 text-white text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest shadow-lg">
                 {shop.category}
+              </span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest shadow-lg flex items-center gap-1 ${storeStatus.isOpen ? 'bg-emerald-600 text-white' : 'bg-rose-700 text-white'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full bg-white ${storeStatus.isOpen ? 'animate-pulse' : ''}`} />
+                {storeStatus.text}
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
@@ -6706,8 +6898,8 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         {/* Immersive Header Spacer */}
         <div className="h-4"></div>
         
-        {/* Sticky Action Tabs & Buttons */}
-        <div className="sticky top-0 z-40 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
+        {/* Immersive Action Tabs & Buttons */}
+        <div className="bg-white/95 dark:bg-slate-950/95 border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
           <div className="flex gap-3 mb-4">
             <button 
               onClick={() => {
@@ -6766,7 +6958,7 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
           {activeTab === 'menu' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* Search Bar */}
-              <div className="relative group">
+              <div id="store-menu-search" className="relative group">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
                 <input 
                   type="text" 
@@ -6797,30 +6989,103 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                  </div>
               )}
 
-              <motion.div 
-                initial="hidden"
-                animate="show"
-                variants={{
-                  hidden: { opacity: 0 },
-                  show: {
-                    opacity: 1,
-                    transition: {
-                      staggerChildren: 0.05
-                    }
-                  }
-                }}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-              >
-                {filteredMenu.length > 0 ? (
-                  filteredMenu.map((item) => (
-                    <MenuItemCard 
-                      key={item.id}
-                      item={item}
-                      shop={shop}
-                      onSelect={(item) => setSelectedItemForQuantity(item)}
-                      showAlert={showAlert}
-                    />
-                  ))
+              {/* Dynamic Categorized Horizontal Tab Navigation Bar */}
+              {visibleCategories.length > 2 && (
+                <div className="sticky top-0 z-35 bg-white/95 dark:bg-slate-950/95 py-3.5 backdrop-blur-md border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 overflow-x-auto no-scrollbar flex items-center gap-2 scroll-smooth shadow-sm">
+                  {visibleCategories.map((category) => {
+                    const isSelected = selectedMenuCategory === category;
+                    return (
+                      <button
+                        key={category}
+                        id={`cat-btn-${category.replace(/\s+/g, '-')}`}
+                        onClick={() => handleCategoryClick(category)}
+                        className={`rounded-full px-4 py-2 transition-all hover:scale-102 duration-200 text-xs md:text-sm font-label whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-orange-600 text-white font-bold shadow-md shadow-orange-600/20'
+                            : 'bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-800 hover:text-slate-700 dark:hover:text-slate-200 font-medium'
+                        }`}
+                      >
+                        <span className="text-xs md:text-sm">{category === 'All' ? '✨' : getCategoryEmoji(category)}</span>
+                        <span>{category}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="space-y-8 md:space-y-12 pt-2">
+                {visibleCategories.length > 0 ? (
+                  visibleCategories
+                    .filter((category) => category !== 'All')
+                    .map((category) => {
+                      const itemsUnderCategory = groupedMenu[category] || [];
+                      if (itemsUnderCategory.length === 0) return null;
+
+                      return (
+                        <div 
+                          key={category} 
+                          id={`category-sec-${category.replace(/\s+/g, '-')}`}
+                          className="space-y-4 scroll-mt-44"
+                        >
+                          <div 
+                            onClick={() => {
+                              setCollapsedCategories(prev => ({ ...prev, [category]: !prev[category] }));
+                              if ("vibrate" in navigator) navigator.vibrate(5);
+                            }}
+                            className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2 cursor-pointer select-none group/cat"
+                          >
+                            <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2 group-hover/cat:text-orange-600 transition-colors">
+                              <span className="text-sm md:text-base">{getCategoryEmoji(category)}</span>
+                              <span>{category}</span>
+                              <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
+                                {collapsedCategories[category] ? 'Tap to expand' : 'Tap to collapse'}
+                              </span>
+                            </h3>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono font-bold text-slate-400 px-2 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full">
+                                {itemsUnderCategory.length} {itemsUnderCategory.length === 1 ? 'item' : 'items'}
+                              </span>
+                              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${collapsedCategories[category] ? '' : 'rotate-180'}`} />
+                            </div>
+                          </div>
+
+                          {!collapsedCategories[category] ? (
+                            <motion.div 
+                              initial="hidden"
+                              animate="show"
+                              variants={{
+                                hidden: { opacity: 0, y: -10 },
+                                show: {
+                                  opacity: 1,
+                                  y: 0,
+                                  transition: {
+                                    staggerChildren: 0.05
+                                  }
+                                }
+                              }}
+                              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                            >
+                              {itemsUnderCategory.map((item) => (
+                                <MenuItemCard 
+                                  key={item.id}
+                                  item={item}
+                                  shop={shop}
+                                  onSelect={(item) => setSelectedItemForQuantity(item)}
+                                  showAlert={showAlert}
+                                />
+                              ))}
+                            </motion.div>
+                          ) : (
+                            <div 
+                              onClick={() => setCollapsedCategories(prev => ({ ...prev, [category]: false }))}
+                              className="py-4 text-center bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                            >
+                              📁 {itemsUnderCategory.length} {itemsUnderCategory.length === 1 ? 'dish is' : 'dishes are'} collapsed. Click to expand.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                 ) : (
                   <div className="py-12 text-center">
                     <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
@@ -6830,39 +7095,75 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     <p className="text-xs text-slate-500 mt-1">Try searching for something else</p>
                   </div>
                 )}
-              </motion.div>
+              </div>
             </div>
           )}
 
           {activeTab === 'reviews' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* Reviews Summary */}
-              <div className="flex items-center gap-6 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800">
-                <div className="text-center">
-                  <p className="text-4xl font-black text-slate-900 dark:text-white">{shop.rating}</p>
-                  <div className="flex text-orange-500 mt-1">
+              <div className="flex flex-col sm:flex-row items-center gap-6 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                <div className="text-center sm:border-r border-slate-200 dark:border-slate-800/80 sm:pr-8 shrink-0">
+                  <p className="text-5xl font-black text-slate-900 dark:text-white">{shop.rating}</p>
+                  <div className="flex text-orange-500 justify-center mt-1.5">
                     {[...Array(5)].map((_, i) => (
-                      <Star key={i} className={`w-3 h-3 ${i < Math.floor(shop.rating) ? 'fill-current' : ''}`} />
+                      <Star key={i} className={`w-3.5 h-3.5 ${i < Math.floor(shop.rating) ? 'fill-current' : ''}`} />
                     ))}
                   </div>
-                  <p className="text-[10px] text-slate-500 font-bold mt-1 uppercase tracking-wider">{reviews.length} Reviews</p>
+                  <p className="text-[10px] text-slate-500 font-bold mt-2 uppercase tracking-wider">{reviews.length} Reviews</p>
                 </div>
-                <div className="flex-1 space-y-1.5">
+                <div className="flex-1 w-full space-y-2">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Filter by Rating</p>
                   {[5, 4, 3, 2, 1].map((rating) => {
                     const count = reviews.filter(r => r.rating === rating).length;
                     const percentage = reviews.length > 0 ? (count / reviews.length) * 100 : 0;
+                    const isSelected = selectedStarFilter === rating;
                     return (
-                      <div key={rating} className="flex items-center gap-3">
-                        <span className="text-[10px] font-bold text-slate-500 w-2 shrink-0 text-center">{rating}</span>
-                        <div className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-orange-500 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }}></div>
+                      <div 
+                        key={rating} 
+                        onClick={() => {
+                          setSelectedStarFilter(prev => prev === rating ? null : rating);
+                          if ("vibrate" in navigator) navigator.vibrate(5);
+                        }}
+                        className={`flex items-center gap-3 cursor-pointer py-1 px-2.5 rounded-xl transition-all hover:bg-slate-100 dark:hover:bg-slate-800 border select-none ${
+                          isSelected 
+                            ? 'bg-orange-50 dark:bg-orange-950/25 border-orange-200 dark:border-orange-900/40 text-orange-600 dark:text-orange-400' 
+                            : 'border-transparent text-slate-500 dark:text-slate-400'
+                        }`}
+                        title={`Filter by ${rating} stars`}
+                      >
+                        <span className="text-[10px] font-bold w-2 shrink-0 text-center">{rating}</span>
+                        <div className="flex-1 h-2 bg-slate-200 dark:bg-slate-700/60 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-500 ${isSelected ? 'bg-orange-600' : 'bg-orange-500'}`} 
+                            style={{ width: `${percentage}%` }}
+                          />
                         </div>
-                        <span className="text-[10px] font-bold text-slate-500 w-6 shrink-0 tabular-nums">({count})</span>
+                        <span className="text-[10px] font-bold w-12 shrink-0 tabular-nums text-right">({count}) {isSelected && '✓'}</span>
                       </div>
                     );
                   })}
                 </div>
               </div>
+
+              {/* Dynamic Filter Notification / Badges */}
+              {selectedStarFilter !== null && (
+                <div className="flex items-center justify-between bg-orange-50 dark:bg-orange-950/15 px-4 py-3 rounded-2xl border border-orange-100 dark:border-orange-900/30">
+                  <p className="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
+                    <span>⭐</span>
+                    <span>Showing only {selectedStarFilter}-star reviews ({filteredReviews.length})</span>
+                  </p>
+                  <button 
+                    onClick={() => {
+                      setSelectedStarFilter(null);
+                      if ("vibrate" in navigator) navigator.vibrate(5);
+                    }}
+                    className="text-[10px] font-black uppercase tracking-widest text-[#221610] dark:text-orange-400 hover:text-orange-600 cursor-pointer text-orange-600"
+                  >
+                    Clear Filter
+                  </button>
+                </div>
+              )}
 
               {/* Review Submission Form */}
               {showReviewForm ? (
@@ -6932,8 +7233,8 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     <div className="animate-spin size-8 border-4 border-orange-600 border-t-transparent rounded-full mx-auto mb-4"></div>
                     <p className="text-xs text-slate-500">Loading reviews...</p>
                   </div>
-                ) : reviews.length > 0 ? (
-                  reviews.map((review) => (
+                ) : filteredReviews.length > 0 ? (
+                  filteredReviews.map((review) => (
                     <div key={review.id} className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-50 dark:border-slate-800">
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-2">
@@ -6957,12 +7258,16 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     </div>
                   ))
                 ) : (
-                  <div className="py-12 text-center">
-                    <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                  <div className="py-12 text-center bg-slate-50/50 dark:bg-slate-900/20 rounded-3xl p-6 border border-dashed border-slate-200 dark:border-slate-800">
+                    <div className="size-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-400">
                       <MessageSquare className="w-8 h-8" />
                     </div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">No reviews yet</p>
-                    <p className="text-xs text-slate-500 mt-1">Be the first to review this store!</p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      {selectedStarFilter !== null ? 'No matching reviews' : 'No reviews yet'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {selectedStarFilter !== null ? 'Try selecting a different rating filter' : 'Be the first to review this store!'}
+                    </p>
                   </div>
                 )}
               </div>
@@ -6978,8 +7283,31 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                     <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center shrink-0">
                       <MapPin className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                     </div>
-                    <div>
-                      <h3 className="font-bold text-gray-900 dark:text-white text-lg">Location</h3>
+                    <div className="flex-grow">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-bold text-gray-900 dark:text-white text-lg">Location</h3>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(shop.address);
+                            setCopiedAddress(true);
+                            if ("vibrate" in navigator) navigator.vibrate(5);
+                            setTimeout(() => setCopiedAddress(false), 2000);
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100/80 dark:bg-slate-900/80 border border-slate-200/40 dark:border-slate-800 text-[10px] text-slate-500 hover:text-orange-600 dark:hover:text-orange-500 transition-colors cursor-pointer"
+                        >
+                          {copiedAddress ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600 animate-in zoom-in-50" />
+                              <span className="text-emerald-500 font-bold">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span className="font-bold">Copy Address</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                       <p className="text-gray-500 dark:text-slate-400 mt-1">{shop.address}</p>
                     </div>
                   </div>
@@ -7019,16 +7347,20 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
                 {/* Hours & Contact */}
                 <div className="space-y-6">
                   <div className="bg-white dark:bg-slate-900/50 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-800">
-                    <div className="flex items-start space-x-4 mb-4">
+                    <div className="flex items-start space-x-4">
                       <div className="w-10 h-10 rounded-full bg-orange-50 dark:bg-orange-900/20 flex items-center justify-center shrink-0">
                         <Clock className="w-6 h-6 text-orange-600 dark:text-orange-400" />
                       </div>
-                      <div>
+                      <div className="flex-grow">
                         <h3 className="font-bold text-gray-900 dark:text-white text-lg">Opening Hours</h3>
-                        <div className="mt-3 space-y-2">
-                          <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-500 dark:text-slate-400">Monday - Sunday</span>
-                            <span className="font-semibold text-gray-900 dark:text-white">08:00 - 20:00</span>
+                        <div className="mt-3 space-y-3">
+                          <div className="flex justify-between items-center text-sm border-b border-dashed border-slate-100 dark:border-slate-800 pb-2">
+                            <span className="text-gray-500 dark:text-slate-400 font-medium">Monday - Sunday</span>
+                            <span className="font-bold text-gray-900 dark:text-white">{storeStatus.hours}</span>
+                          </div>
+                          <div className={`flex items-center gap-2 p-2.5 rounded-xl text-xs font-bold ${storeStatus.isOpen ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}>
+                            <span className={`w-2 h-2 rounded-full ${storeStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                            <span>Store is currently {storeStatus.isOpen ? 'Open' : 'Closed'} • {storeStatus.closingText}</span>
                           </div>
                         </div>
                       </div>
@@ -9599,7 +9931,17 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
           phone: shopData.phone,
           latitude: shopData.latitude,
           longitude: shopData.longitude,
-          menu: (menuData || []) as MenuItem[]
+          menu: (menuData || []).map(m => ({
+            id: String(m.id),
+            name: m.name,
+            price: Number(m.price),
+            displayPrice: `R${Number(m.price).toFixed(2)}`,
+            image: m.image_url || DEFAULT_MENU_IMAGE,
+            description: m.description || "",
+            category: m.category || "Main Course",
+            is_available: m.is_available !== false,
+            customizations: m.customizations || []
+          }))
         };
 
         setShop(formattedShop);
