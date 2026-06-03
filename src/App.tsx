@@ -109,6 +109,7 @@ import {
   Locate,
   LocateFixed,
   Banknote,
+  Wallet,
   ChevronLeft,
   Bug,
   Eye,
@@ -151,6 +152,7 @@ import { BlurUpImage } from './components/BlurUpImage';
 import { TrustBadge } from './components/TrustBadge';
 import { AppHelp } from './components/AppHelp';
 import { OnboardingTour } from './components/OnboardingTour';
+import { OrderHistorySkeleton, ShopOrdersSkeleton, RiderDashboardSkeleton, StatsSkeleton } from './components/FacebookSkeleton';
 
 const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: { 
   shop: Shop, 
@@ -745,21 +747,10 @@ export default function App() {
 
       if (shopsError) {
         console.error('Shops fetch error:', shopsError);
-        
-        const isNetwork = (shopsError.message && shopsError.message.toLowerCase().includes('failed to fetch')) || 
-                        (shopsError.details && shopsError.details.toLowerCase().includes('failed to fetch')) ||
-                        shopsError.code === 'PGRST301';
-
-        // If table doesn't exist, we'll handle it gracefully
-        if (shopsError.code === '42P01') {
-          setFetchError("We're currently setting up our kitchen. Please check back in a few minutes!");
-        } else if (isNetwork) {
-          setFetchError("Connection problem: We could not reach the server. Please check your internet connection.");
-        } else {
-          setFetchError("We couldn't load the stores right now. Give it a moment and try again.");
-        }
-        setLoadingShops(false);
-        return;
+        const errObj = new Error(shopsError.message || 'Unknown Supabase error');
+        (errObj as any).code = shopsError.code;
+        (errObj as any).details = shopsError.details;
+        throw errObj;
       }
 
       console.log(`Total shops found: ${shopsData?.length || 0}`);
@@ -801,6 +792,9 @@ export default function App() {
           name: s.name,
           logo: s.logo_url || DEFAULT_SHOP_LOGO,
           rating: Number(s.rating) || 4.5,
+          cash_trust_enabled: s.cash_trust_enabled === true || s.cash_trust_enabled === 'true',
+          allow_external_riders: s.allow_external_riders === true || s.allow_external_riders === 'true',
+          auto_look_for_rider: s.auto_look_for_rider === true || s.auto_look_for_rider === 'true',
           reviewCount: 12 + (shopHash % 88), // Mock review count
           prepTime: "15-20 min", // Mock prep time
           isOpen: isOpen,
@@ -865,15 +859,27 @@ export default function App() {
         // We don't stop loading spinner during retries to prevent flickering
         setTimeout(() => fetchShopsData(retries - 1), 2500);
       } else {
-        setFetchError(errorMessage);
-        setLoadingShops(false);
-        
-        // Show a more friendly notification for network issues
-        if (isNetworkError) {
-          setNotification({ 
-            message: "Connection lost. Please check if your ad-blocker is blocking Supabase.", 
-            type: 'error' 
+        // Sandboxed Zero-Downtime Guarantee: fallback to local cache if available when database fails
+        const cached = safeLocalStorageGet('cached_shops', null);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          console.warn("Database fetch failed - Falling back gracefully to localStorage cached shops under Zero-Downtime Guarantee rules");
+          setShops(cached);
+          setLoadingShops(false);
+          setNotification({
+            message: "Running in offline mode. Standard default state loaded.",
+            type: 'info'
           });
+        } else {
+          setFetchError(errorMessage);
+          setLoadingShops(false);
+          
+          // Show a more friendly notification for network issues
+          if (isNetworkError) {
+            setNotification({ 
+              message: "Connection lost. Please check if your ad-blocker is blocking Supabase.", 
+              type: 'error' 
+            });
+          }
         }
       }
     }
@@ -3477,39 +3483,145 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
 
   if (loadingShops && shops.length === 0) {
     return (
-      <div className="bg-gray-50 dark:bg-slate-950 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl">
-        <header className="bg-white dark:bg-slate-900/80 px-4 py-3 flex items-center justify-between shadow-sm border-b border-gray-100 dark:border-slate-800">
-          <div className="h-8 w-32 bg-gray-200 dark:bg-slate-800 rounded-lg animate-pulse"></div>
-          <div className="h-10 w-10 bg-gray-200 dark:bg-slate-800 rounded-full animate-pulse"></div>
+      <div className="bg-[#f8fafc] dark:bg-slate-950 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl relative overflow-hidden">
+        {/* Top Header Bar Skeleton */}
+        <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md px-4 py-3 flex items-center justify-between border-b border-gray-100 dark:border-slate-850">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              {/* Logo block */}
+              <div className="h-6 w-28 bg-slate-200 dark:bg-slate-800 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+              </div>
+              {/* Version pill */}
+              <div className="h-4 w-8 bg-slate-100 dark:bg-slate-800 rounded relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+              </div>
+            </div>
+            {/* Status indicator line */}
+            <div className="flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-200 dark:bg-green-900 animate-pulse"></div>
+              <div className="h-2.5 w-24 bg-slate-100 dark:bg-slate-800 rounded relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Notification trigger skeleton */}
+            <div className="h-9 w-9 bg-slate-100 dark:bg-slate-800 rounded-full relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+            </div>
+            {/* Settings trigger skeleton */}
+            <div className="h-9 w-9 bg-slate-100 dark:bg-slate-800 rounded-full relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+            </div>
+          </div>
         </header>
-        <main className="p-4 space-y-8 animate-in fade-in duration-500">
-          <div className="h-10 w-full bg-slate-100 dark:bg-slate-800 rounded-2xl relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+
+        {/* Home Screen Body Skeleton */}
+        <main className="p-4 space-y-7 overflow-y-auto max-w-md w-full mx-auto">
+          {/* Greeting text blocks */}
+          <div className="space-y-2 pt-2">
+            <div className="h-3 w-20 bg-slate-200 dark:bg-slate-800 rounded relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+            </div>
+            <div className="h-8 w-44 bg-slate-200 dark:bg-slate-800 rounded-xl relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+            </div>
           </div>
-          <div className="flex gap-2 overflow-x-hidden">
-            {[1,2,3,4,5].map(i => (
-              <div key={i} className="h-10 w-24 bg-slate-100 dark:bg-slate-800 rounded-full shrink-0 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+
+          {/* Banner Promo Shimmer Template */}
+          <div className="relative rounded-[28px] p-5 bg-gradient-to-r from-slate-100 to-slate-250 dark:from-slate-900 dark:to-slate-800 border border-slate-200/50 dark:border-slate-800 overflow-hidden shadow-inner">
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2.5s_infinite]"></div>
+            <div className="space-y-3 relative z-10">
+              <div className="h-4 w-32 bg-slate-300 dark:bg-slate-700 rounded-full relative overflow-hidden"></div>
+              <div className="h-6 w-52 bg-slate-300 dark:bg-slate-700 rounded-lg relative overflow-hidden"></div>
+              <div className="h-3.5 w-64 bg-slate-300 dark:bg-slate-700 rounded relative overflow-hidden"></div>
+              <div className="pt-2 flex justify-between items-center">
+                <div className="h-9 w-28 bg-slate-300 dark:bg-slate-705 rounded-xl"></div>
+                <div className="h-7 w-20 bg-slate-300 dark:bg-slate-700 rounded-lg"></div>
               </div>
-            ))}
+            </div>
           </div>
-          <div className="space-y-6">
-            {[1,2,3].map(i => (
-              <div key={i} className="bg-white dark:bg-slate-900/50 p-5 rounded-[32px] border border-slate-100 dark:border-slate-800 space-y-4">
-                <div className="h-44 w-full bg-slate-100 dark:bg-slate-800 rounded-[24px] relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
-                </div>
-                <div className="space-y-2">
-                  <div className="h-6 w-2/3 bg-slate-100 dark:bg-slate-800 rounded-lg relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
-                  </div>
-                  <div className="h-4 w-1/3 bg-slate-100 dark:bg-slate-800 rounded-lg relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
-                  </div>
-                </div>
+
+          {/* "Order Again" Section Skeleton */}
+          <section className="space-y-3">
+            <div className="flex justify-between items-center">
+              <div className="h-4 w-24 bg-slate-200 dark:bg-slate-800 rounded-md relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
               </div>
-            ))}
-          </div>
+              <div className="h-5 w-20 bg-slate-100 dark:bg-slate-800/80 rounded-lg relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+              </div>
+            </div>
+            {/* Horizontal sliding circular avatars */}
+            <div className="flex gap-4 overflow-x-hidden pt-1">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="flex-shrink-0 w-[110px] flex flex-col items-center space-y-2">
+                  <div className="w-[84px] h-[84px] bg-slate-200 dark:bg-slate-800 rounded-[28px] relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/20 dark:via-slate-700/15 to-transparent -translate-x-full animate-[shimmer_2.2s_infinite]"></div>
+                  </div>
+                  <div className="h-3 w-16 bg-slate-200 dark:bg-slate-800 rounded relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Food Category Chips Slider Skeleton */}
+          <section className="space-y-2">
+            <div className="flex gap-2 overflow-x-hidden pt-1">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="h-9 w-20 bg-slate-200 dark:bg-slate-800 rounded-full shrink-0 relative overflow-hidden border border-slate-200/40 dark:border-slate-800">
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Spaza Listings Skeleton Grid */}
+          <section className="space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <div className="h-3.5 w-28 bg-slate-200 dark:bg-slate-800 rounded relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/30 dark:via-slate-700/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                </div>
+                <div className="h-1 w-6 bg-slate-250 dark:bg-slate-800 rounded-full"></div>
+              </div>
+              <div className="h-5 w-16 bg-slate-100 dark:bg-slate-800 rounded-full relative overflow-hidden"></div>
+            </div>
+
+            {/* List with 2 detailed beautiful pulsing cards */}
+            <div className="space-y-5">
+              {[1, 2].map(i => (
+                <div key={i} className="bg-white dark:bg-slate-900/50 p-4 rounded-[32px] border border-slate-100 dark:border-slate-800/80 space-y-4 shadow-sm relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/5 dark:via-slate-800/5 to-transparent -translate-x-full animate-[shimmer_3s_infinite]"></div>
+                  
+                  {/* Aspect ratio frame */}
+                  <div className="h-40 w-full bg-slate-150 dark:bg-slate-800/80 rounded-[24px] relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                  </div>
+
+                  {/* Merchant Details Row */}
+                  <div className="flex items-start gap-3">
+                    {/* Merchant Round Icon */}
+                    <div className="w-12 h-12 rounded-2xl bg-slate-200 dark:bg-slate-800 shrink-0 relative overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                    </div>
+                    {/* Multi line details */}
+                    <div className="flex-1 space-y-2.5">
+                      <div className="h-5 w-2/3 bg-slate-200 dark:bg-slate-800 rounded-lg relative overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/20 dark:via-slate-700/10 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                      </div>
+                      <div className="h-3 w-1/3 bg-slate-100 dark:bg-slate-800 rounded-lg relative overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-slate-100/20 dark:via-slate-700/10 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </main>
       </div>
     );
@@ -3549,258 +3661,15 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
           </div>
           <div className="truncate text-slate-500 dark:text-slate-300">Connected to Supabase Cloud</div>
         </div>
-        
+
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <button 
             onClick={onRetry} 
-            className="w-full bg-orange-600 text-white font-bold py-4 px-8 rounded-2xl shadow-xl shadow-orange-200 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 px-8 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
           >
             <RefreshCw className="w-5 h-5" />
             Retry Loading
           </button>
-
-          {/* Demo Seeder for Presentation */}
-          <details className="w-full mt-4">
-            <summary className="text-xs text-slate-400 cursor-pointer text-center mb-4">Developer Options</summary>
-            <button 
-              id="seed-button"
-              onClick={async () => {
-                const btn = document.getElementById('seed-button');
-                if (btn) btn.innerText = 'Seeding...';
-                try {
-                  console.log('Starting demo data seeding...');
-                  const { data: newShops, error: seedError } = await supabase
-                    .from('shops')
-                    .insert([
-                      { name: 'Local Kota King', description: 'The best Khas-Khas in your local area', location: 'Winnie Mandela Zone 1', category: 'Kota', rating: 4.8, is_active: true },
-                      { name: 'Mama\'s Kitchen', description: 'Home-style African cuisine', location: 'Oakmoor', category: 'Traditional', rating: 4.6, is_active: true },
-                      { name: 'The Grill Master', description: 'Flame-grilled chicken and steaks', location: 'Hospital View', category: 'Grill', rating: 4.7, is_active: true }
-                    ])
-                    .select();
-                  
-                  if (seedError) {
-                    console.error('Shops seeding failed:', seedError);
-                    throw seedError;
-                  }
-                  
-                  console.log('Shops seeded successfully:', newShops);
-                  
-                  // Add some menu items for the first shop
-                  if (newShops && newShops[0]) {
-                    const { error: menuSeedError } = await supabase.from('menu_items').insert([
-                      { shop_id: newShops[0].id, name: "The King Kota", price: 45, description: "Chips, Polony, Cheese, Russian, Steak" },
-                      { shop_id: newShops[0].id, name: "Special Combo", price: 35, description: "Chips, Russian, Egg" }
-                    ]);
-                    
-                    if (menuSeedError) {
-                      console.error('Menu items seeding failed:', menuSeedError);
-                    }
-                  }
-                  
-                  onRetry();
-                } catch (err: any) {
-                  console.error('Seeding error detail:', err);
-                  const isFetchError = err.message === 'Failed to fetch';
-                  const msg = isFetchError 
-                    ? 'Network Blocked: Your browser or an ad-blocker is preventing the data from being saved.'
-                    : (err.message || 'Unknown error during seeding');
-                  
-                  if (isFetchError) {
-                    const sqlDiv = document.getElementById('manual-sql-area');
-                    if (sqlDiv) sqlDiv.classList.remove('hidden');
-                  }
-                  
-                  showAlert('Seeding Error', msg);
-                } finally {
-                  if (btn) btn.innerText = 'Seed Demo Shops';
-                }
-              }}
-              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-xl cursor-pointer active:scale-95 transition-transform"
-            >
-              Seed Demo Shops
-            </button>
-
-            <div id="manual-sql-area" className="hidden mt-4 text-left">
-              <p className="text-[10px] font-bold text-red-500 mb-2 uppercase tracking-tight">Manual Setup Required</p>
-              <p className="text-[10px] text-slate-500 mb-3 leading-relaxed">Your browser blocked the automatic setup. Please copy this SQL and run it in your Supabase SQL Editor:</p>
-              <div className="bg-slate-100 p-3 rounded-xl border border-slate-200 overflow-x-auto mb-4">
-                <pre className="text-[8px] font-mono text-slate-700 whitespace-pre-wrap leading-tight">
-{`-- 1. Create shops table
-CREATE TABLE IF NOT EXISTS shops (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  name text NOT NULL,
-  description text,
-  location text,
-  category text,
-  rating numeric DEFAULT 0,
-  is_active boolean DEFAULT true,
-  logo_url text DEFAULT 'https://images.unsplash.com/photo-1526367790999-0150786486a9?auto=format&fit=crop&q=80&w=800',
-  owner_id uuid
-);
-
--- 2. Create notifications table
-CREATE TABLE IF NOT EXISTS notifications (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id uuid NOT NULL,
-  title text NOT NULL,
-  message text NOT NULL,
-  type text NOT NULL,
-  read boolean DEFAULT false,
-  created_at timestamptz DEFAULT now(),
-  data jsonb
-);
-
--- 3. Ensure profiles table has necessary columns
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS favorites text[];
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS photo_url text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS fullName text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS city text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS country text;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS language text DEFAULT 'en';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role text DEFAULT 'user';
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS latitude numeric;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS longitude numeric;
-ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
-
--- 4. Create menu_items table
-CREATE TABLE IF NOT EXISTS menu_items (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  shop_id uuid REFERENCES shops(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  price numeric NOT NULL,
-  description text,
-  image_url text DEFAULT 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800',
-  is_available boolean DEFAULT true
-);
-
--- 5. Create reviews table
-CREATE TABLE IF NOT EXISTS reviews (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  shop_id uuid REFERENCES shops(id) ON DELETE CASCADE,
-  userName text NOT NULL,
-  rating integer CHECK (rating >= 1 AND rating <= 5),
-  comment text NOT NULL,
-  createdAt timestamptz DEFAULT now()
-);
-
--- 6. Create orders table
--- Run this if you get check constraint errors for delivery_status:
--- ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_delivery_status_check;
--- UPDATE orders SET delivery_status = 'none' WHERE delivery_status IS NULL OR delivery_status NOT IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed');
--- ALTER TABLE orders ADD CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed'));
-
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS latitude numeric;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS longitude numeric;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS cancellation_reason text;
-
-CREATE TABLE IF NOT EXISTS orders (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id uuid,
-  shop_id uuid REFERENCES shops(id) ON DELETE SET NULL,
-  customer_name text NOT NULL,
-  phone text NOT NULL,
-  email text,
-  city text,
-  address text NOT NULL,
-  country text DEFAULT 'South Africa',
-  product_name text NOT NULL,
-  product_variant text,
-  quantity integer DEFAULT 1,
-  price numeric NOT NULL,
-  notes text,
-  status text DEFAULT 'pending',
-  payment_method text DEFAULT 'Cash on Delivery',
-  is_delivery boolean DEFAULT false,
-  delivery_fee numeric DEFAULT 0,
-  latitude numeric,
-  longitude numeric,
-  location GEOGRAPHY(POINT),
-  delivery_instructions text,
-  rider_id uuid,
-  delivery_status text DEFAULT 'none' CHECK (delivery_status IN ('none', 'finding_rider', 'rider_assigned', 'picked_up', 'delivered', 'cancelled', 'delivery', 'collection', 'ready', 'pending', 'preparing', 'confirmed', 'completed')),
-  rider_rating integer CHECK (rider_rating >= 1 AND rider_rating <= 5),
-  rider_rating_comment text,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
--- 7. Create rider_profiles table
-CREATE TABLE IF NOT EXISTS rider_profiles (
-  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  full_name text,
-  vehicle_type text DEFAULT 'bicycle',
-  is_online boolean DEFAULT false,
-  current_order_id uuid REFERENCES orders(id) ON DELETE SET NULL,
-  total_earnings numeric DEFAULT 0,
-  current_lat numeric,
-  current_lng numeric,
-  rating numeric DEFAULT 5.0,
-  rating_count integer DEFAULT 0,
-  created_at timestamptz DEFAULT now()
-);
-
--- 8. Create rider_locations table for real-time tracking
-CREATE TABLE IF NOT EXISTS rider_locations (
-  rider_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  latitude numeric NOT NULL,
-  longitude numeric NOT NULL,
-  location GEOGRAPHY(POINT),
-  updated_at timestamptz DEFAULT now()
-);
-
--- 9. Enable Row Level Security (Secure the Map)
-ALTER TABLE public.rider_locations ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Anyone can read rider locations" ON public.rider_locations;
-CREATE POLICY "Anyone can read rider locations" ON public.rider_locations FOR SELECT USING (true);
-
-DROP POLICY IF EXISTS "Riders can update their own location" ON public.rider_locations;
-CREATE POLICY "Riders can update their own location" ON public.rider_locations FOR ALL USING (auth.uid() = rider_id);
-
--- 10. Enable Spatial Geotagging (Optional but makes map perfectly accurate tracking with PostGIS)
--- Note: Ignore any RLS warnings for spatial_ref_sys in the Supabase Dashboard. You cannot and should not modify it.
-CREATE EXTENSION IF NOT EXISTS postgis;
-ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS location GEOGRAPHY(POINT);
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS location GEOGRAPHY(POINT);
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS delivery_instructions text;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS rider_rating integer;
-ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS rider_rating_comment text;
-ALTER TABLE public.rider_profiles ADD COLUMN IF NOT EXISTS rating_count integer DEFAULT 0;
-
-CREATE OR REPLACE FUNCTION update_location_column() RETURNS TRIGGER AS $$
-BEGIN
-  IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
-    NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::GEOGRAPHY;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS auto_update_rider_location ON public.rider_locations;
-CREATE TRIGGER auto_update_rider_location BEFORE INSERT OR UPDATE OF latitude, longitude ON public.rider_locations FOR EACH ROW EXECUTE FUNCTION update_location_column();
-  
-DROP TRIGGER IF EXISTS auto_update_order_location ON public.orders;
-CREATE TRIGGER auto_update_order_location BEFORE INSERT OR UPDATE OF latitude, longitude ON public.orders FOR EACH ROW EXECUTE FUNCTION update_location_column();
-
--- 11. Insert demo data
-INSERT INTO shops (name, description, location, category, rating, is_active)
-VALUES 
-('Local Kota King', 'The best Khas-Khas in your local area', 'Winnie Mandela Zone 1', 'Kota', 4.8, true),
-('Mama''s Kitchen', 'Home-style African cuisine', 'Oakmoor', 'Traditional', 4.6, true),
-('The Grill Master', 'Flame-grilled chicken and steaks', 'Hospital View', 'Grill', 4.7, true);-- 12. Reload PostgREST schema cache
-NOTIFY pgrst, 'reload schema';`}
-              </pre>
-            </div>
-            
-            <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-              <p className="text-[8px] font-bold text-slate-400 uppercase mb-1">Debug Info</p>
-              <p className="text-[8px] text-slate-400 break-all font-mono">URL: {import.meta.env.VITE_SUPABASE_URL || 'https://qnwjkwlhmreenqotufvw.supabase.co'}</p>
-            </div>
-            
-            <p className="text-[9px] text-slate-400 mt-4 italic text-center">Then click "Retry Loading" above.</p>
-          </div>
-          </details>
         </div>
       </div>
     );
@@ -4287,6 +4156,35 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
   const [deliveryType, setDeliveryType] = useState<'collection' | 'delivery'>('collection');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
   
+  const [userOrderCount, setUserOrderCount] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('cached_orders');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed.length;
+      }
+    } catch (_) {}
+    return 0;
+  });
+
+  useEffect(() => {
+    const fetchUserOrderCount = async () => {
+      if (!session?.user?.id) return;
+      try {
+        const { data, error, count } = await supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', session.user.id);
+        if (!error && typeof count === 'number') {
+          setUserOrderCount(count);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch exact order count", e);
+      }
+    };
+    fetchUserOrderCount();
+  }, [session]);
+  
   // Recipient details editable inline to prevent block/exit funnel
   const [customerName, setCustomerName] = useState(userProfile.fullName || '');
   const [customerPhone, setCustomerPhone] = useState(userProfile.phone || '');
@@ -4360,6 +4258,31 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
   const primaryShopId = cart.length > 0 ? cart[0].shopId : (shops[0]?.id || '');
   const primaryShop = shops.find(s => s.id === primaryShopId) || shops[0];
+
+  const [hasInHouseRiderOnline, setHasInHouseRiderOnline] = useState(false);
+
+  useEffect(() => {
+    const checkInHouseRiders = async () => {
+      if (!primaryShop?.id) return;
+      try {
+        const { data, error } = await (supabase as any)
+          .from('rider_profiles')
+          .select('id')
+          .eq('is_online', true)
+          .eq('shop_id', primaryShop.id);
+        
+        if (!error && data && data.length > 0) {
+          setHasInHouseRiderOnline(true);
+        } else {
+          setHasInHouseRiderOnline(false);
+        }
+      } catch (err) {
+        console.warn("Failed to query shop specific riders", err);
+        setHasInHouseRiderOnline(false);
+      }
+    };
+    checkInHouseRiders();
+  }, [primaryShop?.id]);
 
   useEffect(() => {
     if (deliveryCoordinates && primaryShop.latitude && primaryShop.longitude) {
@@ -4592,6 +4515,28 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
 
   const activeDeliveryFee = deliveryType === 'delivery' ? deliveryFee : 0;
   const totalAmount = Math.max(0, subtotal - discountAmount + activeDeliveryFee);
+
+  const isCashTrustActive = primaryShop ? (
+    localStorage.getItem('localeats_cash_trust_' + primaryShop.id) === 'true' || 
+    (primaryShop as any).cash_trust_enabled === true || 
+    (primaryShop as any).cash_trust_enabled === 'true' ||
+    (primaryShop as any).localeats_cash_trust === true || 
+    (primaryShop as any).localeats_cash_trust === 'true'
+  ) : false;
+  const isCoaEligible = isCashTrustActive && (userOrderCount === 0 || totalAmount < 350);
+  const isCoaDisabled = isCashTrustActive && (userOrderCount > 0 && totalAmount >= 350);
+
+  useEffect(() => {
+    if (isCashTrustActive && userOrderCount === 0 && !isCoaDisabled) {
+      setPaymentMethod('cash');
+    }
+  }, [userOrderCount, isCashTrustActive, isCoaDisabled]);
+
+  useEffect(() => {
+    if (isCoaDisabled && paymentMethod === 'cash') {
+      setPaymentMethod('card_machine');
+    }
+  }, [isCoaDisabled, paymentMethod]);
   
   const handleConfirm = async () => {
     if (!isOnline) {
@@ -4754,6 +4699,8 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
           const originalPrice = (item.price + customizationsTotal) * item.quantity;
           const finalItemPrice = Number(Math.max(0, originalPrice - (originalPrice * discountRatio)).toFixed(2));
 
+          const isCOAOrder = isCashTrustActive && paymentMethod === 'cash';
+
           return {
             user_id: session?.user?.id,
             shop_id: item.shopId,
@@ -4770,13 +4717,12 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             notes: item.specialInstructions || '',
             delivery_instructions: finalDeliveryInstructions,
             status: 'pending',
-            payment_method: paymentMethod,
+            payment_method: isCOAOrder ? 'cash_on_arrival' : paymentMethod,
             is_delivery: deliveryType === 'delivery',
             delivery_fee: deliveryType === 'delivery' ? deliveryFee : 0,
-            delivery_status: 'none',
+            delivery_status: isCOAOrder ? 'finding_rider' : 'none',
             latitude: currentLat,
-            longitude: currentLng,
-            delivery_coordinates: deliveryType === 'delivery' ? deliveryCoordinates : null
+            longitude: currentLng
           };
         });
 
@@ -4784,16 +4730,24 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
         const { error } = await supabase.from('orders').insert(orderData).select();
         
         if (error) {
-          console.error('Supabase insert error:', error);
+          console.error('Supabase insert error on first attempt:', error);
           if (error.code === 'PGRST204' || error.message?.includes('column')) {
              console.warn('Orders table missing columns, retrying without spatial data');
              const safeOrderData = orderData.map((d: any) => {
-               const { latitude, longitude, delivery_coordinates, ...rest } = d;
-               return rest;
+                const { latitude, longitude, ...rest } = d;
+                return rest;
              });
              const { error: retryError } = await supabase.from('orders').insert(safeOrderData).select();
              if (retryError) throw retryError;
              
+             // Pop COA confirmation on retry success
+             if (isCashTrustActive && paymentMethod === 'cash') {
+               showAlert(
+                 "Order Broadcasted!",
+                 "Your order is broadcasted! An on-demand rider is being dispatched to retrieve and deliver your fresh order."
+               );
+             }
+
              // Mark promo as used on retry success
              if (appliedPromo) {
                const usedLocalKey = session?.user?.id 
@@ -4808,7 +4762,15 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
              return;
           }
           throw error;
-         }
+        }
+
+        // Pop COA confirmation on initial success
+        if (isCashTrustActive && paymentMethod === 'cash') {
+          showAlert(
+            "Order Broadcasted!",
+            "Your order is broadcasted! An on-demand rider is being dispatched to retrieve and deliver your fresh order."
+          );
+        }
 
         // Mark promo as used on initial success
         if (appliedPromo) {
@@ -4958,6 +4920,18 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
                 />
               </div>
+
+              {primaryShop && primaryShop.allow_external_riders === false && !hasInHouseRiderOnline && (
+                <div className="p-3.5 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-start gap-2.5">
+                  <span className="text-sm shrink-0">🍳</span>
+                  <div>
+                    <h5 className="font-extrabold text-[9px] text-orange-600 dark:text-orange-400 uppercase tracking-widest">Self-Delivered by Store</h5>
+                    <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400 font-bold mt-0.5">
+                      This food is self-delivered directly by the shop’s internal kitchen staff.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {deliveryCoordinates && (
                 <div className="space-y-3 pt-2">
@@ -5355,22 +5329,82 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
               <CreditCard className="w-4 h-4 text-orange-500" />
               Settlement Method
             </h3>
+
+            {isCashTrustActive && (
+              <div id="checkout-coa-trust-banner" className="bg-green-500/10 dark:bg-green-500/15 text-green-700 dark:text-green-400 border border-green-500/20 p-3.5 rounded-2xl flex items-center gap-3 shadow-inner">
+                <span className="text-lg shrink-0">💵</span>
+                <p className="text-xs font-black tracking-tight leading-snug">
+                  Local COD Supported! Pay cash right at your door with complete peace of mind.
+                </p>
+              </div>
+            )}
             
             <div className="flex flex-col gap-2.5">
-              <label className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${paymentMethod === 'cash' ? 'border-orange-500 bg-orange-500/5 dark:bg-orange-500/10' : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`size-9 rounded-full flex items-center justify-center ${paymentMethod === 'cash' ? 'bg-orange-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
-                    <Banknote className="w-4 h-4" />
+              <label 
+                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
+                  isCoaDisabled 
+                    ? 'opacity-50 cursor-not-allowed border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20' 
+                    : paymentMethod === 'cash' 
+                      ? 'border-orange-500 bg-orange-500/5 dark:bg-orange-500/10' 
+                      : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50'
+                }`}
+                onClick={(e) => {
+                  if (isCoaDisabled) {
+                    e.preventDefault();
+                    toast.info("COA is restricted to first-time shoppers or orders under R350.");
+                  }
+                }}
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className={`size-9 rounded-full flex items-center justify-center shrink-0 ${
+                    isCoaDisabled 
+                      ? 'bg-slate-200 dark:bg-slate-800 text-slate-400' 
+                      : paymentMethod === 'cash' 
+                        ? 'bg-orange-600 text-white' 
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                  }`}>
+                    {isCoaDisabled ? <Shield className="w-4 h-4 text-slate-400" /> : <Banknote className="w-4 h-4" />}
                   </div>
-                  <div className="text-left">
-                    <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight">Cash on {deliveryType === 'delivery' ? 'Delivery' : 'Counter'}</p>
-                    <p className="text-slate-400 text-[10px] font-bold tracking-tight">Pay cash directly to customer helper</p>
+                  <div className="text-left flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight">
+                        {isCashTrustActive ? "Cash on Arrival (COA)" : `Cash on ${deliveryType === 'delivery' ? 'Delivery' : 'Counter'}`}
+                      </p>
+                      {isCashTrustActive && userOrderCount === 0 && (
+                        <span className="bg-emerald-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse shrink-0">
+                          Recommended
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-slate-400 text-[10px] font-bold tracking-tight">
+                      {isCoaDisabled 
+                        ? "COA limit of R350 exceeded for returning users." 
+                        : isCashTrustActive 
+                          ? "Pay safely with cash or mobile wallet when rider arrives at your door." 
+                          : "Pay cash directly to customer helper"}
+                    </p>
                   </div>
                 </div>
-                <div className={`size-5 rounded-full border-2 flex items-center justify-center ${paymentMethod === 'cash' ? 'border-orange-500' : 'border-slate-300'}`}>
-                  {paymentMethod === 'cash' && <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />}
+                <div className={`size-5 rounded-full border-2 flex items-center justify-center shrink-0 ${isCoaDisabled ? 'border-slate-200 bg-slate-100 dark:border-slate-800' : paymentMethod === 'cash' ? 'border-orange-500' : 'border-slate-300'}`}>
+                  {isCoaDisabled ? (
+                    <span className="text-[10px]">🔒</span>
+                  ) : (
+                    paymentMethod === 'cash' && <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
+                  )}
                 </div>
-                <input type="radio" name="payment" value="cash" checked={paymentMethod === 'cash'} onChange={() => setPaymentMethod('cash')} className="hidden" />
+                <input 
+                  type="radio" 
+                  name="payment" 
+                  value="cash" 
+                  disabled={isCoaDisabled} 
+                  checked={paymentMethod === 'cash'} 
+                  onChange={() => {
+                    if (!isCoaDisabled) {
+                      setPaymentMethod('cash');
+                    }
+                  }} 
+                  className="hidden" 
+                />
               </label>
 
               <label className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${paymentMethod === 'card_machine' ? 'border-orange-500 bg-orange-500/5 dark:bg-orange-500/10' : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
@@ -6592,6 +6626,41 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
   const [selectedStarFilter, setSelectedStarFilter] = useState<number | null>(null);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const isScrollingRef = useRef(false);
+  const [showTrustTooltip, setShowTrustTooltip] = useState(false);
+  const [userOrderCount, setUserOrderCount] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('cached_orders');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed.length;
+      }
+    } catch (_) {}
+    return 0;
+  });
+
+  useEffect(() => {
+    const fetchUserOrderCount = async () => {
+      if (!session?.user?.id) return;
+      try {
+        const { data, error, count } = await supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', session.user.id);
+        if (!error && typeof count === 'number') {
+          setUserOrderCount(count);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch exact order count", e);
+      }
+    };
+    fetchUserOrderCount();
+  }, [session]);
+
+  const isCashTrustActive = localStorage.getItem('localeats_cash_trust_' + shop.id) === 'true' || 
+    (shop as any).cash_trust_enabled === true || 
+    (shop as any).cash_trust_enabled === 'true' ||
+    (shop as any).localeats_cash_trust === true || 
+    (shop as any).localeats_cash_trust === 'true';
 
   // Memoized filtered reviews list to avoid unnecessary recalculations
   const filteredReviews = useMemo(() => {
@@ -6890,6 +6959,21 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
             </div>
             <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-2xl">{shop.name}</h1>
             <p className="text-white/80 text-xs font-medium max-w-sm line-clamp-1">{shop.address}</p>
+            {isCashTrustActive && userOrderCount === 0 && (
+              <div className="mt-2.5 flex items-center">
+                <button
+                  onClick={() => {
+                    setShowTrustTooltip(true);
+                    if ("vibrate" in navigator) navigator.vibrate(5);
+                  }}
+                  className="group flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-black px-3 py-1.5 rounded-xl uppercase tracking-wider shadow-lg active:scale-95 transition-all animate-bounce"
+                >
+                  <span className="text-xs">💵</span>
+                  <span>Cash on Arrival Available for First-Time Users</span>
+                  <HelpCircle className="w-3.5 h-3.5 opacity-80" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -6930,6 +7014,18 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         {/* Spacer */}
         <div className="h-8"></div>
 
+        {/* Verified Trade Trust Banner */}
+        {isCashTrustActive && (
+          <div id="verified-trade-trust-banner" className="bg-emerald-500/10 text-emerald-700 border border-emerald-500/20 px-3 py-2.5 rounded-xl flex items-center gap-2.5 shadow-sm mb-6 animate-in fade-in slide-in-from-top-4 duration-300">
+            <span className="text-lg shrink-0">💵</span>
+            <div className="flex-1">
+              <p className="text-xs font-black tracking-tight leading-normal">
+                Pay safely with Cash on Arrival! First-time customer? Pay only when your food is safely in hand.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Tab Navigation Buttons */}
         <div className="flex space-x-1 py-1 mb-8 overflow-x-auto no-scrollbar scroll-smooth border-b border-gray-100 dark:border-slate-800">
           {(['menu', 'reviews', 'info'] as const).map((tab) => (
@@ -6957,6 +7053,23 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
         <div className="flex-grow">
           {activeTab === 'menu' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Trust-Builder Badge */}
+              {isCashTrustActive && userOrderCount === 0 && (
+                <div 
+                  onClick={() => {
+                    setShowTrustTooltip(true);
+                    if ("vibrate" in navigator) navigator.vibrate(5);
+                  }}
+                  className="bg-gradient-to-r from-green-500/10 via-amber-500/5 to-green-500/10 hover:from-green-500/15 hover:to-green-500/15 text-green-700 dark:text-green-400 border border-green-500/20 p-4 rounded-3xl flex items-center justify-center gap-3 transition-all duration-200 cursor-pointer shadow-sm active:scale-[0.99] select-none text-center"
+                  id="storefront-coa-trust-badge"
+                >
+                  <Wallet className="w-5 h-5 text-amber-500 dark:text-amber-400 shrink-0" />
+                  <span className="text-xs font-black tracking-tight font-sans leading-snug">
+                    💵 First-Time Local Trust Active: Cash on Arrival Accepted here! Order with absolute confidence.
+                  </span>
+                </div>
+              )}
+
               {/* Search Bar */}
               <div id="store-menu-search" className="relative group">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
@@ -7403,6 +7516,38 @@ function StoreInfoScreen({ onBack, shop, isFavorite, onToggleFavorite, userProfi
           }
         }}
       />
+
+      {/* Cash on Arrival Trust Tooltip / Micro-Drawer */}
+      {showTrustTooltip && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[999] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-300">
+          <div 
+            className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative animate-in slide-in-from-bottom duration-300"
+          >
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full sm:hidden" />
+            <div className="flex items-start gap-4 mt-2">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+                <span className="text-2xl animate-pulse">💵</span>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-extrabold text-[#221610] dark:text-white text-base">Cash-on-Arrival Enabled</h3>
+                <p className="text-slate-500 dark:text-slate-400 text-xs mt-1.5 leading-relaxed font-semibold">
+                  Build trust with your first order! Pay safely with physical cash or mobile wallet at your doorstep once the rider arrives.
+                </p>
+                <div className="mt-4 flex items-center gap-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950/20 px-2.5 py-1 rounded-lg w-max">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  No Risk • Verified Food Delivery
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowTrustTooltip(false)}
+              className="w-full mt-6 py-3 bg-slate-950 hover:bg-slate-900 dark:bg-orange-600 dark:hover:bg-orange-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 cursor-pointer"
+            >
+              Got It, Thanks!
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -8569,7 +8714,22 @@ function OrderTrackingScreen({ orders, shops, onBack, showAlert, triggerHaptic }
                       {order.status === 'preparing' && "Chef is working their magic!"}
                       {order.status === 'ready' && "Your food is ready for collection!"}
                     </p>
-                    <p className="text-[10px] text-slate-500">Estimated time: 15-20 mins</p>
+                    <p className="text-[10px] text-slate-500 font-medium">Estimated time: 15-20 mins</p>
+                    {order.is_delivery && (
+                      <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                        {shop?.allow_external_riders === false ? (
+                          <p id="eta-subtext-inhouse" className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-start gap-1.5 leading-relaxed">
+                            <span>🚴</span>
+                            <span>Serviced exclusively by this shop's private couriers.</span>
+                          </p>
+                        ) : (
+                          <p id="eta-subtext-ondemand" className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold flex items-start gap-1.5 leading-relaxed">
+                            <span>📡</span>
+                            <span>Linked directly to LocalEats Public Fleet</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -9301,12 +9461,7 @@ function RiderDashboardScreen({ onBack, showAlert, showConfirm, triggerHaptic, r
   };
 
   if (loading && !riderProfile) {
-    return (
-      <div className="h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
-        <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
-        <p className="font-bold">Accessing Rider Fleet...</p>
-      </div>
-    );
+    return <RiderDashboardSkeleton />;
   }
 
   if (!riderProfile) {
@@ -9619,7 +9774,6 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'orders' | 'inventory' | 'stats' | 'marketing' | 'settings' | 'riders'>('orders');
-  const [showDebug, setShowDebug] = useState(false);
   const [orderFilter, setOrderFilter] = useState<'today' | 'seven_days' | 'all'>('today');
   const [cancellationModal, setCancellationModal] = useState<{ isOpen: boolean, orderId: string | null }>({ isOpen: false, orderId: null });
   const [cancellationReason, setCancellationReason] = useState("");
@@ -10255,60 +10409,11 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               <p className="text-[10px] uppercase tracking-widest text-primary font-bold">Kitchen Live</p>
             </div>
           </div>
-          <button 
-            onClick={() => setShowDebug(!showDebug)}
-            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${showDebug ? 'bg-orange-500 text-white' : 'text-slate-400 hover:text-orange-500'}`}
-          >
-            <Bug className="w-5 h-5" />
-          </button>
+          <div className="w-10 h-10"></div>
         </div>
       </header>
 
       <main className="flex-grow overflow-y-auto p-4 space-y-4 pb-24 max-w-screen-xl mx-auto w-full">
-        {showDebug && (
-          <div className="mb-6 p-4 bg-slate-900 text-slate-300 rounded-2xl text-[10px] font-mono border border-slate-700 shadow-xl animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex justify-between items-center mb-2 border-b border-slate-800 pb-2">
-              <span className="text-orange-400 font-bold uppercase tracking-widest">Debug Info</span>
-              <button onClick={() => setShowDebug(false)} className="text-slate-500 hover:text-white">Close</button>
-            </div>
-            <p className="mb-1"><span className="text-slate-500">User ID:</span> {currentUserId}</p>
-            <p className="mb-1"><span className="text-slate-500">Shop ID:</span> {shop?.id || 'None'}</p>
-            <p className="mb-1"><span className="text-slate-500">Shop Owner ID:</span> {shop?.owner_id || 'None'}</p>
-            <p className="mb-3"><span className="text-slate-500">Orders Count:</span> {orders.length}</p>
-            
-            <div className="bg-slate-800/50 p-2 rounded-lg border border-slate-700">
-              <p className="text-orange-400/80 mb-1 font-bold">Troubleshooting:</p>
-              <ul className="list-disc list-inside space-y-1 text-slate-400">
-                <li>Ensure your User ID matches the Shop Owner ID.</li>
-                <li>Check if orders in Supabase have the correct Shop ID.</li>
-                <li>Run the SQL provided in the chat to fix schema.</li>
-              </ul>
-            </div>
-            
-            <button 
-              onClick={async () => {
-                const { count, error } = await supabase.from('orders').select('*', { count: 'exact', head: true });
-                showAlert('Database Info', `Total orders in DB: ${count || 0}`);
-              }}
-              className="mt-3 w-full py-2 bg-orange-600/20 text-orange-400 border border-orange-600/30 rounded-lg font-bold hover:bg-orange-600/30 transition-colors"
-            >
-              Check Global Order Count
-            </button>
-
-            <button 
-              onClick={() => {
-                setOrderAcceptedModal({
-                  isOpen: true,
-                  productName: "Test Product",
-                  ownerMessage: "This is a test message from the shop owner! 🚀"
-                });
-              }}
-              className="mt-2 w-full py-2 bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 rounded-lg font-bold hover:bg-emerald-600/30 transition-colors"
-            >
-              Test Acceptance Modal
-            </button>
-          </div>
-        )}
         {!loading && !error && shop && activeTab === 'orders' && (
           <div className="space-y-4 mb-4 animate-in fade-in slide-in-from-top-4 duration-500">
             {/* Stats Overview */}
@@ -10385,7 +10490,7 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 Retry Connection
               </button>
               
-              {/* Presentation Tool: Create Shop for User */}
+              {/* Register Shop for User */}
               {error.includes("No shop found") && (
                 <button 
                   onClick={async () => {
@@ -10414,30 +10519,13 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   }}
                   className="w-full px-6 py-2 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-xl font-bold text-sm cursor-pointer"
                 >
-                  Create Demo Shop
+                  Get Started: Register Shop
                 </button>
               )}
             </div>
           </div>
         ) : loading ? (
-          <div className="space-y-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-700 animate-pulse">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="space-y-2">
-                    <div className="h-5 w-32 bg-slate-200 dark:bg-slate-700 rounded"></div>
-                    <div className="h-4 w-24 bg-slate-100 dark:bg-slate-800 rounded"></div>
-                  </div>
-                  <div className="h-8 w-24 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
-                </div>
-                <div className="h-4 w-full bg-slate-50 dark:bg-slate-800 rounded mb-4"></div>
-                <div className="flex gap-2 pt-4 border-t border-slate-50 dark:border-slate-800">
-                  <div className="h-10 flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl"></div>
-                  <div className="h-10 flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl"></div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <ShopOrdersSkeleton />
         ) : activeTab === 'inventory' ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between px-1">
@@ -10890,6 +10978,78 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                 </button>
               </div>
             </div>
+
+            {/* Cash on Arrival (COA) Trust Badge Settings Card */}
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl text-emerald-600 dark:text-emerald-400">
+                  <Banknote className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-[#221610] dark:text-white text-base">Cash on Arrival (COA) Trust Badge</h3>
+                  <p className="text-xs text-slate-500 font-medium">Allow customers to choose cash payment safely</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col md:flex-row md:items-center justify-between p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 gap-4">
+                <div className="space-y-1 my-1 flex-1">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Enable Trust Status Banner</p>
+                  <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400 font-medium">
+                    Displays high-trust badges stating: <strong className="text-slate-700 dark:text-slate-300">"💵 First-Time Local Trust Active: Cash on Arrival Accepted here!"</strong>. Boosts order volume by reassuring first-time visitors.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const isTrustCurrentlyActive = localStorage.getItem('localeats_cash_trust_' + shop.id) === 'true' || 
+                      (shop as any).cash_trust_enabled === true || 
+                      (shop as any).cash_trust_enabled === 'true' ||
+                      (shop as any).localeats_cash_trust === true || 
+                      (shop as any).localeats_cash_trust === 'true';
+                    const nextVal = !isTrustCurrentlyActive;
+                    
+                    await runWithProcessing(async () => {
+                      // Attempt to persist remote db column update
+                      try {
+                        const { error } = await supabase
+                          .from('shops')
+                          .update({ 
+                            localeats_cash_trust: nextVal,
+                            cash_trust_enabled: nextVal
+                          })
+                          .eq('id', shop.id);
+                        if (error) console.warn("Supabase column update warn:", error);
+                      } catch (err) {
+                        console.warn("Supabase column error:", err);
+                      }
+                      
+                      // Always update LocalStorage as persistent fallback (Rule #1)
+                      localStorage.setItem('localeats_cash_trust_' + shop.id, String(nextVal));
+                      
+                      const updatedShop = { ...shop, localeats_cash_trust: nextVal, cash_trust_enabled: nextVal } as any;
+                      setShop(updatedShop);
+ 
+                      toast.success(nextVal ? "COA Trust Banner activated! Customers will now see your trust badges." : "COA trust features deactivated.");
+                    });
+                  }}
+                  className={`px-4 py-3 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer active:scale-95 transition-all text-white shadow-lg shrink-0 ${
+                    (localStorage.getItem('localeats_cash_trust_' + shop.id) === 'true' || 
+                    (shop as any).cash_trust_enabled === true || 
+                    (shop as any).cash_trust_enabled === 'true' ||
+                    (shop as any).localeats_cash_trust === true || 
+                    (shop as any).localeats_cash_trust === 'true')
+                      ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-900/10' 
+                      : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-950/10'
+                  }`}
+                >
+                  {(localStorage.getItem('localeats_cash_trust_' + shop.id) === 'true' || 
+                  (shop as any).cash_trust_enabled === true || 
+                  (shop as any).cash_trust_enabled === 'true' ||
+                  (shop as any).localeats_cash_trust === true || 
+                  (shop as any).localeats_cash_trust === 'true') ? 'Disable Banner' : 'Enable Banner'}
+                </button>
+              </div>
+            </div>
           </div>
         ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-6">
@@ -10900,54 +11060,6 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
               <p className="font-bold text-lg text-slate-900 dark:text-white">No active orders</p>
               <p className="text-slate-500 text-sm">New orders will appear here in real-time.</p>
             </div>
-            
-            {/* Presentation Tool: Seed Demo Data */}
-            <button 
-              onClick={async () => {
-                if (!shop) return;
-                
-                try {
-                  // Create sample menu items if they don't exist
-                  await supabase.from('menu_items').insert([
-                    { shop_id: shop.id, name: "The King Kota", price: 45, description: "Chips, Polony, Cheese, Egg, Russian, Steak" },
-                    { shop_id: shop.id, name: "Oakmoor Special", price: 35, description: "Chips, Polony, Cheese, Russian" }
-                  ]);
-                  
-                  // Create sample orders
-                  await supabase.from('orders').insert([
-                    { 
-                      shop_id: shop.id, 
-                      customer_name: "Thabo M.", 
-                      product_name: "The King Kota", 
-                      quantity: 1, 
-                      price: 45, 
-                      status: 'pending',
-                      delivery_status: 'none',
-                      created_at: new Date().toISOString()
-                    },
-                    { 
-                      shop_id: shop.id, 
-                      customer_name: "Lerato K.", 
-                      product_name: "Oakmoor Special", 
-                      quantity: 2, 
-                      price: 70, 
-                      status: 'preparing',
-                      delivery_status: 'none',
-                      created_at: new Date(Date.now() - 600000).toISOString()
-                    }
-                  ]);
-                  
-                  // No need to reload, real-time subscription will pick it up
-                  // but we might want to refresh shop data if we added menu items
-                } catch (err: any) {
-                  console.error('Error seeding orders:', err);
-                  showAlert('Error', 'Failed to seed orders: ' + err.message);
-                }
-              }}
-              className="px-4 py-2 border border-primary/20 text-primary/60 rounded-lg text-[10px] uppercase font-bold tracking-widest hover:bg-primary/5 transition-colors cursor-pointer"
-            >
-              Seed Demo Orders (For Presentation)
-            </button>
           </div>
         ) : (
           filteredOrders.map((order) => {
@@ -11018,8 +11130,8 @@ function ShopDashboardScreen({ onBack, orderAcceptedModal, setOrderAcceptedModal
                   </div>
                   {order.payment_method && (
                     <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-bold text-xs">
-                      {order.payment_method === 'cash' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
-                      {order.payment_method === 'cash' ? 'Cash' : 'Card'}
+                      {order.payment_method === 'cash' || order.payment_method === 'cash_on_arrival' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
+                      {order.payment_method === 'cash' ? 'Cash' : order.payment_method === 'cash_on_arrival' ? 'COA' : 'Card'}
                     </div>
                   )}
                 </div>
@@ -11612,24 +11724,7 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
           </div>
 
           {loading ? (
-            <div className="space-y-4">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 animate-pulse">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="space-y-2">
-                      <div className="h-4 w-32 bg-slate-200 dark:bg-slate-700 rounded"></div>
-                      <div className="h-3 w-24 bg-slate-100 dark:bg-slate-800 rounded"></div>
-                    </div>
-                    <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
-                  </div>
-                  <div className="h-4 w-full bg-slate-50 dark:bg-slate-800 rounded mb-3"></div>
-                  <div className="flex justify-between items-center pt-3 border-t border-slate-50 dark:border-slate-800">
-                    <div className="h-8 w-24 bg-slate-100 dark:bg-slate-800 rounded-lg"></div>
-                    <div className="h-8 w-24 bg-slate-100 dark:bg-slate-800 rounded-lg"></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ShopOrdersSkeleton />
           ) : filteredOrders.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50">
               <Package className="w-12 h-12" />
@@ -11758,8 +11853,8 @@ function AdminOrdersScreen({ shops, onBack, showAlert, showConfirm, runWithProce
                             </div>
                             {order.payment_method && (
                               <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300 font-bold">
-                                {order.payment_method === 'cash' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
-                                {order.payment_method === 'cash' ? 'Cash' : 'Card'}
+                                {order.payment_method === 'cash' || order.payment_method === 'cash_on_arrival' ? <Banknote className="w-3.5 h-3.5 text-green-500" /> : <CreditCard className="w-3.5 h-3.5 text-blue-500" />}
+                                {order.payment_method === 'cash' ? 'Cash' : order.payment_method === 'cash_on_arrival' ? 'Cash on Arrival (COA)' : 'Card'}
                               </div>
                             )}
                           </div>
@@ -12414,19 +12509,7 @@ function OrderHistoryScreen({
           </div>
 
           {loading ? (
-            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 animate-pulse">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="space-y-2">
-                      <div className="h-5 w-32 bg-slate-200 dark:bg-slate-700 rounded"></div>
-                      <div className="h-4 w-24 bg-slate-100 dark:bg-slate-800 rounded"></div>
-                    </div>
-                    <div className="h-6 w-20 bg-slate-200 dark:bg-slate-700 rounded-full"></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <OrderHistorySkeleton />
           ) : orders.length > 0 && filteredOrders.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in duration-300">
               <SearchX className="w-12 h-12 text-slate-400 mb-3" />
@@ -12614,7 +12697,7 @@ function OrderHistoryScreen({
                         </p>
                       ) : (
                         <p className="text-slate-400 text-[10px] uppercase tracking-widest mt-1">
-                          {order.payment_method === 'cash' ? '💵 Cash on Collection' : '💳 Card Machine'}
+                          {order.payment_method === 'cash_on_arrival' ? '💵 Cash on Arrival (COA)' : order.payment_method === 'cash' ? '💵 Cash on Collection' : '💳 Card Machine'}
                         </p>
                       )}
                     </div>
