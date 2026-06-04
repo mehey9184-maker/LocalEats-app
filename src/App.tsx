@@ -148,6 +148,7 @@ const LOCAL_PROMO_DB: Record<string, { code: string; type: 'percent' | 'fixed' |
 };
 
 import { AddressSearch, LocationPickerMap } from './components/MapComponents';
+import { detectTownship, TOWNSHIPS, TownshipConfig } from './lib/townshipHelper';
 import { BlurUpImage } from './components/BlurUpImage';
 import { TrustBadge } from './components/TrustBadge';
 import { AppHelp } from './components/AppHelp';
@@ -3407,6 +3408,9 @@ const HorizontalShopCard = ({ shop, onClick, userLocation }: HorizontalShopCardP
 
 function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onSettings, onProfile, onCheckout, onDiscover, onExplore, onOrderHistory, onStoreInfo, onRetry, cart, addToCart, removeFromCart, clearCart, setNotification, setPendingReview, setCurrentScreen, currentScreen, favorites, toggleFavorite, userLocation, onRequestLocation, onNotifications, unreadCount, orders, showAlert, appVersion, triggerHaptic, isOnline }: { userProfile: UserProfile, session: Session | null, shops: Shop[], loadingShops: boolean, fetchError: string | null, onSettings: () => void, onProfile: () => void, onCheckout: () => void, onDiscover: () => void, onExplore: () => void, onOrderHistory: () => void, onStoreInfo: (shopId: string) => void, onRetry: () => void, cart: CartItem[], addToCart: (item: MenuItem, shopId: string, quantity?: number, specialInstructions?: string) => void, removeFromCart: (itemId: string, shopId: string) => void, clearCart: () => void, setNotification: Dispatch<SetStateAction<any>>, setPendingReview: Dispatch<SetStateAction<PendingReview | null>>, setCurrentScreen: Dispatch<SetStateAction<Screen>>, currentScreen: Screen, favorites: string[], toggleFavorite: (shopId: string) => void, userLocation: { lat: number, lng: number } | null, onRequestLocation: () => void, onNotifications: () => void, unreadCount: number, orders: Order[], showAlert: (title: string, message: string) => void, appVersion: string, triggerHaptic: (pattern?: number | number[]) => void, isOnline: boolean }) {
   const { t } = useTranslation();
+  const currentTownship = useMemo(() => {
+    return detectTownship(userLocation?.lat, userLocation?.lng);
+  }, [userLocation]);
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -3792,11 +3796,26 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
     </header>
 
       <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
-        <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-1">{greeting},</p>
-          <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">
-            {userProfile.fullName ? userProfile.fullName.split(' ')[0] : 'Legend'}! 👋
-          </h2>
+        <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600 mb-1">{greeting},</p>
+            <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter">
+              {userProfile.fullName ? userProfile.fullName.split(' ')[0] : 'Legend'}! 👋
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 font-bold tracking-tight">
+              📍 {currentTownship.greeting}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-orange-500/20 shadow-sm animate-pulse">
+              <Sparkles className="w-3.5 h-3.5" />
+              {currentTownship.badgeText}
+            </span>
+            <span className="inline-flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-slate-200 dark:border-slate-750 shadow-sm">
+              <MapPin className="w-3.5 h-3.5 text-orange-500" />
+              {currentTownship.name}
+            </span>
+          </div>
         </div>
 
         {activeOrders.length > 0 && (
@@ -3997,6 +4016,37 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
                  <MapPin className="w-4 h-4 text-orange-500" />
                </button>
              </div>
+          </div>
+        </section>
+
+        {/* Hyper-local Township Landmarks Segment */}
+        <section className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300">
+          <div className="bg-slate-50/50 dark:bg-slate-900/30 p-5 rounded-[28px] border border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center justify-between mb-3.5 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Serving Landmarks in {currentTownship.name}</p>
+              </div>
+              <span className="text-[9px] font-black tracking-wider text-orange-600 dark:text-orange-400 uppercase bg-orange-500/10 dark:bg-orange-500/20 px-2.5 py-1 rounded-full">{currentTownship.name} Zone</span>
+            </div>
+            
+            <div className="flex flex-wrap gap-2 mb-3">
+              {currentTownship.landmarks.map((landmark, index) => (
+                <span 
+                  key={index} 
+                  className="bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl text-[11px] font-bold border border-slate-100 dark:border-slate-800 shadow-sm transition-colors hover:border-orange-500/30 flex items-center gap-1.5 cursor-default"
+                >
+                  <div className="size-1.5 rounded-full bg-orange-500"></div>
+                  {landmark}
+                </span>
+              ))}
+            </div>
+            <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-relaxed font-semibold">
+              🎯 {currentTownship.deliveryRangeMessage}
+            </p>
           </div>
         </section>
 
@@ -4280,6 +4330,14 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
     }
     return null;
   });
+
+  const deliveryTownship = useMemo(() => {
+    if (deliveryCoordinates && deliveryCoordinates.coordinates) {
+      const [lng, lat] = deliveryCoordinates.coordinates;
+      return detectTownship(lat, lng);
+    }
+    return detectTownship(userLocation?.lat, userLocation?.lng);
+  }, [deliveryCoordinates, userLocation]);
 
   // Enforce spatial authority and precision validation via visual map pin confirmation
   const [isLocationConfirmed, setIsLocationConfirmed] = useState<boolean>(false);
@@ -4969,6 +5027,18 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
                 />
               </div>
+
+              {deliveryTownship && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200/50 dark:border-slate-805 rounded-2xl animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider">Detected Township Target</span>
+                    <span className="text-[8.5px] bg-orange-500/10 dark:bg-orange-500/25 text-orange-600 dark:text-orange-450 font-black px-2 py-0.5 rounded-full uppercase tracking-widest">{deliveryTownship.name} Zone</span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-500 dark:text-slate-450 font-bold leading-relaxed">
+                    Local runners will route your Kota using native corridors around <span className="text-slate-800 dark:text-slate-200">{deliveryTownship.landmarks.slice(0, 3).join(', ')}</span> for quick handshake handovers!
+                  </p>
+                </div>
+              )}
 
               {primaryShop && primaryShop.allow_external_riders === false && !hasInHouseRiderOnline && (
                 <div className="p-3.5 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-start gap-2.5">
