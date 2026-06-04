@@ -152,7 +152,10 @@ import { BlurUpImage } from './components/BlurUpImage';
 import { TrustBadge } from './components/TrustBadge';
 import { AppHelp } from './components/AppHelp';
 import { OnboardingTour } from './components/OnboardingTour';
+import { InteractiveTour } from './components/InteractiveTour';
+import { PopiaLegalDrawer } from './components/PopiaLegalDrawer';
 import { OrderHistorySkeleton, ShopOrdersSkeleton, RiderDashboardSkeleton, StatsSkeleton } from './components/FacebookSkeleton';
+import { audioHelper } from './lib/audioHelper';
 
 const ShopCard = memo(({ shop, isFollowed, onStoreInfo, triggerHaptic }: { 
   shop: Shop, 
@@ -639,32 +642,23 @@ export default function App() {
   const notificationAudio = useRef<HTMLAudioElement | null>(null);
   const [audioInitialized, setAudioInitialized] = useState(false);
 
-  useEffect(() => {
-    // Premium "sweet" notification sound
-    notificationAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-  }, []);
-
   const playNotificationSound = useCallback(() => {
-    if (notificationAudio.current) {
-      notificationAudio.current.currentTime = 0;
-      notificationAudio.current.play().catch(e => console.warn("Audio autoplay blocked:", e));
-    }
+    audioHelper.play('alert');
   }, []);
 
   // Initialize audio on first click to satisfy browser autoplay policies
   useEffect(() => {
     const handleFirstInteraction = () => {
-      if (notificationAudio.current && !audioInitialized) {
-        notificationAudio.current.play().then(() => {
-           notificationAudio.current?.pause();
-           setAudioInitialized(true);
-        }).catch(() => {});
-        window.removeEventListener('click', handleFirstInteraction);
+      // Touch/click resumes the AudioContext elegantly
+      const ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (ctx) {
+        audioHelper.play('alert');
       }
+      window.removeEventListener('click', handleFirstInteraction);
     };
     window.addEventListener('click', handleFirstInteraction);
     return () => window.removeEventListener('click', handleFirstInteraction);
-  }, [audioInitialized]);
+  }, []);
 
   const cartCount = cart.reduce((sum, item) => sum + (item?.quantity || 0), 0);
   const cartTotal = cart.reduce((sum, item) => sum + ((item?.price || 0) * (item?.quantity || 0)), 0);
@@ -1202,7 +1196,10 @@ export default function App() {
             
             const oldStatus = payload.old?.status;
             const newStatus = payload.new?.status;
+            const oldDeliveryStatus = payload.old?.delivery_status;
+            const newDeliveryStatus = payload.new?.delivery_status;
             
+            // 1. Core Order Status Updates
             if (oldStatus !== newStatus) {
               const shop = shops.find(s => s.id === payload.new.shop_id);
               const title = `Store Update`;
@@ -1212,7 +1209,15 @@ export default function App() {
               if (newStatus === 'ready') message = `🔥 Your order from ${shop?.name} is READY for collection!`;
               if (newStatus === 'confirmed') message = `${shop?.name} has confirmed your order!`;
               if (newStatus === 'completed') message = `Legendary! You've collected your order from ${shop?.name}. Enjoy! 😋`;
-              
+              if (newStatus === 'cancelled') message = `🚨 Your order from ${shop?.name || 'the shop'} has been cancelled.`;
+
+              // Centralized Psychoacoustic Sound Engine Triggers
+              if (newStatus === 'confirmed') audioHelper.play('confirmed');
+              else if (newStatus === 'preparing') audioHelper.play('preparing');
+              else if (newStatus === 'ready') audioHelper.play('ready');
+              else if (newStatus === 'completed') audioHelper.play('delivered');
+              else if (newStatus === 'cancelled') audioHelper.play('cancelled');
+
               // Special handling for "ready" status - High visibility UI
               if (newStatus === 'ready') {
                 const isDelivery = payload.new.is_delivery;
@@ -1234,26 +1239,6 @@ export default function App() {
                     textTransform: 'uppercase'
                   }
                 });
-
-                // Audio Alert - Using a more distinct built-in beep pattern if possible or the existing playNotificationSound
-                if (typeof window !== 'undefined') {
-                  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-                  const oscillator = audioCtx.createOscillator();
-                  const gainNode = audioCtx.createGain();
-                  
-                  oscillator.type = 'sine';
-                  oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-                  
-                  gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-                  gainNode.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.1);
-                  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1);
-                  
-                  oscillator.connect(gainNode);
-                  gainNode.connect(audioCtx.destination);
-                  
-                  oscillator.start();
-                  oscillator.stop(audioCtx.currentTime + 1);
-                }
 
                 // Haptic Pulse (Double vibration)
                 if (navigator.vibrate) {
@@ -1289,12 +1274,6 @@ export default function App() {
                 if ("vibrate" in navigator) {
                   navigator.vibrate([100, 50, 100]);
                 }
-                // Add sound effect
-                try {
-                  const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3');
-                  audio.volume = 0.4;
-                  audio.play().catch(e => console.log('Audio play failed:', e));
-                } catch (e) {}
 
                 setNotification({
                   message: `✅ ${message}`,
@@ -1314,16 +1293,59 @@ export default function App() {
                   ]
                 });
               }
+            }
 
-              if (newStatus === 'completed') {
-                setPendingReview({
-                  orderId: payload.new.id,
-                  shopId: payload.new.shop_id,
-                  productName: payload.new.product_name,
-                  snoozeCount: 0
-                });
-                setCurrentScreen('review');
+            // 2. Rider Delivery Status Updates
+            if (oldDeliveryStatus !== newDeliveryStatus && newDeliveryStatus) {
+              const shop = shops.find(s => s.id === payload.new.shop_id);
+              let deliveryMessage = ``;
+              
+              if (newDeliveryStatus === 'rider_assigned') {
+                deliveryMessage = `🏍️ Good news! A delivery rider has accepted your order from ${shop?.name || 'the shop'}!`;
+                audioHelper.play('confirmed');
+              } else if (newDeliveryStatus === 'picked_up') {
+                deliveryMessage = `🚀 Your order has been picked up by the rider and is hot on-route!`;
+                audioHelper.play('dispatched');
+              } else if (newDeliveryStatus === 'arrived') {
+                deliveryMessage = `🏡 Ding Dong! Your delivery rider has arrived outside with your fresh order!`;
+                audioHelper.play('ready'); // High attention chime
+              } else if (newDeliveryStatus === 'delivered') {
+                deliveryMessage = `🎉 Order successfully delivered. Bon Appétit!`;
+                audioHelper.play('delivered'); // Satisfying celebratory harmony
               }
+
+              if (deliveryMessage) {
+                toast.success(deliveryMessage, { duration: 6000 });
+                
+                const newNotif: AppNotification = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  title: `Delivery Dispatch`,
+                  message: deliveryMessage,
+                  type: 'order',
+                  timestamp: Date.now(),
+                  read: false,
+                  orderId: payload.new.id
+                };
+                setNotifications(prev => [newNotif, ...prev]);
+
+                setNotification({
+                  message: deliveryMessage,
+                  type: 'success',
+                  actions: [
+                    { label: 'Track Order', onClick: () => setCurrentScreen('order-tracking') }
+                  ]
+                });
+              }
+            }
+
+            if (newStatus === 'completed') {
+              setPendingReview({
+                orderId: payload.new.id,
+                shopId: payload.new.shop_id,
+                productName: payload.new.product_name,
+                snoozeCount: 0
+              });
+              setCurrentScreen('review');
             }
           }
         }
@@ -1681,7 +1703,28 @@ export default function App() {
               exit={{ opacity: 0, y: -100 }}
               className={`fixed ${notification.persistent ? 'inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm' : 'top-0 left-0 right-0'} z-[100] px-4 pointer-events-none`}
             >
-              <div className={`${notification.persistent ? 'w-full max-w-xs' : 'max-w-md mx-auto'} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-2xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto`}>
+              <motion.div 
+                {...(!notification.persistent ? {
+                  drag: true,
+                  dragDirectionLock: true,
+                  dragConstraints: { top: -200, bottom: 100, left: -250, right: 250 },
+                  dragElastic: { top: 0.3, bottom: 0.1, left: 0.3, right: 0.3 },
+                  onDragEnd: (event, info) => {
+                    const swipeAwayY = info.offset.y < -50 || info.velocity.y < -150;
+                    const swipeAwayX = Math.abs(info.offset.x) > 100 || Math.abs(info.velocity.x) > 150;
+                    if (swipeAwayY || swipeAwayX) {
+                      setNotification(null);
+                    }
+                  },
+                  whileDrag: { scale: 0.98, opacity: 0.85 }
+                } : {})}
+                className={`${notification.persistent ? 'w-full max-w-xs' : 'max-w-md mx-auto relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl'} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-2xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
+              >
+                {!notification.persistent && (
+                  <div className="flex justify-center -mt-3.5 -mb-1 shrink-0">
+                    <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full opacity-60" />
+                  </div>
+                )}
                 <div className="flex items-start gap-3">
                   <div className={`${notification.type === 'ready' ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400' : 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400'} p-3 rounded-2xl shrink-0`}>
                     {notification.type === 'ready' ? <Utensils className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
@@ -1702,7 +1745,7 @@ export default function App() {
                 {notification.actions && (
                   <div className="flex flex-col gap-2 mt-2">
                     {notification.actions.map((action, idx) => (
-                      <button
+                       <button
                         key={idx}
                         onClick={() => {
                           action.onClick();
@@ -1719,7 +1762,7 @@ export default function App() {
                     ))}
                   </div>
                 )}
-              </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2254,6 +2297,8 @@ export default function App() {
 
       <AppHelp />
       {session && <OnboardingTour />}
+      {session && <InteractiveTour />}
+      <PopiaLegalDrawer />
     </div>
     </AnimatePresence>
     </div>
@@ -3877,6 +3922,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
                   <Search className="h-5 w-5 text-gray-400 dark:text-slate-500" />
                 </div>
                 <input 
+                  id="tour-search-bar"
                   className="block w-full pl-10 pr-12 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500" 
                   placeholder="Search for the best local Kotas..." 
                   type="text"
@@ -3918,7 +3964,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
         
         {/* Location Display & Manual Fix */}
         <section className="mb-8 mt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
-          <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-[32px] border border-slate-100 dark:border-slate-800 flex items-center justify-between shadow-sm">
+          <div id="tour-delivery-address" className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-[32px] border border-slate-100 dark:border-slate-800 flex items-center justify-between shadow-sm">
              <div className="flex items-center gap-3 overflow-hidden">
                <div className="size-10 bg-orange-100 dark:bg-orange-500/20 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
                  <MapPin className="w-5 h-5" />
@@ -3955,7 +4001,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
         </section>
 
             {/* Category Filters */}
-            <section className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2">
+            <section id="tour-categories" className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2">
               <div className="flex gap-2">
                 {categories.map(cat => (
                   <motion.button
@@ -4083,7 +4129,7 @@ function HomeScreen({ userProfile, session, shops, loadingShops, fetchError, onS
           </div>
           <span className="text-[10px] font-bold">Home</span>
         </button>
-        <button onClick={onDiscover} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
+        <button id="tour-nav-discover" onClick={onDiscover} className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group">
           <div className="p-1 relative">
             <Store className="w-6 h-6 bg-white dark:bg-slate-800 rounded-lg p-0.5 shadow-sm group-hover:scale-110 transition-transform" />
           </div>
@@ -4783,6 +4829,9 @@ function CheckoutScreen({ userProfile, session, shops, onBack, onConfirm, onInco
             safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
           }
         }
+
+        // Psychsound - play ascending major triad for immediate relief and confidence booster
+        audioHelper.play('placed');
       }, onConfirm);
     } catch (err: any) {
       console.error('Checkout failed:', err);
@@ -8844,6 +8893,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
 }) {
   const [uploading, setUploading] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
+  const [selectedDoc, setSelectedDoc] = useState<'terms' | 'privacy' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t, language, setLanguage } = useTranslation();
 
@@ -8878,6 +8928,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
   const languages = [
     { code: 'en', name: 'English' },
     { code: 'zu', name: 'IsiZulu' },
+    { code: 'xh', name: 'IsiXhosa' },
     { code: 'af', name: 'Afrikaans' },
     { code: 'st', name: 'Sesotho' },
     { code: 'ts', name: 'Xitsonga' }
@@ -9074,6 +9125,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
               <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
             <button 
+              onClick={() => setSelectedDoc('terms')}
               className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
             >
               <div className="flex items-center space-x-3">
@@ -9085,6 +9137,7 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
               <ChevronRight className="w-4 h-4 text-slate-300" />
             </button>
             <button 
+              onClick={() => setSelectedDoc('privacy')}
               className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer"
             >
               <div className="flex items-center space-x-3">
@@ -9198,6 +9251,158 @@ function SettingsScreen({ userProfile, setUserProfile, onBack, onLogout, onProfi
                     {language === lang.code && <CheckCircle className="w-5 h-5" />}
                   </button>
                 ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Terms & Conditions / Privacy Policy Document Modals */}
+      <AnimatePresence>
+        {selectedDoc && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ y: "100%", opacity: 0.5 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0.5 }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] max-h-[85vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-100 dark:border-slate-800"
+            >
+              {/* Header */}
+              <header className="px-6 py-5 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="size-11 rounded-full bg-orange-100 dark:bg-orange-500/15 flex items-center justify-center text-orange-600 dark:text-orange-400 font-bold shrink-0">
+                    {selectedDoc === 'terms' ? <FileText className="w-5 h-5" /> : <ShieldCheck className="w-5 h-5" />}
+                  </div>
+                  <div className="text-left">
+                    <h3 className="text-base font-black tracking-tight text-slate-900 dark:text-white leading-tight">
+                      {selectedDoc === 'terms' ? 'Terms & Conditions' : 'Privacy Policy'}
+                    </h3>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest leading-none mt-1">
+                      LocalEats South Africa
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedDoc(null)}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </header>
+
+              {/* Scrollable Doc Content */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs text-slate-600 dark:text-slate-300 leading-relaxed text-left">
+                {selectedDoc === 'terms' ? (
+                  <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="bg-amber-500/10 text-amber-600 dark:text-amber-400 p-4 rounded-2xl border border-amber-500/20 text-xs font-semibold leading-relaxed">
+                      ⚠️ Please read these terms carefully. By accessing or placing orders through LocalEats, you agree to be bound by these local rules.
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>1. Contractual Relationship</span>
+                      </h4>
+                      <p>
+                        These Terms constitute a legally binding agreement between you and LocalEats. LocalEats operates as a technology matching services intermediary in South Africa, governed by the Consumer Protection Act (CPA) and Electronic Communications and Transactions Act (ECTA).
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>2. Ordering Services</span>
+                      </h4>
+                      <p>
+                        Our platform coordinates real-time matching between hunger-seeking customers, local spaza kitchens, and independent Kota joint operators. Placing an order forms a direct purchase relationship with the merchant. Estimated travel and preparation times are subject to weather, traffic, and general load-shedding schedules.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>3. Deliveries & Shipments</span>
+                      </h4>
+                      <p>
+                        Orders are carried out by independent third-party logistics contractors. Delivery fees, peak surcharges, and minimum basket requirements may apply and are explicitly displayed on the Checkout dashboard.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>4. Payments & Cash on Arrival (COA)</span>
+                      </h4>
+                      <p>
+                        LocalEats facilitates secure payment workflows. For Cash on Arrival (COA) options, you agree to pay the delivery carrier or merchant the exact cash amount or make immediate EFT transfers upon arrival. Failure to pay is a breach of contract and results in permanent account termination.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>5. Food Safety Disclaimer</span>
+                      </h4>
+                      <p>
+                        The absolute liability for ingredients, hygienic kitchen preparations, allergen info, and menu pricing consistency lies strictly with the registered storefront owner. LocalEats takes no liability in respect of culinary prepared meals.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 animate-in fade-in duration-200">
+                    <div className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 p-4 rounded-2xl border border-emerald-500/20 text-xs font-semibold leading-relaxed">
+                      🔒 POPIA Compliant: We strictly collect, process, and safeguard personal information as mandated under South African Law (Act 4 of 2013).
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>1. What We Collect</span>
+                      </h4>
+                      <p>
+                        To perform successful spaza-to-door deliveries, we collect:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 pl-1 text-[11px] text-slate-500 dark:text-slate-400">
+                        <li>Real-time GPS Coordinate positions during active order matching.</li>
+                        <li>Client names, cell numbers, and custom order requests.</li>
+                        <li>Profile metadata (avatars, emails) for session authentication.</li>
+                      </ul>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>2. Why We Process Data</span>
+                      </h4>
+                      <p>
+                        Personal details are processed purely to confirm, route, match, and fulfill active customer orders, trace delivery runners on maps, and provide real-time notification alerts. We never sell, rent, or trade your personal registry.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>3. Information Safeguards</span>
+                      </h4>
+                      <p>
+                        All databases are protected utilizing strict Row Level Security (RLS) policies within secure Supabase frameworks. Your exact phone number is hidden from all unassociated network entities and is only displayed to the paired delivery rider while an order journey is live.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <h4 className="font-extrabold text-slate-900 dark:text-white uppercase tracking-wider text-xs flex items-center gap-1.5">
+                        <span>4. Account Erasure Request</span>
+                      </h4>
+                      <p>
+                        You maintain full authority under POPIA section 24 to review, modify, or erase your user file directory at any moment. Simply tap "Reset App Data" inside the Settings menu or initiate an account deletion from your profile.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900/60 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end font-semibold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDoc(null)}
+                  className="px-5 py-3 bg-semibold bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer hover:shadow-lg hover:shadow-orange-600/15"
+                >
+                  Got it
+                </button>
               </div>
             </motion.div>
           </div>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-type Language = 'en' | 'zu' | 'af' | 'st' | 'ts';
+type Language = 'en' | 'zu' | 'xh' | 'af' | 'st' | 'ts';
 
 interface Translations {
   [key: string]: {
@@ -12,6 +12,7 @@ const translations: Translations = {
   settings: {
     en: 'Settings',
     zu: 'Izilungiselelo',
+    xh: 'Izicwangciso',
     af: 'Instellings',
     st: 'Di-settings',
     ts: 'Tisettingi'
@@ -19,6 +20,7 @@ const translations: Translations = {
   account_security: {
     en: 'Account Security',
     zu: 'Ukuphepha kwe-Akhawunti',
+    xh: 'Ukhuseleko lwe-Akhawunti',
     af: 'Rekening sekuriteit',
     st: 'Tshireletso ya Akhaonto',
     ts: 'Nsirhelelo wa Akhaonto'
@@ -26,6 +28,7 @@ const translations: Translations = {
   preferences: {
     en: 'Preferences',
     zu: 'Okukhethwayo',
+    xh: 'Ukukhetha',
     af: 'Voorkeure',
     st: 'Dikgetho',
     ts: 'Swin’wana swi tsakela'
@@ -33,6 +36,7 @@ const translations: Translations = {
   support_legal: {
     en: 'Support & Legal',
     zu: 'Ukusekelwa noMthetho',
+    xh: 'Inkxaso noMthetho',
     af: 'Ondersteuning en Regs',
     st: 'Tshehetso le Melao',
     ts: 'Nseketelo na swa le Nawini'
@@ -40,6 +44,7 @@ const translations: Translations = {
   edit_profile: {
     en: 'Edit Profile',
     zu: 'Hlela Iphrofayela',
+    xh: 'Lungisa Iprofayile',
     af: 'Wysig profiel',
     st: 'Fetola Phrofayele',
     ts: 'Lulamisa Phrofayili'
@@ -47,6 +52,7 @@ const translations: Translations = {
   saved_addresses: {
     en: 'Saved Addresses',
     zu: 'Amakheli Agciniwe',
+    xh: 'Iidilesi Ezisindisiweyo',
     af: 'Gestoorde Adresse',
     st: 'Diaterese tse bolokilweng',
     ts: 'Tiaderese leti hlayisiweke'
@@ -54,6 +60,7 @@ const translations: Translations = {
   delete_account: {
     en: 'Delete Account',
     zu: 'Sula I-akhawunti',
+    xh: 'Cima i-Akhawunti',
     af: 'Skrap rekening',
     st: 'Hlakola Akhaonto',
     ts: 'Sula Akhaonto'
@@ -61,6 +68,7 @@ const translations: Translations = {
   app_language: {
     en: 'App Language',
     zu: 'Ulimi Lokusebenza',
+    xh: 'Ulwimi lwe-App',
     af: 'Taal van die Toep',
     st: 'Puo ya Lenaneo',
     ts: 'Ririmi ra Aplikhayixini'
@@ -68,6 +76,7 @@ const translations: Translations = {
   notifications: {
     en: 'Notifications',
     zu: 'Izaziso',
+    xh: 'Izaziso',
     af: 'Kennisgewings',
     st: 'Ditsebiso',
     ts: 'Switiviso'
@@ -75,6 +84,7 @@ const translations: Translations = {
   dark_mode: {
     en: 'Dark Mode',
     zu: 'Imodi Emnyama',
+    xh: 'Imo Emnyama',
     af: 'Donker modus',
     st: 'Mokgoa o mofitshwana',
     ts: 'Maendlelo ya munyama'
@@ -82,6 +92,7 @@ const translations: Translations = {
   help_center: {
     en: 'Help Center',
     zu: 'Isikhungo Sosizo',
+    xh: 'Iziko loNcedo',
     af: 'Hulpsentrum',
     st: 'Setsi sa Thuso',
     ts: 'Xitichi xa Mpfuno'
@@ -89,6 +100,7 @@ const translations: Translations = {
   terms_conditions: {
     en: 'Terms & Conditions',
     zu: 'Migomo nemibandela',
+    xh: 'Imimiselo nemiqathango',
     af: 'Bepalings en Voorwaardes',
     st: 'Dipehelo le Maemo',
     ts: 'Milawu na Swipimelo'
@@ -96,6 +108,7 @@ const translations: Translations = {
   privacy_policy: {
     en: 'Privacy Policy',
     zu: 'Inqubomgomo Yemfihlo',
+    xh: 'Ipolisi yoBucala',
     af: 'Privaatheidsbeleid',
     st: 'Pholisi ya Boporayefete',
     ts: 'Pholisi ya Xihundla'
@@ -103,6 +116,7 @@ const translations: Translations = {
   app_version: {
     en: 'App Version',
     zu: 'Inguqulo ye-App',
+    xh: 'Uhlobo lwesicelo',
     af: 'Weergawe van Toep',
     st: 'Mofuta wa Lenaneo',
     ts: 'Vhexini ya Aplikhayixini'
@@ -110,6 +124,7 @@ const translations: Translations = {
   logout: {
     en: 'Logout',
     zu: 'Phuma',
+    xh: 'Phuma',
     af: 'Meld uit',
     st: 'Tswa',
     ts: 'Huma'
@@ -117,6 +132,7 @@ const translations: Translations = {
   home: {
     en: 'Home',
     zu: 'Ikhaya',
+    xh: 'Ikhaya',
     af: 'Tuis',
     st: 'Gae',
     ts: 'Kaya'
@@ -124,6 +140,7 @@ const translations: Translations = {
   profile: {
     en: 'Profile',
     zu: 'Iphrofayela',
+    xh: 'Iprofayile',
     af: 'Profiel',
     st: 'Phrofayele',
     ts: 'Phrofayili'
@@ -131,6 +148,7 @@ const translations: Translations = {
   save: {
     en: 'Save',
     zu: 'Gcina',
+    xh: 'Gcina',
     af: 'Stoor',
     st: 'Boloka',
     ts: 'Hlayisa'
@@ -138,6 +156,7 @@ const translations: Translations = {
   discover: {
     en: 'Discover',
     zu: 'Thola',
+    xh: 'Fumanisa',
     af: 'Ontdek',
     st: 'Tswela Pele',
     ts: 'Tshubula'
@@ -145,6 +164,7 @@ const translations: Translations = {
   explore: {
     en: 'Explore',
     zu: 'Hlola',
+    xh: 'Hlola',
     af: 'Verken',
     st: 'Hlahloba',
     ts: 'Valanga'
@@ -152,6 +172,7 @@ const translations: Translations = {
   order_history: {
     en: 'Order History',
     zu: 'Umlando we-oda',
+    xh: 'Imbali ye-Oda',
     af: 'Bestelling Geskiedenis',
     st: 'Nalane ya ditaelo',
     ts: 'Matimu ya odara'

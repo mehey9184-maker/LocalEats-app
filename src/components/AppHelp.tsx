@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock } from 'lucide-react';
+import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock, Sparkles, Volume2, VolumeX, Music } from 'lucide-react';
+import { audioHelper, SoundType } from '../lib/audioHelper';
 
 export function AppHelp() {
   const [isOpen, setIsOpen] = useState(false);
+  const [, setMuteTrigger] = useState(false);
 
   return (
     <>
       <button
+        id="tour-help-trigger"
         onClick={() => setIsOpen(true)}
         className="fixed bottom-6 right-6 z-[90] w-14 h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 transition-all flex items-center justify-center active:scale-95 group"
         title="App Guide"
@@ -76,19 +79,99 @@ export function AppHelp() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setIsOpen(false);
-                    // Give a tiny frame delay so help closes beautifully before tour runs
-                    setTimeout(() => {
-                      window.dispatchEvent(new CustomEvent('localeats_restart_tour'));
-                    }, 200);
-                  }}
-                  className="w-full py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-orange-600 hover:text-white dark:hover:bg-orange-600 text-slate-700 dark:text-slate-200 rounded-2xl font-bold text-sm tracking-wide transition-all active:scale-95 text-center mt-2 flex items-center justify-center gap-2"
-                >
-                  <ChevronRight className="w-4 h-4 animate-pulse" />
-                  Restart Welcome Walkthrough
-                </button>
+                {/* Cognitive Audio Psychology Center */}
+                <div className="bg-slate-50 dark:bg-slate-800/60 p-5 rounded-[24px] border border-slate-100 dark:border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Music className="w-5 h-5 text-orange-500" />
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">Acoustic Sound Therapy</h3>
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        audioHelper.toggleMute();
+                        // Force state update by toggling local dummy trigger
+                        setMuteTrigger(prev => !prev);
+                        // Play demo sound if unmuted
+                        if (!audioHelper.getMuteStatus()) {
+                          audioHelper.play('alert');
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
+                        audioHelper.getMuteStatus() 
+                          ? 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400' 
+                          : 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
+                      }`}
+                    >
+                      {audioHelper.getMuteStatus() ? (
+                        <>
+                          <VolumeX className="w-3.5 h-3.5" />
+                          Muted
+                        </>
+                      ) : (
+                        <>
+                          <Volume2 className="w-3.5 h-3.5" />
+                          Active
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
+                    Designed using target-wave acoustic synthesis to satisfy, trigger cognitive relief, and deliver dopamine directly inside the client flow:
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {[
+                      { id: 'placed' as SoundType, label: 'Success Placement', emoji: '🛒', desc: 'Warm triad ascent (Joy & Relief)' },
+                      { id: 'confirmed' as SoundType, label: 'Order Confirmed', emoji: '🏍️', desc: 'High dual-chime (Motion & Safety)' },
+                      { id: 'ready' as SoundType, label: 'Runner Arrived', emoji: '🏡', desc: 'Rhythmic triple-ping (Attention)' },
+                      { id: 'delivered' as SoundType, label: 'Finished Order', emoji: '🎉', desc: 'Harmony chord (Dopamine hit)' }
+                    ].map((sound) => (
+                      <button
+                        key={sound.id}
+                        type="button"
+                        onClick={() => audioHelper.play(sound.id)}
+                        className="p-2.5 bg-white dark:bg-slate-900 hover:border-orange-500/50 dark:hover:border-orange-500/40 border border-slate-100 dark:border-slate-800 rounded-xl text-left transition-all hover:scale-[1.02] active:scale-95 group cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[11px] font-extrabold text-slate-800 dark:text-slate-200 uppercase tracking-tight">{sound.label}</span>
+                          <span className="text-xs group-hover:animate-bounce">{sound.emoji}</span>
+                        </div>
+                        <p className="text-[9px] text-slate-400 font-bold mt-1 line-clamp-1">{sound.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3.5 pt-2">
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('localeats_start_interactive_tour'));
+                      }, 250);
+                    }}
+                    className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/15 transition-all active:scale-95 text-center flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 animate-bounce" />
+                    Interactive Live Screen Guide
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      // Give a tiny frame delay so help closes beautifully before tour runs
+                      setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('localeats_restart_tour'));
+                      }, 250);
+                    }}
+                    className="w-full py-3.5 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 text-center flex items-center justify-center gap-2 border border-slate-100 dark:border-slate-700 cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                    Classic Onboarding Slideshow
+                  </button>
+                </div>
               </div>
             </motion.div>
           </>
