@@ -45,12 +45,15 @@
           });
         });
       } else {
-        // Unregister any active service workers in preview to fix fetch errors and remove broken service worker registrations
+        // Unregister conflicting legacy/external service workers in preview, but preserve our custom SW
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.getRegistrations().then(function(registrations) {
             for(let registration of registrations) {
-              registration.unregister();
-              console.log('Unregistered development Service Worker:', registration);
+              const activeWorker = registration.active || registration.installing || registration.waiting;
+              if (activeWorker && (activeWorker.scriptURL.includes('onesignal') || activeWorker.scriptURL.includes('OneSignal'))) {
+                registration.unregister();
+                console.log('Unregistered OneSignal Service Worker:', registration);
+              }
             }
           });
         }

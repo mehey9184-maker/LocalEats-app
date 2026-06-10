@@ -11,8 +11,10 @@ if (!hasEnvVars) {
   console.warn('Supabase configuration: Using default fallback project. For personal data persistence, please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your project settings.');
 }
 
-export const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || DEFAULT_URL).replace(/\/$/, '').trim();
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || DEFAULT_KEY).trim();
+export const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_URL.includes('supabase.co') && !import.meta.env.VITE_SUPABASE_URL.includes('your-project') ? import.meta.env.VITE_SUPABASE_URL : DEFAULT_URL).replace(/\/$/, '').trim();
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY && import.meta.env.VITE_SUPABASE_ANON_KEY.length > 50 && !import.meta.env.VITE_SUPABASE_ANON_KEY.includes('your-anon-key') ? import.meta.env.VITE_SUPABASE_ANON_KEY : DEFAULT_KEY).trim();
+
+
 
 // App URL for redirects
 export const APP_URL = window.location.origin;
@@ -20,28 +22,8 @@ export const APP_URL = window.location.origin;
 // Ensure we have a valid URL before creating the client
 if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
   console.error('Invalid Supabase URL configuration. Expected a URL starting with http/https.');
-} else {
-  // Simple connectivity check
-  fetch(`${supabaseUrl}/rest/v1/`, { 
-    method: 'GET', 
-    headers: { 'apikey': supabaseAnonKey },
-    mode: 'cors'
-  })
-    .then(res => {
-      if (res.ok || res.status === 401 || res.status === 404) {
-        console.log('Supabase connectivity check: Server reached successfully');
-      } else {
-        console.warn(`Supabase connectivity: Server returned status ${res.status}`);
-      }
-    })
-    .catch((err) => {
-      console.error('CRITICAL: Supabase connection failed (Failed to fetch).', {
-        url: supabaseUrl,
-        error: err.message,
-        hint: 'This usually means the Supabase project is paused, the URL is incorrect, or your network is blocking the request (check ad-blockers).'
-      });
-    });
 }
+
 
 export const supabase = createClient(
   supabaseUrl || DEFAULT_URL, 
@@ -53,6 +35,9 @@ export const supabase = createClient(
       detectSessionInUrl: true,
       storageKey: `sb-${supabaseUrl.split('.')[0].split('//')[1]}-auth-token`,
       flowType: 'pkce',
+      lock: async (name, acquireTimeout, fn) => {
+        return fn();
+      },
     }
   }
 );
