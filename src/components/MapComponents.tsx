@@ -1,9 +1,21 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMap, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
-import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink } from 'lucide-react';
+import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass } from 'lucide-react';
 import { toast } from 'sonner';
 import { calculateDistance, DEFAULT_COORDS } from '../utils';
+
+const mapStyleUrls = {
+  street: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  dark: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+};
+
+const mapStyleAttributions = {
+  street: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  satellite: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+  dark: '&copy; <a href="https://carto.com/attributions">CARTO</a> contributors'
+};
 
 function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
   const map = useMap();
@@ -12,8 +24,20 @@ function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
   useEffect(() => {
     if (lat !== undefined && lng !== undefined) {
       map.setView({ lat, lng }, map.getZoom());
+      map.invalidateSize();
     }
   }, [lat, lng, map]);
+  return null;
+}
+
+function InvalidateMapSize({ trigger }: { trigger?: any }) {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [map, trigger]);
   return null;
 }
 
@@ -30,6 +54,73 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
   const [markerPos, setMarkerPos] = useState<{lat: number, lng: number} | null>(initialCoords || null);
   const [isConfirmed, setIsConfirmed] = useState(true);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  const [mapStyle, setMapStyle] = useState<'street' | 'satellite' | 'dark'>('street');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isTracking, setIsTracking] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+  const [showStyleDropdown, setShowStyleDropdown] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
+
+  const toggleTracking = () => {
+    if (isTracking) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setIsTracking(false);
+      toast.info("Real-time GPS tracking disabled");
+    } else {
+      if (!navigator.geolocation) {
+        toast.error("Geolocation is not supported by your browser");
+        return;
+      }
+      setIsTracking(true);
+      toast.success("Real-time movement tracking active!", {
+        description: "Moving will automatically update your marker location on the map."
+      });
+      
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          const newCoords = { lat: latitude, lng: longitude };
+          setMarkerPos(newCoords);
+          onSelect({ address: `Live tracking: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, lat: latitude, lng: longitude });
+        },
+        (error) => {
+          console.error("watchPosition error:", error);
+          toast.error("Tracking unavailable: location access denied or timeout");
+          setIsTracking(false);
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+          }
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
+  };
+
+  // Sync state if initial prop coordinates change from outside
+  useEffect(() => {
+    if (initialCoords) {
+      setMarkerPos(initialCoords);
+    }
+  }, [initialCoords?.lat, initialCoords?.lng]);
+
+  // Sync state if initial prop address changes from outside (e.g. from user profile load)
+  useEffect(() => {
+    if (initialAddress !== undefined) {
+      setQuery(initialAddress);
+    }
+  }, [initialAddress]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -69,9 +160,11 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         const lat = parseFloat(match[1]);
         const lng = parseFloat(match[2]);
         setMarkerPos({ lat, lng });
-        setQuery("Location from Google Maps Link");
-        setIsConfirmed(false);
+        const textFromGmaps = "Location from Google Maps Link";
+        setQuery(textFromGmaps);
+        setIsConfirmed(true);
         setShowResults(false);
+        onSelect({ address: textFromGmaps, lat, lng });
         
         // Reverse geocode to get a pretty address name
         try {
@@ -79,48 +172,16 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
           const geoData = await res.json();
           if (geoData && geoData.display_name) {
             setQuery(geoData.display_name);
+            onSelect({ address: geoData.display_name, lat, lng });
           }
         } catch (err) {
           console.error("Reverse geocode failed, using direct coordinates:", err);
         }
         
         toast.success("Google Maps coordinates detected!", {
-          description: `Located at ${lat.toFixed(5)}, ${lng.toFixed(5)}. Click confirm button below.`
+          description: `Located at ${lat.toFixed(5)}, ${lng.toFixed(5)}.`
         });
         return;
-      } else if (val.startsWith('http')) {
-        // Short URL redirect resolution fallback (client-side attempt)
-        try {
-          setLoading(true);
-          const response = await fetch(val, { method: 'HEAD', redirect: 'follow' });
-          if (response.url) {
-            const redirectMatch = response.url.match(coordsRegex) || response.url.match(llRegex) || response.url.match(qRegex) || response.url.match(plainCoordsRegex);
-            if (redirectMatch) {
-              const lat = parseFloat(redirectMatch[1]);
-              const lng = parseFloat(redirectMatch[2]);
-              setMarkerPos({ lat, lng });
-              setQuery("Location from Google Maps Link");
-              setIsConfirmed(false);
-              setShowResults(false);
-              
-              const resGeo = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-              const geoData = await resGeo.json();
-              if (geoData && geoData.display_name) {
-                setQuery(geoData.display_name);
-              }
-              
-              toast.success("Shortlink resolved successfully!");
-              return;
-            }
-          }
-        } catch (corsErr) {
-          console.warn("CORS/network blocked Google Maps short URL resolution, prompting user:", corsErr);
-          toast.info("Google Maps shortlink detected!", {
-            description: "CORS blocks shortlink expansion. Try pasting the coordinates (e.g., -25.9961, 28.2258) or search manually!"
-          });
-        } finally {
-          setLoading(false);
-        }
       }
     }
 
@@ -158,13 +219,16 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
           const address = data.display_name;
           setQuery(address);
           setMarkerPos({ lat: latitude, lng: longitude });
-          setIsConfirmed(false);
+          setIsConfirmed(true);
           setShowResults(false);
+          onSelect({ address, lat: latitude, lng: longitude });
         } catch (error) {
           console.error('Reverse geocoding error:', error);
           setMarkerPos({ lat: latitude, lng: longitude });
-          setQuery(`GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
-          setIsConfirmed(false);
+          const gpsAddr = `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+          setQuery(gpsAddr);
+          setIsConfirmed(true);
+          onSelect({ address: gpsAddr, lat: latitude, lng: longitude });
         } finally {
           setLoading(false);
         }
@@ -182,10 +246,13 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
   };
 
   const handleSelect = (res: any) => {
+    const lat = parseFloat(res.lat);
+    const lng = parseFloat(res.lon);
     setQuery(res.display_name);
-    setMarkerPos({ lat: parseFloat(res.lat), lng: parseFloat(res.lon) });
+    setMarkerPos({ lat, lng });
     setShowResults(false);
-    setIsConfirmed(false);
+    setIsConfirmed(true);
+    onSelect({ address: res.display_name, lat, lng });
   };
 
   const currentDistance = markerPos && shopCoords ? calculateDistance(markerPos.lat, markerPos.lng, shopCoords.lat, shopCoords.lng) : null;
@@ -198,7 +265,20 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         if (marker != null) {
           const newPos = marker.getLatLng();
           setMarkerPos({ lat: newPos.lat, lng: newPos.lng });
-          setIsConfirmed(false);
+          setIsConfirmed(true);
+          
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${newPos.lat}&lon=${newPos.lng}`)
+            .then(res => res.json())
+            .then(data => {
+              const address = data.display_name || `GPS: ${newPos.lat.toFixed(6)}, ${newPos.lng.toFixed(6)}`;
+              setQuery(address);
+              onSelect({ address, lat: newPos.lat, lng: newPos.lng });
+            })
+            .catch(() => {
+              const gpsAddr = `GPS: ${newPos.lat.toFixed(6)}, ${newPos.lng.toFixed(6)}`;
+              setQuery(gpsAddr);
+              onSelect({ address: gpsAddr, lat: newPos.lat, lng: newPos.lng });
+            });
         }
       },
     }), []);
@@ -286,22 +366,144 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         )}
       </div>
 
-      <div className="h-56 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-0 shadow-lg">
-        <MapContainer 
-          center={markerPos || DEFAULT_COORDS} 
-          zoom={15} 
-          style={{ height: '100%', width: '100%' }}
-        >
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <RecenterMap coords={markerPos || DEFAULT_COORDS} />
-          <DraggableMarker />
-          <ShopMarker />
-        </MapContainer>
-        {!markerPos && (
-          <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-950/20 backdrop-blur-[2px] flex items-center justify-center p-4 text-center z-[1000]">
-            <p className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-widest leading-relaxed max-w-[180px]">Select your address to confirm delivery point on map</p>
+      <div className={`${
+        isFullscreen 
+          ? "fixed inset-0 z-[99999] bg-white dark:bg-slate-950 p-4 md:p-6 flex flex-col animate-in fade-in duration-200"
+          : "relative h-56 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 z-0 shadow-lg"
+      }`}>
+        {isFullscreen && (
+          <div className="flex items-center justify-between mb-3 shrink-0">
+            <div>
+              <h3 className="font-extrabold text-sm md:text-base text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                </span>
+                Interactive Map Explorer
+              </h3>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
+                Double-click or drag marker, swipe map, or toggle layers to browse local clusters
+              </p>
+            </div>
+            <button 
+              onClick={() => setIsFullscreen(false)}
+              className="bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-850 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Minimize2 className="w-3.5 h-3.5 text-orange-500" />
+              Minimize
+            </button>
           </div>
         )}
+
+        <div className="relative w-full h-full flex-1">
+          <MapContainer 
+            center={markerPos || DEFAULT_COORDS} 
+            zoom={15} 
+            style={{ height: '100%', width: '100%' }}
+          >
+            <TileLayer 
+              url={mapStyleUrls[mapStyle]} 
+              attribution={mapStyleAttributions[mapStyle]}
+              key={mapStyle}
+            />
+            <RecenterMap coords={markerPos || DEFAULT_COORDS} />
+            <InvalidateMapSize trigger={isFullscreen} />
+            <DraggableMarker />
+            <ShopMarker />
+
+            {/* Visual Delivery Range circles */}
+            {shopCoords && (
+              <>
+                <Circle 
+                  center={shopCoords}
+                  radius={3000}
+                  pathOptions={{
+                    color: '#fb923c',
+                    dashArray: '5, 5',
+                    fillColor: '#fb923c',
+                    fillOpacity: 0.05,
+                    weight: 1.5
+                  }}
+                />
+                <Circle 
+                  center={shopCoords}
+                  radius={6000}
+                  pathOptions={{
+                    color: '#ef4444',
+                    dashArray: '8, 8',
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.03,
+                    weight: 2
+                  }}
+                />
+              </>
+            )}
+          </MapContainer>
+
+          {/* Real-time Floating Overlay Controls inside the Map container wrapper */}
+          <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+            {!isFullscreen && (
+              <button
+                onClick={() => setIsFullscreen(true)}
+                className="bg-white/95 dark:bg-slate-900/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95"
+                title="Toggle Fullscreen representation"
+              >
+                <Maximize2 className="w-4 h-4 text-orange-500" />
+              </button>
+            )}
+
+            <button
+              onClick={toggleTracking}
+              className={`p-2 rounded-xl border shadow-md transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                isTracking 
+                  ? "bg-orange-600 text-white border-orange-600 animate-pulse" 
+                  : "bg-white/95 dark:bg-slate-900/95 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+              }`}
+              title={isTracking ? "Disable live movement tracking" : "Enable live movement tracking (watchPosition)"}
+            >
+              <Compass className={`w-4 h-4 ${isTracking ? 'animate-spin' : 'text-orange-500'}`} />
+            </button>
+
+            <div className="relative">
+              <button
+                onClick={() => setShowStyleDropdown(!showStyleDropdown)}
+                className="bg-white/95 dark:bg-slate-900/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95"
+                title="Select map style layers"
+              >
+                <Layers className="w-4 h-4 text-orange-500" />
+              </button>
+              
+              {showStyleDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in slide-in-from-top-2 duration-150 z-50">
+                  <div className="p-1 flex flex-col gap-0.5">
+                    {(['street', 'satellite', 'dark'] as const).map((style) => (
+                      <button
+                        key={style}
+                        onClick={() => {
+                          setMapStyle(style);
+                          setShowStyleDropdown(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer ${
+                          mapStyle === style
+                            ? "bg-orange-600 text-white"
+                            : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850"
+                        }`}
+                      >
+                        {style === 'street' ? '🗺️ Street' : style === 'satellite' ? '🛰️ Satellite' : '🌒 Dark'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {!markerPos && (
+            <div className="absolute inset-0 bg-slate-900/5 dark:bg-slate-950/20 backdrop-blur-[2px] flex items-center justify-center p-4 text-center z-[1000]">
+              <p className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-widest leading-relaxed max-w-[180px]">Select your address to confirm delivery point on map</p>
+            </div>
+          )}
+        </div>
       </div>
       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-center animate-pulse mt-[-4px]">
         📍 Drag the pin to your door for perfect deliveries
@@ -321,6 +523,57 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
 }
 
 export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { lat: number, lng: number }, onCoordsChange: (c: { lat: number, lng: number }) => void, shopCoords?: { lat: number, lng: number } }) {
+  const [mapStyle, setMapStyle] = useState<'street' | 'satellite' | 'dark'>('street');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isTracking, setIsTracking] = useState(false);
+  const watchIdRef = useRef<number | null>(null);
+  const [showStyleDropdown, setShowStyleDropdown] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+    };
+  }, []);
+
+  const toggleTracking = () => {
+    if (isTracking) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      setIsTracking(false);
+      toast.info("Real-time GPS tracking disabled");
+    } else {
+      if (!navigator.geolocation) {
+        toast.error("Geolocation is not supported by your browser");
+        return;
+      }
+      setIsTracking(true);
+      toast.success("Real-time movement tracking active!", {
+        description: "Moving will automatically update your marker location on the map."
+      });
+      
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          onCoordsChange({ lat: latitude, lng: longitude });
+        },
+        (error) => {
+          console.error("watchPosition error:", error);
+          toast.error("Tracking unavailable: location access denied or timeout");
+          setIsTracking(false);
+          if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+          }
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
+  };
+
   const currentDistance = shopCoords 
     ? calculateDistance(coords.lat, coords.lng, shopCoords.lat, shopCoords.lng) 
     : null;
@@ -379,68 +632,158 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
 
   return (
     <div className="w-full flex flex-col gap-2">
-      <div className="h-48 w-full rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 relative z-10 shadow-inner">
-        <MapContainer center={coords} zoom={16} scrollWheelZoom={false} className="h-full w-full">
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <DraggableMarker />
+      <div className={`${
+        isFullscreen 
+          ? "fixed inset-0 z-[99999] bg-white dark:bg-slate-950 p-4 md:p-6 flex flex-col animate-in fade-in duration-200"
+          : "relative h-48 w-full rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 z-10 shadow-inner"
+      }`}>
+        {isFullscreen && (
+          <div className="flex items-center justify-between mb-3 shrink-0">
+            <div>
+              <h3 className="font-extrabold text-sm md:text-base text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                </span>
+                Interactive Location Pinpointer
+              </h3>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
+                Browse detailed shops clusters and calibrate precise door delivery points
+              </p>
+            </div>
+            <button 
+              onClick={() => setIsFullscreen(false)}
+              className="bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-850 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Minimize2 className="w-3.5 h-3.5 text-orange-500" />
+              Minimize
+            </button>
+          </div>
+        )}
+
+        <div className="relative w-full h-full flex-1">
+          <MapContainer center={coords} zoom={16} scrollWheelZoom={false} className="h-full w-full">
+            <TileLayer
+              attribution={mapStyleAttributions[mapStyle]}
+              url={mapStyleUrls[mapStyle]}
+              key={mapStyle}
+            />
+            <InvalidateMapSize trigger={isFullscreen} />
+            <DraggableMarker />
+            
+            {shopCoords && (
+              <>
+                <Marker position={shopCoords} icon={shopIcon}>
+                  <Popup>
+                    <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
+                  </Popup>
+                </Marker>
+                
+                {/* Radius Circle 1: 3km Standard Delivery Zone A */}
+                <Circle 
+                  center={shopCoords}
+                  radius={3000}
+                  pathOptions={{
+                    color: '#fb923c',
+                    dashArray: '5, 5',
+                    fillColor: '#fb923c',
+                    fillOpacity: 0.05,
+                    weight: 1.5
+                  }}
+                />
+                
+                {/* Radius Circle 2: 6km Max Delivery Zone B */}
+                <Circle 
+                  center={shopCoords}
+                  radius={6000}
+                  pathOptions={{
+                    color: '#ef4444',
+                    dashArray: '8, 8',
+                    fillColor: '#ef4444',
+                    fillOpacity: 0.03,
+                    weight: 2
+                  }}
+                />
+              </>
+            )}
+            
+            <ChangeView center={coords} shopCenter={shopCoords} />
+          </MapContainer>
           
-          {shopCoords && (
-            <>
-              <Marker position={shopCoords} icon={shopIcon}>
-                <Popup>
-                  <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
-                </Popup>
-              </Marker>
-              
-              {/* Radius Circle 1: 3km Standard Delivery Zone A */}
-              <Circle 
-                center={shopCoords}
-                radius={3000}
-                pathOptions={{
-                  color: '#fb923c',
-                  dashArray: '5, 5',
-                  fillColor: '#fb923c',
-                  fillOpacity: 0.05,
-                  weight: 1.5
-                }}
-              />
-              
-              {/* Radius Circle 2: 6km Max Delivery Zone B */}
-              <Circle 
-                center={shopCoords}
-                radius={6000}
-                pathOptions={{
-                  color: '#ef4444',
-                  dashArray: '8, 8',
-                  fillColor: '#ef4444',
-                  fillOpacity: 0.03,
-                  weight: 2
-                }}
-              />
-            </>
-          )}
+          <div className="absolute bottom-2 left-2 right-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider">
+            📍 Drag the red pin to select your exact door location
+          </div>
           
-          <ChangeView center={coords} shopCenter={shopCoords} />
-        </MapContainer>
-        
-        <div className="absolute bottom-2 left-2 right-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider">
-          📍 Drag the red pin to select your exact door location
-        </div>
-        
-        <div className="absolute top-2 right-12 z-[1000] flex gap-2">
-          <a 
-            href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-white/95 dark:bg-slate-800/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md text-slate-700 dark:text-slate-300 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
-            title="Open in OpenStreetMap (Fallback)"
-          >
-            <ExternalLink className="w-3 h-3" />
-            <span className="text-[10px] font-bold uppercase tracking-widest leading-none">OSM Edit</span>
-          </a>
+          <div className="absolute top-2 right-12 z-[1000] flex gap-2">
+            <a 
+              href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-white/95 dark:bg-slate-800/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md text-slate-700 dark:text-slate-300 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
+              title="Open in OpenStreetMap (Fallback)"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span className="text-[10px] font-bold uppercase tracking-widest leading-none">OSM Edit</span>
+            </a>
+          </div>
+
+          {/* Real-time Floating Overlay Controls inside the Map container wrapper */}
+          <div className="absolute top-2 right-2 z-[1000] flex flex-col gap-2">
+            {!isFullscreen && (
+              <button
+                onClick={() => setIsFullscreen(true)}
+                className="bg-white/95 dark:bg-slate-900/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95"
+                title="Toggle Fullscreen"
+              >
+                <Maximize2 className="w-4 h-4 text-orange-500" />
+              </button>
+            )}
+
+            <button
+              onClick={toggleTracking}
+              className={`p-2 rounded-xl border shadow-md transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                isTracking 
+                  ? "bg-orange-600 text-white border-orange-600 animate-pulse" 
+                  : "bg-white/95 dark:bg-slate-900/95 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+              }`}
+              title={isTracking ? "Disable live movement tracking" : "Enable live movement tracking (watchPosition)"}
+            >
+              <Compass className={`w-4 h-4 ${isTracking ? 'animate-spin' : 'text-orange-500'}`} />
+            </button>
+
+            <div className="relative">
+              <button
+                onClick={() => setShowStyleDropdown(!showStyleDropdown)}
+                className="bg-white/95 dark:bg-slate-900/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95"
+                title="Select map style layers"
+              >
+                <Layers className="w-4 h-4 text-orange-500" />
+              </button>
+              
+              {showStyleDropdown && (
+                <div className="absolute right-0 top-full mt-2 w-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden animate-in slide-in-from-top-2 duration-150 z-50">
+                  <div className="p-1 flex flex-col gap-0.5">
+                    {(['street', 'satellite', 'dark'] as const).map((style) => (
+                      <button
+                        key={style}
+                        onClick={() => {
+                          setMapStyle(style);
+                          setShowStyleDropdown(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer ${
+                          mapStyle === style
+                            ? "bg-orange-600 text-white"
+                            : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850"
+                        }`}
+                      >
+                        {style === 'street' ? '🗺️ Street' : style === 'satellite' ? '🛰️ Satellite' : '🌒 Dark'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

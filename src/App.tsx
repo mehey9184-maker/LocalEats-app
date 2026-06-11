@@ -1733,8 +1733,8 @@ export default function App() {
         if (error) {
           // If columns are missing, try one more time without them
           if (error.code === "PGRST204" || error.message?.includes("column")) {
-            console.warn(
-              "Profiles table missing columns, retrying without location/extended fields",
+            console.log(
+              "[Profile Sync] Table config mismatch, re-routing via essential payload fallback",
             );
             const safePayload = {
               user_id: session.user.id,
@@ -2445,13 +2445,11 @@ export default function App() {
               error.message?.includes("fetch") || 
               (error.details && error.details.includes("Failed to fetch"));
 
-            if (!isFetchErr) {
-              console.error("Error syncing profile to Supabase:", error);
-            }
-            if (
+            const isMissingColumnError = 
               error.code === "PGRST204" ||
-              error.message?.includes("column")
-            ) {
+              error.message?.includes("column");
+
+            if (isMissingColumnError) {
               // Graceful degradation: sync only essential fields known to exist
               const safePayload = {
                 user_id: session.user.id,
@@ -2461,20 +2459,27 @@ export default function App() {
                 updated_at: new Date().toISOString(),
               };
               try {
-                await supabase.from("profiles").upsert(safePayload);
+                const { error: fallbackError } = await supabase.from("profiles").upsert(safePayload);
+                if (fallbackError) {
+                  // Fallback also failed, now log the error
+                  console.error("Error syncing fallback profile to Supabase:", fallbackError);
+                } else {
+                  console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
+                }
               } catch (e) {
-                console.warn("Silent failure in safe profile sync fallback");
+                console.warn("Silent failure in safe profile sync fallback:", e);
               }
 
-              const colName = error.message.includes("'")
-                ? error.message.split("'")[1]
-                : "field";
               setNotification({
                 message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
                 type: "info",
               });
-            } else if (isFetchErr) {
-              console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
+            } else {
+              if (isFetchErr) {
+                console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
+              } else {
+                console.error("Error syncing profile to Supabase:", error);
+              }
             }
           }
         } catch (err) {
@@ -3240,6 +3245,7 @@ export default function App() {
                   isOnline={isOnline}
                   shops={shops}
                   addToCart={addToCart}
+                  setCart={setCart}
                   setCurrentScreen={setCurrentScreen}
                   triggerHaptic={triggerHaptic}
                 />
@@ -4813,6 +4819,30 @@ function HomeScreen({
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
 
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("recent_searches");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveRecentSearch = useCallback((query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, 5);
+      try {
+        localStorage.setItem("recent_searches", JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
+    });
+  }, []);
+
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestions = useMemo(() => {
     if (searchQuery.length < 2) return [];
@@ -4846,6 +4876,16 @@ function HomeScreen({
     const cuisines = shops.map((s) => s.cuisine_type).filter(Boolean);
     return Array.from(new Set([...base, ...types, ...cuisines] as string[]));
   }, [shops]);
+
+  const getCategoryCount = useCallback((cat: string) => {
+    if (cat === "All" || cat === "Nearby") {
+      return shops.length;
+    }
+    if (cat === "Favorites") {
+      return shops.filter((s) => favorites.includes(s.id)).length;
+    }
+    return shops.filter((s) => s.category === cat || s.cuisine_type === cat).length;
+  }, [shops, favorites]);
 
   const filteredShops = useMemo(() => {
     return shops.filter((shop) => {
@@ -5511,31 +5551,85 @@ function HomeScreen({
               placeholder="Search for the best local Kotas..."
               type="text"
               value={searchQuery}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              onFocus={() => searchQuery.length > 1 && setShowSuggestions(true)}
+              onBlur={() => {
+                if (searchQuery.trim().length >= 2) {
+                  saveRecentSearch(searchQuery.trim());
+                }
+                setTimeout(() => setShowSuggestions(false), 200);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                  saveRecentSearch(searchQuery.trim());
+                  setShowSuggestions(false);
+                }
+              }}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
-                setShowSuggestions(e.target.value.length > 1);
+                setShowSuggestions(true);
               }}
             />
 
-            {showSuggestions && suggestions.length > 0 && (
+            {showSuggestions && (searchQuery.length < 2 && recentSearches.length > 0 ? (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
+                <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                  🕒 Recent Searches
+                </div>
+                {recentSearches.map((s, idx) => (
+                  <div
+                    key={idx}
+                    className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(s);
+                        setShowSuggestions(false);
+                        saveRecentSearch(s);
+                      }}
+                      className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white"
+                    >
+                      <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                      {s}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRecentSearches((prev) => {
+                          const updated = prev.filter((item) => item !== s);
+                          try {
+                            localStorage.setItem("recent_searches", JSON.stringify(updated));
+                          } catch {}
+                          return updated;
+                        });
+                      }}
+                      className="px-4 py-3 text-[10px] text-slate-400 hover:text-rose-500 font-extrabold uppercase tracking-wider cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : searchQuery.length >= 2 && suggestions.length > 0 ? (
               <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
                 {suggestions.map((s, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => {
                       setSearchQuery(s);
                       setShowSuggestions(false);
+                      saveRecentSearch(s);
                     }}
-                    className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 text-[13px] font-bold border-b border-white/5 last:border-none flex items-center gap-2"
+                    className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 text-[13px] font-bold border-b border-white/5 last:border-none flex items-center gap-2 cursor-pointer dark:text-white"
                   >
-                    <History className="w-3.5 h-3.5 text-slate-400" />
+                    <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
                     {s}
                   </button>
                 ))}
               </div>
-            )}
+            ) : null)}
 
             <button
               onClick={() =>
@@ -5640,17 +5734,20 @@ function HomeScreen({
           className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2"
         >
           <div className="flex gap-2">
-            {categories.map((cat) => (
-              <motion.button
-                key={cat}
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? "bg-orange-500 text-white shadow-md shadow-orange-600/15" : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"}`}
-              >
-                {cat}
-              </motion.button>
-            ))}
+            {categories.map((cat) => {
+              const count = getCategoryCount(cat);
+              return (
+                <motion.button
+                  key={cat}
+                  whileHover={{ y: -1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? "bg-orange-500 text-white shadow-md shadow-orange-600/15" : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"}`}
+                >
+                  {cat} ({count})
+                </motion.button>
+              );
+            })}
           </div>
 
           <div className="flex gap-2">
@@ -6795,10 +6892,11 @@ function CheckoutScreen({
           .select();
 
         if (error) {
-          console.error("Supabase insert error on first attempt:", error);
-          if (error.code === "PGRST204" || error.message?.includes("column")) {
-            console.warn(
-              "Orders table missing columns, retrying without spatial data",
+          const isMissingColumnError = error.code === "PGRST204" || error.message?.includes("column");
+          
+          if (isMissingColumnError) {
+            console.log(
+              "[Order Placement] Orders table has missing optional spatial columns, retrying insert omitting latitude/longitude...",
             );
             const safeOrderData = orderData.map((d: any) => {
               const { latitude, longitude, ...rest } = d;
@@ -6808,7 +6906,10 @@ function CheckoutScreen({
               .from("orders")
               .insert(safeOrderData)
               .select();
-            if (retryError) throw retryError;
+            if (retryError) {
+              console.error("Supabase order insert retry error:", retryError);
+              throw retryError;
+            }
 
             // Pop COA confirmation on retry success
             if (isCashTrustActive && paymentMethod === "cash") {
@@ -6830,8 +6931,10 @@ function CheckoutScreen({
               }
             }
             return;
+          } else {
+            console.error("Supabase insert error on first attempt:", error);
+            throw error;
           }
-          throw error;
         }
 
         // Pop COA confirmation on initial success
@@ -7342,9 +7445,35 @@ function CheckoutScreen({
                 <Utensils className="w-4 h-4 text-orange-500" />
                 Items to Order
               </h3>
-              <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 px-2 py-0.5 rounded font-black uppercase tracking-wider">
-                {cart.reduce((s, c) => s + c.quantity, 0)} Items Added
-              </span>
+              <div className="flex items-center gap-2">
+                {cart.length > 0 && (
+                  <button
+                    id="cart-clear-all-btn"
+                    type="button"
+                    onClick={() => {
+                      showConfirm(
+                        "Clear Cart?",
+                        "Are you sure you want to remove all items from your cart?",
+                        () => {
+                          setCart([]);
+                          setNotification({
+                            message: "Cart cleared successfully",
+                            type: "info"
+                          });
+                          setTimeout(() => setNotification(null), 2000);
+                        }
+                      );
+                    }}
+                    className="text-[10px] bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 px-2 py-0.5 rounded font-black uppercase tracking-wider transition-colors cursor-pointer flex items-center gap-1 border border-rose-100/30"
+                  >
+                    <Trash2 className="w-2.5 h-2.5" />
+                    Clear All
+                  </button>
+                )}
+                <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 px-2 py-0.5 rounded font-black uppercase tracking-wider">
+                  {cart.reduce((s, c) => s + c.quantity, 0)} Items Added
+                </span>
+              </div>
             </div>
 
             <div className="flex flex-col gap-3">
@@ -17315,6 +17444,7 @@ function OrderHistoryScreen({
   isOnline,
   shops = [],
   addToCart,
+  setCart,
   setCurrentScreen,
   triggerHaptic,
 }: {
@@ -17332,6 +17462,7 @@ function OrderHistoryScreen({
     specialInstructions?: string,
     selectedCustomizations?: { name: string; price: number }[],
   ) => void;
+  setCart?: Dispatch<SetStateAction<CartItem[]>>;
   setCurrentScreen?: Dispatch<SetStateAction<Screen>>;
   triggerHaptic?: (pattern?: number | number[]) => void;
 }) {
@@ -17702,6 +17833,12 @@ function OrderHistoryScreen({
   const handleReorderGroup = (group: any) => {
     if (!addToCart) return;
     triggerHaptic?.([50, 30, 50]);
+    
+    // Pre-fill the cart with only these items (clear previous cart contents)
+    if (setCart) {
+      setCart([]);
+    }
+    
     const shop = shops.find((s) => s.id === group.shop_id);
 
     let addedCount = 0;
