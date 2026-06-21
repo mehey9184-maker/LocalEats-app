@@ -16,6 +16,9 @@ export default defineConfig(({mode}) => {
         filename: 'sw.ts',
         registerType: 'autoUpdate',
         injectRegister: 'inline',
+        injectManifest: {
+          maximumFileSizeToCacheInBytes: 6000000,
+        },
         manifest: {
           short_name: "LocalEats",
           name: "LocalEats | Local's Best Kota & Braai",

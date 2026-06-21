@@ -9,7 +9,7 @@ export { DEFAULT_FALLBACK_SHOPS };
 export const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
 export const DEFAULT_SHOP_LOGO = "/logo.png";
 export const APP_VERSION = "2.4.1 (1024)";
-export const DEFAULT_COORDS = { lat: -25.9964, lng: 28.2268 };
+export const DEFAULT_COORDS = { lat: -26.009012, lng: 28.192455 };
 export const SUPPORTED_CITIES = ['Tembisa', 'Kaalfontein', 'Ivory Park'];
 
 /**
@@ -325,4 +325,16 @@ export const cleanCacheStorage = async (): Promise<void> => {
   } catch (e) {
     console.warn('[SelfCleaning] CacheStorage/IndexedDb cleanup omitted or unsupported in current runtime environment', e);
   }
+};
+
+/**
+ * Computes whether a shop's updated_at timestamp stands in the moderately inactive band (4 to 6 days).
+ * Returns true if age is between 96 and 144 hours.
+ */
+export const isShopAway = (shop: { updated_at?: string }): boolean => {
+  if (!shop.updated_at) return false;
+  const updatedAtDate = new Date(shop.updated_at);
+  const timeDiff = Date.now() - updatedAtDate.getTime();
+  const ageHours = timeDiff / (1000 * 60 * 60);
+  return ageHours > 96 && ageHours <= 144;
 };

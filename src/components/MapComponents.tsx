@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useMap, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass } from 'lucide-react';
@@ -61,6 +61,51 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
   const watchIdRef = useRef<number | null>(null);
   const [showStyleDropdown, setShowStyleDropdown] = useState(false);
 
+  const [isManuallyDragged, setIsManuallyDragged] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+
+  const accuracyDetails = useMemo(() => {
+    if (!markerPos) {
+      return { pct: 0, src: "Unselected", color: "text-slate-400", desc: "No coordinate selected" };
+    }
+    
+    if (isManuallyDragged) {
+      return { pct: 100, src: "Manual Rooftop Pin", color: "text-emerald-500", desc: "Manually customized exact spot" };
+    }
+    
+    // GPS Tracking Active or Location set from GPS
+    if (isTracking && gpsAccuracy !== null) {
+      const displayPct = gpsAccuracy <= 10 ? 99 : gpsAccuracy <= 20 ? 97 : gpsAccuracy <= 50 ? 92 : gpsAccuracy <= 100 ? 85 : 75;
+      return { pct: displayPct, src: `GPS Active (±${Math.round(gpsAccuracy)}m)`, color: "text-emerald-500", desc: `Estimated precision radius: ${Math.round(gpsAccuracy)}m` };
+    }
+    
+    if (gpsAccuracy !== null) {
+      const displayPct = gpsAccuracy <= 10 ? 99 : gpsAccuracy <= 20 ? 97 : gpsAccuracy <= 50 ? 92 : gpsAccuracy <= 100 ? 85 : 75;
+      return { pct: displayPct, src: `GPS Fixed (±${Math.round(gpsAccuracy)}m)`, color: "text-emerald-500", desc: `Estimated accuracy: ${Math.round(gpsAccuracy)} meters` };
+    }
+    
+    if (isTracking) {
+      return { pct: 98, src: "Live GPS Active", color: "text-emerald-500", desc: "Tracking active with high-accuracy query" };
+    }
+    
+    const addr = query.toLowerCase();
+    
+    // Direct link or manual GPS coordinate insertion
+    if (addr.includes("google maps") || addr.startsWith("location from") || addr.includes("gps:") || addr.includes("maps.app")) {
+      return { pct: 99, src: "Verified Precise GPS", color: "text-emerald-500", desc: "Coordinates parsed directly" };
+    }
+    
+    const partsCount = query.split(',').length;
+    if (partsCount >= 6) {
+      return { pct: 95, src: "Street-level Rooftop Info", color: "text-emerald-500", desc: "Detailed address with high-precision street info" };
+    } else if (partsCount >= 4) {
+      return { pct: 88, src: "Street-level Accuracy", color: "text-amber-550", desc: "Street level geographic match" };
+    } else if (partsCount >= 2) {
+      return { pct: 75, src: "Neighborhood Match", color: "text-amber-400", desc: "Zone neighborhood alignment" };
+    }
+    return { pct: 60, src: "Township Approximation", color: "text-rose-500", desc: "Sub-optimal wide lookup" };
+  }, [query, markerPos, isTracking, isManuallyDragged, gpsAccuracy]);
+
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null) {
@@ -89,9 +134,10 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
       
       watchIdRef.current = navigator.geolocation.watchPosition(
         (position) => {
-          const { latitude, longitude } = position.coords;
+          const { latitude, longitude, accuracy } = position.coords;
           const newCoords = { lat: latitude, lng: longitude };
           setMarkerPos(newCoords);
+          setGpsAccuracy(accuracy);
           onSelect({ address: `Live tracking: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`, lat: latitude, lng: longitude });
         },
         (error) => {
@@ -210,9 +256,11 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
     }
 
     setLoading(true);
+    setIsManuallyDragged(false);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        const { latitude, longitude } = position.coords;
+        const { latitude, longitude, accuracy } = position.coords;
+        setGpsAccuracy(accuracy);
         try {
           const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
           const data = await response.json();
@@ -248,6 +296,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
   const handleSelect = (res: any) => {
     const lat = parseFloat(res.lat);
     const lng = parseFloat(res.lon);
+    setIsManuallyDragged(false);
     setQuery(res.display_name);
     setMarkerPos({ lat, lng });
     setShowResults(false);
@@ -266,6 +315,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
           const newPos = marker.getLatLng();
           setMarkerPos({ lat: newPos.lat, lng: newPos.lng });
           setIsConfirmed(true);
+          setIsManuallyDragged(true);
           
           fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${newPos.lat}&lon=${newPos.lng}`)
             .then(res => res.json())
@@ -281,7 +331,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
             });
         }
       },
-    }), []);
+    }), [onSelect]);
 
     return markerPos === null ? null : (
       <Marker
@@ -440,6 +490,39 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
             )}
           </MapContainer>
 
+          {/* Map Precision Meter Widget */}
+          {markerPos && (
+            <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 dark:bg-slate-900/95 px-3 py-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-md flex items-center gap-2 max-w-[195px] backdrop-blur-md animate-in fade-in zoom-in duration-200">
+              <div className="relative flex items-center justify-center shrink-0">
+                <svg className="w-9 h-9" viewBox="0 0 36 36">
+                  <path
+                    className="text-slate-100 dark:text-slate-800"
+                    strokeWidth="3.5"
+                    stroke="currentColor"
+                    fill="none"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path
+                    className={accuracyDetails.color}
+                    strokeDasharray={`${Math.min(100, accuracyDetails.pct)}, 100`}
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                    stroke="currentColor"
+                    fill="none"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                </svg>
+                <span className="absolute text-[9px] font-black leading-none text-slate-800 dark:text-slate-100">
+                  {Math.min(100, accuracyDetails.pct)}%
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none mb-0.5">Map Accuracy</p>
+                <p className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate leading-tight uppercase tracking-tight">{accuracyDetails.src}</p>
+              </div>
+            </div>
+          )}
+
           {/* Real-time Floating Overlay Controls inside the Map container wrapper */}
           <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
             {!isFullscreen && (
@@ -529,6 +612,62 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
   const watchIdRef = useRef<number | null>(null);
   const [showStyleDropdown, setShowStyleDropdown] = useState(false);
 
+  const [isManuallyDragged, setIsManuallyDragged] = useState(false);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [resolvedAddress, setResolvedAddress] = useState<string>("");
+  const [isAddressLoading, setIsAddressLoading] = useState(false);
+  const [isConfirmedByPin, setIsConfirmedByPin] = useState(true);
+
+  useEffect(() => {
+    if (!coords) return;
+    setIsAddressLoading(true);
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`;
+    
+    const controller = new AbortController();
+    fetch(url, { signal: controller.signal })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.display_name) {
+          setResolvedAddress(data.display_name);
+        } else {
+          setResolvedAddress(`${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`);
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          console.error("Reverse geocoding failed", err);
+          setResolvedAddress(`${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`);
+        }
+      })
+      .finally(() => {
+        setIsAddressLoading(false);
+      });
+      
+    return () => controller.abort();
+  }, [coords.lat, coords.lng]);
+
+  const accuracyDetails = useMemo(() => {
+    if (isManuallyDragged) {
+      return { pct: 100, src: "Manual Calibrated Pin", color: "text-emerald-500", desc: "Manually calibrated of doorway" };
+    }
+    
+    if (isTracking && gpsAccuracy !== null) {
+      const displayPct = gpsAccuracy <= 10 ? 99 : gpsAccuracy <= 20 ? 97 : gpsAccuracy <= 50 ? 92 : gpsAccuracy <= 100 ? 85 : 75;
+      return { pct: displayPct, src: `Live GPS (±${Math.round(gpsAccuracy)}m)`, color: "text-emerald-500", desc: `Estimated accuracy is ±${Math.round(gpsAccuracy)}m` };
+    }
+    
+    if (gpsAccuracy !== null) {
+      const displayPct = gpsAccuracy <= 10 ? 99 : gpsAccuracy <= 20 ? 97 : gpsAccuracy <= 50 ? 92 : gpsAccuracy <= 100 ? 85 : 75;
+      return { pct: displayPct, src: `GPS Fixed (±${Math.round(gpsAccuracy)}m)`, color: "text-emerald-500", desc: `Estimated precision is ±${Math.round(gpsAccuracy)}m` };
+    }
+    
+    if (isTracking) {
+      return { pct: 98, src: "Live GPS Active", color: "text-emerald-500", desc: "Live signal tracking" };
+    }
+    
+    return { pct: 92, src: "Geocoordinate Precision", color: "text-emerald-500", desc: "Standard position geometry" };
+  }, [isTracking, isManuallyDragged, gpsAccuracy]);
+
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null) {
@@ -557,8 +696,11 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
       
       watchIdRef.current = navigator.geolocation.watchPosition(
         (position) => {
-          const { latitude, longitude } = position.coords;
+          const { latitude, longitude, accuracy } = position.coords;
           onCoordsChange({ lat: latitude, lng: longitude });
+          setGpsAccuracy(accuracy);
+          setIsManuallyDragged(false);
+          setIsConfirmedByPin(false); // Make user re-verify spot
         },
         (error) => {
           console.error("watchPosition error:", error);
@@ -586,6 +728,8 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
         if (marker != null) {
           const newPos = marker.getLatLng();
           onCoordsChange({ lat: newPos.lat, lng: newPos.lng });
+          setIsManuallyDragged(true);
+          setIsConfirmedByPin(false); // Must re-verify new spot
         }
       },
     }), [onCoordsChange]);
@@ -671,6 +815,21 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             <InvalidateMapSize trigger={isFullscreen} />
             <DraggableMarker />
             
+            {gpsAccuracy && coords && (
+              <Circle
+                center={coords}
+                radius={gpsAccuracy}
+                pathOptions={{
+                  color: '#fb923c',
+                  fillColor: '#fb923c',
+                  fillOpacity: 0.1,
+                  stroke: true,
+                  weight: 1,
+                  dashArray: '3, 5'
+                }}
+              />
+            )}
+            
             {shopCoords && (
               <>
                 <Marker position={shopCoords} icon={shopIcon}>
@@ -709,6 +868,40 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             
             <ChangeView center={coords} shopCenter={shopCoords} />
           </MapContainer>
+          
+          {/* Map Precision Meter Widget */}
+          <div className="absolute top-2 left-2 z-[1000] bg-white/95 dark:bg-slate-900/95 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md flex items-center gap-2 backdrop-blur-md animate-in fade-in zoom-in duration-200">
+            <div className="relative flex items-center justify-center shrink-0">
+              <svg className="w-7 h-7" viewBox="0 0 36 36">
+                <path
+                  className="text-slate-100 dark:text-slate-800"
+                  strokeWidth="3.5"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+                <path
+                  className={accuracyDetails.color}
+                  strokeDasharray={`${accuracyDetails.pct}, 100`}
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+              </svg>
+              <span className="absolute text-[8px] font-black leading-none text-slate-800 dark:text-slate-100">
+                {accuracyDetails.pct}%
+              </span>
+            </div>
+            <div className="min-w-0 pr-1">
+              <p className="text-[7px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none mb-0.5">accuracy</p>
+              <p className="text-[9px] font-extrabold text-slate-800 dark:text-slate-200 truncate leading-tight uppercase tracking-tight">{accuracyDetails.src}</p>
+              {accuracyDetails.desc && (
+                <p className="text-[7px] text-slate-500 dark:text-slate-400 font-bold truncate leading-none mt-0.5">{accuracyDetails.desc}</p>
+              )}
+            </div>
+          </div>
           
           <div className="absolute bottom-2 left-2 right-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider">
             📍 Drag the red pin to select your exact door location
@@ -785,6 +978,60 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Dynamic Selected Address & Manual Lock Steps Verification */}
+      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-850 rounded-2xl p-4 flex flex-col gap-3 animate-in fade-in slide-in-from-top-1 duration-300">
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 bg-orange-500/10 dark:bg-orange-500/20 rounded-xl text-orange-600 dark:text-orange-400 shrink-0 mt-0.5">
+            <MapPin className="w-5 h-5 animate-bounce" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-450 dark:text-slate-500">
+              Pinpointer Address Lookup
+            </p>
+            {isAddressLoading ? (
+              <div className="h-4 bg-slate-200/50 dark:bg-slate-800 animate-pulse rounded w-3/4 mt-1"></div>
+            ) : (
+              <p className="text-xs font-bold text-slate-850 dark:text-slate-100 mt-1 leading-relaxed">
+                {resolvedAddress || `${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {!isConfirmedByPin ? (
+          <button
+            type="button"
+            onClick={() => {
+              setIsConfirmedByPin(true);
+              toast.success("Delivery Spot Confirmed!", {
+                description: "Map pinpoint has been manually verified and locked."
+              });
+            }}
+            className="w-full py-3 bg-gradient-to-r from-orange-600 to-amber-550 hover:from-orange-700 hover:to-orange-600 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-98 shadow-md shadow-orange-600/10 cursor-pointer"
+          >
+            <CheckCircle className="w-4 h-4 text-white" />
+            Lock & Confirm Spot Accuracy
+          </button>
+        ) : (
+          <div className="bg-emerald-500/5 border border-emerald-500/20 px-3 py-2.5 rounded-xl flex items-center justify-between text-emerald-800 dark:text-emerald-400">
+            <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              Coordinates Secured
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsConfirmedByPin(false)}
+              className="text-[10px] font-black underline uppercase tracking-tight text-slate-400 hover:text-orange-600 dark:hover:text-orange-400 transition-colors cursor-pointer"
+            >
+              Adjust Pin Spot
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Visual Delivery Range Feedback and Warnings */}

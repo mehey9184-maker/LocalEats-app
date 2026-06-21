@@ -115,4 +115,6 @@ export type Shop = {
   cash_trust_enabled?: boolean;
   allow_external_riders?: boolean;
   auto_look_for_rider?: boolean;
+  updated_at?: string;
+  is_active?: boolean;
 };

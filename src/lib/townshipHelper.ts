@@ -33,12 +33,12 @@ export const TOWNSHIPS: TownshipConfig[] = [
   {
     id: 'ivory_park',
     name: 'Ivory Park',
-    center: { lat: -26.0125, lng: 28.1950 },
+    center: { lat: -26.009012, lng: 28.192455 },
     greeting: 'Welcome to Ivory Park LocalEats',
     heroSubtitle: 'Serving hot Kotas to Ivory Park. Real-time matching with registered community runners.',
     badgeText: 'Ivory Park Local',
     deliveryRangeMessage: 'Fulfilling orders promptly across Kopanong & Busy Corner.',
-    landmarks: ['Kopanong Section', 'Busy Corner', 'Ivory Park Hall', 'Ext 2', 'Ext 3']
+    landmarks: ['Kopanong Section', 'Busy Corner', 'Ivory Park Hall', 'Thakgalo Street', 'Ext 2', 'Ext 3']
   },
   {
     id: 'kaalfontein',
@@ -53,7 +53,7 @@ export const TOWNSHIPS: TownshipConfig[] = [
   {
     id: 'rabie_ridge',
     name: 'Rabie Ridge',
-    center: { lat: -26.0026, lng: 28.1755 },
+    center: { lat: -26.009012, lng: 28.192455 },
     greeting: 'Rabie Ridge Hot Delivery',
     heroSubtitle: 'Authentic local street food delivered safely to Rabie Ridge & Kanana residents.',
     badgeText: 'Rabie Ridge Local',
@@ -73,10 +73,39 @@ export const TOWNSHIPS: TownshipConfig[] = [
 ];
 
 /**
- * Detects the closest township config based on coordinate proximity.
+ * Detects the closest township config based on coordinate proximity or address string.
  * Falls back to Tembisa (default) if coordinates are invalid or extremely far.
  */
-export function detectTownship(lat: number | undefined | null, lng: number | undefined | null): TownshipConfig {
+export function detectTownship(
+  lat: number | undefined | null,
+  lng: number | undefined | null,
+  address?: string | null
+): TownshipConfig {
+  if (address) {
+    const lowerAddress = address.toLowerCase();
+    
+    if (lowerAddress.includes("ivory park") || lowerAddress.includes("ivorypark") || lowerAddress.includes("thakgalo") || lowerAddress.includes("ward 77") || lowerAddress.includes("ward77")) {
+      const found = TOWNSHIPS.find(t => t.id === 'ivory_park');
+      if (found) return found;
+    }
+    if (lowerAddress.includes("rabie ridge") || lowerAddress.includes("rabieridge")) {
+      const found = TOWNSHIPS.find(t => t.id === 'rabie_ridge');
+      if (found) return found;
+    }
+    if (lowerAddress.includes("kaalfontein")) {
+      const found = TOWNSHIPS.find(t => t.id === 'kaalfontein');
+      if (found) return found;
+    }
+    if (lowerAddress.includes("tembisa")) {
+      const found = TOWNSHIPS.find(t => t.id === 'tembisa');
+      if (found) return found;
+    }
+    if (lowerAddress.includes("clayville")) {
+      const found = TOWNSHIPS.find(t => t.id === 'clayville');
+      if (found) return found;
+    }
+  }
+
   if (lat == null || lng == null) {
     return TOWNSHIPS[0]; // Tembisa default
   }

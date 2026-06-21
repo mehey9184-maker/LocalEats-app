@@ -34,6 +34,19 @@ import icon from "leaflet/dist/images/marker-icon.png";
 import iconShadow from "leaflet/dist/images/marker-shadow.png";
 import iconRetina from "leaflet/dist/images/marker-icon-2x.png";
 import QRCode from "qrcode";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  PieChart,
+  Pie,
+  Legend,
+} from "recharts";
 
 let DefaultIcon = L.icon({
   iconUrl: icon,
@@ -174,6 +187,7 @@ import {
   handleSupabaseError,
   calculateDistance,
   getShopStatus,
+  isShopAway,
   SUPPORTED_CITIES,
   APP_VERSION,
   DEFAULT_COORDS,
@@ -361,8 +375,13 @@ const ShopCard = memo(
             )}
           </div>
 
-          <div className="flex items-center gap-2 mt-2 overflow-hidden">
+          <div className="flex items-center gap-2 mt-2 overflow-hidden flex-wrap">
             <TrustBadge shop={shop} />
+            {isShopAway(shop) && (
+              <span className="text-[9px] font-black bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 uppercase tracking-widest whitespace-nowrap px-1.5 py-0.5 rounded animate-pulse border border-rose-200 dark:border-rose-900/30">
+                ⚠️ Away / Likely Offline
+              </span>
+            )}
             {!status.isOpen && (
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap bg-slate-100/50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded">
                 Opens {status.nextOpeningTime || "Soon"}
@@ -415,6 +434,13 @@ const MenuItemCard = memo(
             );
             return;
           }
+          if (isShopAway(shop)) {
+            showAlert(
+              "Ordering Disabled",
+              "This shop hasn't updated its live heartbeat in over 4 days. To protect your funds, ordering is temporarily disabled until the merchant logs back in."
+            );
+            return;
+          }
           if (item.is_available === false) {
             showAlert("Out of Stock", "This item is currently unavailable.");
             return;
@@ -462,16 +488,18 @@ const MenuItemCard = memo(
               {item.displayPrice}
             </p>
             <div
-              className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen || item.is_available === false ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none" : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700"}`}
+              className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen || item.is_available === false || isShopAway(shop) ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none" : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700"}`}
             >
               <span>
                 {!getShopStatus(shop).isOpen
                   ? "Closed"
-                  : item.is_available === false
-                    ? "Sold Out"
-                    : "Buy"}
+                  : isShopAway(shop)
+                    ? "Disabled"
+                    : item.is_available === false
+                      ? "Sold Out"
+                      : "Buy"}
               </span>
-              {getShopStatus(shop).isOpen && item.is_available !== false && (
+              {getShopStatus(shop).isOpen && item.is_available !== false && !isShopAway(shop) && (
                 <Plus className="w-3 h-3" />
               )}
             </div>
@@ -777,6 +805,16 @@ export default function App() {
     }
   });
 
+  const [hapticEnabled, setHapticEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem("haptic_enabled");
+      if (saved === null) return true;
+      return saved === "true";
+    } catch {
+      return true;
+    }
+  });
+
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(
     () => {
       return safeLocalStorageGet("pending_review", null);
@@ -1002,10 +1040,10 @@ export default function App() {
   }, [pendingReview]);
 
   const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
-    if ("vibrate" in navigator) {
+    if (hapticEnabled && "vibrate" in navigator) {
       navigator.vibrate(pattern);
     }
-  }, []);
+  }, [hapticEnabled]);
 
   const fetchShopsData = useCallback(async (retries = 3) => {
     setLoadingShops(true);
@@ -1208,6 +1246,21 @@ export default function App() {
               currentTimeStr <= s.closing_time;
           }
 
+          const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
+          let parsedUpdatedAt = s.updated_at;
+          if (isActive) {
+            let isDateValid = false;
+            if (parsedUpdatedAt) {
+              const d = new Date(parsedUpdatedAt);
+              if (!isNaN(d.getTime())) {
+                isDateValid = true;
+              }
+            }
+            if (!isDateValid) {
+              parsedUpdatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            }
+          }
+
           return {
             id: String(s.id),
             name: s.name,
@@ -1233,6 +1286,8 @@ export default function App() {
             phone: s.phone || "+27 12 345 6789",
             latitude: s.latitude || DEFAULT_COORDS.lat,
             longitude: s.longitude || DEFAULT_COORDS.lng,
+            updated_at: parsedUpdatedAt,
+            is_active: isActive,
             images: (s as any).images || [
               DEFAULT_SHOP_LOGO,
               "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
@@ -1253,6 +1308,17 @@ export default function App() {
                 customizations: m.customizations || [],
               })),
           };
+        })
+        .filter((shop) => {
+          if (shop.is_active) {
+            if (!shop.updated_at) return false;
+            const updatedAtDate = new Date(shop.updated_at);
+            const ageHours = (Date.now() - updatedAtDate.getTime()) / (1000 * 60 * 60);
+            if (ageHours > 144) {
+              return false; // older than 6 days (144 hours) is considered abandoned
+            }
+          }
+          return true;
         })
         .sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
 
@@ -3120,6 +3186,19 @@ export default function App() {
                     setIsDarkMode(!isDarkMode);
                     triggerHaptic(10);
                   }}
+                  hapticEnabled={hapticEnabled}
+                  onToggleHaptic={() => {
+                    const next = !hapticEnabled;
+                    setHapticEnabled(next);
+                    try {
+                      localStorage.setItem("haptic_enabled", String(next));
+                    } catch {}
+                    if (next) {
+                      if ("vibrate" in navigator) {
+                        navigator.vibrate(15);
+                      }
+                    }
+                  }}
                   setNotification={setNotification}
                   showAlert={showAlert}
                   showConfirm={showConfirm}
@@ -4713,7 +4792,14 @@ const HorizontalShopCard = ({
           {shop.description}
         </p>
 
-        <TrustBadge shop={shop} />
+        <div className="flex flex-col gap-1 mt-1">
+          <TrustBadge shop={shop} />
+          {isShopAway(shop) && (
+            <span className="w-max text-[9px] font-black bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 uppercase tracking-widest px-1.5 py-0.5 rounded animate-pulse border border-rose-200 dark:border-rose-900/30">
+              ⚠️ Away / Likely Offline
+            </span>
+          )}
+        </div>
 
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50 dark:border-slate-800/50">
           <div className="flex items-center gap-1">
@@ -4810,8 +4896,8 @@ function HomeScreen({
 }) {
   const { t } = useTranslation();
   const currentTownship = useMemo(() => {
-    return detectTownship(userLocation?.lat, userLocation?.lng);
-  }, [userLocation]);
+    return detectTownship(userLocation?.lat, userLocation?.lng, userProfile?.address);
+  }, [userLocation, userProfile?.address]);
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -6182,10 +6268,10 @@ function CheckoutScreen({
   const deliveryTownship = useMemo(() => {
     if (deliveryCoordinates && deliveryCoordinates.coordinates) {
       const [lng, lat] = deliveryCoordinates.coordinates;
-      return detectTownship(lat, lng);
+      return detectTownship(lat, lng, deliveryAddressText);
     }
-    return detectTownship(userLocation?.lat, userLocation?.lng);
-  }, [deliveryCoordinates, userLocation]);
+    return detectTownship(userLocation?.lat, userLocation?.lng, userProfile?.address);
+  }, [deliveryCoordinates, userLocation, deliveryAddressText, userProfile?.address]);
 
   // Enforce spatial authority and precision validation via visual map pin confirmation
   const [isLocationConfirmed, setIsLocationConfirmed] =
@@ -9264,6 +9350,7 @@ const QuantityModal = ({
   isOpen,
   onClose,
   onConfirm,
+  shopAway,
 }: {
   item: MenuItem | null;
   isOpen: boolean;
@@ -9273,6 +9360,7 @@ const QuantityModal = ({
     specialInstructions: string,
     selectedCustomizations: { name: string; price: number }[],
   ) => void;
+  shopAway?: boolean;
 }) => {
   const [quantity, setQuantity] = useState(1);
   const [specialInstructions, setSpecialInstructions] = useState("");
@@ -9416,12 +9504,27 @@ const QuantityModal = ({
           </div>
         </div>
 
+        {shopAway && (
+          <div className="mt-4 p-4 bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 rounded-2xl border border-red-100 dark:border-red-900/30 flex items-start gap-2.5">
+            <span className="text-lg shrink-0">⚠️</span>
+            <p className="text-xs font-bold leading-normal">
+              This shop hasn't updated its live heartbeat in over 4 days. To protect your funds, ordering is temporarily disabled until the merchant logs back in.
+            </p>
+          </div>
+        )}
+
         <div className="mt-8 flex gap-4">
           <button
-            onClick={() =>
-              onConfirm(quantity, specialInstructions, selectedCustomizations)
-            }
-            className="flex-1 h-16 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer"
+            onClick={() => {
+              if (shopAway) return;
+              onConfirm(quantity, specialInstructions, selectedCustomizations);
+            }}
+            disabled={shopAway}
+            className={`flex-1 h-16 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer ${
+              shopAway
+                ? "bg-slate-300 dark:bg-slate-800 text-slate-500 cursor-not-allowed shadow-none"
+                : "bg-slate-900 dark:bg-orange-600"
+            }`}
           >
             <ShoppingBag className="w-6 h-6" />
             <span>Add to Basket • R{totalPrice.toFixed(2)}</span>
@@ -10776,6 +10879,7 @@ function StoreInfoScreen({
             setSelectedItemForQuantity(null);
           }
         }}
+        shopAway={shop ? isShopAway(shop) : false}
       />
 
       {/* Cash on Arrival Trust Tooltip / Micro-Drawer */}
@@ -12148,6 +12252,109 @@ function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCountdownP
   );
 }
 
+function DetailedKitchenStatus({ createdAt, status }: { createdAt: string; status: string }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 10000); // refresh kitchen ticks every 10 seconds
+    return () => clearInterval(timer);
+  }, []);
+
+  const orderTime = new Date(createdAt).getTime();
+  const elapsedMinutes = Math.max(0, Math.floor((now - orderTime) / 60000));
+
+  const milestones = useMemo(() => {
+    if (status === "pending" || status === "queued_for_sync") {
+      return [
+        { label: "Order transmitted to kitchen", done: true, current: false },
+        { label: "Awaiting shop owner acceptance & prep queue", done: elapsedMinutes >= 1.5, current: elapsedMinutes < 1.5 },
+        { label: "Kitchen ingredient allocation", done: false, current: elapsedMinutes >= 1.5 },
+      ];
+    } else if (status === "preparing" || status === "confirmed") {
+      return [
+        { label: "Order accepted by shop owner", done: true, current: false },
+        { label: "Ingredients prepped & portioned by chef", done: elapsedMinutes >= 4, current: elapsedMinutes < 4 },
+        { label: "Cooking / Grilling in progress", done: elapsedMinutes >= 8, current: elapsedMinutes >= 4 && elapsedMinutes < 8 },
+        { label: "Meal plated & quality-inspected", done: elapsedMinutes >= 12, current: elapsedMinutes >= 8 && elapsedMinutes < 12 },
+        { label: "Packed in warmth-retaining thermal packaging", done: false, current: elapsedMinutes >= 12 },
+      ];
+    } else if (status === "ready") {
+      return [
+        { label: "Cooking completed & inspected", done: true, current: false },
+        { label: "Packed in heat-resistant dispatch bundle", done: true, current: false },
+        { label: "Food ready! Awaiting driver pickup or hand-over", done: false, current: true },
+      ];
+    } else {
+      return [
+        { label: "Food prepared & hand over complete", done: true, current: false },
+        { label: "Delivered safely - Enjoy!", done: true, current: false },
+      ];
+    }
+  }, [status, elapsedMinutes]);
+
+  return (
+    <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-150/40 dark:border-slate-800/80 mt-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5 leading-none">
+          <span className="size-1.5 rounded-full bg-orange-600 animate-pulse" />
+          Kitchen Timeline Status
+        </h4>
+        <span className="text-[8px] font-black uppercase tracking-wider text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-2 py-0.5 rounded leading-none animate-pulse">
+          Live Tracker
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {milestones.map((milestone, idx) => (
+          <div key={idx} className="flex items-start gap-2.5 text-xs">
+            <div className="mt-0.5 flex flex-col items-center shrink-0">
+              <div
+                className={`size-4.5 rounded-full flex items-center justify-center border transition-all duration-300 ${
+                  milestone.done
+                    ? "bg-emerald-500 border-emerald-550 text-white"
+                    : milestone.current
+                    ? "bg-orange-500/10 border-orange-500 text-orange-600 animate-pulse scale-105"
+                    : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-750 text-slate-300"
+                }`}
+              >
+                {milestone.done ? (
+                  <Check className="w-2.5 h-2.5 stroke-[4]" />
+                ) : milestone.current ? (
+                  <span className="size-1.5 rounded-full bg-orange-500 animate-ping" />
+                ) : (
+                  <span className="size-1.5 rounded-full bg-slate-350 dark:bg-slate-600" />
+                )}
+              </div>
+              {idx < milestones.length - 1 && (
+                <div
+                  className={`w-[1px] h-4 transition-colors duration-300 ${
+                    milestone.done ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-800"
+                  }`}
+                />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p
+                className={`text-[11px] font-semibold leading-tight transition-colors ${
+                  milestone.done
+                    ? "text-slate-400 line-through dark:text-slate-500"
+                    : milestone.current
+                    ? "text-slate-900 font-extrabold dark:text-white"
+                    : "text-slate-400 dark:text-slate-600"
+                }`}
+              >
+                {milestone.label}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OrderTrackingScreen({
   orders,
   shops,
@@ -12494,6 +12701,7 @@ function OrderTrackingScreen({
                       Estimated time: 15-20 mins
                     </p>
                     <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={order.is_delivery} />
+                    <DetailedKitchenStatus createdAt={order.created_at} status={order.status} />
                     {order.is_delivery && (
                       <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                         {shop?.allow_external_riders === false ? (
@@ -12650,6 +12858,8 @@ function SettingsScreen({
   onUpdateProfile,
   isDarkMode,
   onToggleDarkMode,
+  hapticEnabled,
+  onToggleHaptic,
   setNotification,
   showAlert,
   showConfirm,
@@ -12669,6 +12879,8 @@ function SettingsScreen({
   onUpdateProfile: (data: Partial<UserProfile>, showSuccess?: boolean) => void;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+  hapticEnabled: boolean;
+  onToggleHaptic: () => void;
   setNotification: (n: NotificationState) => void;
   showAlert: (title: string, message: string) => void;
   showConfirm: (
@@ -12955,6 +13167,28 @@ function SettingsScreen({
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDarkMode ? "translate-x-6" : "translate-x-1"}`}
+                />
+              </button>
+            </div>
+
+            {/* Haptic Feedback toggle */}
+            <div className="flex items-center justify-between p-4 border-t border-slate-50 dark:border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Haptic Feedback</span>
+                  <p className="text-[10px] text-slate-500">Physical feel on interaction</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleHaptic}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticEnabled ? "bg-primary animate-pulse" : "bg-slate-200 dark:bg-slate-700"}`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hapticEnabled ? "translate-x-6" : "translate-x-1"}`}
                 />
               </button>
             </div>
@@ -14840,6 +15074,45 @@ function ShopDashboardScreen({
 
   const weeklyStats = getWeeklyStats();
 
+  const orderStatusBreakdown = useMemo(() => {
+    const todayStr = new Date().toDateString();
+    
+    // Get all orders from the shop for the current day
+    const todayOrders = orders.filter((o) => {
+      if (!o.created_at) return false;
+      return new Date(o.created_at).toDateString() === todayStr;
+    });
+
+    let pendingCount = 0;
+    let preparingCount = 0;
+    let readyCount = 0;
+    let completedCount = 0;
+    let cancelledCount = 0;
+
+    todayOrders.forEach((o) => {
+      const st = String(o.status).toLowerCase();
+      if (st === "pending") {
+        pendingCount++;
+      } else if (st === "confirmed" || st === "preparing") {
+        preparingCount++;
+      } else if (st === "ready") {
+        readyCount++;
+      } else if (st === "completed") {
+        completedCount++;
+      } else if (st === "cancelled") {
+        cancelledCount++;
+      }
+    });
+
+    return [
+      { name: "Pending", value: pendingCount, color: "#F59E0B" },
+      { name: "Preparing", value: preparingCount, color: "#3B82F6" },
+      { name: "Ready", value: readyCount, color: "#10B981" },
+      { name: "Completed", value: completedCount, color: "#64748B" },
+      { name: "Cancelled", value: cancelledCount, color: "#EF4444" },
+    ];
+  }, [orders]);
+
   const toggleItemAvailability = async (
     itemId: string,
     currentStatus: boolean,
@@ -14869,6 +15142,17 @@ function ShopDashboardScreen({
       showAlert("Error", "Failed to update stock: " + err.message);
     }
   };
+
+  const isTrustCurrentlyActive = useMemo(() => {
+    if (!shop) return false;
+    return (
+      localStorage.getItem("localeats_cash_trust_" + shop.id) === "true" ||
+      (shop as any).cash_trust_enabled === true ||
+      (shop as any).cash_trust_enabled === "true" ||
+      (shop as any).localeats_cash_trust === true ||
+      (shop as any).localeats_cash_trust === "true"
+    );
+  }, [shop]);
 
   const popularItemName = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -14984,6 +15268,69 @@ function ShopDashboardScreen({
                   R{Math.round(todayRevenue)}
                 </p>
               </motion.div>
+            </div>
+
+            {/* Cash on Arrival (COA) Quick Toggle */}
+            <div className="bg-white dark:bg-slate-900 border border-emerald-500/15 dark:border-emerald-500/20 p-4.5 rounded-2xl flex items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="size-10 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center shrink-0">
+                  <Banknote className="w-5 h-5 animate-pulse" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 leading-none">
+                    <span>COA Trust Badge</span>
+                    <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded leading-none ${
+                      isTrustCurrentlyActive 
+                        ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400" 
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                    }`}>
+                      {isTrustCurrentlyActive ? "Active" : "Disabled"}
+                    </span>
+                  </p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-550 font-medium mt-1.5 truncate">
+                    Allow customers to see trust banner
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextVal = !isTrustCurrentlyActive;
+                  await runWithProcessing(async () => {
+                    try {
+                      const { error } = await supabase
+                        .from("shops")
+                        .update({
+                          localeats_cash_trust: nextVal,
+                          cash_trust_enabled: nextVal,
+                        })
+                        .eq("id", shop.id);
+                      if (error) console.warn("Supabase COA update error:", error);
+                    } catch (err) {
+                      console.warn(err);
+                    }
+
+                    localStorage.setItem("localeats_cash_trust_" + shop.id, String(nextVal));
+                    setShop({
+                      ...shop,
+                      localeats_cash_trust: nextVal,
+                      cash_trust_enabled: nextVal,
+                    });
+
+                    toast.success(
+                      nextVal
+                        ? "COA Trust Badge enabled! Customers will view your trust banner."
+                        : "COA Trust Badge disabled."
+                    );
+                  });
+                }}
+                className={`w-12 h-6.5 rounded-full p-1 transition-colors duration-200 focus:outline-none flex items-center cursor-pointer ${
+                  isTrustCurrentlyActive ? "bg-emerald-500 justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"
+                }`}
+              >
+                <div className="size-4.5 rounded-full bg-white shadow-md transition-transform duration-200" />
+              </button>
             </div>
 
             {/* Date Range Filter */}
@@ -15233,6 +15580,90 @@ function ShopDashboardScreen({
                 ))}
               </div>
             </div>
+
+            {/* Recharts - Today's Order Status Breakdown */}
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm space-y-4">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">Today's Order Status Breakdown</h3>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Real-time status metrics for today's orders</p>
+              </div>
+
+              {orderStatusBreakdown.reduce((sum, item) => sum + item.value, 0) === 0 ? (
+                <div className="flex flex-col items-center justify-center p-6 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center py-10">
+                  <BarChart3 className="w-8 h-8 text-slate-400 mb-2 animate-bounce" />
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No Orders Registered Today</p>
+                  <p className="text-[10px] text-slate-400 max-w-[200px] mt-1">Once clients start sending today's orders, status percentages will be charted automatically.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                  <div className="h-48 w-full flex items-center justify-center relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={orderStatusBreakdown.filter(item => item.value > 0)}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={3}
+                          dataKey="value"
+                        >
+                          {orderStatusBreakdown.filter(item => item.value > 0).map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip 
+                          formatter={(value) => [`${value} Order(s)`, 'Volume']}
+                          contentStyle={{
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            border: '1px solid rgba(249, 115, 22, 0.15)',
+                            borderRadius: '12px',
+                            padding: '8px 12px',
+                            color: '#FFF'
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute flex flex-col items-center">
+                      <span className="text-2xl font-black text-slate-900 dark:text-white leading-none">
+                        {orderStatusBreakdown.reduce((sum, item) => sum + item.value, 0)}
+                      </span>
+                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-1">Total Today</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {orderStatusBreakdown.map((item) => {
+                      const totalTodayVal = orderStatusBreakdown.reduce((sum, o) => sum + o.value, 0);
+                      const percent = totalTodayVal > 0 ? (item.value / totalTodayVal) * 100 : 0;
+                      return (
+                        <div key={item.name} className="space-y-1">
+                          <div className="flex justify-between items-center text-xs font-bold">
+                            <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                              <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: item.color }}></span>
+                              {item.name}
+                            </span>
+                            <span className="text-slate-900 dark:text-white font-mono">
+                              {item.value} <span className="text-[10px] text-slate-400 font-normal">({percent.toFixed(0)}%)</span>
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full rounded-full transition-all duration-500" 
+                              style={{ 
+                                width: `${percent}%`,
+                                backgroundColor: item.color 
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5">
                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">
@@ -17831,18 +18262,12 @@ function OrderHistoryScreen({
 
   // Instant whole-order group reorder to bypass single item popups and menu navigation
   const handleReorderGroup = (group: any) => {
-    if (!addToCart) return;
+    if (!setCart) return;
     triggerHaptic?.([50, 30, 50]);
-    
-    // Pre-fill the cart with only these items (clear previous cart contents)
-    if (setCart) {
-      setCart([]);
-    }
     
     const shop = shops.find((s) => s.id === group.shop_id);
 
-    let addedCount = 0;
-    group.allOrders.forEach((orderItem: any) => {
+    const newCartItems: CartItem[] = group.items.map((orderItem: any) => {
       let originalMenuItem: MenuItem | undefined = undefined;
       if (shop) {
         originalMenuItem = shop.menu?.find(
@@ -17861,23 +18286,25 @@ function OrderHistoryScreen({
         customizations: orderItem.customizations || [],
       };
 
-      addToCart(
-        menuItem,
-        group.shop_id,
-        orderItem.quantity || 1,
-        orderItem.notes || "",
-        orderItem.customizations || [],
-      );
-      addedCount++;
+      return {
+        id: menuItem.id,
+        shopId: String(group.shop_id),
+        name: String(menuItem.name),
+        price: Number(menuItem.price),
+        quantity: Number(orderItem.quantity || 1),
+        image: String(menuItem.image),
+        specialInstructions: String(orderItem.notes || ""),
+        selectedCustomizations: orderItem.customizations || [],
+      };
     });
 
-    if (addedCount > 0) {
+    if (newCartItems.length > 0) {
+      setCart(newCartItems);
       if (setCurrentScreen) {
         setCurrentScreen("checkout");
       }
-      showAlert(
-        "Reordered!",
-        `Successfully added ${addedCount} item(s) from your previous order to your cart. Ready for checkout!`,
+      toast.success(
+        `⚡ Quick Reorder successful! Repopulated cart with ${newCartItems.length} items.`
       );
     } else {
       showAlert("Error", "Could not restore this order right now.");
@@ -17990,6 +18417,149 @@ function OrderHistoryScreen({
     }
   };
 
+  const handleExportPDF = () => {
+    triggerHaptic?.([100, 50, 100]);
+    try {
+      const doc = new jsPDF();
+      
+      // Document header with orange brand identity
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(22);
+      doc.setTextColor(249, 115, 22); // Orange theme color R=249, G=115, B=22
+      doc.text("LocalEats", 14, 20);
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139); // Slate-500 gray text
+      doc.text("Premium Diner Order History & Personal Records Statement", 14, 25);
+      
+      doc.setDrawColor(226, 232, 240); // Slate-200 border
+      doc.line(14, 28, 196, 28);
+      
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("PERSONAL REVENUE AND ORDER METRIC DOCUMENT", 14, 38);
+      
+      // Customer Metadata Cards
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(71, 85, 105);
+      doc.text("CUSTOMER IDENTIFICATION", 14, 46);
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`FullName:  ${userProfile?.fullName || "Valued Customer"}`, 14, 51);
+      doc.text(`Email Address:  ${userProfile?.email || "N/A"}`, 14, 56);
+      doc.text(`Export Timestamp:  ${new Date().toLocaleString()}`, 14, 61);
+      doc.text(`Total Transaction Counts:  ${filteredOrders.length} records compiled`, 14, 66);
+      
+      doc.line(14, 70, 196, 70);
+      
+      let y = 80;
+      
+      // Table headers
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Date", 14, y);
+      doc.text("Restaurant Name", 42, y);
+      doc.text("Product (Item Details)", 95, y);
+      doc.text("Status", 155, y);
+      doc.text("Total Paid", 180, y);
+      
+      doc.line(14, y + 2, 196, y + 2);
+      y += 8;
+      
+      // Sort orders by date descending
+      const sortedForPDF = [...filteredOrders].sort((a, b) => {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      
+      let totalSpentSum = 0;
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      
+      sortedForPDF.forEach((order) => {
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(9);
+          doc.setTextColor(15, 23, 42);
+          doc.text("Date", 14, y);
+          doc.text("Restaurant Name", 42, y);
+          doc.text("Product (Item Details)", 95, y);
+          doc.text("Status", 155, y);
+          doc.text("Total Paid", 180, y);
+          doc.line(14, y + 2, 196, y + 2);
+          y += 8;
+        }
+        
+        doc.setFont("Helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(71, 85, 105);
+        
+        // Date formatting
+        const oDate = new Date(order.created_at);
+        const dateStr = oDate.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+        doc.text(dateStr, 14, y);
+        
+        // Shop name resolution
+        const orderShop = shops.find((s) => s.id === order.shop_id);
+        const shopName = orderShop?.name || "Local Kitchen";
+        const truncatedShopName = shopName.length > 25 ? shopName.slice(0, 22) + "..." : shopName;
+        doc.text(truncatedShopName, 42, y);
+        
+        // Product Details format
+        const prodDetails = `${order.quantity || 1}x ${order.product_name}`;
+        const truncatedProd = prodDetails.length > 30 ? prodDetails.slice(0, 27) + "..." : prodDetails;
+        doc.text(truncatedProd, 95, y);
+        
+        // Capitalized status
+        const statusStr = String(order.status).toUpperCase();
+        doc.text(statusStr, 155, y);
+        
+        // Total pricing math
+        const itemVal = (order.price || 0) * (order.quantity || 1);
+        doc.text(`R ${itemVal.toFixed(2)}`, 180, y);
+        
+        totalSpentSum += itemVal;
+        y += 7;
+      });
+      
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+      
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, y + 2, 196, y + 2);
+      y += 10;
+      
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text("TOTAL DISBURSED AMOUNT:", 100, y);
+      doc.setTextColor(249, 115, 22);
+      doc.text(`R ${totalSpentSum.toFixed(2)}`, 180, y);
+      
+      y += 15;
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text("This statement acts as an official personal record of transactions handled on the LocalEats Platform.", 14, y);
+      
+      doc.save(`LocalEats_Billing_History_${new Date().toISOString().split('T')[0]}.pdf`);
+      toast.success("PDF summary exported! Starting statement download.");
+    } catch (err) {
+      console.error(err);
+      showAlert("Export Failed", "We could not compile your PDF due to an unexpected error. Please try again.");
+    }
+  };
+
   useEffect(() => {
     const fetchOrders = async () => {
       if (!session?.user?.id) {
@@ -18048,18 +18618,31 @@ function OrderHistoryScreen({
       <div className="relative flex h-auto min-h-screen w-full flex-col bg-white dark:bg-slate-950 overflow-x-hidden shadow-xl">
         <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 mr-4">
           <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
-            <div
+            <button
+              type="button"
               onClick={onBack}
-              className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer transition-colors hover:text-orange-500"
+              className="text-slate-900 dark:text-slate-100 flex size-12 shrink-0 items-center justify-start cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
             >
               <ArrowLeft className="w-6 h-6" />
-            </div>
+            </button>
             {loading ? (
               <div className="h-6 w-32 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mx-auto"></div>
             ) : (
-              <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-12">
+              <h2 className="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">
                 My Orders
               </h2>
+            )}
+            {!loading && orders.length > 0 ? (
+              <button
+                type="button"
+                onClick={handleExportPDF}
+                title="Export order history as PDF"
+                className="text-slate-700 dark:text-slate-300 flex size-12 shrink-0 items-center justify-end cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
+              >
+                <FileText className="w-5 h-5" />
+              </button>
+            ) : (
+              <div className="size-12"></div>
             )}
           </div>
         </header>
@@ -18111,6 +18694,21 @@ function OrderHistoryScreen({
                   </span>
                 </div>
               </div>
+
+              {/* PDF Record Keeping Export row */}
+              <div className="flex justify-between items-center pt-3 border-t border-slate-800/65 mt-0.5">
+                <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">
+                  Statement Documents
+                </span>
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-[9px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 flex items-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  <FileText className="w-3 h-3" />
+                  PDF Summary Export
+                </button>
+              </div>
             </div>
           )}
 
@@ -18138,17 +18736,17 @@ function OrderHistoryScreen({
               </div>
 
               <div className="grid grid-cols-2 gap-2 mt-0.5">
-                {/* Shop Filter */}
+                {/* Restaurant Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">
-                    Filter by Shop
+                    Filter by Restaurant
                   </label>
                   <select
                     value={filterShop}
                     onChange={(e) => setFilterShop(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300"
+                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
                   >
-                    <option value="All">All Shops</option>
+                    <option value="All">All Restaurants</option>
                     {orderedShopsList.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -18165,15 +18763,29 @@ function OrderHistoryScreen({
                   <select
                     value={filterDate}
                     onChange={(e) => setFilterDate(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300"
+                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
                   >
                     <option value="All">All Time</option>
-                    <option value="7days">Last 7 Days</option>
-                    <option value="30days">Last 30 Days</option>
-                    <option value="90days">Last 90 Days</option>
+                    <option value="7days">Last 7 days</option>
+                    <option value="30days">Last 30 days</option>
+                    <option value="90days">Last 90 days</option>
                   </select>
                 </div>
               </div>
+
+              {(filterShop !== "All" || filterDate !== "All" || searchQuery !== "") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterShop("All");
+                    setFilterDate("All");
+                    setSearchQuery("");
+                  }}
+                  className="w-full py-2 bg-orange-50 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-100 transition-colors cursor-pointer"
+                >
+                  Reset Active Filters
+                </button>
+              )}
             </div>
           )}
 
@@ -18464,10 +19076,10 @@ function OrderHistoryScreen({
                         <button
                           type="button"
                           onClick={() => handleReorderGroup(group)}
-                          className="flex-1 py-2 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-orange-100 dark:border-orange-500/20 transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-xs active:scale-95"
+                          className="flex-1 py-2 bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-605 text-white hover:from-orange-600 hover:to-amber-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
-                          Reorder
+                          ⚡ Quick Reorder
                         </button>
                       </div>
                     )}
