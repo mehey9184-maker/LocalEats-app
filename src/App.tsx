@@ -1089,14 +1089,14 @@ export default function App() {
             shopsError.details.toLowerCase().includes("failed to fetch")) ||
           shopsError.code === "PGRST301";
         if (isNetwork) {
-          console.warn(
+          console.log(
             "Network issue fetching shops, using offline mode:",
             shopsError.message,
           );
         } else if (retries === 0) {
           console.error("Shops fetch error:", shopsError);
         } else {
-          console.warn("Shops fetch issue (retrying):", shopsError.message);
+          console.log("Shops fetch issue (retrying):", shopsError.message);
         }
         const errObj = new Error(
           shopsError.message || "Unknown Supabase error",
@@ -1121,14 +1121,14 @@ export default function App() {
           menuError.code === "PGRST301";
 
         if (isNetwork) {
-          console.warn(
+          console.log(
             "Network issue fetching menu items, using offline mode:",
             menuError.message,
           );
         } else if (retries === 0) {
           console.error("Menu items fetch error:", menuError);
         } else {
-          console.warn("Menu items fetch issue (retrying):", menuError.message);
+          console.log("Menu items fetch issue (retrying):", menuError.message);
         }
 
         if (isNetwork) {
@@ -1344,9 +1344,9 @@ export default function App() {
       // Only log errors that are not network-related, or log them only on final failure
       if (!isNetworkError || retries === 0) {
         if (err?.message === "FAILED_TO_FETCH_MENU" || isNetworkError) {
-          console.warn(
+          console.log(
             "Network connectivity issue: falling back to offline content gracefully.",
-            err,
+            err?.message || err,
           );
         } else {
           console.error("Error fetching shops:", err);
@@ -1400,10 +1400,10 @@ export default function App() {
           setLoadingShops(false);
           toast.info(
             "Database connection offline. Loaded cached offline copy. 👍",
-            { duration: 4000 },
+            { id: "database-offline-toast", duration: 4000 },
           );
         } else {
-          console.warn(
+          console.log(
             "Database fetch failed and no cache found - Landing on premium offline fallback content",
           );
           setShops(DEFAULT_FALLBACK_SHOPS);
@@ -1414,7 +1414,7 @@ export default function App() {
           setLoadingShops(false);
           toast.info(
             "Database connection offline. Loaded offline demo menus. Ready to explore! 🍟",
-            { duration: 4000 },
+            { id: "database-offline-toast", duration: 4000 },
           );
         }
       }
@@ -1532,7 +1532,11 @@ export default function App() {
         // Notification removed to keep it in the background as requested
       },
       (error) => {
-        console.warn("Error getting location:", error.message);
+        if (error?.message && error.message.includes("permissions policy")) {
+          console.log("Geolocation disabled by iframe permissions policy.");
+        } else {
+          console.log("Error getting location (graceful fallback):", error?.message);
+        }
         if (silent) return; // Fail silently for automatic requests to avoid annoying timeout toasts
         
         let errorMsg = "Could not get your location automatically.";
@@ -2558,12 +2562,7 @@ export default function App() {
 
   return (
     <div className="relative">
-      {!isOnline && (
-        <div className="fixed top-0 left-0 right-0 bg-orange-600 shadow-md text-white text-[11px] font-bold py-1.5 text-center z-[100] animate-in slide-in-from-top duration-300 flex items-center justify-center gap-1.5">
-          <WifiOff className="w-3.5 h-3.5" />
-          <span>You're browsing while offline. Reconnect to order!</span>
-        </div>
-      )}
+
       <AnimatePresence mode="wait">
         <div className="relative">
           <Toaster position="top-center" expand={true} richColors closeButton />
@@ -2731,24 +2730,28 @@ export default function App() {
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
                 exit={{ height: 0, opacity: 0 }}
-                className="bg-red-650 dark:bg-red-700 text-white text-xs py-3 px-4 text-center font-black flex items-center justify-center gap-2 z-[250] sticky top-0 shadow-lg border-b border-red-500"
+                className="bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white text-xs py-2.5 px-4 text-center font-bold flex items-center justify-center gap-3 z-[250] sticky top-0 shadow-md border-b border-orange-500/40"
               >
                 <div className="flex items-center gap-2">
-                  <WifiOff className="w-4 h-4 animate-bounce" />
-                  <span className="uppercase tracking-wider">
-                    You are offline. Intermittent connection or poor signal.
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                  </span>
+                  <WifiOff className="w-4 h-4 text-orange-400" />
+                  <span className="uppercase tracking-wider text-[10px] font-black text-slate-200">
+                    Offline Mode — Browsing local cache
                   </span>
                 </div>
                 <button
                   onClick={async () => {
                     triggerHaptic();
-                    toast.info("Retrying connection to store servers...");
+                    toast.info("Retrying connection to servers...", { id: "offline-retry" });
                     await fetchShopsData();
                   }}
-                  className="ml-4 bg-white text-red-600 hover:bg-slate-50 px-3 py-1 bg-white text-red-600 font-extrabold text-[10px] rounded-full transition-all active:scale-95 shadow-sm flex items-center gap-1 cursor-pointer"
+                  className="ml-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-md flex items-center gap-1 cursor-pointer border-0"
                 >
                   <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                  Retry Connection
+                  Reconnect
                 </button>
               </motion.div>
             )}
@@ -3390,7 +3393,7 @@ export default function App() {
               )}
           </AnimatePresence>
 
-          <AppHelp />
+          <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
           {session && currentScreen === "home" && <OnboardingTour />}
           {session && currentScreen === "home" && <InteractiveTour />}
           <PopiaLegalDrawer />

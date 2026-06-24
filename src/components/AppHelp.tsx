@@ -3,20 +3,40 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock, Sparkles, Volume2, VolumeX, Music } from 'lucide-react';
 import { audioHelper, SoundType } from '../lib/audioHelper';
 
-export function AppHelp() {
+export function AppHelp({
+  currentScreen = "splash",
+  cartCount = 0
+}: {
+  currentScreen?: string;
+  cartCount?: number;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [, setMuteTrigger] = useState(false);
 
+  // Define screens where the floating help button is contextually helpful.
+  const activeHelpScreens = ["home", "discover", "explore", "store-info", "order-history", "notifications", "contact"];
+  
+  // Dynamic conflict avoidance: Only show help when browsing non-critical screens AND when floating checkout is NOT active.
+  const shouldShowHelpButton = activeHelpScreens.includes(currentScreen) && cartCount === 0;
+
   return (
     <>
-      <button
-        id="tour-help-trigger"
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-[92px] left-4 md:left-auto md:bottom-6 md:right-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 transition-all flex items-center justify-center active:scale-95 group"
-        title="App Guide"
-      >
-        <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
-      </button>
+      <AnimatePresence>
+        {shouldShowHelpButton && (
+          <motion.button
+            id="tour-help-trigger"
+            initial={{ scale: 0, opacity: 0, y: 15 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0, opacity: 0, y: 15 }}
+            transition={{ type: "spring", stiffness: 280, damping: 22 }}
+            onClick={() => setIsOpen(true)}
+            className="fixed bottom-[92px] left-4 md:left-auto md:bottom-6 md:right-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 flex items-center justify-center active:scale-95 group cursor-pointer"
+            title="App Guide"
+          >
+            <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {isOpen && (
