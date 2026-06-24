@@ -12,10 +12,10 @@ export function AppHelp() {
       <button
         id="tour-help-trigger"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-[90] w-14 h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 transition-all flex items-center justify-center active:scale-95 group"
+        className="fixed bottom-[92px] left-4 md:left-auto md:bottom-6 md:right-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 transition-all flex items-center justify-center active:scale-95 group"
         title="App Guide"
       >
-        <HelpCircle className="w-6 h-6 group-hover:scale-110 transition-transform" />
+        <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
       </button>
 
       <AnimatePresence>
@@ -32,7 +32,7 @@ export function AppHelp() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-x-4 bottom-24 md:bottom-auto md:top-1/2 md:-translate-y-1/2 md:max-w-md md:left-1/2 md:-translate-x-1/2 z-[100] bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[80vh]"
+              className="fixed inset-x-4 top-1/2 -translate-y-1/2 md:max-w-md md:left-1/2 md:-translate-x-1/2 z-[100] bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]"
             >
               <div className="p-6 pb-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center sticky top-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md z-10">
                 <div className="flex items-center gap-3">

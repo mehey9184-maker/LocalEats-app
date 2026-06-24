@@ -167,7 +167,7 @@ export function InteractiveTour() {
 
   if (targetRect) {
     const margin = 14;
-    const tooltipWidth = 320;
+    const tooltipWidth = Math.min(320, window.innerWidth - 32);
     
     // Default fallback values
     let top = targetRect.bottom + margin;
@@ -189,6 +189,9 @@ export function InteractiveTour() {
       }
     }
 
+    // Ensure top is never offscreen
+    top = Math.max(16, Math.min(window.innerHeight - 240, top));
+
     tooltipStyle = {
       ...tooltipStyle,
       top: `${top}px`,
@@ -198,12 +201,13 @@ export function InteractiveTour() {
     };
   } else {
     // Screen center fallback if element is missing
+    const tooltipWidth = Math.min(320, window.innerWidth - 32);
     tooltipStyle = {
       ...tooltipStyle,
       top: '50%',
       left: '50%',
       transform: 'translate(-50%, -50%)',
-      width: '320px',
+      width: `${tooltipWidth}px`,
     };
   }
 

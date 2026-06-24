@@ -3301,6 +3301,7 @@ export default function App() {
                   runWithProcessing={runWithProcessing}
                   setPreviousScreen={setPreviousScreen}
                   setCurrentScreen={setCurrentScreen}
+                  triggerHaptic={triggerHaptic}
                 />
               )}
               {currentScreen === "order-success" && (
@@ -4901,6 +4902,26 @@ function HomeScreen({
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isHeaderSearching, setIsHeaderSearching] = useState(false);
+  const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
+    try {
+      return localStorage.getItem("localeats_winter_banner_dismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const isPromoUsed = useCallback((code: string) => {
+    try {
+      const usedLocalKey = session?.user?.id
+        ? `used_promo_codes_${session.user.id}`
+        : `used_promo_codes_guest`;
+      const usedLocal = safeLocalStorageGet(usedLocalKey, []);
+      return usedLocal.includes(code);
+    } catch {
+      return false;
+    }
+  }, [session?.user?.id]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
@@ -5357,104 +5378,350 @@ function HomeScreen({
       )}
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
-        <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex flex-col justify-center">
-            <div className="flex items-center gap-1.5">
-              <LocalEatsLogo width={130} height={34} />
-              <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                v{appVersion}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 ml-0.5 mt-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
-              <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
-                Serving Local Flavours
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onNotifications}
-              className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
-            >
-              <Bell className="w-6 h-6" />
-              {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
-                  {unreadCount > 9 ? "9+" : unreadCount}
+        {!isHeaderSearching ? (
+          <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex flex-col justify-center">
+              <div className="flex items-center gap-1.5">
+                <LocalEatsLogo width={130} height={34} />
+                <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                  v{appVersion}
                 </span>
-              )}
-            </button>
-            <div className="relative">
+              </div>
+              <div className="flex items-center gap-1.5 ml-0.5 mt-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
+                <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+                  Serving Local Flavours
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {/* WhatsApp-style Search Button */}
               <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                aria-label="Settings"
-                className={`p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-gray-100 dark:bg-slate-800" : "hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+                onClick={() => {
+                  setIsHeaderSearching(true);
+                  setShowSuggestions(true);
+                  triggerHaptic(10);
+                }}
+                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
+                aria-label="Search stores"
               >
-                <svg
-                  className="h-6 w-6 text-gray-700"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                  ></path>
-                </svg>
+                <Search className="w-5 h-5" />
               </button>
 
-              {isSettingsOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-[50]"
-                    onClick={() => setIsSettingsOpen(false)}
-                  ></div>
-                  <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    <button
-                      onClick={() => {
-                        setIsSettingsOpen(false);
-                        onSettings();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                    >
-                      <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                        Settings
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsSettingsOpen(false);
-                        onProfile();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                    >
-                      <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                        Profile
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsSettingsOpen(false);
-                        onOrderHistory();
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                    >
-                      <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                        Order History
-                      </span>
-                    </button>
-                  </div>
-                </>
+              <button
+                onClick={onNotifications}
+                className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                  aria-label="Settings"
+                  className={`p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-gray-100 dark:bg-slate-800" : "hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+                >
+                  <svg
+                    className="h-5 w-5 text-gray-700 dark:text-slate-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                    ></path>
+                  </svg>
+                </button>
+
+                {isSettingsOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-[50]"
+                      onClick={() => setIsSettingsOpen(false)}
+                    ></div>
+                    <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <button
+                        onClick={() => {
+                          setIsSettingsOpen(false);
+                          onSettings();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      >
+                        <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                          Settings
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsSettingsOpen(false);
+                          onProfile();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      >
+                        <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                          Profile
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsSettingsOpen(false);
+                          onOrderHistory();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      >
+                        <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                          Order History
+                        </span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center gap-3 animate-in fade-in duration-200">
+            <button
+              onClick={() => {
+                setIsHeaderSearching(false);
+                setSearchQuery("");
+                setShowSuggestions(false);
+                triggerHaptic(5);
+              }}
+              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-700 dark:text-slate-300"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="relative flex-1">
+              <input
+                id="header-search-input"
+                autoFocus
+                className="w-full bg-slate-100 dark:bg-slate-800 border-none outline-none rounded-xl py-2 pl-3 pr-10 text-xs font-bold dark:text-white"
+                placeholder="Search for the best local Kotas..."
+                value={searchQuery}
+                onBlur={() => {
+                  if (searchQuery.trim().length >= 2) {
+                    saveRecentSearch(searchQuery.trim());
+                  }
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                    saveRecentSearch(searchQuery.trim());
+                    setShowSuggestions(false);
+                  }
+                }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => {
+                    setSearchQuery("");
+                    setShowSuggestions(true);
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               )}
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Dynamic Compact Promo Banner (Disappears when used/dismissed) */}
+        {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
+          <div className="bg-gradient-to-r from-orange-600 to-amber-500 text-white text-[10px] py-2 px-4 flex items-center justify-between gap-2 border-t border-white/10 shadow-inner">
+            <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
+              <Tag className="w-3.5 h-3.5 shrink-0 text-orange-200 animate-pulse" />
+              <span className="truncate font-semibold tracking-tight">
+                ❄️ <strong>Winter Special:</strong> Save 10% on Kotas with code <span className="font-mono bg-white/20 px-1.5 py-0.5 rounded text-white select-all">LOCALEATS10</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText("LOCALEATS10");
+                  toast.success("Promo Code Copied!", {
+                    description: "Use LOCALEATS10 at checkout to get 10% off!"
+                  });
+                  triggerHaptic(15);
+                }}
+                className="bg-white text-orange-600 hover:bg-orange-50 font-black text-[9px] uppercase tracking-wider px-2 py-1 rounded-md transition-all active:scale-95 cursor-pointer"
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => {
+                  setIsWinterBannerDismissed(true);
+                  try {
+                    localStorage.setItem("localeats_winter_banner_dismissed", "true");
+                  } catch {}
+                }}
+                className="p-1 hover:bg-white/10 rounded-full transition-colors text-white/80 hover:text-white"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Float Suggestions relative to header */}
+        {isHeaderSearching && showSuggestions && (
+          <div className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1">
+            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[300px] overflow-y-auto pointer-events-auto">
+              {searchQuery.length < 2 && recentSearches.length > 0 ? (
+                <>
+                  <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                    🕒 Recent Searches
+                  </div>
+                  {recentSearches.map((s, idx) => (
+                    <div
+                      key={idx}
+                      className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                    >
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSearchQuery(s);
+                          setShowSuggestions(false);
+                          saveRecentSearch(s);
+                        }}
+                        className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
+                      >
+                        <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                        {s}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRecentSearches((prev) => {
+                            const updated = prev.filter((item) => item !== s);
+                            try {
+                              localStorage.setItem("recent_searches", JSON.stringify(updated));
+                            } catch {}
+                            return updated;
+                          });
+                        }}
+                        className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </>
+              ) : suggestions.length > 0 ? (
+                <>
+                  <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                    🔍 Stores Found
+                  </div>
+                  {suggestions.map((name, idx) => {
+                    const shop = shops.find(s => s.name === name);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          if (shop) {
+                            onStoreInfo(shop.id);
+                            setIsHeaderSearching(false);
+                            setSearchQuery("");
+                            setShowSuggestions(false);
+                          }
+                        }}
+                        className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                      >
+                        <Store className="w-3.5 h-3.5 text-orange-500" />
+                        {name}
+                      </button>
+                    );
+                  })}
+                </>
+              ) : searchQuery.length >= 2 ? (
+                <div className="px-5 py-4 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
+                  No matching stores found for "{searchQuery}"
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {/* Sticky Sub-Header with Category Filters & Quick Filters (only on home screen) */}
+        {currentScreen === "home" && (
+          <div className="max-w-screen-xl mx-auto px-4 pb-3 pt-1 border-t border-slate-100 dark:border-slate-850 flex flex-col gap-2 overflow-hidden">
+            {/* Row 1: Categories */}
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-4 px-4 mask-gradient">
+              {categories.map((cat) => {
+                const count = getCategoryCount(cat);
+                return (
+                  <motion.button
+                    key={cat}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setSelectedCategory(cat);
+                      triggerHaptic(5);
+                    }}
+                    className={`px-3 py-1 rounded-full text-[11px] font-black tracking-tight transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? "bg-orange-500 text-white shadow-sm" : "bg-slate-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400 border border-transparent hover:bg-slate-200 dark:hover:bg-slate-700"}`}
+                  >
+                    {cat} ({count})
+                  </motion.button>
+                );
+              })}
+            </div>
+
+            {/* Row 2: Status & Rating Quick Filters */}
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-4 px-4">
+              <button
+                onClick={() => {
+                  setShowOnlyOpen(!showOnlyOpen);
+                  triggerHaptic(5);
+                }}
+                className={`whitespace-nowrap px-2 py-1 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 border ${
+                  showOnlyOpen
+                    ? "bg-green-500/10 text-green-600 border-green-500/30"
+                    : "bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200/60 dark:border-slate-800"
+                }`}
+              >
+                <Clock className={`w-2.5 h-2.5 ${showOnlyOpen ? "fill-current" : ""}`} />
+                Open Now
+              </button>
+              {[0, 3, 4, 4.5].map((rating) => (
+                <button
+                  key={rating}
+                  onClick={() => {
+                    setMinRating(rating);
+                    triggerHaptic(5);
+                  }}
+                  className={`whitespace-nowrap px-2 py-1 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 border ${
+                    minRating === rating
+                      ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/30"
+                      : "bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200/60 dark:border-slate-800"
+                  }`}
+                >
+                  <Star className={`w-2.5 h-2.5 ${minRating === rating ? "fill-current text-yellow-500" : ""}`} />
+                  {rating === 0 ? "All Ratings" : `${rating}+ Stars`}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
@@ -5484,93 +5751,6 @@ function HomeScreen({
             </span>
           </div>
         </div>
-
-        {activeOrders.length > 0 && (
-          <div className="mb-6 animate-in slide-in-from-top-4 duration-500">
-            <button
-              onClick={() => {
-                triggerHaptic();
-                setCurrentScreen("order-tracking");
-              }}
-              className="w-full bg-slate-900 dark:bg-orange-600 rounded-[32px] p-4 flex items-center justify-between shadow-xl shadow-slate-200 dark:shadow-none hover:translate-y-[-2px] active:scale-95 transition-all text-white relative overflow-hidden group"
-            >
-              <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-              <div className="flex items-center gap-4 relative z-10">
-                <div className="size-12 bg-white/20 rounded-2xl flex items-center justify-center animate-pulse">
-                  <Package className="w-6 h-6" />
-                </div>
-                <div className="text-left">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 decoration-white/20 underline decoration-2 underline-offset-4 mb-0.5">
-                    Active Order
-                  </p>
-                  <p className="text-[15px] font-black tracking-tight">
-                    {activeOrders.length} order
-                    {activeOrders.length > 1 ? "s" : ""} in progress...
-                  </p>
-                </div>
-              </div>
-              <ChevronRight className="w-6 h-6 opacity-60 mr-2" />
-            </button>
-          </div>
-        )}
-
-        {/* Interactive Promotion Banner */}
-        <section className="mb-8 animate-in fade-in duration-500">
-          <div className="bg-gradient-to-r from-orange-600 to-amber-500 rounded-[28px] p-5 text-white shadow-xl shadow-orange-500/10 relative overflow-hidden group">
-            {/* Ambient Accent details */}
-            <div className="absolute -right-8 -bottom-8 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:scale-125 transition-transform duration-750"></div>
-            <div className="absolute -left-6 -top-6 w-20 h-20 bg-amber-400/20 rounded-full blur-xl"></div>
-
-            <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <span className="inline-flex items-center gap-1.5 bg-white/20 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest leading-none">
-                  <Tag className="w-3 h-3 text-orange-200" />
-                  Winter Discount Live
-                </span>
-                <h3 className="text-xl font-black mt-2 leading-tight tracking-tight">
-                  South African Local Flavours
-                </h3>
-                <p className="text-xs text-orange-100 mt-1 max-w-[285px] leading-relaxed">
-                  Save 10% on your next Kota! Tap to copy the voucher code
-                  instantly.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-2 shrink-0">
-                <div className="bg-white/10 backdrop-blur-md border border-white/20 p-2.5 rounded-2xl flex items-center justify-between gap-3 shadow-inner">
-                  <div className="pr-1">
-                    <p className="text-[8px] font-extrabold text-orange-200 uppercase tracking-widest">
-                      PROMO CODE
-                    </p>
-                    <p className="text-xs font-black tracking-wider uppercase font-mono text-white">
-                      LOCALEATS10
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText("LOCALEATS10");
-                      toast.success("Promo Code Copied!", {
-                        description:
-                          "Use LOCALEATS10 during checkout to secure 10% off your entire meal!",
-                      });
-                      triggerHaptic(15);
-                    }}
-                    className="bg-white hover:bg-orange-50 text-orange-600 font-black text-[10px] px-3.5 py-2.5 rounded-xl transition-all shadow-md active:scale-95 shrink-0 uppercase cursor-pointer"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <div className="text-[9px] text-white/80 font-bold uppercase tracking-widest text-center">
-                  First Time? Use{" "}
-                  <span className="font-extrabold text-white underline">
-                    FIRSTTREAT
-                  </span>{" "}
-                  for R15 off!
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
 
         {/* Order Again Carousel */}
         {recentShops.length > 0 && (
@@ -5625,249 +5805,9 @@ function HomeScreen({
           </section>
         )}
 
-        {/* SearchSection */}
-        <section className="mb-4">
-          <div className="relative group/search flex-1">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400 dark:text-slate-500" />
-            </div>
-            <input
-              id="tour-search-bar"
-              className="block w-full pl-10 pr-12 py-3 border-none bg-white dark:bg-slate-800 rounded-2xl shadow-md ring-1 ring-black/5 dark:ring-white/5 focus:ring-2 focus:ring-orange-500 transition-all text-sm outline-none dark:text-white dark:placeholder:text-slate-500"
-              placeholder="Search for the best local Kotas..."
-              type="text"
-              value={searchQuery}
-              onBlur={() => {
-                if (searchQuery.trim().length >= 2) {
-                  saveRecentSearch(searchQuery.trim());
-                }
-                setTimeout(() => setShowSuggestions(false), 200);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
-                  saveRecentSearch(searchQuery.trim());
-                  setShowSuggestions(false);
-                }
-              }}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setShowSuggestions(true);
-              }}
-            />
 
-            {showSuggestions && (searchQuery.length < 2 && recentSearches.length > 0 ? (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
-                <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                  🕒 Recent Searches
-                </div>
-                {recentSearches.map((s, idx) => (
-                  <div
-                    key={idx}
-                    className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchQuery(s);
-                        setShowSuggestions(false);
-                        saveRecentSearch(s);
-                      }}
-                      className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white"
-                    >
-                      <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
-                      {s}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRecentSearches((prev) => {
-                          const updated = prev.filter((item) => item !== s);
-                          try {
-                            localStorage.setItem("recent_searches", JSON.stringify(updated));
-                          } catch {}
-                          return updated;
-                        });
-                      }}
-                      className="px-4 py-3 text-[10px] text-slate-400 hover:text-rose-500 font-extrabold uppercase tracking-wider cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : searchQuery.length >= 2 && suggestions.length > 0 ? (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl z-[60] overflow-hidden">
-                {suggestions.map((s, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setSearchQuery(s);
-                      setShowSuggestions(false);
-                      saveRecentSearch(s);
-                    }}
-                    className="w-full text-left px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 text-[13px] font-bold border-b border-white/5 last:border-none flex items-center gap-2 cursor-pointer dark:text-white"
-                  >
-                    <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
-                    {s}
-                  </button>
-                ))}
-              </div>
-            ) : null)}
 
-            <button
-              onClick={() =>
-                setSelectedCategory(
-                  selectedCategory === "Favorites" ? "All" : "Favorites",
-                )
-              }
-              className={`absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all cursor-pointer ${selectedCategory === "Favorites" ? "bg-orange-500 text-white shadow-lg" : "text-slate-400 hover:text-orange-500"}`}
-            >
-              <Heart
-                className={`w-5 h-5 ${selectedCategory === "Favorites" ? "fill-current" : ""}`}
-              />
-            </button>
-          </div>
-        </section>
 
-        {/* Location Display & Manual Fix */}
-        <section className="mb-8 mt-2 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
-          <div
-            id="tour-delivery-address"
-            className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-[32px] border border-slate-100 dark:border-slate-800 flex items-center justify-between shadow-sm"
-          >
-            <div className="flex items-center gap-3 overflow-hidden">
-              <div className="size-10 bg-orange-100 dark:bg-orange-500/20 text-orange-600 rounded-2xl flex items-center justify-center shrink-0">
-                <MapPin className="w-5 h-5" />
-              </div>
-              <div className="min-w-0 pr-2">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 leading-none mb-1">
-                  Delivering To
-                </p>
-                <p className="text-[13px] font-black text-slate-900 dark:text-white truncate">
-                  {userProfile.address ||
-                    (userLocation?.lat === -28.68
-                      ? "Koffiefontein (Default)"
-                      : "Current Location")}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <button
-                onClick={onProfile}
-                className="bg-white dark:bg-slate-900 px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-300 active:scale-95 transition-all shadow-sm cursor-pointer"
-              >
-                Set
-              </button>
-              <button
-                onClick={() => {
-                  onRequestLocation();
-                  triggerHaptic(10);
-                  toast.success("Locating Your Position...", {
-                    description:
-                      "Accessing device GPS to update delivery coordinates.",
-                  });
-                }}
-                className="size-10 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-orange-600 hover:border-orange-500 transition-all shadow-sm cursor-pointer"
-                title="GPS Quick Locate"
-              >
-                <MapPin className="w-4 h-4 text-orange-500" />
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Hyper-local Township Landmarks Segment */}
-        <section className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300">
-          <div className="bg-slate-50/50 dark:bg-slate-900/30 p-5 rounded-[28px] border border-slate-100 dark:border-slate-800/80">
-            <div className="flex items-center justify-between mb-3.5 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                </span>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                  Serving Landmarks in {currentTownship.name}
-                </p>
-              </div>
-              <span className="text-[9px] font-black tracking-wider text-orange-600 dark:text-orange-400 uppercase bg-orange-500/10 dark:bg-orange-500/20 px-2.5 py-1 rounded-full">
-                {currentTownship.name} Zone
-              </span>
-            </div>
-
-            <div className="flex flex-wrap gap-2 mb-3">
-              {currentTownship.landmarks.map((landmark, index) => (
-                <span
-                  key={index}
-                  className="bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl text-[11px] font-bold border border-slate-100 dark:border-slate-800 shadow-sm transition-colors hover:border-orange-500/30 flex items-center gap-1.5 cursor-default"
-                >
-                  <div className="size-1.5 rounded-full bg-orange-500"></div>
-                  {landmark}
-                </span>
-              ))}
-            </div>
-            <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-relaxed font-semibold">
-              🎯 {currentTownship.deliveryRangeMessage}
-            </p>
-          </div>
-        </section>
-
-        {/* Category Filters */}
-        <section
-          id="tour-categories"
-          className="mb-4 overflow-x-auto no-scrollbar flex flex-col gap-4 pb-2"
-        >
-          <div className="flex gap-2">
-            {categories.map((cat) => {
-              const count = getCategoryCount(cat);
-              return (
-                <motion.button
-                  key={cat}
-                  whileHover={{ y: -1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${selectedCategory === cat ? "bg-orange-500 text-white shadow-md shadow-orange-600/15" : "bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 border border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700"}`}
-                >
-                  {cat} ({count})
-                </motion.button>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowOnlyOpen(!showOnlyOpen)}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 border ${
-                showOnlyOpen
-                  ? "bg-green-500/10 text-green-600 border-green-500/30"
-                  : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800"
-              }`}
-            >
-              <Clock
-                className={`w-2.5 h-2.5 ${showOnlyOpen ? "fill-current" : ""}`}
-              />
-              Open Now
-            </button>
-            {[0, 3, 4, 4.5].map((rating) => (
-              <button
-                key={rating}
-                onClick={() => setMinRating(rating)}
-                className={`whitespace-nowrap px-3 py-1.5 rounded-xl font-bold text-[9px] uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5 border ${
-                  minRating === rating
-                    ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/30"
-                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800"
-                }`}
-              >
-                <Star
-                  className={`w-2.5 h-2.5 ${minRating === rating ? "fill-current" : ""}`}
-                />
-                {rating === 0 ? "All Ratings" : `${rating}+ Stars`}
-              </button>
-            ))}
-          </div>
-        </section>
 
         {/* Local Merchants */}
         <section className="mb-24">
@@ -6093,6 +6033,7 @@ function CheckoutScreen({
   setPreviousScreen,
   setCurrentScreen,
   isOnline,
+  triggerHaptic,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -6121,6 +6062,7 @@ function CheckoutScreen({
   setPreviousScreen: (screen: Screen | null) => void;
   setCurrentScreen: (screen: Screen) => void;
   isOnline: boolean;
+  triggerHaptic: (pattern?: number | number[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
@@ -6129,6 +6071,7 @@ function CheckoutScreen({
   const [deliveryType, setDeliveryType] = useState<"collection" | "delivery">(
     "collection",
   );
+  const [showAddressModal, setShowAddressModal] = useState(false);
   const [deliveryInstructions, setDeliveryInstructions] = useState(() => {
     try {
       return localStorage.getItem("localeats_last_instructions") || "";
@@ -7140,7 +7083,13 @@ function CheckoutScreen({
 
               <button
                 type="button"
-                onClick={() => setDeliveryType("delivery")}
+                onClick={() => {
+                  setDeliveryType("delivery");
+                  if (!deliveryAddressText || !isLocationConfirmed) {
+                    setShowAddressModal(true);
+                  }
+                  triggerHaptic(5);
+                }}
                 className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all cursor-pointer ${
                   deliveryType === "delivery"
                     ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 font-black shadow-sm"
@@ -7176,230 +7125,96 @@ function CheckoutScreen({
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 leading-none">
                   Choose Delivery Spot
                 </span>
-                {userLocation && (
+                {isLocationConfirmed ? (
                   <div className="flex items-center gap-1 bg-green-50 dark:bg-green-500/10 px-2 py-0.5 rounded-full border border-green-100 dark:border-green-500/20">
                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
                     <span className="text-[8px] font-black text-green-600 uppercase tracking-wider">
-                      Live Position Lock
+                      Location Confirmed
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 bg-amber-50 dark:bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-500/20">
+                    <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></div>
+                    <span className="text-[8px] font-black text-amber-600 uppercase tracking-wider">
+                      Requires Setup
                     </span>
                   </div>
                 )}
               </div>
 
-              <AddressSearch
-                initialAddress={deliveryAddressText}
-                initialCoords={
-                  deliveryCoordinates
-                    ? {
-                        lat: deliveryCoordinates.coordinates[1],
-                        lng: deliveryCoordinates.coordinates[0],
-                      }
-                    : undefined
-                }
-                shopCoords={
-                  primaryShop.latitude && primaryShop.longitude
-                    ? { lat: primaryShop.latitude, lng: primaryShop.longitude }
-                    : undefined
-                }
-                onSelect={(data) => {
-                  setDeliveryAddressText(data.address);
-                  setDeliveryCoordinates({
-                    type: "Point",
-                    coordinates: [
-                      Number(data.lng.toFixed(6)),
-                      Number(data.lat.toFixed(6)),
-                    ],
-                  });
-                  // Reset location confirmation to force visual pin check on the map below
-                  setIsLocationConfirmed(false);
-                  safeLocalStorageSet(
-                    "delivery_location",
-                    JSON.stringify(data),
-                  );
-                  toast.info(
-                    "Address loaded! Please confirm your exact pin location on the map below.",
-                  );
-                }}
-              />
-
-              <div className="space-y-1 mt-1">
-                <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  Rider Drop-off Instructions
-                </label>
-                <textarea
-                  placeholder="e.g., Green gate next to the Spaza, or 3rd building flat B."
-                  value={deliveryInstructions}
-                  onChange={(e) => setDeliveryInstructions(e.target.value)}
-                  rows={2}
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
-                />
+              <div className="flex items-start justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-850">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200 truncate">
+                    {deliveryAddressText || "No delivery address set yet"}
+                  </p>
+                  {deliveryInstructions ? (
+                    <p className="text-[11px] text-slate-400 mt-1 truncate">
+                      Instructions: "{deliveryInstructions}"
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-400 mt-1 italic">
+                      No rider instructions added
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddressModal(true);
+                    triggerHaptic(5);
+                  }}
+                  className="bg-orange-500 hover:bg-orange-600 text-white font-black text-[11px] uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
+                >
+                  {deliveryAddressText ? "Change" : "Set Spot"}
+                </button>
               </div>
 
-              {deliveryTownship && (
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200/50 dark:border-slate-805 rounded-2xl animate-in fade-in duration-200">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider">
-                      Detected Township Target
-                    </span>
-                    <span className="text-[8.5px] bg-orange-500/10 dark:bg-orange-500/25 text-orange-600 dark:text-orange-450 font-black px-2 py-0.5 rounded-full uppercase tracking-widest">
-                      {deliveryTownship.name} Zone
+              {/* Visual distance range helper badge */}
+              <div className="flex flex-col gap-2">
+                <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/10 p-3 rounded-2xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 font-bold text-orange-900 dark:text-orange-400">
+                    <Bike className="w-4 h-4 text-orange-500" />
+                    <span>
+                      Distance:{" "}
+                      {distance !== null
+                        ? `${distance.toFixed(2)}km`
+                        : "Calculating distance..."}
                     </span>
                   </div>
-                  <p className="text-[10.5px] text-slate-500 dark:text-slate-450 font-bold leading-relaxed">
-                    Local runners will route your Kota using native corridors
-                    around{" "}
-                    <span className="text-slate-800 dark:text-slate-200">
-                      {deliveryTownship.landmarks.slice(0, 3).join(", ")}
-                    </span>{" "}
-                    for quick handshake handovers!
-                  </p>
+                  {distance !== null && (
+                    <span
+                      className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                        distance > ZONE_B_LIMIT
+                          ? "bg-red-100 text-red-700"
+                          : distance > ZONE_A_LIMIT
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-green-100 text-green-700"
+                      }`}
+                    >
+                      {distance > ZONE_B_LIMIT
+                        ? "Limit Exceeded"
+                        : distance > ZONE_A_LIMIT
+                          ? "Zone B"
+                          : "Zone A"}
+                    </span>
+                  )}
                 </div>
-              )}
 
-              {primaryShop &&
-                primaryShop.allow_external_riders === false &&
-                !hasInHouseRiderOnline && (
-                  <div className="p-3.5 bg-orange-500/5 dark:bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-start gap-2.5">
-                    <span className="text-sm shrink-0">🍳</span>
-                    <div>
-                      <h5 className="font-extrabold text-[9px] text-orange-600 dark:text-orange-400 uppercase tracking-widest">
-                        Self-Delivered by Store
-                      </h5>
-                      <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400 font-bold mt-0.5">
-                        This food is self-delivered directly by the shop’s
-                        internal kitchen staff.
+                {distance !== null && distance > ZONE_B_LIMIT && (
+                  <div className="bg-rose-50 dark:bg-red-950/20 border border-rose-150 p-3.5 rounded-2xl flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                    <div className="text-left">
+                      <p className="text-xs font-black text-rose-700 uppercase tracking-wide">
+                        Out of service area
+                      </p>
+                      <p className="text-[10px] text-rose-500 mt-0.5 leading-relaxed font-semibold">
+                        Max range limit is {ZONE_B_LIMIT}km. Adjust your
+                        delivery pin closer or switch to Counter Pickup!
                       </p>
                     </div>
                   </div>
                 )}
-
-              {deliveryCoordinates && (
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
-                      Pin Precision Control Map
-                    </p>
-                    {isLocationConfirmed && (
-                      <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
-                        <Target className="w-3 h-3 text-green-600" />
-                        <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
-                          {deliveryCoordinates.coordinates[1].toFixed(6)},{" "}
-                          {deliveryCoordinates.coordinates[0].toFixed(6)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <LocationPickerMap
-                      coords={{
-                        lat: deliveryCoordinates.coordinates[1],
-                        lng: deliveryCoordinates.coordinates[0],
-                      }}
-                      onCoordsChange={(c) => {
-                        setDeliveryCoordinates({
-                          type: "Point",
-                          coordinates: [
-                            Number(c.lng.toFixed(6)),
-                            Number(c.lat.toFixed(6)),
-                          ],
-                        });
-                        setIsLocationConfirmed(false); // Reset confirmation on drag to force re-confirm
-                      }}
-                      shopCoords={
-                        primaryShop.latitude && primaryShop.longitude
-                          ? {
-                              lat: primaryShop.latitude,
-                              lng: primaryShop.longitude,
-                            }
-                          : undefined
-                      }
-                    />
-
-                    {!isLocationConfirmed && (
-                      <div className="absolute inset-0 bg-slate-900/10 dark:bg-slate-950/20 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse z-[1000]">
-                        <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
-                          PIN UNLOCKED: PLEASE CONFIRM SPOT
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {!isLocationConfirmed ? (
-                    <button
-                      type="button"
-                      onClick={() => setIsLocationConfirmed(true)}
-                      className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Target className="w-4 h-4" />
-                      <span>Confirm Exact Delivery Spot</span>
-                    </button>
-                  ) : (
-                    <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 p-3 rounded-2xl flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="w-5 h-5 text-green-600" />
-                        <p className="text-[10px] font-black text-green-800 dark:text-green-400 uppercase tracking-wider">
-                          Location Secured
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsLocationConfirmed(false)}
-                        className="text-[10px] font-black text-slate-400 hover:text-orange-600 dark:text-slate-500 dark:hover:text-orange-400 uppercase underline cursor-pointer"
-                      >
-                        Change Pin
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Visual distance range helper badge */}
-                  <div className="flex flex-col gap-2">
-                    <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/10 p-3 rounded-2xl flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2 font-bold text-orange-900 dark:text-orange-400">
-                        <Bike className="w-4 h-4 text-orange-500" />
-                        <span>
-                          Distance Map Point:{" "}
-                          {distance !== null
-                            ? `${distance.toFixed(2)}km`
-                            : "Calculating distance..."}
-                        </span>
-                      </div>
-                      {distance !== null && (
-                        <span
-                          className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
-                            distance > ZONE_B_LIMIT
-                              ? "bg-red-100 text-red-700"
-                              : distance > ZONE_A_LIMIT
-                                ? "bg-amber-100 text-amber-700"
-                                : "bg-green-100 text-green-700"
-                          }`}
-                        >
-                          {distance > ZONE_B_LIMIT
-                            ? "Limit Exceeded"
-                            : distance > ZONE_A_LIMIT
-                              ? "Zone B"
-                              : "Zone A"}
-                        </span>
-                      )}
-                    </div>
-
-                    {distance !== null && distance > ZONE_B_LIMIT && (
-                      <div className="bg-rose-50 dark:bg-red-950/20 border border-rose-150 p-3.5 rounded-2xl flex items-start gap-2.5">
-                        <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-                        <div className="text-left">
-                          <p className="text-xs font-black text-rose-700 uppercase tracking-wide">
-                            Out of service area
-                          </p>
-                          <p className="text-[10px] text-rose-500 mt-0.5 leading-relaxed font-semibold">
-                            Max range limit is {ZONE_B_LIMIT}km. Adjust your
-                            delivery pin closer or switch to Counter Pickup!
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              </div>
             </section>
           ) : (
             <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
@@ -8264,6 +8079,257 @@ function CheckoutScreen({
           </div>
         </div>
       </div>
+
+      {/* Address Selection & Pin Precision Control Popup Modal */}
+      {showAddressModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            className="bg-white dark:bg-slate-900 rounded-[32px] border border-slate-100 dark:border-slate-800 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto flex flex-col"
+          >
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-slate-850 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="size-10 bg-orange-100 dark:bg-orange-500/10 text-orange-600 rounded-2xl flex items-center justify-center">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <div className="text-left">
+                  <h3 className="font-black text-slate-900 dark:text-white text-base leading-none">
+                    Configure Delivery Spot
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mt-1.5">
+                    Ensure precise handshakes with runners
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAddressModal(false);
+                  triggerHaptic(5);
+                }}
+                className="size-9 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 dark:text-slate-300 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1">
+              {/* Live position detector */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 leading-none">
+                  Select Delivery Spot
+                </span>
+                {userLocation && (
+                  <div className="flex items-center gap-1 bg-green-50 dark:bg-green-500/10 px-2.5 py-1 rounded-full border border-green-100 dark:border-green-500/20">
+                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-[8.5px] font-black text-green-600 uppercase tracking-wider">
+                      Live Position Lock
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Address Search */}
+              <AddressSearch
+                initialAddress={deliveryAddressText}
+                initialCoords={
+                  deliveryCoordinates
+                    ? {
+                        lat: deliveryCoordinates.coordinates[1],
+                        lng: deliveryCoordinates.coordinates[0],
+                      }
+                    : undefined
+                }
+                shopCoords={
+                  primaryShop.latitude && primaryShop.longitude
+                    ? { lat: primaryShop.latitude, lng: primaryShop.longitude }
+                    : undefined
+                }
+                onSelect={(data) => {
+                  setDeliveryAddressText(data.address);
+                  setDeliveryCoordinates({
+                    type: "Point",
+                    coordinates: [
+                      Number(data.lng.toFixed(6)),
+                      Number(data.lat.toFixed(6)),
+                    ],
+                  });
+                  setIsLocationConfirmed(false);
+                  safeLocalStorageSet(
+                    "delivery_location",
+                    JSON.stringify(data),
+                  );
+                  toast.info(
+                    "Address loaded! Pin your exact location on the map below.",
+                  );
+                }}
+              />
+
+              {/* Instructions */}
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                  Rider Drop-off Instructions
+                </label>
+                <textarea
+                  placeholder="e.g., Green gate next to the Spaza, or 3rd building flat B."
+                  value={deliveryInstructions}
+                  onChange={(e) => setDeliveryInstructions(e.target.value)}
+                  rows={2}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
+                />
+              </div>
+
+              {/* Detected Township Target */}
+              {deliveryTownship && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200/50 dark:border-slate-805 rounded-2xl text-left">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[8.5px] font-black uppercase text-slate-400 tracking-wider">
+                      Detected Township Target
+                    </span>
+                    <span className="text-[8.5px] bg-orange-500/10 dark:bg-orange-500/25 text-orange-600 dark:text-orange-450 font-black px-2 py-0.5 rounded-full uppercase tracking-widest">
+                      {deliveryTownship.name} Zone
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-500 dark:text-slate-450 font-bold leading-relaxed">
+                    Local runners will route your Kota using native corridors
+                    around{" "}
+                    <span className="text-slate-800 dark:text-slate-200 font-extrabold">
+                      {deliveryTownship.landmarks.slice(0, 3).join(", ")}
+                    </span>{" "}
+                    for quick handshake handovers!
+                  </p>
+                </div>
+              )}
+
+              {/* Map Section */}
+              {deliveryCoordinates && (
+                <div className="space-y-3 pt-1 text-left">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                      Pin Precision Control Map
+                    </p>
+                    {isLocationConfirmed && (
+                      <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
+                        <Target className="w-3 h-3 text-green-600" />
+                        <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
+                          {deliveryCoordinates.coordinates[1].toFixed(6)},{" "}
+                          {deliveryCoordinates.coordinates[0].toFixed(6)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <LocationPickerMap
+                      coords={{
+                        lat: deliveryCoordinates.coordinates[1],
+                        lng: deliveryCoordinates.coordinates[0],
+                      }}
+                      onCoordsChange={(c) => {
+                        setDeliveryCoordinates({
+                          type: "Point",
+                          coordinates: [
+                            Number(c.lng.toFixed(6)),
+                            Number(c.lat.toFixed(6)),
+                          ],
+                        });
+                        setIsLocationConfirmed(false);
+                      }}
+                      shopCoords={
+                        primaryShop.latitude && primaryShop.longitude
+                          ? {
+                              lat: primaryShop.latitude,
+                              lng: primaryShop.longitude,
+                            }
+                          : undefined
+                      }
+                    />
+
+                    {!isLocationConfirmed && (
+                      <div className="absolute inset-0 bg-slate-900/10 dark:bg-slate-950/20 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse z-[1000]">
+                        <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
+                          PIN UNLOCKED: PLEASE CONFIRM SPOT
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {!isLocationConfirmed ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsLocationConfirmed(true);
+                        triggerHaptic(5);
+                        toast.success("Exact spot locked in!");
+                      }}
+                      className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <Target className="w-4 h-4" />
+                      <span>Confirm Exact Delivery Spot</span>
+                    </button>
+                  ) : (
+                    <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 p-3 rounded-2xl flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <p className="text-[10px] font-black text-green-800 dark:text-green-400 uppercase tracking-wider">
+                          Location Secured
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsLocationConfirmed(false)}
+                        className="text-[10px] font-black text-slate-400 hover:text-orange-600 dark:text-slate-500 dark:hover:text-orange-400 uppercase underline cursor-pointer"
+                      >
+                        Change Pin
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-5 border-t border-slate-100 dark:border-slate-850 bg-slate-50 dark:bg-slate-950/20 flex gap-3 shrink-0 rounded-b-[32px]">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddressModal(false);
+                  triggerHaptic(5);
+                }}
+                className="flex-1 py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl font-black uppercase tracking-wider text-xs cursor-pointer text-center"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!deliveryAddressText) {
+                    toast.error("Please enter/search for a delivery address.");
+                    return;
+                  }
+                  if (!isLocationConfirmed) {
+                    toast.error("Please confirm your location pin on the map.");
+                    return;
+                  }
+                  setShowAddressModal(false);
+                  triggerHaptic(10);
+                  toast.success("Delivery coordinates fully applied!");
+                }}
+                className={`flex-1 py-3.5 text-white rounded-2xl font-black uppercase tracking-wider text-xs text-center cursor-pointer ${
+                  deliveryAddressText && isLocationConfirmed
+                    ? "bg-orange-500 hover:bg-orange-600 shadow-md"
+                    : "bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                }`}
+              >
+                Save Coordinates
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </main>
   );
 }
