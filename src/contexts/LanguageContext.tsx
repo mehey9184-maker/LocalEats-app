@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-type Language = 'en' | 'zu' | 'xh' | 'af' | 'st' | 'ts';
+type Language = 'en' | 'zu' | 'xh' | 'af' | 'st' | 'ts' | 'nso' | 'tn' | 'ss' | 've' | 'nr';
 
 interface Translations {
   [key: string]: {
@@ -15,7 +15,12 @@ const translations: Translations = {
     xh: 'Izicwangciso',
     af: 'Instellings',
     st: 'Di-settings',
-    ts: 'Tisettingi'
+    ts: 'Tisettingi',
+    nso: 'Dipehelo',
+    tn: 'Di-settings',
+    ss: 'Tilungiselelo',
+    ve: 'Zwilungisedzo',
+    nr: 'Izilungiselelo'
   },
   account_security: {
     en: 'Account Security',
@@ -23,7 +28,12 @@ const translations: Translations = {
     xh: 'Ukhuseleko lwe-Akhawunti',
     af: 'Rekening sekuriteit',
     st: 'Tshireletso ya Akhaonto',
-    ts: 'Nsirhelelo wa Akhaonto'
+    ts: 'Nsirhelelo wa Akhaonto',
+    nso: 'Tšhireletso ya Akhaonto',
+    tn: 'Tshireletso ya Akhaonto',
+    ss: 'Kuphepha kwe-Akhawunti',
+    ve: 'Tsireledzo ya Akhaonthu',
+    nr: 'Ukuvikeleka kwe-Akhawunti'
   },
   preferences: {
     en: 'Preferences',
@@ -31,7 +41,12 @@ const translations: Translations = {
     xh: 'Ukukhetha',
     af: 'Voorkeure',
     st: 'Dikgetho',
-    ts: 'Swin’wana swi tsakela'
+    ts: 'Swin’wana swi tsakela',
+    nso: 'Dikgetho',
+    tn: 'Dikgetho',
+    ss: 'Lokukhethwako',
+    ve: 'Zwinandzeleswaho',
+    nr: 'Okukhethwako'
   },
   support_legal: {
     en: 'Support & Legal',
@@ -39,7 +54,12 @@ const translations: Translations = {
     xh: 'Inkxaso noMthetho',
     af: 'Ondersteuning en Regs',
     st: 'Tshehetso le Melao',
-    ts: 'Nseketelo na swa le Nawini'
+    ts: 'Nseketelo na swa le Nawini',
+    nso: 'Thekgo le Melao',
+    tn: 'Tshegetso le Melao',
+    ss: 'Sisekelo nemitfwaso',
+    ve: 'Thikhiso na Mulayo',
+    nr: 'Isizo nomThetho'
   },
   edit_profile: {
     en: 'Edit Profile',
@@ -47,7 +67,12 @@ const translations: Translations = {
     xh: 'Lungisa Iprofayile',
     af: 'Wysig profiel',
     st: 'Fetola Phrofayele',
-    ts: 'Lulamisa Phrofayili'
+    ts: 'Lulamisa Phrofayili',
+    nso: 'Fetola Phrofayele',
+    tn: 'Fetola Phofayele',
+    ss: 'Hlela Iphrofayela',
+    ve: 'Khwinisa Phurofaele',
+    nr: 'Lungisa Iphrofayili'
   },
   saved_addresses: {
     en: 'Saved Addresses',
@@ -55,7 +80,12 @@ const translations: Translations = {
     xh: 'Iidilesi Ezisindisiweyo',
     af: 'Gestoorde Adresse',
     st: 'Diaterese tse bolokilweng',
-    ts: 'Tiaderese leti hlayisiweke'
+    ts: 'Tiaderese leti hlayisiweke',
+    nso: 'Diaterese tšeo di bolokilwego',
+    tn: 'Diaterese tse di bolokilweng',
+    ss: 'Tindzawo letilondvolotiwe',
+    ve: 'Diaderese dzo vhalewaho',
+    nr: 'Amakheli we-Dilesi aGciniweko'
   },
   delete_account: {
     en: 'Delete Account',
@@ -63,7 +93,12 @@ const translations: Translations = {
     xh: 'Cima i-Akhawunti',
     af: 'Skrap rekening',
     st: 'Hlakola Akhaonto',
-    ts: 'Sula Akhaonto'
+    ts: 'Sula Akhaonto',
+    nso: 'Phumola Akhaonto',
+    tn: 'Phumola Akhaonto',
+    ss: 'Sula I-akhawunti',
+    ve: 'Phumula Akhaonthu',
+    nr: 'Sula I-akhawunti'
   },
   app_language: {
     en: 'App Language',
@@ -71,7 +106,12 @@ const translations: Translations = {
     xh: 'Ulwimi lwe-App',
     af: 'Taal van die Toep',
     st: 'Puo ya Lenaneo',
-    ts: 'Ririmi ra Aplikhayixini'
+    ts: 'Ririmi ra Aplikhayixini',
+    nso: 'Puo ya Lenaneo',
+    tn: 'Puo ya Lenaneo',
+    ss: 'Lulwimi lwe-App',
+    ve: 'Luambo lwa Phurogiramu',
+    nr: 'Ilimi ye-App'
   },
   notifications: {
     en: 'Notifications',
@@ -79,7 +119,12 @@ const translations: Translations = {
     xh: 'Izaziso',
     af: 'Kennisgewings',
     st: 'Ditsebiso',
-    ts: 'Switiviso'
+    ts: 'Switiviso',
+    nso: 'Ditsebišo',
+    tn: 'Ditsebiso',
+    ss: 'Taziso',
+    ve: 'Ndivhadzo',
+    nr: 'Izaziso'
   },
   dark_mode: {
     en: 'Dark Mode',
@@ -87,7 +132,12 @@ const translations: Translations = {
     xh: 'Imo Emnyama',
     af: 'Donker modus',
     st: 'Mokgoa o mofitshwana',
-    ts: 'Maendlelo ya munyama'
+    ts: 'Maendlelo ya munyama',
+    nso: 'Mokgwa o mofifiri',
+    tn: 'Mokgwa o montsho',
+    ss: 'Imodi Lemnyama',
+    ve: 'Ndi nzhi ya swiswi',
+    nr: 'Ihlelo eliMnyama'
   },
   help_center: {
     en: 'Help Center',
@@ -95,7 +145,12 @@ const translations: Translations = {
     xh: 'Iziko loNcedo',
     af: 'Hulpsentrum',
     st: 'Setsi sa Thuso',
-    ts: 'Xitichi xa Mpfuno'
+    ts: 'Xitichi xa Mpfuno',
+    nso: 'Lefelo la Thuso',
+    tn: 'Lefelo la Thuso',
+    ss: 'Sikhungo Selusito',
+    ve: 'Senthara ya Thikhiso',
+    nr: 'Izinzo zeSizo'
   },
   terms_conditions: {
     en: 'Terms & Conditions',
@@ -103,7 +158,12 @@ const translations: Translations = {
     xh: 'Imimiselo nemiqathango',
     af: 'Bepalings en Voorwaardes',
     st: 'Dipehelo le Maemo',
-    ts: 'Milawu na Swipimelo'
+    ts: 'Milawu na Swipimelo',
+    nso: 'Melao le Mabaka',
+    tn: 'Dipehelo le Maemo',
+    ss: 'Migomo nemibandela',
+    ve: 'Milayo na Maemo',
+    nr: 'Imithetho nesiVunyelwano'
   },
   privacy_policy: {
     en: 'Privacy Policy',
@@ -111,7 +171,12 @@ const translations: Translations = {
     xh: 'Ipolisi yoBucala',
     af: 'Privaatheidsbeleid',
     st: 'Pholisi ya Boporayefete',
-    ts: 'Pholisi ya Xihundla'
+    ts: 'Pholisi ya Xihundla',
+    nso: 'Molao wa Sephiri',
+    tn: 'Pholisi ya Boporofete',
+    ss: 'Inqubomgomo Yemfihlo',
+    ve: 'Pholisi ya tshiphiri',
+    nr: 'Inqubomgomo yeMifihlo'
   },
   app_version: {
     en: 'App Version',
@@ -119,7 +184,12 @@ const translations: Translations = {
     xh: 'Uhlobo lwesicelo',
     af: 'Weergawe van Toep',
     st: 'Mofuta wa Lenaneo',
-    ts: 'Vhexini ya Aplikhayixini'
+    ts: 'Vhexini ya Aplikhayixini',
+    nso: 'Tlhamo ya Lenaneo',
+    tn: 'Mofuta wa Lenaneo',
+    ss: 'Inguqulo ye-App',
+    ve: 'Mofuta wa Phurogiramu',
+    nr: 'Inguqulo ye-App'
   },
   logout: {
     en: 'Logout',
@@ -127,7 +197,12 @@ const translations: Translations = {
     xh: 'Phuma',
     af: 'Meld uit',
     st: 'Tswa',
-    ts: 'Huma'
+    ts: 'Huma',
+    nso: 'Tšwa',
+    tn: 'Tswa',
+    ss: 'Phuma',
+    ve: 'Buda',
+    nr: 'Phuma'
   },
   home: {
     en: 'Home',
@@ -135,7 +210,12 @@ const translations: Translations = {
     xh: 'Ikhaya',
     af: 'Tuis',
     st: 'Gae',
-    ts: 'Kaya'
+    ts: 'Kaya',
+    nso: 'Gae',
+    tn: 'Gae',
+    ss: 'Ekhaya',
+    ve: 'Hayani',
+    nr: 'Ikhaya'
   },
   profile: {
     en: 'Profile',
@@ -143,7 +223,12 @@ const translations: Translations = {
     xh: 'Iprofayile',
     af: 'Profiel',
     st: 'Phrofayele',
-    ts: 'Phrofayili'
+    ts: 'Phrofayili',
+    nso: 'Phrofayele',
+    tn: 'Phrofayele',
+    ss: 'Iphrofayela',
+    ve: 'Phurofaele',
+    nr: 'Iphrofayili'
   },
   save: {
     en: 'Save',
@@ -151,7 +236,12 @@ const translations: Translations = {
     xh: 'Gcina',
     af: 'Stoor',
     st: 'Boloka',
-    ts: 'Hlayisa'
+    ts: 'Hlayisa',
+    nso: 'Boloka',
+    tn: 'Boloka',
+    ss: 'Gcina',
+    ve: 'Vhala',
+    nr: 'Gcina'
   },
   discover: {
     en: 'Discover',
@@ -159,7 +249,12 @@ const translations: Translations = {
     xh: 'Fumanisa',
     af: 'Ontdek',
     st: 'Tswela Pele',
-    ts: 'Tshubula'
+    ts: 'Tshubula',
+    nso: 'Utulla',
+    tn: 'Utulla',
+    ss: 'Tfolisisa',
+    ve: 'Wana',
+    nr: 'Thola'
   },
   explore: {
     en: 'Explore',
@@ -167,7 +262,25 @@ const translations: Translations = {
     xh: 'Hlola',
     af: 'Verken',
     st: 'Hlahloba',
-    ts: 'Valanga'
+    ts: 'Valanga',
+    nso: 'Hlahloba',
+    tn: 'Hlahloba',
+    ss: 'Hlola',
+    ve: 'Tshimbila',
+    nr: 'Hlola'
+  },
+  map: {
+    en: 'Map',
+    zu: 'Imephu',
+    xh: 'Imephu',
+    af: 'Kaart',
+    st: 'Mepe',
+    ts: 'Mepe',
+    nso: 'Mepe',
+    tn: 'Mepe',
+    ss: 'Imephu',
+    ve: 'Mepe',
+    nr: 'Imephu'
   },
   order_history: {
     en: 'Order History',
@@ -175,7 +288,25 @@ const translations: Translations = {
     xh: 'Imbali ye-Oda',
     af: 'Bestelling Geskiedenis',
     st: 'Nalane ya ditaelo',
-    ts: 'Matimu ya odara'
+    ts: 'Matimu ya odara',
+    nso: 'Histori ya Ditaelo',
+    tn: 'Nalane ya Ditaelo',
+    ss: 'Umlando wema-oda',
+    ve: 'Ditsiko dza Odara',
+    nr: 'Umlando we-oda'
+  },
+  orders: {
+    en: 'Orders',
+    zu: 'Ama-oda',
+    xh: 'Iiodolo',
+    af: 'Bestellings',
+    st: 'Ditaelo',
+    ts: 'Tiodara',
+    nso: 'Ditaelo',
+    tn: 'Ditaelo',
+    ss: 'Tindzaba',
+    ve: 'Diodara',
+    nr: 'Ama-oda'
   }
 };
 
