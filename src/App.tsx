@@ -48,6 +48,8 @@ import {
   Legend,
 } from "recharts";
 
+import { Html5Qrcode } from "html5-qrcode";
+
 let DefaultIcon = L.icon({
   iconUrl: icon,
   shadowUrl: iconShadow,
@@ -573,6 +575,7 @@ type UserProfile = {
   latitude?: number;
   longitude?: number;
   language?: string;
+  loyaltyPoints?: number;
 };
 
 // Phone formatting and validation methods outsourced to ./utils
@@ -676,7 +679,7 @@ type ModalState = {
   isOpen: boolean;
   title: string;
   message: string;
-  type: "alert" | "confirm" | "prompt";
+  type: "alert" | "confirm" | "prompt" | "password-prompt";
   onConfirm?: (value?: string) => void;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -712,10 +715,10 @@ const ModalContent = ({
           {modal.message}
         </p>
 
-        {modal.type === "prompt" && (
+        {(modal.type === "prompt" || modal.type === "password-prompt") && (
           <div className="mb-6">
             <input
-              type="text"
+              type={modal.type === "password-prompt" ? "password" : "text"}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               autoFocus
@@ -728,7 +731,11 @@ const ModalContent = ({
           <button
             onClick={() => {
               if (modal.onConfirm) {
-                modal.onConfirm(modal.type === "prompt" ? value : undefined);
+                modal.onConfirm(
+                  modal.type === "prompt" || modal.type === "password-prompt"
+                    ? value
+                    : undefined
+                );
               }
               onClose();
             }}
@@ -737,7 +744,9 @@ const ModalContent = ({
             {modal.confirmLabel || (modal.type === "alert" ? "OK" : "Confirm")}
           </button>
 
-          {(modal.type === "confirm" || modal.type === "prompt") && (
+          {(modal.type === "confirm" ||
+            modal.type === "prompt" ||
+            modal.type === "password-prompt") && (
             <button
               onClick={onClose}
               className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl transition-all active:scale-95 cursor-pointer"
@@ -804,6 +813,21 @@ const getCategorySlang = (category: string, lang: string) => {
     return "Nearby 📍";
   }
   return category;
+};
+
+const getShopCategoryIcon = (category: string) => {
+  const c = category.toLowerCase().trim();
+  if (c.includes("kota")) return "🍞";
+  if (c.includes("braai") || c.includes("shisa") || c.includes("grill") || c.includes("meat")) return "🔥";
+  if (c.includes("burger") || c.includes("fast") || c.includes("sandwich")) return "🍔";
+  if (c.includes("pizza") || c.includes("italian")) return "🍕";
+  if (c.includes("drink") || c.includes("beverage") || c.includes("coffee") || c.includes("juice") || c.includes("shake")) return "🥤";
+  if (c.includes("dessert") || c.includes("sweet") || c.includes("cake") || c.includes("bakery")) return "🍰";
+  if (c.includes("salad") || c.includes("healthy") || c.includes("veg")) return "🥗";
+  if (c.includes("chicken") || c.includes("poultry") || c.includes("wing")) return "🍗";
+  if (c.includes("seafood") || c.includes("fish")) return "🐟";
+  if (c.includes("traditional") || c.includes("local")) return "🇿🇦";
+  return "🍽️";
 };
 
 // Storage utilities and cache cleaners outsourced to ./utils
@@ -906,6 +930,45 @@ export default function App() {
       return true;
     }
   });
+
+  const [orderAgainEnabled, setOrderAgainEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem("order_again_enabled");
+      if (saved === null) return true;
+      return saved === "true";
+    } catch {
+      return true;
+    }
+  });
+
+  const [hapticButtonPress, setHapticButtonPress] = useState(() => {
+    try {
+      const saved = localStorage.getItem("haptic_button_press");
+      return saved === null ? true : saved === "true";
+    } catch {
+      return true;
+    }
+  });
+
+  const [hapticOrderUpdate, setHapticOrderUpdate] = useState(() => {
+    try {
+      const saved = localStorage.getItem("haptic_order_update");
+      return saved === null ? true : saved === "true";
+    } catch {
+      return true;
+    }
+  });
+
+  const [hapticCartAnimation, setHapticCartAnimation] = useState(() => {
+    try {
+      const saved = localStorage.getItem("haptic_cart_animation");
+      return saved === null ? true : saved === "true";
+    } catch {
+      return true;
+    }
+  });
+
+  const [showQRScanner, setShowQRScanner] = useState(false);
 
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(
     () => {
@@ -1026,6 +1089,21 @@ export default function App() {
     });
   };
 
+  const showPasswordPrompt = (
+    title: string,
+    message: string,
+    onConfirm: (value: string) => void,
+  ) => {
+    setModal({
+      isOpen: true,
+      title,
+      message,
+      type: "password-prompt",
+      onConfirm: (val) => onConfirm(val || ""),
+      defaultValue: "",
+    });
+  };
+
   const [orderAcceptedModal, setOrderAcceptedModal] = useState<{
     isOpen: boolean;
     productName: string;
@@ -1094,7 +1172,7 @@ export default function App() {
   const prevCartCountRef = useRef(cartCount);
 
   useEffect(() => {
-    if (cartCount > prevCartCountRef.current) {
+    if (cartCount !== prevCartCountRef.current) {
       setIsCartBouncing(true);
       const timer = setTimeout(() => setIsCartBouncing(false), 600);
       return () => clearTimeout(timer);
@@ -1118,6 +1196,10 @@ export default function App() {
   useEffect(() => {
     safeLocalStorageSet("app_notifications", JSON.stringify(notifications));
   }, [notifications]);
+
+  useEffect(() => {
+    safeLocalStorageSet("order_again_enabled", String(orderAgainEnabled));
+  }, [orderAgainEnabled]);
 
   useEffect(() => {
     safeLocalStorageSet("dark_mode", String(isDarkMode));
@@ -1148,11 +1230,52 @@ export default function App() {
     }
   }, [pendingReview]);
 
-  const triggerHaptic = useCallback((pattern: number | number[] = 10) => {
-    if (hapticEnabled && "vibrate" in navigator) {
+  const triggerHaptic = useCallback((
+    pattern: number | number[] = 10,
+    actionType?: "button_press" | "order_update" | "cart_animation"
+  ) => {
+    if (!hapticEnabled) return;
+    if (actionType === "button_press" && !hapticButtonPress) return;
+    if (actionType === "order_update" && !hapticOrderUpdate) return;
+    if (actionType === "cart_animation" && !hapticCartAnimation) return;
+
+    if ("vibrate" in navigator) {
       navigator.vibrate(pattern);
     }
-  }, [hapticEnabled]);
+  }, [hapticEnabled, hapticButtonPress, hapticOrderUpdate, hapticCartAnimation]);
+
+  const handleQRScanSuccess = useCallback((text: string) => {
+    if (!text) return;
+    
+    // Find matching shop
+    const foundShop = shops.find((s) => {
+      const sId = String(s.id).toLowerCase();
+      const sName = String(s.name).toLowerCase();
+      const scannedLower = text.toLowerCase();
+      return (
+        scannedLower === sId ||
+        scannedLower.includes(sId) ||
+        sId.includes(scannedLower) ||
+        scannedLower.includes(sName)
+      );
+    });
+
+    if (foundShop) {
+      triggerHaptic([15, 15], "button_press");
+      setSelectedStoreId(foundShop.id);
+      setPreviousScreen(currentScreen);
+      setCurrentScreen("store-info");
+      setShowQRScanner(false);
+      toast.success(`Scanned flyer for ${foundShop.name}!`, {
+        description: "Instantly opening their menu.",
+      });
+    } else {
+      triggerHaptic([30, 30], "button_press");
+      toast.error("Unrecognized Flyer Code", {
+        description: `Could not find any store matching "${text}".`,
+      });
+    }
+  }, [shops, currentScreen, triggerHaptic]);
 
   const fetchShopsData = useCallback(async (retries = 3) => {
     setLoadingShops(true);
@@ -2012,7 +2135,24 @@ export default function App() {
         });
         requestNotificationPermission();
       } else {
-        setCurrentScreen("splash");
+        setCurrentScreen((prev) => {
+          if (_event === "SIGNED_OUT") {
+            return "splash";
+          }
+          const preLoginScreens: Screen[] = [
+            "splash",
+            "signup",
+            "login",
+            "verify",
+            "setup-pin",
+            "setup-password",
+            "success"
+          ];
+          if (preLoginScreens.includes(prev)) {
+             return "splash";
+          }
+          return prev; // Stay on current screen if momentary loss
+        });
       }
     });
 
@@ -2035,7 +2175,7 @@ export default function App() {
           const vData = await vResponse.json();
           if (vData && vData.version) {
             setAppVersion(vData.version);
-            if (vData.version !== "4.0") {
+            if (vData.version !== APP_VERSION.split(" ")[0]) {
               setIsUpdateAvailable(true);
             }
             return; // Success
@@ -2554,11 +2694,7 @@ export default function App() {
           buildCartItemNode(quantity),
         ];
       });
-      setNotification({
-        message: `Added ${quantity}x ${item.name} to cart`,
-        type: "success",
-      });
-      setTimeout(() => setNotification(null), 2000);
+      // Notification removed for cleaner UI
     },
     [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
   );
@@ -2590,8 +2726,6 @@ export default function App() {
       () => {
         triggerHaptic();
         setCart([]);
-        setNotification({ message: "Cart cleared", type: "info" });
-        setTimeout(() => setNotification(null), 2000);
       },
     );
   }, [showConfirm, triggerHaptic, setCart, setNotification]);
@@ -3067,6 +3201,7 @@ export default function App() {
                   showAlert={showAlert}
                   appVersion={appVersion}
                   triggerHaptic={triggerHaptic}
+                  orderAgainEnabled={orderAgainEnabled}
                 />
               )}
               {currentScreen === "notifications" && (
@@ -3208,6 +3343,7 @@ export default function App() {
                   setCurrentScreen={setCurrentScreen}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
+                  loadingShops={loadingShops}
                 />
               )}
               {currentScreen === "explore" && (
@@ -3230,6 +3366,7 @@ export default function App() {
                   showAlert={showAlert}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
+                  loadingShops={loadingShops}
                 />
               )}
               {currentScreen === "store-info" && (
@@ -3241,7 +3378,7 @@ export default function App() {
                   shop={
                     shops && shops.length > 0
                       ? shops.find(
-                          (s) => String(s.id) === String(selectedStoreId),
+                           (s) => String(s.id) === String(selectedStoreId),
                         ) || shops[0]
                       : DEFAULT_FALLBACK_SHOPS[0]
                   }
@@ -3271,6 +3408,7 @@ export default function App() {
                   showAlert={showAlert}
                   showConfirm={showConfirm}
                   setCurrentScreen={setCurrentScreen}
+                  onScanFlyer={() => setShowQRScanner(true)}
                 />
               )}
               {currentScreen === "settings" && (
@@ -3322,9 +3460,42 @@ export default function App() {
                       }
                     }
                   }}
+                  hapticButtonPress={hapticButtonPress}
+                  onToggleHapticButtonPress={() => {
+                    const next = !hapticButtonPress;
+                    setHapticButtonPress(next);
+                    try {
+                      localStorage.setItem("haptic_button_press", String(next));
+                    } catch {}
+                    triggerHaptic(10, "button_press");
+                  }}
+                  hapticOrderUpdate={hapticOrderUpdate}
+                  onToggleHapticOrderUpdate={() => {
+                    const next = !hapticOrderUpdate;
+                    setHapticOrderUpdate(next);
+                    try {
+                      localStorage.setItem("haptic_order_update", String(next));
+                    } catch {}
+                    triggerHaptic(10, "button_press");
+                  }}
+                  hapticCartAnimation={hapticCartAnimation}
+                  onToggleHapticCartAnimation={() => {
+                    const next = !hapticCartAnimation;
+                    setHapticCartAnimation(next);
+                    try {
+                      localStorage.setItem("haptic_cart_animation", String(next));
+                    } catch {}
+                    triggerHaptic(10, "button_press");
+                  }}
+                  orderAgainEnabled={orderAgainEnabled}
+                  onToggleOrderAgain={() => {
+                    setOrderAgainEnabled(!orderAgainEnabled);
+                    triggerHaptic(10, "button_press");
+                  }}
                   setNotification={setNotification}
                   showAlert={showAlert}
                   showConfirm={showConfirm}
+                  showPasswordPrompt={showPasswordPrompt}
                   isOnline={isOnline}
                   onSubscribeToPush={subscribeToPushNotifications}
                 />
@@ -3410,7 +3581,18 @@ export default function App() {
                   shops={shops}
                   isOnline={isOnline}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onConfirm={() => setCurrentScreen("order-success")}
+                  onConfirm={() => {
+                    const pointsEarned = Math.floor(cartTotal / 10);
+                    if (session?.user?.id) {
+                      handleUpdateProfile(
+                        { loyaltyPoints: (userProfile.loyaltyPoints || 0) + pointsEarned },
+                        false,
+                        () => setCurrentScreen("order-success")
+                      );
+                    } else {
+                      setCurrentScreen("order-success");
+                    }
+                  }}
                   onIncompleteProfile={() => {
                     setPreviousScreen("checkout");
                     setCurrentScreen("complete-profile");
@@ -3451,6 +3633,7 @@ export default function App() {
                   setCart={setCart}
                   setCurrentScreen={setCurrentScreen}
                   triggerHaptic={triggerHaptic}
+                  onScanFlyer={() => setShowQRScanner(true)}
                 />
               )}
             </motion.div>
@@ -3512,6 +3695,13 @@ export default function App() {
                 </motion.button>
               )}
           </AnimatePresence>
+
+          <QRScannerModal
+            isOpen={showQRScanner}
+            onClose={() => setShowQRScanner(false)}
+            onScanSuccess={handleQRScanSuccess}
+            shops={shops}
+          />
 
           <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
           {session && currentScreen === "home" && <OnboardingTour />}
@@ -4979,6 +5169,7 @@ function HomeScreen({
   appVersion,
   triggerHaptic,
   isOnline,
+  orderAgainEnabled = true,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -5017,6 +5208,7 @@ function HomeScreen({
   appVersion: string;
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
+  orderAgainEnabled?: boolean;
 }) {
   const { t, language } = useTranslation();
   const currentTownship = useMemo(() => {
@@ -5182,6 +5374,65 @@ function HomeScreen({
     return ids
       .map((id) => shops.find((s) => s.id === id))
       .filter(Boolean) as Shop[];
+  }, [orders, shops]);
+
+  const mostFrequentItems = useMemo(() => {
+    const itemCounts: {
+      [key: string]: {
+        count: number;
+        name: string;
+        variantId: string;
+        shopId: string;
+        price: number;
+        customizations: any[];
+      };
+    } = {};
+
+    orders.forEach((o) => {
+      if (o.status === "cancelled") return;
+      const key = `${o.shop_id}_${o.product_name}`;
+      if (!itemCounts[key]) {
+        itemCounts[key] = {
+          count: 0,
+          name: o.product_name,
+          variantId: o.product_variant || o.id,
+          shopId: o.shop_id,
+          price: o.price || 0,
+          customizations: o.customizations || [],
+        };
+      }
+      itemCounts[key].count += o.quantity || 1;
+    });
+
+    const sorted = Object.values(itemCounts).sort((a, b) => b.count - a.count);
+
+    return sorted
+      .map((entry) => {
+        const shop = shops.find((s) => s.id === entry.shopId);
+        const originalMenuItem = shop?.menu?.find(
+          (m) =>
+            m.name.toLowerCase() === entry.name.toLowerCase() ||
+            m.id === entry.variantId,
+        );
+
+        const menuItem: MenuItem = originalMenuItem || {
+          id: entry.variantId || entry.name,
+          name: entry.name,
+          price: entry.price,
+          displayPrice: `R ${entry.price.toFixed(2)}`,
+          image: shop?.logo || DEFAULT_SHOP_LOGO,
+          description: "Delicious local favorite",
+          customizations: entry.customizations,
+        };
+
+        return {
+          menuItem,
+          shopId: entry.shopId,
+          shopName: shop?.name || "Local Kitchen",
+          count: entry.count,
+        };
+      })
+      .slice(0, 10);
   }, [orders, shops]);
 
   const cartCount = cart.reduce((sum, item) => sum + (item?.quantity || 0), 0);
@@ -5490,7 +5741,7 @@ function HomeScreen({
               <div className="flex items-center gap-1.5">
                 <LocalEatsLogo width={130} height={34} />
                 <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
-                  v{appVersion}
+                  v{APP_VERSION.split(" ")[0]}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 ml-0.5 mt-1">
@@ -5587,7 +5838,7 @@ function HomeScreen({
                       >
                         <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
                         <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                          Order History
+                          {t("order_history")}
                         </span>
                       </button>
                     </div>
@@ -5831,12 +6082,12 @@ function HomeScreen({
         </div>
 
         {/* Order Again Carousel */}
-        {recentShops.length > 0 && (
+        {orderAgainEnabled && mostFrequentItems.length > 0 && (
           <section className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tighter flex items-center gap-2 italic">
                 Order Again
-                <div className="w-1.5 h-1.5 bg-orange-500 rounded-full"></div>
+                <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse"></div>
               </h3>
               <button
                 onClick={onOrderHistory}
@@ -5848,33 +6099,54 @@ function HomeScreen({
 
             <div className="relative">
               <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-4 px-4">
-                {recentShops.map((shop) => (
+                {mostFrequentItems.map(({ menuItem, shopId, shopName, count }) => (
                   <motion.div
-                    key={`again-${shop.id}`}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => onStoreInfo(shop.id)}
-                    className="flex-shrink-0 w-[140px] group cursor-pointer"
+                    key={`again-item-${shopId}-${menuItem.id}`}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => onStoreInfo(shopId)}
+                    className="flex-shrink-0 w-[150px] bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs flex flex-col justify-between group hover:border-orange-500/20 transition-all duration-300 relative overflow-hidden cursor-pointer"
                   >
-                    <div className="relative mb-3">
-                      <div className="aspect-square rounded-[32px] overflow-hidden border border-slate-100 dark:border-slate-800 shadow-sm transition-all group-hover:shadow-md group-hover:border-orange-200 dark:group-hover:border-orange-900/30">
-                        <BlurUpImage
-                          src={shop.logo || DEFAULT_SHOP_LOGO}
-                          alt={shop.name}
-                          className="w-full h-full object-cover p-4 bg-slate-50 dark:bg-slate-800/50"
-                        />
-                      </div>
-                      <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-white dark:bg-slate-900 rounded-2xl shadow-lg flex items-center justify-center border border-slate-50 dark:border-slate-800">
-                        <RotateCcw className="w-4 h-4 text-orange-500" />
-                      </div>
+                    {/* Frequency Badge */}
+                    <div className="absolute top-2 left-2 z-10 bg-orange-500/90 text-white text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shadow-xs uppercase tracking-tight">
+                      🔥 {count}x
                     </div>
-                    <h4 className="text-[11px] font-black text-slate-900 dark:text-white truncate uppercase tracking-tight text-center px-1">
-                      {shop.name}
-                    </h4>
-                    <div className="flex items-center justify-center gap-1 mt-1">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                        {shop.delivery_eta || "30m"}
+                    
+                    <div className="relative aspect-square rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-800/50 mb-2">
+                      <BlurUpImage
+                        src={menuItem.image || DEFAULT_SHOP_LOGO}
+                        alt={menuItem.name}
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    </div>
+                    
+                    <div className="flex-grow flex flex-col justify-start mb-2">
+                      <h4 className="text-[11px] font-extrabold text-slate-900 dark:text-white line-clamp-1 leading-tight mb-0.5">
+                        {menuItem.name}
+                      </h4>
+                      <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 line-clamp-1">
+                        {shopName}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-auto pt-1 border-t border-slate-50 dark:border-slate-800/50">
+                      <span className="text-[11px] font-black text-slate-900 dark:text-white">
+                        R {menuItem.price.toFixed(2)}
                       </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          addToCart(menuItem, shopId);
+                          triggerHaptic(10);
+                          toast.success(`Added ${menuItem.name} to cart`, {
+                            description: `From ${shopName}`
+                          });
+                        }}
+                        className="bg-orange-500 hover:bg-orange-600 text-white p-1.5 rounded-lg transition-all active:scale-90 cursor-pointer flex items-center justify-center gap-1 shadow-xs"
+                        title="Add to cart"
+                      >
+                        <Plus className="w-3.5 h-3.5 font-bold" />
+                      </button>
                     </div>
                   </motion.div>
                 ))}
@@ -5938,8 +6210,6 @@ function HomeScreen({
               onClick={() => {
                 setSearchQuery("");
                 setSelectedCategory("All");
-                setMinRating(0);
-                setShowOnlyOpen(false);
               }}
               className="mt-6 px-6 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
             >
@@ -6617,7 +6887,9 @@ function CheckoutScreen({
       (acc, c) => acc + Number(c.price),
       0,
     );
-    return sum + (item.price + customizationsTotal) * item.quantity;
+    const itemTotal = (item.price + customizationsTotal) * item.quantity;
+    const finalItemTotal = item.quantity > 5 ? itemTotal * 0.85 : itemTotal;
+    return sum + finalItemTotal;
   }, 0);
 
   // Dynamic promo discounts
@@ -6730,9 +7002,7 @@ function CheckoutScreen({
 
   const processCheckout = async (isClosed: boolean) => {
     setLoading(true);
-    if ("vibrate" in navigator) {
-      navigator.vibrate([10, 30, 10]); // Premium double-tap feel for confirmation
-    }
+    triggerHaptic?.([200, 100, 200]);
 
     // Double check promo code eligibility before submitting order
     if (appliedPromo) {
@@ -6875,8 +7145,9 @@ function CheckoutScreen({
         const customizationsTotal = (
           item.selectedCustomizations || []
         ).reduce((acc, c) => acc + Number(c.price), 0);
-        const originalPrice =
+        const rawOriginalPrice =
           (item.price + customizationsTotal) * item.quantity;
+        const originalPrice = item.quantity > 5 ? rawOriginalPrice * 0.85 : rawOriginalPrice;
         const finalItemPrice = Number(
           Math.max(0, originalPrice - originalPrice * discountRatio).toFixed(
             2,
@@ -6982,8 +7253,9 @@ function CheckoutScreen({
           const customizationsTotal = (
             item.selectedCustomizations || []
           ).reduce((acc, c) => acc + Number(c.price), 0);
-          const originalPrice =
+          const rawOriginalPrice =
             (item.price + customizationsTotal) * item.quantity;
+          const originalPrice = item.quantity > 5 ? rawOriginalPrice * 0.85 : rawOriginalPrice;
           const finalItemPrice = Number(
             Math.max(0, originalPrice - originalPrice * discountRatio).toFixed(
               2,
@@ -7463,11 +7735,6 @@ function CheckoutScreen({
                         "Are you sure you want to remove all items from your cart?",
                         () => {
                           setCart([]);
-                          setNotification({
-                            message: "Cart cleared successfully",
-                            type: "info"
-                          });
-                          setTimeout(() => setNotification(null), 2000);
                         }
                       );
                     }}
@@ -7514,17 +7781,45 @@ function CheckoutScreen({
                         </p>
                       ) : null}
 
-                      <p className="text-primary font-black text-xs leading-none">
-                        R{" "}
-                        {(
-                          (item.price +
-                            (item.selectedCustomizations || []).reduce(
-                              (acc, c) => acc + Number(c.price),
-                              0,
-                            )) *
-                          item.quantity
-                        ).toFixed(2)}
-                      </p>
+                      {item.quantity > 5 ? (
+                        <div className="flex flex-col gap-1">
+                          <p className="text-primary font-black text-xs leading-none">
+                            R{" "}
+                            {(
+                              (item.price +
+                                (item.selectedCustomizations || []).reduce(
+                                  (acc, c) => acc + Number(c.price),
+                                  0,
+                                )) *
+                              item.quantity *
+                              0.85
+                            ).toFixed(2)}
+                          </p>
+                          <p className="text-[8px] text-emerald-650 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
+                            15% Bulk Discount Applied! (Was R{" "}
+                            {(
+                              (item.price +
+                                (item.selectedCustomizations || []).reduce(
+                                  (acc, c) => acc + Number(c.price),
+                                  0,
+                                )) *
+                              item.quantity
+                            ).toFixed(2)})
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-primary font-black text-xs leading-none">
+                          R{" "}
+                          {(
+                            (item.price +
+                              (item.selectedCustomizations || []).reduce(
+                                (acc, c) => acc + Number(c.price),
+                                0,
+                              )) *
+                            item.quantity
+                          ).toFixed(2)}
+                        </p>
+                      )}
                     </div>
 
                     {/* Quantity Modifier Chips */}
@@ -8526,6 +8821,22 @@ function OrderSuccessScreen({
               </p>
             </div>
           </div>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 shadow-sm border border-slate-100 dark:border-slate-800 text-left flex items-start gap-5 md:col-span-2">
+            <div className="size-16 bg-amber-500/10 rounded-2xl flex items-center justify-center text-amber-500 shrink-0">
+              <Star className="w-8 h-8" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-500 uppercase tracking-widest mb-1">
+                Loyalty Reward
+              </p>
+              <p className="text-slate-900 dark:text-white text-xl font-bold leading-tight">
+                +{Math.floor(totalAmount / 10)} Points Earned
+              </p>
+              <p className="text-slate-500 text-sm mt-1 uppercase font-black text-[10px] tracking-tighter">
+                Added to your profile balance
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Dynamic Rating Prompt */}
@@ -8600,6 +8911,187 @@ function OrderSuccessScreen({
   );
 }
 
+function QRScannerModal({
+  isOpen,
+  onClose,
+  onScanSuccess,
+  shops,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onScanSuccess: (text: string) => void;
+  shops: Shop[];
+}) {
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [manualCode, setManualCode] = useState("");
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerId = "qr-reader-element";
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    const startScanner = async () => {
+      try {
+        setErrorMsg(null);
+        const html5QrCode = new Html5Qrcode(scannerId);
+        scannerRef.current = html5QrCode;
+
+        await html5QrCode.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: { width: 220, height: 220 },
+          },
+          (decodedText) => {
+            if (isMounted) {
+              onScanSuccess(decodedText);
+              html5QrCode.stop().catch(console.error);
+            }
+          },
+          (errorMessage) => {
+            // benign logs
+          }
+        );
+      } catch (err: any) {
+        console.warn("QR start error:", err);
+        if (isMounted) {
+          setErrorMsg("Camera access not available. Try entering the code manually or simulating a scan below!");
+        }
+      }
+    };
+
+    // delay slightly to ensure div is in DOM
+    const timer = setTimeout(() => {
+      startScanner();
+    }, 300);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+      if (scannerRef.current && scannerRef.current.isScanning) {
+        scannerRef.current.stop().catch(console.error);
+      }
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-slate-900 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-2">
+            <QrCode className="w-5 h-5 text-orange-500 animate-pulse" />
+            <h3 className="font-['Plus_Jakarta_Sans'] font-black text-sm uppercase tracking-wider text-slate-800 dark:text-slate-100">
+              Flyer QR Code Scanner
+            </h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="size-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 hover:text-slate-800 dark:hover:text-white transition-all cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scanner Body */}
+        <div className="p-6 flex flex-col items-center">
+          <p className="text-xs text-slate-500 dark:text-slate-400 text-center mb-4 leading-relaxed">
+            Scan a store's flyer QR code to instantly open its menu.
+          </p>
+
+          {/* Camera Viewport */}
+          <div className="relative w-full aspect-square max-w-[240px] bg-slate-950 dark:bg-slate-950 rounded-2xl overflow-hidden border-2 border-dashed border-orange-500/40 flex items-center justify-center">
+            <div id={scannerId} className="w-full h-full object-cover" />
+            
+            {errorMsg && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-slate-950/90 text-slate-400">
+                <Camera className="w-8 h-8 text-slate-600 mb-2" />
+                <span className="text-[10px] font-medium leading-relaxed">
+                  {errorMsg}
+                </span>
+              </div>
+            )}
+            
+            {/* Animated Laser Scanning Line */}
+            {!errorMsg && (
+              <div className="absolute left-0 right-0 h-0.5 bg-orange-500 shadow-[0_0_8px_#f97316] animate-[bounce_2s_infinite] top-0 z-10" />
+            )}
+          </div>
+
+          {/* Manual Input or Simulator */}
+          <div className="w-full mt-6 space-y-4">
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                value={manualCode}
+                onChange={(e) => setManualCode(e.target.value)}
+                placeholder="Enter flyer code manually (e.g. shop_1)"
+                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              <button
+                onClick={() => {
+                  if (manualCode.trim()) {
+                    onScanSuccess(manualCode.trim());
+                  }
+                }}
+                className="absolute right-2 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+              >
+                Submit
+              </button>
+            </div>
+
+            {/* Simulated QR Scan Section */}
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800/80">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                Flyer QR Code Tester (Simulation)
+              </span>
+              <div className="grid grid-cols-2 gap-2 mt-2 max-h-[120px] overflow-y-auto">
+                {shops.slice(0, 4).map((shop) => (
+                  <button
+                    key={shop.id}
+                    onClick={() => onScanSuccess(shop.id)}
+                    className="flex flex-col text-left p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group"
+                  >
+                    <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 group-hover:text-orange-500 truncate">
+                      {shop.name}
+                    </span>
+                    <span className="text-[8px] text-slate-400 font-mono mt-0.5">
+                      Code: {shop.id}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShopCardSkeleton() {
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-[32px] overflow-hidden border border-slate-100/60 dark:border-slate-800/60 flex flex-col h-[380px] animate-pulse">
+      {/* Top Image Area */}
+      <div className="h-52 bg-slate-200 dark:bg-slate-800/80 relative" />
+      {/* Text Area */}
+      <div className="p-6 flex flex-col flex-grow justify-between">
+        <div className="space-y-3">
+          <div className="h-5 bg-slate-200 dark:bg-slate-800/80 rounded-lg w-2/3" />
+          <div className="h-3 bg-slate-100 dark:bg-slate-800/50 rounded w-1/2" />
+        </div>
+        <div className="flex justify-between items-center mt-4">
+          <div className="h-4 bg-slate-200 dark:bg-slate-800/80 rounded w-1/4" />
+          <div className="h-4 bg-slate-100 dark:bg-slate-800/50 rounded w-1/5" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DiscoverScreen({
   shops,
   onHome,
@@ -8612,6 +9104,7 @@ function DiscoverScreen({
   setCurrentScreen,
   triggerHaptic,
   isOnline,
+  loadingShops = false,
 }: {
   shops: Shop[];
   onHome: () => void;
@@ -8624,6 +9117,7 @@ function DiscoverScreen({
   setCurrentScreen: (screen: Screen) => void;
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
+  loadingShops?: boolean;
 }) {
   const { t, language } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
@@ -8808,10 +9302,15 @@ function DiscoverScreen({
         {/* Store Grid or Map */}
         {viewMode === "list" ? (
           <section className="px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {sortedShops.map((shop) => {
-              const isFollowing = favorites.includes(shop.id);
-              const status = getShopStatus(shop);
-              return (
+            {loadingShops ? (
+              Array.from({ length: 6 }).map((_, idx) => (
+                <ShopCardSkeleton key={idx} />
+              ))
+            ) : (
+              sortedShops.map((shop) => {
+                const isFollowing = favorites.includes(shop.id);
+                const status = getShopStatus(shop);
+                return (
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
@@ -8865,8 +9364,11 @@ function DiscoverScreen({
                     <div>
                       <div className="flex justify-between items-start mb-3 gap-3">
                         <div>
-                          <h3 className="font-['Plus_Jakarta_Sans'] font-black text-lg sm:text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-600 transition-colors line-clamp-2 break-words whitespace-normal">
-                            {shop.name}
+                          <h3 className="font-['Plus_Jakarta_Sans'] font-black text-lg sm:text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-600 transition-colors line-clamp-2 break-words whitespace-normal flex items-center gap-1.5">
+                            <span className="text-xl shrink-0" role="img" aria-label={shop.category}>
+                              {getShopCategoryIcon(shop.category)}
+                            </span>
+                            <span>{shop.name}</span>
                           </h3>
                           <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 font-medium">
                             {shop.address}
@@ -8904,7 +9406,8 @@ function DiscoverScreen({
                   </div>
                 </div>
               );
-            })}
+            }) // close map
+            )} // close ternary
             {filteredShops.length === 0 && (
               <div className="col-span-full py-20 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-700">
                 <div className="relative mb-6">
@@ -9555,7 +10058,9 @@ const QuantityModal = ({
     (sum, c) => sum + Number(c.price),
     0,
   );
-  const totalPrice = (basePrice + customizationsTotal) * quantity;
+  const isBulkDiscount = quantity > 5;
+  const rawTotalPrice = (basePrice + customizationsTotal) * quantity;
+  const totalPrice = isBulkDiscount ? rawTotalPrice * 0.85 : rawTotalPrice;
 
   const toggleCustomization = (customization: {
     name: string;
@@ -9647,7 +10152,7 @@ const QuantityModal = ({
             <textarea
               value={specialInstructions}
               onChange={(e) => setSpecialInstructions(e.target.value)}
-              placeholder="E.g. No atchar, toast the bun..."
+              placeholder="E.g. 'no atchar' or 'extra spicy'..."
               className="w-full h-20 p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-600/20 transition-all resize-none"
             />
           </div>
@@ -9822,6 +10327,7 @@ function StoreInfoScreen({
   showConfirm,
   setCurrentScreen,
   isOnline,
+  onScanFlyer,
 }: {
   onBack: () => void;
   shop: Shop;
@@ -9841,6 +10347,7 @@ function StoreInfoScreen({
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
   setCurrentScreen: (screen: Screen) => void;
   isOnline: boolean;
+  onScanFlyer?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"menu" | "reviews" | "info">(
     "menu",
@@ -10343,12 +10850,21 @@ function StoreInfoScreen({
                 }
               }}
               className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
+              title="Share"
             >
               <Share2 className="w-6 h-6" />
             </button>
             <button
+              onClick={onScanFlyer}
+              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
+              title="Scan Flyer QR"
+            >
+              <QrCode className="w-6 h-6 text-orange-500" />
+            </button>
+            <button
               onClick={onToggleFavorite}
               className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
+              title="Toggle Favorite"
             >
               <Heart
                 className={`w-6 h-6 ${isFavorite ? "fill-red-500 text-red-500" : ""}`}
@@ -11147,6 +11663,7 @@ function ExploreScreen({
   showAlert,
   triggerHaptic,
   isOnline,
+  loadingShops = false,
 }: {
   shops: Shop[];
   onHome: () => void;
@@ -11159,6 +11676,7 @@ function ExploreScreen({
   showAlert: (title: string, message: string) => void;
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
+  loadingShops?: boolean;
 }) {
   const { t, language } = useTranslation();
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -11509,7 +12027,11 @@ function ExploreScreen({
               </span>
             </div>
 
-            {sortedShops.length === 0 ? (
+            {loadingShops ? (
+              Array.from({ length: 4 }).map((_, idx) => (
+                <ShopCardSkeleton key={idx} />
+              ))
+            ) : sortedShops.length === 0 ? (
               <div className="bg-slate-50 dark:bg-slate-900/40 rounded-[32px] p-12 text-center border border-slate-100 dark:border-slate-800 animate-in fade-in duration-300">
                 <SearchX className="w-12 h-12 text-slate-400 mx-auto mb-4" />
                 <h4 className="font-extrabold text-lg text-slate-900 dark:text-white uppercase tracking-tight mb-2">
@@ -11613,8 +12135,11 @@ function ExploreScreen({
 
                     <div className="p-5 flex flex-col justify-between flex-grow">
                       <div>
-                        <h4 className="font-['Plus_Jakarta_Sans'] font-black text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-500 transition-colors line-clamp-1 break-all">
-                          {shop.name}
+                        <h4 className="font-['Plus_Jakarta_Sans'] font-black text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-500 transition-colors line-clamp-1 break-all flex items-center gap-1.5">
+                          <span className="text-xl shrink-0" role="img" aria-label={shop.category}>
+                            {getShopCategoryIcon(shop.category)}
+                          </span>
+                          <span>{shop.name}</span>
                         </h4>
                         <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 font-semibold truncate">
                           {shop.address}
@@ -12407,37 +12932,61 @@ function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCountdownP
   const totalSeconds = isDelivery ? 25 * 60 : 15 * 60;
   const percentage = Math.min(100, Math.max(0, (secondsLeft / totalSeconds) * 100));
 
+  const radius = 18;
+  const strokeWidth = 3.5;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
   return (
-    <div className="flex flex-col gap-2 bg-white dark:bg-slate-900/60 border border-slate-100/60 dark:border-slate-800 p-3 rounded-xl mt-2 shadow-xs w-full">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="size-6 rounded-lg bg-orange-500/10 flex items-center justify-center text-orange-500 animate-pulse">
-            <Clock className="w-3.5 h-3.5" />
-          </div>
-          <div>
-            <h5 className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 leading-none">
-              {status === "ready" ? "Rider Transfer" : "Estimated Food Prep"}
-            </h5>
-            <p className="text-[10px] font-extrabold text-slate-800 dark:text-slate-200 mt-1 leading-none">
-              {status === "ready" ? "On the way" : "Crafting your order"}
-            </p>
+    <div className="flex items-center justify-between bg-white dark:bg-slate-900/60 border border-slate-100/60 dark:border-slate-800 p-4 rounded-[24px] mt-3 shadow-xs w-full">
+      <div className="flex items-center gap-3">
+        {/* SVG Countdown Progress Circle */}
+        <div className="relative size-12 flex items-center justify-center shrink-0">
+          <svg className="w-full h-full transform -rotate-90">
+            {/* Background circle */}
+            <circle
+              cx="24"
+              cy="24"
+              r={radius}
+              className="stroke-slate-100 dark:stroke-slate-800 fill-transparent"
+              strokeWidth={strokeWidth}
+            />
+            {/* Foreground circle with animation */}
+            <motion.circle
+              cx="24"
+              cy="24"
+              r={radius}
+              className="stroke-orange-500 dark:stroke-orange-400 fill-transparent"
+              strokeWidth={strokeWidth}
+              strokeDasharray={circumference}
+              animate={{ strokeDashoffset }}
+              transition={{ duration: 1, ease: "linear" }}
+              strokeLinecap="round"
+            />
+          </svg>
+          {/* Inner Clock Icon or small overlay */}
+          <div className="absolute inset-0 flex items-center justify-center text-orange-500">
+            <Clock className="w-4 h-4 animate-pulse" />
           </div>
         </div>
-        <div className="flex flex-col items-end">
-          <span className="font-mono text-sm font-black text-orange-600 dark:text-orange-400 tracking-tight leading-none">
-            {formattedTime}
-          </span>
-          <span className="text-[8px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 mt-1 leading-none animate-pulse">
-            Remaining
-          </span>
+
+        <div>
+          <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 leading-none">
+            {status === "ready" ? "Rider Transfer" : "Estimated Food Prep"}
+          </h5>
+          <p className="text-xs font-black text-slate-800 dark:text-slate-200 mt-1 leading-none">
+            {status === "ready" ? "On the way" : "Crafting your order"}
+          </p>
         </div>
       </div>
 
-      <div className="w-full bg-slate-50 dark:bg-slate-950 rounded-full h-1 overflow-hidden border border-slate-100/50 dark:border-slate-800/80 mt-1.5">
-        <div
-          className="bg-gradient-to-r from-orange-400 to-orange-600 h-full rounded-full transition-all duration-1000 ease-linear"
-          style={{ width: `${100 - percentage}%` }}
-        />
+      <div className="flex flex-col items-end">
+        <span className="font-mono text-base font-black text-orange-600 dark:text-orange-400 tracking-tight leading-none">
+          {formattedTime}
+        </span>
+        <span className="text-[8px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 mt-1.5 leading-none animate-pulse">
+          Remaining
+        </span>
       </div>
     </div>
   );
@@ -12572,6 +13121,26 @@ function OrderTrackingScreen({
   useEffect(() => {
     setLocalOrders(orders);
   }, [orders]);
+
+  const prevStatusesRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    localOrders.forEach((order) => {
+      const prevStatus = prevStatusesRef.current[order.id];
+      if (prevStatus && prevStatus !== "ready" && order.status === "ready") {
+        // Unique long-vibration haptic pattern [500, 100, 500, 100, 800]
+        if (triggerHaptic) {
+          triggerHaptic([500, 100, 500, 100, 800]);
+        } else if ("vibrate" in navigator) {
+          navigator.vibrate([500, 100, 500, 100, 800]);
+        }
+        toast.success(`Your order #${order.id.slice(0, 5)} is ready!`, {
+          description: "Please collect it or await your courier.",
+        });
+      }
+      prevStatusesRef.current[order.id] = order.status;
+    });
+  }, [localOrders, triggerHaptic]);
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -13051,9 +13620,18 @@ function SettingsScreen({
   onToggleDarkMode,
   hapticEnabled,
   onToggleHaptic,
+  hapticButtonPress = true,
+  onToggleHapticButtonPress,
+  hapticOrderUpdate = true,
+  onToggleHapticOrderUpdate,
+  hapticCartAnimation = true,
+  onToggleHapticCartAnimation,
+  orderAgainEnabled = true,
+  onToggleOrderAgain,
   setNotification,
   showAlert,
   showConfirm,
+  showPasswordPrompt,
   isOnline,
   onSubscribeToPush,
 }: {
@@ -13072,6 +13650,14 @@ function SettingsScreen({
   onToggleDarkMode: () => void;
   hapticEnabled: boolean;
   onToggleHaptic: () => void;
+  hapticButtonPress?: boolean;
+  onToggleHapticButtonPress: () => void;
+  hapticOrderUpdate?: boolean;
+  onToggleHapticOrderUpdate: () => void;
+  hapticCartAnimation?: boolean;
+  onToggleHapticCartAnimation: () => void;
+  orderAgainEnabled?: boolean;
+  onToggleOrderAgain: () => void;
   setNotification: (n: NotificationState) => void;
   showAlert: (title: string, message: string) => void;
   showConfirm: (
@@ -13080,6 +13666,11 @@ function SettingsScreen({
     onConfirm: () => void,
     confirmLabel?: string,
     cancelLabel?: string,
+  ) => void;
+  showPasswordPrompt: (
+    title: string,
+    message: string,
+    onConfirm: (value: string) => void
   ) => void;
   isOnline: boolean;
   onSubscribeToPush?: (customUserId?: string) => Promise<void>;
@@ -13398,6 +13989,13 @@ function SettingsScreen({
                 {userProfile.role || "User"}
               </span>
             </div>
+            {(userProfile.loyaltyPoints ?? 0) > 0 && (
+              <div className="flex items-center gap-1 mt-1.5">
+                <span className="bg-gradient-to-r from-amber-400 to-amber-600 text-white text-[9px] font-black px-2 py-0.5 rounded shadow-sm flex items-center gap-1 uppercase tracking-widest">
+                  ✨ {userProfile.loyaltyPoints} Loyalty Points
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -13406,7 +14004,7 @@ function SettingsScreen({
           <div className="flex items-center gap-2 px-1">
             <Shield className="w-4 h-4 text-primary" />
             <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
-              Account & Deliveries
+              {t("account_security")}
             </h3>
           </div>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
@@ -13453,14 +14051,17 @@ function SettingsScreen({
             {/* Account Deletion */}
             <button
               onClick={() => {
-                showConfirm(
+                showPasswordPrompt(
                   "Delete Account?",
-                  "Are you sure you want to delete your profile permanently? This cannot be undone.",
-                  () => {
-                    setNotification({
-                      message: "Account deletion initiated. Your records are being scrubbed.",
-                      type: "info",
-                    });
+                  "Enter your password to permanently delete your profile. This cannot be undone.",
+                  (password) => {
+                    if (password) {
+                      setNotification({
+                        message: "Account deletion initiated. Your records are being scrubbed.",
+                        type: "info",
+                      });
+                      // Here you would typically call a backend endpoint to delete the account with the provided password
+                    }
                   }
                 );
               }}
@@ -13484,7 +14085,7 @@ function SettingsScreen({
           <div className="flex items-center gap-2 px-1">
             <SlidersHorizontal className="w-4 h-4 text-primary" />
             <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
-              Preferences & Signals
+              {t("preferences")}
             </h3>
           </div>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
@@ -13521,7 +14122,7 @@ function SettingsScreen({
                     <Bell className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="font-medium text-sm">Alert Tuning</span>
+                    <span className="font-medium text-sm">{t("notifications")}</span>
                     <p className="text-[10px] text-slate-400 mt-0.5">Define push, SMS, and newsletter states</p>
                   </div>
                 </div>
@@ -13700,7 +14301,7 @@ function SettingsScreen({
             </div>
 
             {/* Haptic Feedback toggle */}
-            <div className="flex items-center justify-between p-4">
+            <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800">
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
                   <Smartphone className="w-5 h-5" />
@@ -13722,6 +14323,91 @@ function SettingsScreen({
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hapticEnabled ? "translate-x-6" : "translate-x-1"}`}
+                />
+              </button>
+            </div>
+
+            {/* Granular Haptic Feedback Toggles */}
+            <AnimatePresence>
+              {hapticEnabled && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="bg-slate-50/50 dark:bg-slate-900/30 border-b border-slate-100 dark:border-slate-800/80 overflow-hidden text-xs"
+                >
+                  {/* Button Press Haptic */}
+                  <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
+                    <div className="flex flex-col text-left">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Button Press Feel</span>
+                      <span className="text-[9px] text-slate-400">Vibrate on buttons and chip selection</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onToggleHapticButtonPress}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticButtonPress ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticButtonPress ? "translate-x-5" : "translate-x-1"}`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Order Update Haptic */}
+                  <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
+                    <div className="flex flex-col text-left">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Order Update Feel</span>
+                      <span className="text-[9px] text-slate-400">Vibrate when order status advances</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onToggleHapticOrderUpdate}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticOrderUpdate ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticOrderUpdate ? "translate-x-5" : "translate-x-1"}`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Cart Animation Haptic */}
+                  <div className="flex items-center justify-between py-3 px-6">
+                    <div className="flex flex-col text-left">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Cart Animation Feel</span>
+                      <span className="text-[9px] text-slate-400">Vibrate on adding or reordering items</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onToggleHapticCartAnimation}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticCartAnimation ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticCartAnimation ? "translate-x-5" : "translate-x-1"}`}
+                      />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Order Again toggle */}
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                  <RotateCcw className="w-5 h-5 text-orange-500" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Order Again Section</span>
+                  <p className="text-[10px] text-slate-500">Show popular ordered items on Home screen</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleOrderAgain}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${orderAgainEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${orderAgainEnabled ? "translate-x-6" : "translate-x-1"}`}
                 />
               </button>
             </div>
@@ -15064,7 +15750,7 @@ function RiderDashboardScreen({
 
       <div className="p-4 bg-white dark:bg-slate-950 border-t border-primary/10">
         <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-[0.2em]">
-          LocalEats Rider Fleet v2.4.0
+          LocalEats Rider Fleet v{APP_VERSION.split(" ")[0]}
         </p>
       </div>
     </div>
@@ -18795,6 +19481,7 @@ function OrderHistoryScreen({
   setCart,
   setCurrentScreen,
   triggerHaptic,
+  onScanFlyer,
 }: {
   session: Session | null;
   onBack: () => void;
@@ -18813,6 +19500,7 @@ function OrderHistoryScreen({
   setCart?: Dispatch<SetStateAction<CartItem[]>>;
   setCurrentScreen?: Dispatch<SetStateAction<Screen>>;
   triggerHaptic?: (pattern?: number | number[]) => void;
+  onScanFlyer?: () => void;
 }) {
   const [orders, setOrders] = useState<any[]>(() => {
     return safeLocalStorageGet("cached_orders", []);
@@ -19549,18 +20237,26 @@ function OrderHistoryScreen({
                 My Orders
               </h2>
             )}
-            {!loading && orders.length > 0 ? (
+            <div className="flex items-center gap-2 shrink-0">
+              {!loading && orders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  title="Export order history as PDF"
+                  className="text-slate-700 dark:text-slate-300 flex size-10 items-center justify-center cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
+                >
+                  <FileText className="w-5 h-5" />
+                </button>
+              )}
               <button
                 type="button"
-                onClick={handleExportPDF}
-                title="Export order history as PDF"
-                className="text-slate-700 dark:text-slate-300 flex size-12 shrink-0 items-center justify-end cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
+                onClick={onScanFlyer}
+                title="Scan Flyer QR"
+                className="text-slate-700 dark:text-slate-300 flex size-10 items-center justify-center cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
               >
-                <FileText className="w-5 h-5" />
+                <QrCode className="w-5 h-5 text-orange-500" />
               </button>
-            ) : (
-              <div className="size-12"></div>
-            )}
+            </div>
           </div>
         </header>
 
@@ -19911,72 +20607,120 @@ function OrderHistoryScreen({
                       </span>
                     </div>
 
-                    {/* Progress Indicator (only if active) */}
-                    {group.status !== "completed" && group.status !== "cancelled" && (
-                      <div className="pt-2">
-                        <div className="relative flex justify-between items-center w-full">
-                          <div className="absolute top-1/2 left-0 w-full h-0.5 bg-slate-50 dark:bg-slate-800 -translate-y-1/2 z-0"></div>
-                          <div
-                            className="absolute top-1/2 left-0 h-0.5 bg-primary -translate-y-1/2 z-0 transition-all duration-700 ease-out"
-                            style={{
-                              width:
-                                group.status === "pending"
+                    {/* Progress Indicator (under each order card) */}
+                    <div className="pt-3 pb-1 border-t border-slate-50 dark:border-slate-800/50 mt-1">
+                      <div className="relative flex justify-between items-center w-full px-2">
+                        {/* Background track line */}
+                        <div className="absolute top-[12px] left-4 right-4 h-1 bg-slate-100 dark:bg-slate-800 rounded-full z-0"></div>
+                        
+                        {/* Colored active line */}
+                        <div
+                          className="absolute top-[12px] left-4 h-1 rounded-full z-0 transition-all duration-700 ease-out bg-primary"
+                          style={{
+                            width:
+                              group.status === "cancelled"
+                                ? "0%"
+                                : group.status === "pending" || group.status === "queued_for_sync"
                                   ? "0%"
                                   : group.status === "confirmed"
                                     ? "33%"
                                     : group.status === "ready"
                                       ? "66%"
-                                      : "0%",
-                            }}
-                          ></div>
+                                      : group.status === "completed"
+                                        ? "100%"
+                                        : "0%",
+                          }}
+                        ></div>
 
-                          {[
-                            { id: "pending", icon: Hourglass },
-                            { id: "confirmed", icon: CheckCircle2 },
-                            { id: "ready", icon: Utensils },
-                            { id: "completed", icon: CheckSquare },
-                          ].map((step, idx, arr) => {
-                            const statuses = arr.map((s) => s.id);
-                            const currentIdx = statuses.indexOf(group.status);
-                            const isCompleted = currentIdx >= idx;
-                            const StepIcon = step.icon;
+                        {[
+                          { id: "pending", label: "Pending", icon: Hourglass },
+                          { id: "confirmed", label: "Preparing", icon: Utensils },
+                          { id: "ready", label: "Ready", icon: Bike },
+                          { id: "completed", label: "Delivered", icon: CheckCircle2 },
+                        ].map((step, idx) => {
+                          const statusOrder = ["pending", "queued_for_sync", "confirmed", "ready", "completed"];
+                          let isCompleted = false;
+                          let isActive = false;
 
-                            return (
-                              <div key={idx} className="relative z-10 flex flex-col items-center">
-                                <div
-                                  className={`size-5 rounded-full flex items-center justify-center transition-all duration-300 ${
-                                    isCompleted
-                                      ? "bg-primary text-white shadow-xs"
-                                      : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-300"
-                                  }`}
-                                >
-                                  <StepIcon className="size-2.5" />
-                                </div>
+                          if (group.status !== "cancelled") {
+                            const currentStatusIdx = statusOrder.indexOf(group.status);
+                            
+                            if (step.id === "pending") {
+                              isCompleted = currentStatusIdx >= 0;
+                              isActive = group.status === "pending" || group.status === "queued_for_sync";
+                            } else if (step.id === "confirmed") {
+                              isCompleted = currentStatusIdx >= 2; // confirmed is idx 2
+                              isActive = group.status === "confirmed";
+                            } else if (step.id === "ready") {
+                              isCompleted = currentStatusIdx >= 3; // ready is idx 3
+                              isActive = group.status === "ready";
+                            } else if (step.id === "completed") {
+                              isCompleted = currentStatusIdx >= 4; // completed is idx 4
+                              isActive = group.status === "completed";
+                            }
+                          }
+
+                          const StepIcon = step.icon;
+
+                          return (
+                            <div key={idx} className="relative z-10 flex flex-col items-center flex-1">
+                              {/* Step Bubble */}
+                              <div
+                                className={`size-6 rounded-full flex items-center justify-center transition-all duration-300 ${
+                                  group.status === "cancelled"
+                                    ? "bg-slate-100 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700"
+                                    : isActive
+                                      ? "bg-orange-600 text-white shadow-md scale-110 ring-4 ring-orange-500/20"
+                                      : isCompleted
+                                        ? "bg-orange-500 text-white"
+                                        : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400"
+                                }`}
+                              >
+                                <StepIcon className="size-3" />
                               </div>
-                            );
-                          })}
-                        </div>
+                              {/* Step Label */}
+                              <span
+                                className={`text-[9px] font-black uppercase tracking-tight mt-1.5 transition-colors duration-300 ${
+                                  group.status === "cancelled"
+                                    ? "text-slate-400"
+                                    : isActive
+                                      ? "text-orange-600 dark:text-orange-400 font-extrabold"
+                                      : isCompleted
+                                        ? "text-slate-700 dark:text-slate-300"
+                                        : "text-slate-400 dark:text-slate-500"
+                                }`}
+                              >
+                                {step.label}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
-                    )}
+                      
+                      {group.status === "cancelled" && (
+                        <p className="text-center text-rose-500 text-[10px] font-bold uppercase tracking-wider mt-2 bg-rose-50 dark:bg-rose-950/20 py-1 rounded-lg">
+                          🚫 Order Cancelled
+                        </p>
+                      )}
+                    </div>
 
-                    {/* Control Buttons Footer mapping closely to users criteria */}
-                    {["pending", "confirmed"].includes(group.status) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCancelReason("");
-                          setCustomReasonText("");
-                          setCancellingOrderId(group.id);
-                        }}
-                        className="w-full mt-1 py-2 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 animate-pulse"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        Cancel Order
-                      </button>
-                    )}
-
-                    {["completed", "cancelled"].includes(group.status) && (
-                      <div className="flex gap-2 mt-1 pt-1.5 border-t border-slate-50 dark:border-slate-800/60">
+                    {/* Control Buttons Footer */}
+                    <div className="flex gap-2 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
+                      {/* Left action based on status */}
+                      {["pending", "confirmed"].includes(group.status) ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCancelReason("");
+                            setCustomReasonText("");
+                            setCancellingOrderId(group.id);
+                          }}
+                          className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-xs active:scale-95 border-0"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          Cancel Order
+                        </button>
+                      ) : (
                         <button
                           type="button"
                           onClick={() => {
@@ -19989,17 +20733,18 @@ function OrderHistoryScreen({
                           <HelpCircle className="w-3 h-3" />
                           Get Help
                         </button>
+                      )}
 
-                        <button
-                          type="button"
-                          onClick={() => handleReorderGroup(group)}
-                          className="flex-1 py-2 bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-605 text-white hover:from-orange-600 hover:to-amber-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0"
-                        >
-                          <ShoppingBag className="w-3.5 h-3.5" />
-                          ⚡ Quick Reorder
-                        </button>
-                      </div>
-                    )}
+                      {/* ALWAYS show the Reorder button on EVERY card */}
+                      <button
+                        type="button"
+                        onClick={() => handleReorderGroup(group)}
+                        className="flex-1 py-2 bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-605 text-white hover:from-orange-600 hover:to-amber-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0"
+                      >
+                        <ShoppingBag className="w-3.5 h-3.5" />
+                        Reorder
+                      </button>
+                    </div>
                   </div>
                 );
               })}
