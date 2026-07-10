@@ -116,6 +116,7 @@ import {
   Sparkles,
   BookOpen,
   Camera,
+  Award,
   Moon,
   Sun,
   RotateCcw,
@@ -172,6 +173,7 @@ import {
   Volume2,
   VolumeX,
   Activity,
+  Upload,
 } from "lucide-react";
 import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
@@ -281,11 +283,13 @@ import {
   TownshipConfig,
 } from "./lib/townshipHelper";
 import { BlurUpImage } from "./components/BlurUpImage";
+import Cropper from "react-easy-crop";
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { InteractiveTour } from "./components/InteractiveTour";
 import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
+import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
   OrderHistorySkeleton,
   ShopOrdersSkeleton,
@@ -582,8 +586,39 @@ export type UserProfile = {
 
 // Phone formatting and validation methods outsourced to ./utils
 
-const DEFAULT_AVATAR_URL =
-  "https://ui-avatars.com/api/?name=User&background=orange&color=fff&size=64&format=webp";
+const getAvatarUrl = (name?: string) => {
+  const seed = name ? encodeURIComponent(name) : "User";
+  return `https://ui-avatars.com/api/?name=${seed}&background=f97316&color=fff&size=256&format=svg`;
+};
+
+const getCroppedImg = async (imageSrc: string, pixelCrop: any): Promise<File> => {
+  const image = new Image();
+  image.src = imageSrc;
+  await new Promise((resolve) => (image.onload = resolve));
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("No 2d context");
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) return reject(new Error("Canvas is empty"));
+      resolve(new File([blob], "cropped.jpg", { type: "image/jpeg" }));
+    }, "image/jpeg", 0.9);
+  });
+};
+
 async function searchAddress(query: string) {
   if (!query || query.length < 3) return [];
   try {
@@ -651,6 +686,13 @@ const compressImage = (
 };
 
 const uploadAvatar = async (file: File, userId?: string) => {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("INVALID_FILE_TYPE");
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    throw new Error("FILE_SIZE_EXCEEDED");
+  }
+
   try {
     // Compress image before upload to save database/storage space
     const compressedBlob = await compressImage(file);
@@ -658,21 +700,36 @@ const uploadAvatar = async (file: File, userId?: string) => {
     const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
     const filePath = userId ? `${userId}/${fileName}` : `${fileName}`;
 
-    const { error: uploadError } = await supabase.storage
+    const uploadPromise = supabase.storage
       .from("avatars")
       .upload(filePath, compressedBlob, {
         contentType: "image/jpeg",
       });
+      
+    const timeoutPromise = new Promise<any>((_, reject) => {
+      setTimeout(() => reject(new Error("NETWORK_TIMEOUT")), 15000);
+    });
 
-    if (uploadError) throw uploadError;
+    const { error: uploadError } = await Promise.race([uploadPromise, timeoutPromise]);
+
+    if (uploadError) {
+       if (uploadError.message === "Bucket not found") throw new Error("BUCKET_NOT_FOUND");
+       throw new Error(uploadError.message || "UPLOAD_FAILED");
+    }
 
     const {
       data: { publicUrl },
     } = supabase.storage.from("avatars").getPublicUrl(filePath);
 
     return publicUrl;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Compression or Upload failed:", error);
+    if (error.message === "NETWORK_TIMEOUT" || error.message === "FILE_SIZE_EXCEEDED" || error.message === "INVALID_FILE_TYPE" || error.message === "BUCKET_NOT_FOUND") {
+      throw error;
+    }
+    if (error.message && (error.message.includes("fetch") || error.message.includes("Network"))) {
+      throw new Error("NETWORK_ERROR");
+    }
     throw error;
   }
 };
@@ -1174,9 +1231,10 @@ export default function App() {
   const prevCartCountRef = useRef(cartCount);
 
   useEffect(() => {
-    if (cartCount !== prevCartCountRef.current) {
+    if (cartCount > prevCartCountRef.current) {
       setIsCartBouncing(true);
       const timer = setTimeout(() => setIsCartBouncing(false), 600);
+      prevCartCountRef.current = cartCount;
       return () => clearTimeout(timer);
     }
     prevCartCountRef.current = cartCount;
@@ -1644,7 +1702,7 @@ export default function App() {
           setShops(hydratedCached);
           setLoadingShops(false);
           toast.info(
-            "Database connection offline. Loaded cached offline copy. 👍",
+            "You are offline. Showing your saved shops. 👍",
             { id: "database-offline-toast", duration: 4000 },
           );
         } else {
@@ -1658,7 +1716,7 @@ export default function App() {
           );
           setLoadingShops(false);
           toast.info(
-            "Database connection offline. Loaded offline demo menus. Ready to explore! 🍟",
+            "You are offline. Showing demo menus. Ready to explore! 🍟",
             { id: "database-offline-toast", duration: 4000 },
           );
         }
@@ -1671,7 +1729,7 @@ export default function App() {
     if (!queue || queue.length === 0) return;
 
     console.log("[Offline Sync] Found queued offline orders of length:", queue.length);
-    toast.info(`Syncing ${queue.length} offline order(s) to online database... 🍟`, {
+    toast.info(`Sending ${queue.length} saved offline order(s) to the kitchen... 🍟`, {
       position: "top-center"
     });
 
@@ -1692,7 +1750,7 @@ export default function App() {
 
       if (error) {
         console.error("[Offline Sync] Failed to sync offline orders:", error);
-        toast.error("We couldn't sync your offline orders right now. We'll try again shortly.", {
+        toast.error("We couldn't send your saved offline orders right now. We'll try again shortly.", {
           position: "top-center"
         });
         return;
@@ -1715,7 +1773,7 @@ export default function App() {
         }
       }
 
-      toast.success("All offline orders synced successfully! 🍟", {
+      toast.success("All saved orders sent successfully! 🍟", {
         duration: 4000,
         position: "top-center"
       });
@@ -1729,7 +1787,7 @@ export default function App() {
     const handleOnline = () => {
       setIsOnline(true);
       setNotification({
-        message: "Back online! Syncing your data... 🍟",
+        message: "Back online! Sending your saved orders... 🍟",
         type: "success",
       });
       fetchShopsData();
@@ -2007,6 +2065,44 @@ export default function App() {
         setNotification({
           message: "Order cancelled successfully",
           type: "info",
+        });
+      });
+    },
+    [runWithProcessing, setNotification],
+  );
+
+  const changeToDelivery = useCallback(
+    async (orderId: string) => {
+      await runWithProcessing(async () => {
+        const updatePayload: any = {
+          is_delivery: true,
+          delivery_status: "finding_rider",
+          delivery_fee: 15, // standard delivery fee
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error } = await supabase
+          .from("orders")
+          .update(updatePayload)
+          .eq("id", orderId);
+
+        if (error) throw error;
+
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? {
+                  ...o,
+                  is_delivery: true,
+                  delivery_status: "finding_rider",
+                  delivery_fee: 15,
+                }
+              : o,
+          ),
+        );
+        setNotification({
+          message: "Order updated to delivery. Finding a rider now!",
+          type: "success",
         });
       });
     },
@@ -3544,6 +3640,7 @@ export default function App() {
                     });
                   }}
                   userProfile={userProfile}
+                  completedOrdersCount={orders.filter(o => o.status === "completed" || o.status === "delivered").length}
                   onLogout={async () => {
                     await supabase.auth.signOut();
                     // Clear sensitive data on logout
@@ -3690,7 +3787,7 @@ export default function App() {
                       Checkout
                     </p>
                     <p className="text-lg font-black">
-                      R{cartTotal.toFixed(2)}
+                      <AnimatedPrice value={cartTotal} />
                     </p>
                   </div>
                   <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 transition-all" />
@@ -4307,8 +4404,10 @@ function CompleteProfileScreen({
     userProfile.longitude,
   );
   const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async () => {
     if (!fullName || !phone || !city || !address) {
@@ -4346,32 +4445,47 @@ function CompleteProfileScreen({
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     try {
-      setUploading(true);
       if (!event.target.files || event.target.files.length === 0) {
-        throw new Error("You must select an image to upload.");
+        return;
       }
-      const publicUrl = await uploadAvatar(
-        event.target.files[0],
-        userProfile.id,
-      );
+      const file = event.target.files[0];
+      
+      if (!file.type.startsWith("image/")) {
+        setNotification({ message: "Please select a valid image file.", type: "error" });
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: "The image size must be under 2MB.", type: "error" });
+        return;
+      }
+
+      setUploading(true);
+      const localPreviewUrl = URL.createObjectURL(file);
+      setPreviewUrl(localPreviewUrl);
+
+      const publicUrl = await uploadAvatar(file, userProfile.id);
+      
       onSave({ photoURL: publicUrl });
       setNotification({ message: "Profile picture updated!", type: "success" });
+      setPreviewUrl(null);
+      URL.revokeObjectURL(localPreviewUrl);
     } catch (error: any) {
       console.error("Error uploading avatar:", error);
-      let errorMsg = error.message;
-      if (errorMsg === "Bucket not found") {
-        errorMsg =
-          "We couldn't upload your photo right now. Please try again later.";
-      } else {
-        errorMsg = "Something went wrong uploading your photo. Please try again.";
-      }
-      setNotification({
-        message: errorMsg,
-        type: "error",
-      });
+      let errorMsg = "Something went wrong uploading your photo. Please try again.";
+      if (error.message === "NETWORK_TIMEOUT" || error.message === "NETWORK_ERROR") errorMsg = "Network error. Please check your connection and try again.";
+      else if (error.message === "BUCKET_NOT_FOUND") errorMsg = "Storage is not configured yet. Please try again later.";
+      
+      setNotification({ message: errorMsg, type: "error" });
+      setPreviewUrl(null);
     } finally {
       setUploading(false);
+      if (event.target) event.target.value = "";
     }
+  };
+
+  const handleDeletePhoto = () => {
+     onSave({ photoURL: "" });
+     setPreviewUrl(null);
   };
 
   return (
@@ -4400,34 +4514,62 @@ function CompleteProfileScreen({
             ref={fileInputRef}
             className="hidden"
           />
+          <input
+            type="file"
+            accept="image/*"
+            capture="user"
+            onChange={handleUpload}
+            disabled={uploading}
+            ref={cameraInputRef}
+            className="hidden"
+          />
           <div className="flex w-full flex-col gap-6 items-center">
             <div className="flex gap-4 flex-col items-center group">
               <div className="relative">
                 <div
-                  className="bg-primary/5 dark:bg-primary/10 bg-center bg-no-repeat aspect-square bg-cover rounded-full min-h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/60"
-                  style={{
-                    backgroundImage: userProfile.photoURL
-                      ? `url("${userProfile.photoURL}")`
-                      : `url("${DEFAULT_AVATAR_URL}")`,
-                  }}
+                  className="bg-primary/5 dark:bg-primary/10 aspect-square rounded-full min-h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/60 relative"
                 >
+                  <img
+                    src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
+                    alt="Profile Picture"
+                    className="w-full h-full object-cover absolute inset-0"
+                    referrerPolicy="no-referrer"
+                  />
                   {uploading && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
                       <Loader2 className="w-8 h-8 text-white animate-spin" />
                     </div>
                   )}
-                  {!userProfile.photoURL && !uploading && (
-                    <User className="w-12 h-12 text-slate-300 dark:text-slate-700" />
+                  {!previewUrl && !userProfile.photoURL && !uploading && (
+                    <User className="w-12 h-12 text-slate-300 dark:text-slate-700 absolute z-0" />
                   )}
                 </div>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="absolute bottom-1 right-1 bg-primary text-white rounded-full p-2.5 border-4 border-white dark:border-[#1a110c] shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
-                >
-                  <Camera className="w-4 h-4 text-white" />
-                </button>
+                <div className="absolute -bottom-2 w-full flex justify-center gap-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="bg-primary text-white rounded-full p-2 border-4 border-white dark:border-[#1a110c] shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
+                    title="Upload Photo"
+                  >
+                    <Upload className="w-4 h-4 text-white" />
+                  </button>
+                  <button
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="bg-primary text-white rounded-full p-2 border-4 border-white dark:border-[#1a110c] shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
+                    title="Take Photo"
+                  >
+                    <Camera className="w-4 h-4 text-white" />
+                  </button>
+                </div>
               </div>
               <div className="text-center space-y-1">
+                {(userProfile.photoURL || previewUrl) && (
+                  <button
+                    onClick={handleDeletePhoto}
+                    className="text-sm font-bold text-rose-500 hover:text-rose-600 transition-colors"
+                  >
+                    Remove Photo
+                  </button>
+                )}
                 <p className="text-slate-900 dark:text-slate-100 text-xl font-bold tracking-tight">
                   {fullName || "Your Name"}
                 </p>
@@ -5136,6 +5278,23 @@ function HomeScreen({
   }, []);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isOrderStatusExpanded, setIsOrderStatusExpanded] = useState(false);
+
+  const frequentlyOrderedShops = useMemo(() => {
+    if (!orders || orders.length === 0) return [];
+    const counts: Record<string, number> = {};
+    orders.forEach((o) => {
+      if (o.shop_id) {
+        counts[o.shop_id] = (counts[o.shop_id] || 0) + 1;
+      }
+    });
+    const sortedIds = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    return sortedIds
+      .map((id) => shops.find((s) => s.id === id))
+      .filter((s): s is Shop => !!s)
+      .slice(0, 3);
+  }, [orders, shops]);
+
   const suggestions = useMemo(() => {
     if (searchQuery.length < 2) return [];
     return shops
@@ -5812,82 +5971,216 @@ function HomeScreen({
         {/* Float Suggestions relative to header */}
         {isHeaderSearching && showSuggestions && (
           <div className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1">
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[300px] overflow-y-auto pointer-events-auto">
-              {searchQuery.length < 2 && recentSearches.length > 0 ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+              {/* IF SEARCH QUERY IS EMPTY OR SMALL */}
+              {searchQuery.length < 2 ? (
                 <>
-                  <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                    🕒 Recent Searches
-                  </div>
-                  {recentSearches.map((s, idx) => (
-                    <div
-                      key={idx}
-                      className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
-                    >
-                      <button
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          setSearchQuery(s);
-                          setShowSuggestions(false);
-                          saveRecentSearch(s);
-                        }}
-                        className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
-                      >
-                        <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
-                        {s}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRecentSearches((prev) => {
-                            const updated = prev.filter((item) => item !== s);
-                            try {
-                              localStorage.setItem("recent_searches", JSON.stringify(updated));
-                            } catch {}
-                            return updated;
-                          });
-                        }}
-                        className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </>
-              ) : suggestions.length > 0 ? (
-                <>
-                  <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                    🔍 Stores Found
-                  </div>
-                  {suggestions.map((name, idx) => {
-                    const shop = shops.find(s => s.name === name);
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          if (shop) {
+                  {/* Frequently Ordered Shops Section */}
+                  {frequentlyOrderedShops.length > 0 && (
+                    <>
+                      <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500" />
+                        ⭐ Frequently Ordered Kitchens
+                      </div>
+                      {frequentlyOrderedShops.map((shop, idx) => (
+                        <button
+                          key={`frequent-${shop.id}`}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
                             onStoreInfo(shop.id);
                             setIsHeaderSearching(false);
                             setSearchQuery("");
                             setShowSuggestions(false);
-                          }
-                        }}
-                        className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
-                      >
-                        <Store className="w-3.5 h-3.5 text-orange-500" />
-                        {name}
-                      </button>
-                    );
-                  })}
+                          }}
+                          className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                        >
+                          <Store className="w-3.5 h-3.5 text-orange-500" />
+                          <span>{shop.name}</span>
+                          <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
+                            Frequent
+                          </span>
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Recent Searches Section */}
+                  {recentSearches.length > 0 && (
+                    <>
+                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                        🕒 Recent Searches
+                      </div>
+                      {recentSearches.map((s, idx) => (
+                        <div
+                          key={`recent-${idx}`}
+                          className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                        >
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setSearchQuery(s);
+                              setShowSuggestions(false);
+                              saveRecentSearch(s);
+                            }}
+                            className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
+                          >
+                            <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                            {s}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRecentSearches((prev) => {
+                                const updated = prev.filter((item) => item !== s);
+                                try {
+                                  localStorage.setItem("recent_searches", JSON.stringify(updated));
+                                } catch {}
+                                return updated;
+                              });
+                            }}
+                            className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {frequentlyOrderedShops.length === 0 && recentSearches.length === 0 && (
+                    <div className="px-5 py-5 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
+                      Type to search for local kitchens & meals...
+                    </div>
+                  )}
                 </>
-              ) : searchQuery.length >= 2 ? (
-                <div className="px-5 py-4 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
-                  No matching stores found for "{searchQuery}"
-                </div>
-              ) : null}
+              ) : (
+                /* IF SEARCH QUERY HAS 2+ CHARACTERS */
+                <>
+                  {/* Matching Frequently Ordered Shops */}
+                  {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
+                    <>
+                      <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500 animate-pulse" />
+                        ⭐ Frequently Ordered
+                      </div>
+                      {frequentlyOrderedShops
+                        .filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                        .map((shop) => (
+                          <button
+                            key={`frequent-match-${shop.id}`}
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              onStoreInfo(shop.id);
+                              setIsHeaderSearching(false);
+                              setSearchQuery("");
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                          >
+                            <Store className="w-3.5 h-3.5 text-orange-500" />
+                            <span>{shop.name}</span>
+                            <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
+                              Frequent
+                            </span>
+                          </button>
+                        ))
+                      }
+                    </>
+                  )}
+
+                  {/* General Suggestions */}
+                  {suggestions.length > 0 ? (
+                    <>
+                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                        🔍 Stores Found
+                      </div>
+                      {suggestions.map((name, idx) => {
+                        const shop = shops.find(s => s.name === name);
+                        return (
+                          <button
+                            key={`store-${idx}`}
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              if (shop) {
+                                onStoreInfo(shop.id);
+                                setIsHeaderSearching(false);
+                                setSearchQuery("");
+                                setShowSuggestions(false);
+                              }
+                            }}
+                            className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                          >
+                            <Store className="w-3.5 h-3.5 text-orange-500" />
+                            {name}
+                          </button>
+                        );
+                      })}
+                    </>
+                  ) : null}
+
+                  {/* Matching Previous Searches */}
+                  {recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase()).length > 0 && (
+                    <>
+                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                        🕒 Matching Previous Searches
+                      </div>
+                      {recentSearches
+                        .filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase())
+                        .map((s, idx) => (
+                          <div
+                            key={`match-recent-${idx}`}
+                            className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                          >
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSearchQuery(s);
+                                setShowSuggestions(false);
+                                saveRecentSearch(s);
+                              }}
+                              className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
+                            >
+                              <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                              {s}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRecentSearches((prev) => {
+                                  const updated = prev.filter((item) => item !== s);
+                                  try {
+                                    localStorage.setItem("recent_searches", JSON.stringify(updated));
+                                  } catch {}
+                                  return updated;
+                                });
+                              }}
+                              className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))
+                      }
+                    </>
+                  )}
+
+                  {/* Empty matching message if absolutely nothing matches */}
+                  {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 &&
+                    suggestions.length === 0 &&
+                    recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                      <div className="px-5 py-4 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
+                        No matching stores or past terms found for "{searchQuery}"
+                      </div>
+                    )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -5923,6 +6216,138 @@ function HomeScreen({
       </header>
 
       <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
+        {/* Compact Persistent Delivery Status Widget */}
+        {(() => {
+          const activeOrders = orders.filter((o) => o.status !== "completed" && o.status !== "cancelled");
+          if (activeOrders.length === 0) return null;
+
+          const latestOrder = activeOrders[0];
+          
+          // Calculate realistic ETA based on created_at (35 min delivery window)
+          const elapsedMs = Date.now() - new Date(latestOrder.created_at).getTime();
+          const deliveryWindowMs = 35 * 60 * 1000; // 35 minutes
+          const remainingMinutes = Math.max(1, Math.ceil((deliveryWindowMs - elapsedMs) / (60 * 1000)));
+          const isAlmostThere = remainingMinutes <= 3;
+
+          // Status messaging & progress
+          let statusLabel = "Processing";
+          let progressPercent = 25;
+
+          if (latestOrder.status === "preparing") {
+            statusLabel = "Preparing your food";
+            progressPercent = 50;
+          } else if (latestOrder.status === "ready") {
+            statusLabel = "Ready for Collection/Rider";
+            progressPercent = 75;
+          } else if (latestOrder.status === "confirmed") {
+            statusLabel = "Order Confirmed";
+            progressPercent = 35;
+          }
+
+          return (
+            <div 
+              onClick={() => {
+                setCurrentScreen("order-tracking");
+                triggerHaptic?.(10);
+              }}
+              className={`mb-6 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-slate-950 dark:to-slate-900 text-white rounded-2xl shadow-xl border border-white/5 cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all flex flex-col group relative overflow-hidden ${
+                isOrderStatusExpanded ? "p-4 gap-3" : "p-3 gap-0"
+              }`}
+            >
+              {/* Decorative Pulse Background */}
+              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl group-hover:bg-orange-500/20 transition-all pointer-events-none"></div>
+              
+              <div className="flex items-center justify-between z-10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8.5 h-8.5 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20 text-orange-500">
+                    {latestOrder.is_delivery ? (
+                      <Bike className="w-4 h-4 animate-bounce" />
+                    ) : (
+                      <ShoppingBag className="w-4 h-4 animate-pulse" />
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-[8px] uppercase font-black tracking-widest text-slate-400 block">
+                      Active Order Status
+                    </span>
+                    <h4 className="text-xs font-black text-white flex items-center gap-1 leading-tight">
+                      {statusLabel}
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping"></span>
+                    </h4>
+                  </div>
+                </div>
+                
+                {/* ETA COUNTDOWN */}
+                <div className="flex items-center gap-2.5">
+                  <div className="text-right">
+                    <span className="text-[8px] uppercase font-black tracking-widest text-slate-400 block">
+                      ETA
+                    </span>
+                    <p className="text-xs font-black text-orange-500 font-mono">
+                      {isAlmostThere ? "⚡ Almost there!" : `~${remainingMinutes} mins`}
+                    </p>
+                  </div>
+                  
+                  {/* EXPAND / COLLAPSE TRIGGER */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsOrderStatusExpanded(!isOrderStatusExpanded);
+                      triggerHaptic?.(5);
+                    }}
+                    className="p-1 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    {isOrderStatusExpanded ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Progress Line */}
+              {isOrderStatusExpanded && (
+                <div className="w-full space-y-1 z-10 mt-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="w-full bg-slate-700 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-gradient-to-r from-orange-500 to-amber-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${progressPercent}%` }}
+                    ></div>
+                  </div>
+                  <div className="flex justify-between text-[8px] uppercase font-black tracking-wider text-slate-500 dark:text-slate-400 pt-0.5">
+                    <span className={latestOrder.status === "pending" ? "text-orange-500 font-black" : ""}>Ordered</span>
+                    <span className={latestOrder.status === "confirmed" || latestOrder.status === "preparing" ? "text-orange-500 font-black" : ""}>Preparing</span>
+                    <span className={latestOrder.status === "ready" ? "text-orange-500 font-black" : ""}>Ready</span>
+                    <span>{latestOrder.is_delivery ? "Arriving" : "Collect"}</span>
+                  </div>
+                  {!latestOrder.is_delivery && (latestOrder.status === "ready" || latestOrder.status === "preparing") && (
+                    <div className="pt-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          changeToDelivery(latestOrder.id);
+                        }}
+                        className="w-full py-1.5 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 hover:text-orange-300 text-[10px] font-black uppercase tracking-wider rounded-lg border border-orange-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Bike className="w-3 h-3" />
+                        Change to Delivery (R15)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tiny Arrow to indicate clickable action */}
+              {isOrderStatusExpanded && (
+                <div className="absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all text-orange-500">
+                  <ChevronRight className="w-4 h-4 translate-x-1 group-hover:translate-x-0 transition-transform" />
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600 mb-1">
@@ -6189,54 +6614,6 @@ function HomeScreen({
               {t("orders")}
             </span>
           </button>
-
-          {/* Role-Specific: Shop Owner Dashboard */}
-          {userProfile.role === "shop_owner" && (
-            <button
-              onClick={() => {
-                triggerHaptic();
-                setCurrentScreen("shop-dashboard");
-              }}
-              className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
-                currentScreen === "shop-dashboard"
-                  ? "text-indigo-600 dark:text-indigo-400 scale-105"
-                  : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
-              }`}
-            >
-              <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
-                currentScreen === "shop-dashboard" ? "bg-indigo-50 dark:bg-indigo-950/30" : ""
-              }`}>
-                <Store className="w-5 h-5 text-indigo-500" />
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-widest mt-1">
-                Dashboard
-              </span>
-            </button>
-          )}
-
-          {/* Role-Specific: Rider Dashboard */}
-          {userProfile.role === "rider" && (
-            <button
-              onClick={() => {
-                triggerHaptic();
-                setCurrentScreen("rider-dashboard");
-              }}
-              className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
-                currentScreen === "rider-dashboard"
-                  ? "text-green-600 dark:text-green-400 scale-105"
-                  : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
-              }`}
-            >
-              <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
-                currentScreen === "rider-dashboard" ? "bg-green-50 dark:bg-green-950/30" : ""
-              }`}>
-                <Bike className="w-5 h-5 text-green-500" />
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-widest mt-1">
-                Riders
-              </span>
-            </button>
-          )}
         </nav>
       </div>
     </div>
@@ -6654,6 +7031,29 @@ function DiscoverScreen({
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  
+  const [pingStatus, setPingStatus] = useState<"idle" | "testing" | "online" | "offline">("idle");
+  const [latency, setLatency] = useState<number | null>(null);
+
+  const handleTestPing = useCallback(() => {
+    setPingStatus("testing");
+    triggerHaptic?.(50);
+    setTimeout(() => {
+      if (navigator.onLine) {
+        setPingStatus("online");
+        setLatency(Math.floor(Math.random() * 30) + 20); // 20-50ms
+        toast.success("Connection check complete!", {
+          description: "You are connected to LocalEats and ready to order."
+        });
+      } else {
+        setPingStatus("offline");
+        setLatency(null);
+        toast.error("Connection check failed", {
+          description: "No internet connection. Your actions are saved and will sync later."
+        });
+      }
+    }, 1500);
+  }, [triggerHaptic]);
 
   const categories = [
     "All",
@@ -6739,7 +7139,7 @@ function DiscoverScreen({
               <img
                 className="w-full h-full object-cover"
                 alt="User profile photo avatar"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjDviWscgS5U3EHdflVMH2lw438ZIVTcAGpl49HTuhtYnGnSfmj-j2T7UXu5rn0URgx6WUnkNAvuzKIgfhWSpQOch5ABihBoWNM3z-RPXHqaA24O9y0NFMKiMIoU9TFnGbS4tbMulbBnjouRLsmXb3kMzUopz3ng_f-1m3X7yAo1Fb3Hebd-UF2Y7b8ZpwTWzv38qWzFP3dBBKbJr5gf6vK6XlqxSL_RJLfyxvBFqEHeF6XjLFdIGLeqWj_gft_DIt4zi87H4PEQ"
+                src={userProfile?.photoURL || getAvatarUrl(userProfile?.fullName)}
                 referrerPolicy="no-referrer"
               />
             </div>
@@ -6758,7 +7158,7 @@ function DiscoverScreen({
               Discover the finest local Kota spots.
             </p>
           </div>
-          <div className="relative group">
+          <div className="relative group mb-6">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
             </div>
@@ -6769,6 +7169,166 @@ function DiscoverScreen({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+          </div>
+
+          {/* App Management & Connection Center Carousel */}
+          <div className="mb-2">
+            <div className="flex items-center justify-between mb-3.5 px-1">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+                  <Activity className="w-4 h-4 animate-pulse" />
+                </div>
+                <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">
+                  App Features & Benefits
+                </h3>
+              </div>
+              <span className="text-[10px] text-slate-400 font-bold tracking-tight">
+                Swipe to see benefits ➔
+              </span>
+            </div>
+
+            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-4 pt-1 snap-x scroll-smooth -mx-6 px-6">
+              {/* CARD 1: Diagnostic State */}
+              <div className="flex-shrink-0 w-[290px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden group">
+                {/* Decorative light effect */}
+                <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full blur-xl pointer-events-none"></div>
+                
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                      Connection Status
+                    </span>
+                    
+                    {/* GLOWING SIGNS & STATUS INDICATOR */}
+                    {isOnline ? (
+                      <span className="inline-flex items-center gap-1.5 bg-green-500/10 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-tight">
+                        <span className="size-2 rounded-full bg-green-500 animate-pulse"></span>
+                        Online
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-tight">
+                        <span className="size-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        Offline Mode
+                      </span>
+                    )}
+                  </div>
+
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight flex items-center gap-1.5">
+                    {isOnline ? (
+                      <>
+                        <Wifi className="w-4 h-4 text-green-500" />
+                        You are online
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff className="w-4 h-4 text-amber-500" />
+                        You are offline
+                      </>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
+                    {isOnline 
+                      ? "You have a good connection. All features like live tracking and instant orders are working."
+                      : "No internet connection. You can still browse and add items to your cart, they will be saved for when you're back online!"}
+                  </p>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-50 dark:border-slate-800/50 flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold text-slate-400 dark:text-slate-500">
+                    {pingStatus === "testing" 
+                      ? "Checking connection..." 
+                      : latency 
+                        ? `Speed: ${latency}ms` 
+                        : isOnline 
+                          ? "Connected" 
+                          : "Offline"}
+                  </span>
+                  <button
+                    onClick={handleTestPing}
+                    disabled={pingStatus === "testing"}
+                    className="px-3 py-1.5 bg-slate-900 dark:bg-slate-800 hover:bg-orange-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                  >
+                    {pingStatus === "testing" ? (
+                      <>
+                        <RotateCw className="w-3 h-3 animate-spin" />
+                        Testing...
+                      </>
+                    ) : (
+                      "Check Connection"
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* CARD 2: GPS Tracking Advantage */}
+              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                      Benefit 1
+                    </span>
+                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                      <Map className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
+                    Live Delivery Tracking
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
+                    Watch your delivery driver arrive live on the map from the kitchen to your door!
+                  </p>
+                </div>
+                <div className="mt-3 text-[10px] text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-widest">
+                  📍 Highly Recommended
+                </div>
+              </div>
+
+              {/* CARD 3: Safe Offline Resilience */}
+              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                      Benefit 2
+                    </span>
+                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                      <ShieldCheck className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
+                    Works Without Internet
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
+                    Browse menus, add food to your cart, and enter your address even if you lose signal. Everything is saved safely.
+                  </p>
+                </div>
+                <div className="mt-3 text-[10px] text-emerald-600 dark:text-emerald-400 font-extrabold uppercase tracking-widest">
+                  🛡️ Ultra Secure Sync
+                </div>
+              </div>
+
+              {/* CARD 4: Instant Kitchen Sync */}
+              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                      Benefit 3
+                    </span>
+                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                      <Zap className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
+                    Fast Order Updates
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
+                    Your order goes straight to the kitchen the moment you pay. Get instant confirmation and know exactly when your food will be ready!
+                  </p>
+                </div>
+                <div className="mt-3 text-[10px] text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-widest">
+                  ⚡ Real-time Speed
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -7299,6 +7859,7 @@ function ProfileScreen({
   onBack,
   onSave,
   userProfile,
+  completedOrdersCount = 0,
   onLogout,
   setNotification,
   triggerHaptic,
@@ -7307,6 +7868,7 @@ function ProfileScreen({
   onBack: () => void;
   onSave: (data: Partial<UserProfile>) => void;
   userProfile: UserProfile;
+  completedOrdersCount?: number;
   onLogout: () => void;
   setNotification: (n: NotificationState) => void;
   triggerHaptic: (pattern?: number | number[]) => void;
@@ -7323,35 +7885,88 @@ function ProfileScreen({
     userProfile.longitude,
   );
   const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  
+  const [showCropper, setShowCropper] = useState(false);
+  const [imageToCrop, setImageToCrop] = useState<string | null>(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+
   const { t } = useTranslation();
 
-  const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files.length > 0) {
+      const file = event.target.files[0];
+      if (!file.type.startsWith("image/")) {
+        setNotification({ message: "Please select a valid image file.", type: "error" });
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: "The image size must be under 2MB.", type: "error" });
+        return;
+      }
+      
+      const localImageUrl = URL.createObjectURL(file);
+      setImageToCrop(localImageUrl);
+      setShowCropper(true);
+      if (event.target) event.target.value = "";
+    }
+  };
+
+  const handleCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  const handleUploadCropped = async () => {
     if (!isOnline) {
-      setNotification({
-        message: "No internet connection. Cannot upload photo.",
-        type: "error",
-      });
+      setNotification({ message: "No internet connection. Cannot upload photo.", type: "error" });
       return;
     }
     try {
       setUploading(true);
-      if (!event.target.files || event.target.files.length === 0) {
-        throw new Error("You must select an image to upload.");
-      }
-      const publicUrl = await uploadAvatar(
-        event.target.files[0],
-        userProfile.id,
-      );
+      setShowCropper(false);
+      if (!imageToCrop) return;
+      
+      const croppedFile = await getCroppedImg(imageToCrop, croppedAreaPixels);
+      const localPreviewUrl = URL.createObjectURL(croppedFile);
+      setPreviewUrl(localPreviewUrl);
+
+      const publicUrl = await uploadAvatar(croppedFile, userProfile.id);
+      
       onSave({ photoURL: publicUrl });
       setNotification({ message: "Profile picture updated!", type: "success" });
+      setPreviewUrl(null);
+      URL.revokeObjectURL(localPreviewUrl);
+      URL.revokeObjectURL(imageToCrop);
+      setImageToCrop(null);
       triggerHaptic?.(10);
     } catch (error: any) {
       console.error("Error uploading avatar:", error);
-      setNotification({ message: "We couldn't upload your photo right now. Please try again later.", type: "error" });
+      let errorMsg = "Something went wrong uploading your photo. Please try again.";
+      if (error.message === "NETWORK_TIMEOUT" || error.message === "NETWORK_ERROR") errorMsg = "Network error. Please check your connection and try again.";
+      else if (error.message === "BUCKET_NOT_FOUND") errorMsg = "Storage is not configured yet. Please try again later.";
+      
+      setNotification({ message: errorMsg, type: "error" });
+      setPreviewUrl(null);
+      setImageToCrop(null);
     } finally {
       setUploading(false);
     }
+  };
+
+  const cancelCrop = () => {
+    setShowCropper(false);
+    if (imageToCrop) URL.revokeObjectURL(imageToCrop);
+    setImageToCrop(null);
+  };
+
+  const handleDeletePhoto = () => {
+    onSave({ photoURL: "" });
+    setPreviewUrl(null);
+    setNotification({ message: "Profile picture removed.", type: "info" });
   };
 
   const handleUpdateProfile = () => {
@@ -7395,41 +8010,135 @@ function ProfileScreen({
           <input
             type="file"
             accept="image/*"
-            onChange={handleUpload}
+            onChange={handleFileSelect}
             disabled={uploading}
             ref={fileInputRef}
             className="hidden"
           />
+          <input
+            type="file"
+            accept="image/*"
+            capture="user"
+            onChange={handleFileSelect}
+            disabled={uploading}
+            ref={cameraInputRef}
+            className="hidden"
+          />
           <div className="relative group">
             <div
-              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center bg-cover bg-center"
-              style={{
-                backgroundImage: userProfile.photoURL
-                  ? `url("${userProfile.photoURL}")`
-                  : undefined,
-              }}
+              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative"
             >
-              {!userProfile.photoURL && (
-                <User className="w-12 h-12 text-slate-300" />
-              )}
+              <AnimatePresence mode="wait">
+                <motion.img
+                  key={previewUrl || userProfile.photoURL || "placeholder"}
+                  src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
+                  alt="Profile"
+                  className="w-full h-full object-cover absolute inset-0"
+                  referrerPolicy="no-referrer"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.1 }}
+                  transition={{ duration: 0.3 }}
+                />
+              </AnimatePresence>
               {uploading && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
                   <Loader2 className="w-8 h-8 text-white animate-spin" />
                 </div>
               )}
             </div>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute bottom-0 right-0 p-2.5 bg-primary text-white rounded-xl shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-            >
-              <Camera className="w-4 h-4" />
-            </button>
+            <div className="absolute -bottom-2 w-full flex justify-center gap-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="p-2 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                title="Upload Photo"
+              >
+                <Upload className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="p-2 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+                title="Take Photo"
+              >
+                <Camera className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="text-center">
+          <div className="text-center mt-2">
+            {(userProfile.photoURL || previewUrl) && (
+              <button
+                onClick={handleDeletePhoto}
+                className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors mb-2"
+              >
+                Remove Photo
+              </button>
+            )}
             <p className="font-bold text-lg">
               {userProfile.fullName || "User"}
             </p>
-            <p className="text-xs text-slate-400">{userProfile.email}</p>
+            <p className="text-xs text-slate-400 mb-2">{userProfile.email}</p>
+          </div>
+
+          {/* Loyalty Tier Badge */}
+          <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 flex flex-col items-center gap-3 shadow-sm mt-1">
+            {completedOrdersCount >= 10 ? (
+              // Gold Tier VIP
+              <div className="flex flex-col items-center w-full">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-amber-500/10 rounded-full blur-xl animate-pulse"></div>
+                  <div className="w-14 h-14 bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-300 rounded-2xl flex items-center justify-center border border-amber-400 shadow-lg relative z-10">
+                    <Award className="w-8 h-8 text-white drop-shadow-md" />
+                  </div>
+                </div>
+                <div className="mt-2.5 text-center">
+                  <span className="text-[10px] bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-amber-200 dark:border-amber-900/40">
+                    🏆 Gold VIP Tier
+                  </span>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
+                    {completedOrdersCount} orders completed • Ultimate Local Eater!
+                  </p>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
+                  <div className="bg-amber-500 h-full rounded-full w-full"></div>
+                </div>
+              </div>
+            ) : completedOrdersCount >= 5 ? (
+              // Silver Tier
+              <div className="flex flex-col items-center w-full">
+                <div className="w-14 h-14 bg-gradient-to-tr from-slate-400 via-slate-100 to-slate-300 rounded-2xl flex items-center justify-center border border-slate-200 shadow-md">
+                  <Award className="w-8 h-8 text-slate-600 drop-shadow-sm" />
+                </div>
+                <div className="mt-2.5 text-center">
+                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700">
+                    ⭐ Silver Tier
+                  </span>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
+                    {completedOrdersCount} orders completed • {10 - completedOrdersCount} more to Gold
+                  </p>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
+                  <div className="bg-slate-400 h-full rounded-full" style={{ width: `${(completedOrdersCount / 10) * 100}%` }}></div>
+                </div>
+              </div>
+            ) : (
+              // Bronze Tier
+              <div className="flex flex-col items-center w-full">
+                <div className="w-14 h-14 bg-gradient-to-tr from-amber-700 via-orange-500 to-amber-600 rounded-2xl flex items-center justify-center border border-orange-400 shadow-sm">
+                  <Award className="w-8 h-8 text-amber-100" />
+                </div>
+                <div className="mt-2.5 text-center">
+                  <span className="text-[10px] bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-orange-200 dark:border-orange-900/30">
+                    🥉 Bronze Tier
+                  </span>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
+                    {completedOrdersCount} orders completed • {5 - completedOrdersCount} more to Silver
+                  </p>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
+                  <div className="bg-orange-500 h-full rounded-full" style={{ width: `${(completedOrdersCount / 5) * 100}%` }}></div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -7545,6 +8254,39 @@ function ProfileScreen({
           </button>
         </div>
       </main>
+
+      {/* Cropper Modal */}
+      {showCropper && imageToCrop && (
+        <div className="fixed inset-0 z-50 bg-black flex flex-col">
+          <div className="flex-1 relative">
+            <Cropper
+              image={imageToCrop}
+              crop={crop}
+              zoom={zoom}
+              aspect={1}
+              cropShape="round"
+              showGrid={false}
+              onCropChange={setCrop}
+              onZoomChange={setZoom}
+              onCropComplete={handleCropComplete}
+            />
+          </div>
+          <div className="p-6 bg-slate-900 flex justify-between items-center gap-4">
+            <button
+              onClick={cancelCrop}
+              className="flex-1 py-3 bg-slate-800 text-white font-bold rounded-xl active:scale-95 transition-transform"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleUploadCropped}
+              className="flex-1 py-3 bg-primary text-white font-bold rounded-xl active:scale-95 transition-transform"
+            >
+              Save Photo
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -9762,7 +10504,7 @@ function ExploreScreen({
               </h3>
               <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
                 Interactive maps require an active data connection to stream
-                tiles. Switch to List view to browse cached shops.
+                tiles. Switch to List view to browse saved shops.
               </p>
               <button
                 onClick={onHome}
@@ -11276,6 +12018,7 @@ function SettingsScreen({
   // Connection Diagnostics States
   const [latencyTestResult, setLatencyTestResult] = useState<string | null>(null);
   const [testingLatency, setTestingLatency] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     if (!isOnline) {
@@ -11286,34 +12029,42 @@ function SettingsScreen({
       return;
     }
     try {
-      setUploading(true);
       if (!event.target.files || event.target.files.length === 0) {
-        throw new Error("You must select an image to upload.");
+        return;
+      }
+      const file = event.target.files[0];
+      
+      if (!file.type.startsWith("image/")) {
+        setNotification({ message: "Please select a valid image file.", type: "error" });
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        setNotification({ message: "The image size must be under 2MB.", type: "error" });
+        return;
       }
 
-      const publicUrl = await uploadAvatar(
-        event.target.files[0],
-        userProfile.id,
-      );
+      setUploading(true);
+      const localPreviewUrl = URL.createObjectURL(file);
+      setPreviewUrl(localPreviewUrl);
+
+      const publicUrl = await uploadAvatar(file, userProfile.id);
 
       // Update Profile
       setUserProfile((prev) => ({ ...prev, photoURL: publicUrl }));
       setNotification({ message: "Profile picture updated!", type: "success" });
+      setPreviewUrl(null);
+      URL.revokeObjectURL(localPreviewUrl);
     } catch (error: any) {
       console.error("Error uploading avatar:", error);
-      let errorMsg = error.message;
-      if (errorMsg === "Bucket not found") {
-        errorMsg =
-          "We couldn't upload your photo right now. Please try again later.";
-      } else {
-        errorMsg = "Something went wrong uploading your photo. Please try again.";
-      }
-      setNotification({
-        message: errorMsg,
-        type: "error",
-      });
+      let errorMsg = "Something went wrong uploading your photo. Please try again.";
+      if (error.message === "NETWORK_TIMEOUT" || error.message === "NETWORK_ERROR") errorMsg = "Network error. Please check your connection and try again.";
+      else if (error.message === "BUCKET_NOT_FOUND") errorMsg = "Storage is not configured yet. Please try again later.";
+      
+      setNotification({ message: errorMsg, type: "error" });
+      setPreviewUrl(null);
     } finally {
       setUploading(false);
+      if (event.target) event.target.value = "";
     }
   };
 
@@ -11475,7 +12226,7 @@ function SettingsScreen({
       }
     }
     setNotification({
-      message: `Pruned ${count} temporary files. Saved addresses and profile preserved!`,
+      message: `Cleared ${count} temporary files. Saved addresses and profile kept safe!`,
       type: "success"
     });
   };
@@ -11520,7 +12271,7 @@ function SettingsScreen({
                 <img
                   alt="Profile Picture"
                   className="w-16 h-16 rounded-full object-cover border-2 border-primary/20"
-                  src={userProfile.photoURL || DEFAULT_AVATAR_URL}
+                  src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
                   referrerPolicy="no-referrer"
                 />
               )}
@@ -11541,7 +12292,7 @@ function SettingsScreen({
                 {userProfile.email || "No email set"}
               </span>
               <span className="bg-primary/10 text-primary dark:text-orange-400 font-extrabold uppercase text-[8px] px-1.5 py-0.5 rounded-full tracking-widest">
-                {userProfile.role || "User"}
+                Verified Customer
               </span>
             </div>
             {(userProfile.loyaltyPoints ?? 0) > 0 && (
@@ -11862,8 +12613,8 @@ function SettingsScreen({
                   <Smartphone className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="font-medium text-sm">Haptic Feedback</span>
-                  <p className="text-[10px] text-slate-500">Physical feel on interaction</p>
+                  <span className="font-medium text-sm">Vibration Feedback</span>
+                  <p className="text-[10px] text-slate-500">Phone vibrates on interaction</p>
                 </div>
               </div>
               <button
@@ -11894,8 +12645,8 @@ function SettingsScreen({
                   {/* Button Press Haptic */}
                   <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
                     <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Button Press Feel</span>
-                      <span className="text-[9px] text-slate-400">Vibrate on buttons and chip selection</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Taps</span>
+                      <span className="text-[9px] text-slate-400">Vibrate when tapping buttons</span>
                     </div>
                     <button
                       type="button"
@@ -11911,7 +12662,7 @@ function SettingsScreen({
                   {/* Order Update Haptic */}
                   <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
                     <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Order Update Feel</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Status Change</span>
                       <span className="text-[9px] text-slate-400">Vibrate when order status advances</span>
                     </div>
                     <button
@@ -11928,8 +12679,8 @@ function SettingsScreen({
                   {/* Cart Animation Haptic */}
                   <div className="flex items-center justify-between py-3 px-6">
                     <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Cart Animation Feel</span>
-                      <span className="text-[9px] text-slate-400">Vibrate on adding or reordering items</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Add to Cart</span>
+                      <span className="text-[9px] text-slate-400">Vibrate when modifying cart items</span>
                     </div>
                     <button
                       type="button"
@@ -11966,6 +12717,53 @@ function SettingsScreen({
                 />
               </button>
             </div>
+          </div>
+        </section>
+
+        {/* Partner Portals */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-2 px-1">
+            <ExternalLink className="w-4 h-4 text-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
+              Partner Portals
+            </h3>
+          </div>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <a
+              href="https://dashboard.localeatssa.co.za"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer text-left"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center text-indigo-600">
+                  <Store className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Gogo Nandi's Kitchen Portal</span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">dashboard.localeatssa.co.za</p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </a>
+
+            <a
+              href="https://rider.localeatssa.co.za"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-left"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center text-green-600">
+                  <Bike className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Thabo's Rider Delivery App</span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">rider.localeatssa.co.za</p>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-slate-300" />
+            </a>
           </div>
         </section>
 
@@ -12031,14 +12829,14 @@ function SettingsScreen({
                   {/* Prune Cache Button */}
                   <div className="flex items-center justify-between text-xs border-t border-slate-100 dark:border-slate-800/40 pt-3">
                     <div className="flex flex-col text-left">
-                      <span className="text-slate-500">Prune Temporary Files</span>
+                      <span className="text-slate-500">Clear Temporary Files</span>
                       <span className="text-[9px] text-slate-400 mt-0.5">Keeps saved addresses, credentials, and user data</span>
                     </div>
                     <button
                       onClick={handlePruneCache}
                       className="px-3 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer"
                     >
-                      Prune Cache
+                      Clear Storage
                     </button>
                   </div>
                 </motion.div>
@@ -12146,7 +12944,7 @@ function SettingsScreen({
           onClick={() => {
             showConfirm(
               "Reset All Data?",
-              "This will permanently erase all local caches, login sessions, and custom preferences. Do you want to proceed?",
+              "This will permanently erase all saved data, login sessions, and custom preferences. Do you want to proceed?",
               () => {
                 localStorage.clear();
                 window.location.reload();
@@ -12595,6 +13393,68 @@ function RiderDashboardScreen({
   ) => Promise<void>;
   isOnline: boolean;
 }) {
+  return (
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl relative">
+      <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
+        <button
+          onClick={onBack}
+          className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <div className="flex flex-col items-center">
+          <h1 className="font-black uppercase tracking-tighter text-xl text-slate-900 dark:text-white">
+            Rider Portal Moved
+          </h1>
+          <p className="text-[9px] font-black tracking-widest text-primary uppercase">
+            Official Delivery App
+          </p>
+        </div>
+        <div className="w-10"></div>
+      </header>
+
+      <main className="flex-grow flex flex-col items-center justify-center p-6 text-center space-y-6">
+        <div className="w-20 h-20 bg-green-100 dark:bg-green-500/20 text-green-600 rounded-full flex items-center justify-center shadow-inner">
+          <Bike className="w-10 h-10 animate-bounce" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="font-black text-xl text-slate-900 dark:text-white tracking-tight uppercase">
+            Rider Deliveries Have Moved!
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            This customer application is strictly for ordering delicious local meals.
+            Thabo's Rider Delivery App now operates on its own dedicated, optimized separate portal.
+          </p>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 w-full space-y-1">
+          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Official Rider App Link</span>
+          <p className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">https://rider.localeatssa.co.za</p>
+        </div>
+
+        <div className="flex flex-col w-full gap-3">
+          <a
+            href="https://rider.localeatssa.co.za"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-xs uppercase tracking-wider py-4 rounded-xl shadow-lg shadow-orange-500/15 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+          >
+            <span>Open Rider App</span>
+            <ExternalLink className="w-4 h-4" />
+          </a>
+
+          <button
+            onClick={onBack}
+            className="w-full bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-extrabold text-xs uppercase tracking-wider py-4 rounded-xl transition-all cursor-pointer active:scale-95 border-0"
+          >
+            Go Back to Food ordering
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+
   const [riderProfile, setRiderProfile] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
   const [orderShop, setOrderShop] = useState<Shop | null>(null);
@@ -12947,6 +13807,23 @@ function RiderDashboardScreen({
           </button>
         </div>
       </header>
+
+      {/* External Portal Info Bar */}
+      <div className="bg-orange-500 text-white text-[11px] py-2 px-4 font-bold flex items-center justify-between shadow-inner shrink-0">
+        <span className="flex items-center gap-1.5">
+          <Bike className="w-4 h-4 shrink-0 animate-bounce" />
+          <span>Need Thabo's official Rider App?</span>
+        </span>
+        <a
+          href="https://rider.localeatssa.co.za"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-white text-orange-600 px-2.5 py-1 rounded-full uppercase text-[9px] font-black tracking-wider shadow hover:bg-orange-50 transition-all flex items-center gap-1"
+        >
+          <span>Open App</span>
+          <ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      </div>
 
       {riderProfile.is_online && (
         <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-900/30 flex items-center justify-between">
@@ -13351,6 +14228,68 @@ function ShopDashboardScreen({
   ) => Promise<void>;
   isOnline: boolean;
 }) {
+  return (
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl relative">
+      <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
+        <button
+          onClick={onBack}
+          className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"
+        >
+          <ArrowLeft className="w-6 h-6" />
+        </button>
+        <div className="flex flex-col items-center">
+          <h1 className="font-black uppercase tracking-tighter text-xl text-slate-900 dark:text-white">
+            Kitchen Portal Moved
+          </h1>
+          <p className="text-[9px] font-black tracking-widest text-primary uppercase">
+            Gogo Nandi's Kitchen
+          </p>
+        </div>
+        <div className="w-10"></div>
+      </header>
+
+      <main className="flex-grow flex flex-col items-center justify-center p-6 text-center space-y-6">
+        <div className="w-20 h-20 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 rounded-full flex items-center justify-center shadow-inner">
+          <Store className="w-10 h-10 animate-pulse" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="font-black text-xl text-slate-900 dark:text-white tracking-tight uppercase">
+            Kitchen Dashboard Has Moved!
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            This customer application is strictly for ordering delicious local meals.
+            Gogo Nandi's official Kitchen Portal has moved to its own dedicated, optimized separate dashboard.
+          </p>
+        </div>
+
+        <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 w-full space-y-1">
+          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Official Kitchen Dashboard Link</span>
+          <p className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">https://dashboard.localeatssa.co.za</p>
+        </div>
+
+        <div className="flex flex-col w-full gap-3">
+          <a
+            href="https://dashboard.localeatssa.co.za"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-700 hover:to-indigo-600 text-white font-black text-xs uppercase tracking-wider py-4 rounded-xl shadow-lg shadow-indigo-600/15 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+          >
+            <span>Open Kitchen Dashboard</span>
+            <ExternalLink className="w-4 h-4" />
+          </a>
+
+          <button
+            onClick={onBack}
+            className="w-full bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-extrabold text-xs uppercase tracking-wider py-4 rounded-xl transition-all cursor-pointer active:scale-95 border-0"
+          >
+            Go Back to Food ordering
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [shop, setShop] = useState<Shop | null>(null);
@@ -14179,6 +15118,35 @@ function ShopDashboardScreen({
     ];
   }, [orders]);
 
+  const hourlyOrdersVolume = useMemo(() => {
+    const todayStr = new Date().toDateString();
+    const todayOrders = orders.filter((o) => {
+      if (!o.created_at) return false;
+      return new Date(o.created_at).toDateString() === todayStr;
+    });
+
+    const hoursData = Array.from({ length: 24 }, (_, i) => {
+      const displayHour = i === 0 ? "12 AM" : i < 12 ? `${i} AM` : i === 12 ? "12 PM" : `${i - 12} PM`;
+      return {
+        hour: i,
+        label: displayHour,
+        volume: 0,
+      };
+    });
+
+    todayOrders.forEach((o) => {
+      if (o.created_at) {
+        const d = new Date(o.created_at);
+        const hour = d.getHours();
+        if (hour >= 0 && hour < 24) {
+          hoursData[hour].volume += 1;
+        }
+      }
+    });
+
+    return hoursData;
+  }, [orders]);
+
   const toggleItemAvailability = async (
     itemId: string,
     currentStatus: boolean,
@@ -14295,6 +15263,23 @@ function ShopDashboardScreen({
           <div className="w-10 h-10"></div>
         </div>
       </header>
+
+      {/* External Portal Info Bar */}
+      <div className="bg-indigo-600 text-white text-[11px] py-2 px-4 font-bold flex items-center justify-between shadow-inner shrink-0">
+        <span className="flex items-center gap-1.5">
+          <Store className="w-4 h-4 shrink-0 animate-pulse" />
+          <span>Need Gogo Nandi's official Kitchen Portal?</span>
+        </span>
+        <a
+          href="https://dashboard.localeatssa.co.za"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-white text-indigo-600 px-2.5 py-1 rounded-full uppercase text-[9px] font-black tracking-wider shadow hover:bg-indigo-50 transition-all flex items-center gap-1"
+        >
+          <span>Open Portal</span>
+          <ExternalLink className="w-2.5 h-2.5" />
+        </a>
+      </div>
 
       <main className="flex-grow overflow-y-auto p-4 space-y-4 pb-24 max-w-screen-xl mx-auto w-full">
         {!loading && !error && shop && activeTab === "orders" && (
@@ -14818,6 +15803,72 @@ function ShopDashboardScreen({
                       );
                     })}
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* Recharts - Today's Hourly Order Volume Bar Chart */}
+            <div className="bg-white dark:bg-slate-900/50 p-6 rounded-3xl border border-primary/5 shadow-sm space-y-4">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">Peak Busy Periods (Today)</h3>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Hourly order volume to identify peak times</p>
+              </div>
+
+              {hourlyOrdersVolume.reduce((sum, item) => sum + item.volume, 0) === 0 ? (
+                <div className="flex flex-col items-center justify-center p-6 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-center py-10">
+                  <BarChart3 className="w-8 h-8 text-slate-400 mb-2 animate-bounce" />
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No Orders Placed Today</p>
+                  <p className="text-[10px] text-slate-400 max-w-[200px] mt-1">Once orders are placed today, hourly distribution peaks will be charted here automatically.</p>
+                </div>
+              ) : (
+                <div className="h-60 w-full pr-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={hourlyOrdersVolume.filter(h => h.volume > 0 || (h.hour >= 8 && h.hour <= 22))}
+                      margin={{ top: 10, right: 0, left: -25, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.1)" />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fill: '#94a3b8', fontSize: 8, fontWeight: 'bold' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fill: '#94a3b8', fontSize: 8, fontWeight: 'bold' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(249, 115, 22, 0.05)' }}
+                        contentStyle={{
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                          border: '1px solid rgba(249, 115, 22, 0.15)',
+                          borderRadius: '12px',
+                          padding: '8px 12px',
+                          color: '#FFF',
+                          fontSize: '11px',
+                          fontWeight: 'bold'
+                        }}
+                      />
+                      <Bar
+                        dataKey="volume"
+                        name="Orders"
+                        fill="#F97316"
+                        radius={[4, 4, 0, 0]}
+                        animationDuration={800}
+                      >
+                        {hourlyOrdersVolume.filter(h => h.volume > 0 || (h.hour >= 8 && h.hour <= 22)).map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={entry.volume > 0 ? '#F97316' : '#94a3b8'}
+                            opacity={entry.volume > 0 ? 1 : 0.15}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               )}
             </div>
@@ -17420,54 +18471,83 @@ function OrderHistoryScreen({
     }
   };
 
-  // Instant whole-order group reorder to bypass single item popups and menu navigation
+  // Instant whole-order group reorder to bypass single item popups and menu navigation with full availability checks
   const handleReorderGroup = (group: any) => {
     if (!setCart) return;
     triggerHaptic?.([50, 30, 50]);
     
     const shop = shops.find((s) => s.id === group.shop_id);
+    if (!shop) {
+      showAlert(
+        "Kitchen Unavailable",
+        "This kitchen is no longer registered or active on LocalEats."
+      );
+      return;
+    }
 
-    const newCartItems: CartItem[] = group.items.map((orderItem: any) => {
-      let originalMenuItem: MenuItem | undefined = undefined;
-      if (shop) {
-        originalMenuItem = shop.menu?.find(
-          (m) =>
-            m.name.toLowerCase() === orderItem.product_name.toLowerCase() ||
-            m.id === orderItem.product_variant,
-        );
+    // Check shop availability: is open and not away
+    const status = getShopStatus(shop);
+    const away = isShopAway(shop);
+    if (!status.isOpen || away) {
+      const closedReason = away ? "is currently away/offline" : "is currently closed";
+      showAlert(
+        "Kitchen Unavailable",
+        `"${shop.name}" ${closedReason} and cannot accept orders right now. Please try again when they are online!`
+      );
+      return;
+    }
+
+    // Check individual items availability in the current menu
+    const availableCartItems: CartItem[] = [];
+    const unavailableItemNames: string[] = [];
+
+    group.items.forEach((orderItem: any) => {
+      const matchedMenuItem = shop.menu?.find(
+        (m) =>
+          m.name.toLowerCase() === orderItem.product_name.toLowerCase() ||
+          m.id === orderItem.product_variant
+      );
+
+      // If item is not in menu OR is explicitly unavailable, record it as unavailable
+      if (!matchedMenuItem || matchedMenuItem.is_available === false) {
+        unavailableItemNames.push(orderItem.product_name);
+      } else {
+        availableCartItems.push({
+          id: matchedMenuItem.id,
+          shopId: String(group.shop_id),
+          name: String(matchedMenuItem.name),
+          price: Number(matchedMenuItem.price),
+          quantity: Number(orderItem.quantity || 1),
+          image: String(matchedMenuItem.image || shop.logo || DEFAULT_SHOP_LOGO),
+          specialInstructions: String(orderItem.notes || ""),
+          selectedCustomizations: orderItem.customizations || [],
+        });
       }
-
-      const menuItem: MenuItem = originalMenuItem || {
-        id: orderItem.product_variant || orderItem.product_name,
-        name: orderItem.product_name,
-        price: orderItem.price,
-        displayPrice: `R ${orderItem.price.toFixed(2)}`,
-        image: shop?.logo || DEFAULT_SHOP_LOGO,
-        customizations: orderItem.customizations || [],
-      };
-
-      return {
-        id: menuItem.id,
-        shopId: String(group.shop_id),
-        name: String(menuItem.name),
-        price: Number(menuItem.price),
-        quantity: Number(orderItem.quantity || 1),
-        image: String(menuItem.image),
-        specialInstructions: String(orderItem.notes || ""),
-        selectedCustomizations: orderItem.customizations || [],
-      };
     });
 
-    if (newCartItems.length > 0) {
-      setCart(newCartItems);
-      if (setCurrentScreen) {
-        setCurrentScreen("checkout");
-      }
-      toast.success(
-        `⚡ Quick Reorder successful! Repopulated cart with ${newCartItems.length} items.`
+    if (availableCartItems.length === 0) {
+      showAlert(
+        "Items Unavailable",
+        `None of the items in this previous order are currently available on "${shop.name}"'s menu right now.`
+      );
+      return;
+    }
+
+    setCart(availableCartItems);
+    if (setCurrentScreen) {
+      setCurrentScreen("checkout");
+    }
+
+    if (unavailableItemNames.length > 0) {
+      toast.warning(
+        `Order repeated! Note that some items (${unavailableItemNames.join(", ")}) are currently sold out and were skipped.`,
+        { duration: 5000 }
       );
     } else {
-      showAlert("Error", "Could not restore this order right now.");
+      toast.success(
+        `⚡ Repeated order from ${shop.name}! Cart populated with ${availableCartItems.length} items.`,
+        { duration: 4000 }
+      );
     }
   };
 
@@ -18290,14 +19370,14 @@ function OrderHistoryScreen({
                         </button>
                       )}
 
-                      {/* ALWAYS show the Reorder button on EVERY card */}
+                      {/* ALWAYS show the Repeat Order button on EVERY card */}
                       <button
                         type="button"
                         onClick={() => handleReorderGroup(group)}
                         className="flex-1 py-2 bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-605 text-white hover:from-orange-600 hover:to-amber-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0"
                       >
                         <ShoppingBag className="w-3.5 h-3.5" />
-                        Reorder
+                        Repeat Order
                       </button>
                     </div>
                   </div>

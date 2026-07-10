@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent
+  ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { Shop, CartItem, Screen } from "../types";
@@ -10,6 +10,7 @@ import { calculateDistance, formatSAPhone, validateSAPhone, safeLocalStorageSet,
 import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
+import { AnimatedPrice } from "../components/AnimatedPrice";
 import { AddressSearch, LocationPickerMap } from "../components/MapComponents";
 import { toast } from "sonner";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
@@ -128,6 +129,9 @@ export function CheckoutScreen({
   }, [shops, cart]);
 
   const [cardHolder, setCardHolder] = useState(userProfile?.fullName || "");
+  const [isCartSummaryExpanded, setIsCartSummaryExpanded] = useState(true);
+  const [tipPercentage, setTipPercentage] = useState<number | "custom">(0);
+  const [customTipInput, setCustomTipInput] = useState<string>("");
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvv, setCardCvv] = useState("");
@@ -565,9 +569,17 @@ export function CheckoutScreen({
   }
 
   const activeDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
+
+  const tipAmount = useMemo(() => {
+    if (tipPercentage === "custom") {
+      return parseFloat(customTipInput) || 0;
+    }
+    return (subtotal * tipPercentage) / 100;
+  }, [tipPercentage, customTipInput, subtotal]);
+
   const totalAmount = Math.max(
     0,
-    subtotal - discountAmount + activeDeliveryFee,
+    subtotal - discountAmount + activeDeliveryFee + tipAmount,
   );
 
   const isCashTrustActive = primaryShop
@@ -805,6 +817,11 @@ export function CheckoutScreen({
     // Append promo code tagging into delivery instructions for backend once-per-client tracking
     if (appliedPromo) {
       finalDeliveryInstructions = `${finalDeliveryInstructions ? finalDeliveryInstructions + " • " : ""}[PROMO:${appliedPromo.code}]`;
+    }
+
+    // Append tipping tag to finalDeliveryInstructions
+    if (tipAmount > 0) {
+      finalDeliveryInstructions = `${finalDeliveryInstructions ? finalDeliveryInstructions + " • " : ""}[TIP: R${tipAmount.toFixed(2)}]`;
     }
 
     if (!isOnline) {
@@ -1091,7 +1108,183 @@ export function CheckoutScreen({
           </button>
         </div>
 
+        {!isOnline && (
+          <div className="bg-amber-500/10 dark:bg-amber-500/5 border-b border-amber-500/20 px-5 py-3.5 flex items-start gap-3.5 animate-in slide-in-from-top duration-300">
+            <div className="p-2 bg-amber-500/20 rounded-2xl text-amber-600 dark:text-amber-400 shrink-0">
+              <WifiOff className="w-5 h-5 animate-pulse" />
+            </div>
+            <div className="space-y-0.5">
+              <h4 className="text-xs font-black uppercase tracking-wider text-amber-800 dark:text-amber-400">
+                You are currently offline
+              </h4>
+              <p className="text-[10px] text-amber-700/95 dark:text-amber-300/90 font-medium leading-relaxed">
+                No active internet connection was detected. Don't worry—your order will be queued locally and automatically synced once connection is restored!
+              </p>
+            </div>
+          </div>
+        )}
+
                 <div className="flex flex-col gap-6 p-4">
+          {/* CART SUMMARY PREVIEW PANE: Interactive, allows direct quantity edit, note edit, and item removal */}
+          <section className="bg-orange-50/45 dark:bg-orange-950/10 border border-orange-100 dark:border-orange-900/30 rounded-3xl overflow-hidden transition-all duration-300">
+            <button
+              id="cart-summary-toggle-btn"
+              type="button"
+              onClick={() => {
+                triggerHaptic(10);
+                setIsCartSummaryExpanded(!isCartSummaryExpanded);
+              }}
+              className="w-full flex items-center justify-between p-4 bg-orange-50/80 dark:bg-orange-950/20 border-b border-orange-100/50 dark:border-orange-900/20 text-left cursor-pointer transition-all hover:bg-orange-100/30 dark:hover:bg-orange-950/30"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-orange-500/10 dark:bg-orange-500/20 rounded-2xl text-orange-600 dark:text-orange-400">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-800 dark:text-slate-200">
+                    Cart Summary Preview
+                  </h3>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
+                    {cart.reduce((s, c) => s + c.quantity, 0)} Items • Tap to {isCartSummaryExpanded ? "Hide" : "Expand"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full font-black tracking-tight">
+                  <AnimatedPrice value={subtotal} />
+                </span>
+                <ChevronRight
+                  className={`w-5 h-5 text-slate-400 dark:text-slate-500 transition-transform duration-300 ${
+                    isCartSummaryExpanded ? "rotate-90" : "rotate-0"
+                  }`}
+                />
+              </div>
+            </button>
+
+            {isCartSummaryExpanded && (
+              <div className="p-4 space-y-4 animate-in fade-in duration-300">
+                <div className="divide-y divide-slate-100 dark:divide-slate-800/40 max-h-[350px] overflow-y-auto pr-1 space-y-3">
+                  {cart.map((item, idx) => {
+                    const customizationsTotal = (item.selectedCustomizations || []).reduce(
+                      (acc, c) => acc + Number(c.price),
+                      0,
+                    );
+                    const itemUnitPrice = item.price + customizationsTotal;
+                    const itemTotal = itemUnitPrice * item.quantity;
+                    const finalItemTotal = item.quantity > 5 ? itemTotal * 0.85 : itemTotal;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex flex-col gap-3.5 pt-3.5 first:pt-0 border-slate-100 dark:border-slate-800/40"
+                      >
+                        <div className="flex items-start justify-between gap-3.5">
+                          <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                            <div className="size-14 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 bg-white shrink-0 shadow-sm relative">
+                              <BlurUpImage
+                                src={item.image || DEFAULT_MENU_IMAGE}
+                                alt={item.name}
+                                className="w-full h-full object-cover"
+                                blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-black text-slate-900 dark:text-white truncate leading-snug">
+                                {item.name}
+                              </p>
+                              {item.selectedCustomizations &&
+                              item.selectedCustomizations.length > 0 ? (
+                                <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight italic truncate mt-0.5">
+                                  +{" "}
+                                  {item.selectedCustomizations
+                                    .map((c) => c.name)
+                                    .join(", ")}
+                                </p>
+                              ) : null}
+                              <div className="flex flex-col gap-0.5 mt-1">
+                                {item.quantity > 5 ? (
+                                  <>
+                                    <p className="text-primary font-black text-xs leading-none">
+                                      R {finalItemTotal.toFixed(2)}
+                                    </p>
+                                    <p className="text-[8px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
+                                      15% Bulk Discount Applied! (Was R {itemTotal.toFixed(2)})
+                                    </p>
+                                  </>
+                                ) : (
+                                  <p className="text-primary font-black text-xs leading-none">
+                                    R {finalItemTotal.toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2.5 shrink-0">
+                            {/* Quantity modifier */}
+                            <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-1 rounded-xl shadow-sm">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  triggerHaptic(10);
+                                  updateCartQty(idx, -1);
+                                }}
+                                className="text-slate-500 hover:text-rose-600 p-0.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded transition-colors"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <span className="text-xs font-black min-w-[14px] text-center text-slate-900 dark:text-white leading-none">
+                                {item.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  triggerHaptic(10);
+                                  updateCartQty(idx, 1);
+                                }}
+                                className="text-slate-500 hover:text-orange-600 p-0.5 hover:bg-slate-50 dark:hover:bg-slate-800 rounded transition-colors"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            {/* Direct Remove */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                triggerHaptic(20);
+                                removeCartItem(idx);
+                              }}
+                              className="p-2 text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 rounded-xl transition-all border border-rose-100/30 active:scale-95 shadow-sm"
+                              title="Remove from order"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Cook Note input row inside preview summary */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800/20 w-full flex items-center gap-2">
+                          <span className="text-[9px] uppercase font-black tracking-wider text-slate-400 dark:text-slate-500">
+                            Cook Request:
+                          </span>
+                          <input
+                            type="text"
+                            id={`cook-note-preview-${idx}`}
+                            placeholder="Add specific request (e.g., extra spicy, no onion...)"
+                            value={item.specialInstructions || ""}
+                            onChange={(e) => updateCartNote(idx, e.target.value)}
+                            className="flex-1 bg-white dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-[11px] text-slate-700 dark:text-slate-300 focus:outline-none focus:border-orange-500 placeholder-slate-400 dark:placeholder-slate-650 transition-colors"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+
           {/* SECTION 1: Fulfillment Type (Moved to the Top for Perfect User Flow Context) */}
           <section className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between mb-3.5 px-1">
@@ -1558,7 +1751,7 @@ export function CheckoutScreen({
                   <button
                     type="button"
                     onClick={() => removeCartItem(idx)}
-                    className="absolute -top-1.5 -right-1.5 bg-rose-50 dark:bg-rose-950/50 text-rose-600 size-6 rounded-full border border-rose-100 dark:border-rose-900/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+                    className="absolute -top-1.5 -right-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-600 size-6 rounded-full border border-rose-100 dark:border-rose-900/30 flex items-center justify-center opacity-100 transition-all active:scale-90 shadow-sm"
                     title="Remove item"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -2065,6 +2258,85 @@ export function CheckoutScreen({
             )}
           </section>
 
+          {/* SECTION 6.5: Support Merchant with Optional Tip */}
+          <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+              <Coins className="w-4 h-4 text-orange-500" />
+              Support the Merchant Tip
+            </h3>
+            <p className="text-[10px] text-slate-500 font-medium">
+              Optional tip to show appreciation for the kitchen team's efforts. 100% of tips go directly to the merchant.
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "No Tip", val: 0 },
+                { label: "5%", val: 5 },
+                { label: "10%", val: 10 },
+                { label: "15%", val: 15 },
+                { label: "Custom", val: "custom" },
+              ].map((item) => (
+                <button
+                  type="button"
+                  key={item.label}
+                  onClick={() => {
+                    if (typeof item.val === "number") {
+                      setTipPercentage(item.val);
+                    } else {
+                      setTipPercentage("custom");
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 border ${
+                    (item.val === "custom" && tipPercentage === "custom") || (typeof item.val === "number" && tipPercentage === item.val)
+                      ? "bg-orange-600 text-white border-orange-600 shadow-sm"
+                      : "bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-900"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            {tipPercentage === "custom" && (
+              <div className="flex items-center gap-2 animate-in zoom-in-95 duration-200">
+                <span className="text-xs font-black text-slate-400 font-mono pl-1">
+                  Custom Tip:
+                </span>
+                <div className="flex-1 relative flex items-center">
+                  <span className="absolute left-3 text-xs font-black text-slate-500 font-mono">
+                    R
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={customTipInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (parseFloat(val) >= 0 || val === "") {
+                        setCustomTipInput(val);
+                      }
+                    }}
+                    placeholder="Enter custom amount (e.g., 20)"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-8 pr-4 py-2.5 text-xs font-bold outline-none focus:border-orange-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {tipAmount > 0 && (
+              <div className="p-3 bg-orange-50/55 dark:bg-orange-950/20 border border-orange-100/40 dark:border-orange-900/20 rounded-2xl flex justify-between items-center text-xs animate-in slide-in-from-top-2 duration-200">
+                <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
+                  <span>Appreciated Tip:</span>
+                </span>
+                <span className="font-black text-orange-600 dark:text-orange-400 font-mono text-sm">
+                  + R {tipAmount.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </section>
+
           {/* SECTION 7: Unified Visually Clean Receipt Details */}
           <section className="bg-slate-950 text-slate-100 p-5 rounded-3xl space-y-3 shadow-xl relative overflow-hidden border border-slate-850">
             {/* Real receipt style details */}
@@ -2147,12 +2419,22 @@ export function CheckoutScreen({
                 </div>
               )}
 
+              {tipAmount > 0 && (
+                <div className="flex justify-between items-center text-amber-400">
+                  <span className="uppercase tracking-wider flex items-center gap-1">
+                    <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
+                    Support Merchant Tip
+                  </span>
+                  <span className="font-mono">R {tipAmount.toFixed(2)}</span>
+                </div>
+              )}
+
               <div className="border-t border-dashed border-slate-800 pt-3 flex justify-between items-center text-slate-100">
                 <span className="text-sm font-black uppercase tracking-widest">
                   Grand Total Amount
                 </span>
                 <span className="text-2xl font-black font-mono text-orange-500">
-                  R {totalAmount.toFixed(2)}
+                  <AnimatedPrice value={totalAmount} />
                 </span>
               </div>
             </div>
