@@ -181,6 +181,7 @@ import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { SplashScreen } from "./screens/SplashScreen";
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
+import { AuthSkeleton } from "./components/AuthSkeleton";
 import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
 import {
@@ -970,16 +971,14 @@ export default function App() {
 
   const [isRestoringSession, setIsRestoringSession] = useState(() => {
     try {
-      const cachedProfile = localStorage.getItem("userProfile");
       const hasToken = Object.keys(localStorage).some(
         (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
       );
-      if (cachedProfile && hasToken) {
-        const parsed = JSON.parse(cachedProfile);
-        return !!parsed?.email;
-      }
-    } catch {}
-    return false;
+      const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
+      return hasToken || hasRememberToken;
+    } catch {
+      return false;
+    }
   });
 
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -2201,32 +2200,37 @@ export default function App() {
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
-        setCurrentScreen((prev) => {
-          const preLoginScreens: Screen[] = [
-            "splash",
-            "signup",
-            "login",
-            "verify",
-            "setup-pin",
-            "setup-password",
-            "success"
-          ];
-          if (preLoginScreens.includes(prev)) {
-            return "home";
+    const hasToken = Object.keys(localStorage).some(
+      (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
+    );
+    const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
+
+    if (hasToken || hasRememberToken) {
+      setIsRestoringSession(true);
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (session && hasRememberToken) {
+          setSession(session);
+          fetchUserProfile(session.user.id);
+          setCurrentScreen("home");
+          requestNotificationPermission();
+        } else {
+          if (session) {
+            await supabase.auth.signOut().catch(() => {});
           }
-          return prev;
-        });
-        requestNotificationPermission();
-      }
+          setSession(null);
+          localStorage.removeItem("remember_me_secure_token");
+          setCurrentScreen("login");
+        }
+        setIsRestoringSession(false);
+      }).catch((err) => {
+        console.warn("Failed to retrieve initial user session:", err);
+        localStorage.removeItem("remember_me_secure_token");
+        setCurrentScreen("login");
+        setIsRestoringSession(false);
+      });
+    } else {
       setIsRestoringSession(false);
-    }).catch((err) => {
-      console.warn("Failed to retrieve initial user session:", err);
-      setIsRestoringSession(false);
-    });
+    }
 
     const {
       data: { subscription },
@@ -2251,6 +2255,9 @@ export default function App() {
         });
         requestNotificationPermission();
       } else {
+        if (_event === "SIGNED_OUT") {
+          localStorage.removeItem("remember_me_secure_token");
+        }
         setCurrentScreen((prev) => {
           if (_event === "SIGNED_OUT") {
             return "splash";
@@ -2932,7 +2939,7 @@ export default function App() {
   }, [userProfile, session, favorites]);
 
   if (isRestoringSession) {
-    return <AppSkeletonLoader userProfile={userProfile} />;
+    return <AuthSkeleton />;
   }
 
   return (
@@ -3679,6 +3686,7 @@ export default function App() {
                   onLogout={async () => {
                     await supabase.auth.signOut();
                     // Clear sensitive data on logout
+                    localStorage.removeItem("remember_me_secure_token");
                     localStorage.removeItem("cart");
                     localStorage.removeItem("userProfile");
                     localStorage.removeItem("favorites");
@@ -4799,12 +4807,22 @@ function LoginScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(() => {
     try {
-      return !!localStorage.getItem("remembered_identifier");
+      return !!localStorage.getItem("remember_me_secure_token") || !!localStorage.getItem("remembered_identifier");
     } catch {
       return false;
     }
   });
   const [loading, setLoading] = useState(false);
+
+  const generateSecureToken = () => {
+    try {
+      const arr = new Uint8Array(32);
+      window.crypto.getRandomValues(arr);
+      return Array.from(arr, b => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      return Math.random().toString(36).substring(2) + Date.now().toString(36);
+    }
+  };
 
   const handleLogin = async () => {
     if (!identifier || !password) {
@@ -4825,8 +4843,10 @@ function LoginScreen({
       try {
         if (rememberMe) {
           localStorage.setItem("remembered_identifier", identifier);
+          localStorage.setItem("remember_me_secure_token", generateSecureToken());
         } else {
           localStorage.removeItem("remembered_identifier");
+          localStorage.removeItem("remember_me_secure_token");
         }
       } catch (e) {
         console.warn("Credential storage persist error:", e);
