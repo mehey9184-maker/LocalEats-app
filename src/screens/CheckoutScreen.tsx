@@ -2258,25 +2258,25 @@ export function CheckoutScreen({
             )}
           </section>
 
-          {/* SECTION 6.5: Support Merchant with Optional Tip */}
-          <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-              <Coins className="w-4 h-4 text-orange-500" />
-              Support the Merchant Tip
-            </h3>
-            <p className="text-[10px] text-slate-500 font-medium">
-              Optional tip to show appreciation for the kitchen team's efforts. 100% of tips go directly to the merchant.
-            </p>
-
-            <div className="flex flex-wrap gap-2">
-              {[
-                { label: "No Tip", val: 0 },
-                { label: "5%", val: 5 },
-                { label: "10%", val: 10 },
-                { label: "15%", val: 15 },
-                { label: "Custom", val: "custom" },
-              ].map((item) => (
-                <button
+          {/* SECTION 6.5: Support Rider with Optional Tip */}
+          {deliveryType === "delivery" && (
+            <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                <Coins className="w-4 h-4 text-orange-500" />
+                Rider Tip
+              </h3>
+              <p className="text-[10px] text-slate-500 font-medium">
+                Optional tip to show appreciation for the rider's efforts. 100% of tips go directly to the rider.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { label: "No Tip", val: 0 },
+                  { label: "5%", val: 5 },
+                  { label: "10%", val: 10 },
+                  { label: "15%", val: 15 },
+                  { label: "Custom", val: "custom" },
+                ].map((item) => (
+                  <button
                   type="button"
                   key={item.label}
                   onClick={() => {
@@ -2336,6 +2336,7 @@ export function CheckoutScreen({
               </div>
             )}
           </section>
+          )}
 
           {/* SECTION 7: Unified Visually Clean Receipt Details */}
           <section className="bg-slate-950 text-slate-100 p-5 rounded-3xl space-y-3 shadow-xl relative overflow-hidden border border-slate-850">

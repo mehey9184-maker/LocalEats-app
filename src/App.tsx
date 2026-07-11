@@ -173,6 +173,7 @@ import {
   Volume2,
   VolumeX,
   Activity,
+  BellOff,
   Upload,
 } from "lucide-react";
 import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
@@ -3287,6 +3288,7 @@ export default function App() {
                   addToCart={addToCart}
                   removeFromCart={removeFromCart}
                   clearCart={clearCart}
+                  changeToDelivery={changeToDelivery}
                   setNotification={setNotification}
                   setPendingReview={setPendingReview}
                   setCurrentScreen={setCurrentScreen}
@@ -3423,6 +3425,7 @@ export default function App() {
               )}
               {currentScreen === "discover" && (
                 <DiscoverScreen
+                  userProfile={userProfile}
                   shops={shops}
                   onHome={() => setCurrentScreen("home")}
                   onExplore={() => {
@@ -4483,6 +4486,15 @@ function CompleteProfileScreen({
     }
   };
 
+  const handleCameraClick = async () => {
+    try {
+      await navigator.mediaDevices.getUserMedia({ video: true });
+      cameraInputRef.current?.click();
+    } catch (err) {
+      setNotification({ message: "Camera permission denied. Please allow camera access in your device settings.", type: "error" });
+    }
+  };
+
   const handleDeletePhoto = () => {
      onSave({ photoURL: "" });
      setPreviewUrl(null);
@@ -4553,7 +4565,7 @@ function CompleteProfileScreen({
                     <Upload className="w-4 h-4 text-white" />
                   </button>
                   <button
-                    onClick={() => cameraInputRef.current?.click()}
+                    onClick={handleCameraClick}
                     className="bg-primary text-white rounded-full p-2 border-4 border-white dark:border-[#1a110c] shadow-lg cursor-pointer hover:scale-110 active:scale-95 transition-all"
                     title="Take Photo"
                   >
@@ -5184,6 +5196,7 @@ function HomeScreen({
   triggerHaptic,
   isOnline,
   orderAgainEnabled = true,
+  changeToDelivery,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -5223,6 +5236,7 @@ function HomeScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
   orderAgainEnabled?: boolean;
+  changeToDelivery: (orderId: string) => void;
 }) {
   const { t, language } = useTranslation();
   const currentTownship = useMemo(() => {
@@ -7000,6 +7014,7 @@ function ShopCardSkeleton() {
 
 function DiscoverScreen({
   shops,
+  userProfile,
   onHome,
   onExplore,
   favorites,
@@ -7024,6 +7039,7 @@ function DiscoverScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
   loadingShops?: boolean;
+  userProfile?: UserProfile;
 }) {
   const { t, language } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
@@ -11413,6 +11429,9 @@ function OrderTrackingScreen({
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [localOrders, setLocalOrders] = useState<Order[]>(orders);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    return safeLocalStorageGet("localeats_order_notifications", true);
+  });
 
   // Sync props to local state if props change (e.g. from websocket updates)
   useEffect(() => {
@@ -11422,22 +11441,47 @@ function OrderTrackingScreen({
   const prevStatusesRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
+    if (!notificationsEnabled) {
+      localOrders.forEach((order) => {
+        prevStatusesRef.current[order.id] = order.status;
+      });
+      return;
+    }
+
     localOrders.forEach((order) => {
       const prevStatus = prevStatusesRef.current[order.id];
-      if (prevStatus && prevStatus !== "ready" && order.status === "ready") {
-        // Unique long-vibration haptic pattern [500, 100, 500, 100, 800]
-        if (triggerHaptic) {
-          triggerHaptic([500, 100, 500, 100, 800]);
-        } else if ("vibrate" in navigator) {
-          navigator.vibrate([500, 100, 500, 100, 800]);
+      if (prevStatus && prevStatus !== order.status) {
+        if (order.status === "ready" || order.status === "completed") {
+          // Unique long-vibration haptic pattern [500, 100, 500, 100, 800]
+          if (triggerHaptic) {
+            triggerHaptic([500, 100, 500, 100, 800]);
+          } else if ("vibrate" in navigator) {
+            navigator.vibrate([500, 100, 500, 100, 800]);
+          }
+          
+          if (order.status === "ready") {
+            toast.success(`Your order #${order.id.slice(0, 5)} is ready!`, {
+              description: "Please collect it or await your courier.",
+            });
+          } else if (order.status === "completed") {
+            toast.success(`Your order #${order.id.slice(0, 5)} has been picked up!`, {
+              description: "Enjoy your meal!",
+            });
+          }
         }
-        toast.success(`Your order #${order.id.slice(0, 5)} is ready!`, {
-          description: "Please collect it or await your courier.",
-        });
       }
       prevStatusesRef.current[order.id] = order.status;
     });
-  }, [localOrders, triggerHaptic]);
+  }, [localOrders, triggerHaptic, notificationsEnabled]);
+
+  const handleToggleNotifications = () => {
+    const newState = !notificationsEnabled;
+    setNotificationsEnabled(newState);
+    safeLocalStorageSet("localeats_order_notifications", String(newState));
+    if (newState) {
+      toast.info("Order notifications enabled");
+    }
+  };
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -11545,16 +11589,26 @@ function OrderTrackingScreen({
             <ArrowLeft className="w-6 h-6" />
           </button>
           <h1 className="text-xl font-bold tracking-tight">Track Orders</h1>
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="w-10 h-10 flex items-center justify-end text-orange-600 dark:text-orange-400 cursor-pointer active:scale-95 transition-transform"
-            title="Refresh Status"
-          >
-            <RefreshCw
-              className={`w-5 h-5 ${isRefreshing ? "animate-spin" : ""}`}
-            />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleToggleNotifications}
+              className={`w-10 h-10 flex items-center justify-center cursor-pointer active:scale-95 transition-transform ${notificationsEnabled ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}`}
+              title="Toggle Notifications"
+            >
+              {notificationsEnabled ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+            </button>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="w-10 h-10 flex items-center justify-end text-orange-600 dark:text-orange-400 cursor-pointer active:scale-95 transition-transform"
+              title="Refresh Status"
+            >
+              <RefreshCw
+                className={`w-5 h-5 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -18253,26 +18307,11 @@ function OrderHistoryScreen({
   // Combined filters: Status + Search Input + Shop Selected + Date range selected
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
-      // 1. Filter status
       if (filterStatus !== "All") {
-        const isPendingGroup =
-          filterStatus === "Pending" &&
-          (o.status === "pending" || o.status === "confirmed" || o.status === "queued_for_sync");
-        const isReadyGroup = filterStatus === "Ready" && o.status === "ready";
-        const isDeliveredGroup =
-          filterStatus === "Delivered" && o.status === "completed";
-        const isCancelledGroup =
-          filterStatus === "Cancelled" && o.status === "cancelled";
-        if (
-          !isPendingGroup &&
-          !isReadyGroup &&
-          !isDeliveredGroup &&
-          !isCancelledGroup
-        )
+        const isActiveGroup = filterStatus === "Active" && (o.status === "pending" || o.status === "confirmed" || o.status === "queued_for_sync" || o.status === "ready");        const isCompletedGroup = filterStatus === "Completed" && o.status === "completed";        const isCancelledGroup = filterStatus === "Cancelled" && o.status === "cancelled";        if (!isActiveGroup && !isCompletedGroup && !isCancelledGroup) return false;
           return false;
       }
 
-      // 2. Filter search query text
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const itemName = (o.product_name || "").toLowerCase();
@@ -19037,22 +19076,17 @@ function OrderHistoryScreen({
             </div>
           )}
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {["All", "Pending", "Ready", "Delivered", "Cancelled"].map(
-              (status) => (
-                <button
-                  key={status}
-                  onClick={() => setFilterStatus(status)}
-                  className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                    filterStatus === status
-                      ? "bg-orange-600 text-white shadow-lg shadow-orange-600/20"
-                      : "bg-white dark:bg-slate-800 text-slate-500 border border-slate-100 dark:border-slate-700"
-                  }`}
-                >
-                  {status}
-                </button>
-              ),
-            )}
+          <div className="flex items-center gap-2 pb-2">
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="w-full sm:w-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer shadow-sm appearance-none"
+            >
+              <option value="All">All Orders</option>
+              <option value="Active">Active Orders</option>
+              <option value="Completed">Completed Orders</option>
+              <option value="Cancelled">Cancelled Orders</option>
+            </select>
           </div>
 
           {loading ? (
