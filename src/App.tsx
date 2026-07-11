@@ -180,6 +180,7 @@ import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { SplashScreen } from "./screens/SplashScreen";
+import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
 import {
@@ -965,6 +966,20 @@ export default function App() {
       country: "South Africa",
       role: "user",
     });
+  });
+
+  const [isRestoringSession, setIsRestoringSession] = useState(() => {
+    try {
+      const cachedProfile = localStorage.getItem("userProfile");
+      const hasToken = Object.keys(localStorage).some(
+        (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
+      );
+      if (cachedProfile && hasToken) {
+        const parsed = JSON.parse(cachedProfile);
+        return !!parsed?.email;
+      }
+    } catch {}
+    return false;
   });
 
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -2207,8 +2222,10 @@ export default function App() {
         });
         requestNotificationPermission();
       }
+      setIsRestoringSession(false);
     }).catch((err) => {
       console.warn("Failed to retrieve initial user session:", err);
+      setIsRestoringSession(false);
     });
 
     const {
@@ -2253,6 +2270,7 @@ export default function App() {
           return prev; // Stay on current screen if momentary loss
         });
       }
+      setIsRestoringSession(false);
     });
 
     return () => {
@@ -2913,6 +2931,10 @@ export default function App() {
     }
   }, [userProfile, session, favorites]);
 
+  if (isRestoringSession) {
+    return <AppSkeletonLoader userProfile={userProfile} />;
+  }
+
   return (
     <div className="relative">
 
@@ -3355,15 +3377,25 @@ export default function App() {
                   ) => {
                     try {
                       // 1. Save Shop Review
+                      const dbShopId = typeof pendingReview.shopId === "number"
+                        ? pendingReview.shopId
+                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
+
+                      const dbOrderId = typeof pendingReview.orderId === "number"
+                        ? pendingReview.orderId
+                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
+                          ? pendingReview.orderId
+                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
+
                       const { error: shopErr } = await supabase
                         .from("reviews")
                         .insert({
-                          shop_id: pendingReview.shopId,
-                          order_id: pendingReview.orderId,
-                          user_name: userProfile.fullName || "Anonymous",
+                          shop_id: dbShopId,
+                          user_id: userProfile?.id || session?.user?.id,
+                          username: userProfile.fullName || "Anonymous",
                           rating,
                           comment,
-                          created_at: new Date().toISOString(),
+                          createdAt: new Date().toISOString(),
                         });
 
                       if (shopErr) throw shopErr;
@@ -3372,7 +3404,7 @@ export default function App() {
                       const { data: order } = await supabase
                         .from("orders")
                         .select("rider_id")
-                        .eq("id", pendingReview.orderId)
+                        .eq("id", dbOrderId)
                         .single();
 
                       if (order?.rider_id && riderRating) {
@@ -3382,7 +3414,7 @@ export default function App() {
                             rider_rating: riderRating,
                             rider_rating_comment: riderComment,
                           })
-                          .eq("id", pendingReview.orderId);
+                          .eq("id", dbOrderId);
 
                         // Update rider profile average rating
                         const { data: rider } = await supabase
@@ -9025,10 +9057,14 @@ function StoreInfoScreen({
     setLoadingReviews(true);
     setTableMissing(false);
     try {
+      const dbShopId = typeof shop.id === "number"
+        ? shop.id
+        : (parseInt(String(shop.id).replace(/\D/g, "")) || 1);
+
       const { data, error } = await supabase
         .from("reviews")
         .select("*")
-        .eq("shop_id", shop.id)
+        .eq("shop_id", dbShopId)
         .order("createdAt", { ascending: false });
 
       if (error) {
@@ -9038,7 +9074,13 @@ function StoreInfoScreen({
         }
         throw error;
       }
-      setReviews(data || []);
+
+      const mappedReviews = (data || []).map((r: any) => ({
+        ...r,
+        userName: r.userName || r.username || "Anonymous",
+      }));
+
+      setReviews(mappedReviews);
     } catch (error) {
       console.error("Error fetching reviews:", error);
     } finally {
@@ -9061,10 +9103,15 @@ function StoreInfoScreen({
     if (!newComment.trim() || !userProfile) return;
     setIsSubmittingReview(true);
     try {
+      const dbShopId = typeof shop.id === "number"
+        ? shop.id
+        : (parseInt(String(shop.id).replace(/\D/g, "")) || 1);
+
       const { error } = await supabase.from("reviews").insert([
         {
-          shop_id: shop.id,
-          userName: userProfile.fullName || "Anonymous",
+          shop_id: dbShopId,
+          user_id: userProfile?.id || session?.user?.id,
+          username: userProfile.fullName || "Anonymous",
           rating: newRating,
           comment: newComment,
           createdAt: new Date().toISOString(),
@@ -18179,6 +18226,18 @@ function OrderHistoryScreen({
   const [filterShop, setFilterShop] = useState("All");
   const [filterDate, setFilterDate] = useState("All");
 
+  // Private notes states
+  const [privateNotes, setPrivateNotes] = useState<Record<string, string>>(() => safeLocalStorageGet("localeats_private_notes", {}));
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [tempNoteText, setTempNoteText] = useState("");
+
+  const handleSaveNote = (groupId: string) => {
+    const newNotes = { ...privateNotes, [groupId]: tempNoteText };
+    setPrivateNotes(newNotes);
+    safeLocalStorageSet("localeats_private_notes", JSON.stringify(newNotes));
+    setEditingNoteId(null);
+  };
+
   // Support/Help query states
   const [supportOrder, setSupportOrder] = useState<any | null>(null);
   const [issueType, setIssueType] = useState("");
@@ -18309,9 +18368,7 @@ function OrderHistoryScreen({
     return orders.filter((o) => {
       if (filterStatus !== "All") {
         const isActiveGroup = filterStatus === "Active" && (o.status === "pending" || o.status === "confirmed" || o.status === "queued_for_sync" || o.status === "ready");        const isCompletedGroup = filterStatus === "Completed" && o.status === "completed";        const isCancelledGroup = filterStatus === "Cancelled" && o.status === "cancelled";        if (!isActiveGroup && !isCompletedGroup && !isCancelledGroup) return false;
-          return false;
       }
-
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const itemName = (o.product_name || "").toLowerCase();
@@ -19092,27 +19149,44 @@ function OrderHistoryScreen({
           {loading ? (
             <OrderHistorySkeleton />
           ) : orders.length > 0 && filteredOrders.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in duration-300">
-              <SearchX className="w-12 h-12 text-slate-400 mb-3" />
-              <h4 className="text-base font-black text-slate-800 dark:text-white mb-1">
-                No matches found
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
+              <div className="relative mb-8">
+                <div className="absolute inset-0 bg-primary/10 rounded-full scale-[2] blur-3xl opacity-50 animate-pulse"></div>
+                <div className="size-32 bg-white dark:bg-slate-800 rounded-full shadow-2xl flex items-center justify-center text-primary relative z-10 hover:scale-105 transition-transform duration-500 border-4 border-slate-50 dark:border-slate-800/80">
+                  <div className="relative">
+                    <SearchX className="w-12 h-12 text-slate-400 dark:text-slate-500 mb-1" />
+                    <Utensils className="w-6 h-6 text-orange-500 absolute -bottom-2 -right-3 rotate-12" />
+                  </div>
+                </div>
+              </div>
+              <h4 className="text-xl font-black text-slate-800 dark:text-white mb-2 leading-tight">
+                No orders match your filters
               </h4>
-              <p className="text-xs text-slate-500 max-w-xs mb-6 font-semibold">
-                Try modifying your query search criteria, selecting another tab,
-                or clearing the custom shop filter.
+              <p className="text-sm text-slate-500 dark:text-slate-400 max-w-[260px] mb-8 font-medium leading-relaxed">
+                We couldn't find any past orders matching your search. Why not explore something new instead?
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery("");
-                  setFilterShop("All");
-                  setFilterDate("All");
-                  setFilterStatus("All");
-                }}
-                className="px-5 py-2.5 bg-orange-100 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-orange-200 transition-all active:scale-95"
-              >
-                Reset All Filters
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setFilterShop("All");
+                    setFilterDate("All");
+                    setFilterStatus("All");
+                  }}
+                  className="px-6 py-3.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <RotateCw className="w-4 h-4" />
+                  Reset Filters
+                </button>
+                <button
+                  onClick={onBack}
+                  className="px-6 py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:from-orange-600 hover:to-amber-600 shadow-lg shadow-orange-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Search className="w-4 h-4" />
+                  Browse Food
+                </button>
+              </div>
             </div>
           ) : filteredOrders.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
@@ -19145,7 +19219,8 @@ function OrderHistoryScreen({
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+            <motion.div layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+              <AnimatePresence mode="popLayout">
               {groupedOrders.map((group) => {
                 const shop = shops.find((s) => s.id === group.shop_id);
                 
@@ -19190,7 +19265,12 @@ function OrderHistoryScreen({
                 const showDateStr = dateObj.toLocaleDateString([], { month: "short", day: "numeric" }) + " • " + dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
                 return (
-                  <div
+                  <motion.div
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    transition={{ duration: 0.2 }}
                     key={group.id}
                     className="bg-white dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-105 dark:border-slate-800 shadow-xs flex flex-col gap-3 group hover:border-orange-500/30 transition-all duration-300"
                   >
@@ -19373,6 +19453,70 @@ function OrderHistoryScreen({
                       )}
                     </div>
 
+                    {/* Private Internal Notes */}
+                    <div className="pt-2">
+                      {editingNoteId === group.id ? (
+                        <div className="animate-in fade-in duration-200">
+                          <textarea
+                            value={tempNoteText}
+                            onChange={(e) => setTempNoteText(e.target.value)}
+                            placeholder="Add a private note to remember your preferences (e.g., asked for extra spicy next time)..."
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-xs text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none min-h-[60px]"
+                          />
+                          <div className="flex justify-end gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingNoteId(null)}
+                              className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveNote(group.id)}
+                              className="px-3 py-1.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[10px] font-bold uppercase tracking-wider rounded-lg active:scale-95 transition-all cursor-pointer"
+                            >
+                              Save Note
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 group/note">
+                          <div className="flex-1">
+                            {privateNotes[group.id] ? (
+                              <div 
+                                onClick={() => {
+                                  setTempNoteText(privateNotes[group.id] || "");
+                                  setEditingNoteId(group.id);
+                                }}
+                                className="bg-orange-50/50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 p-2.5 rounded-xl cursor-pointer hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
+                              >
+                                <p className="text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-500 mb-1 flex items-center gap-1.5">
+                                  <FileText className="w-3 h-3" />
+                                  Private Note
+                                </p>
+                                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed italic">
+                                  "{privateNotes[group.id]}"
+                                </p>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTempNoteText("");
+                                  setEditingNoteId(group.id);
+                                }}
+                                className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Add Private Note
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Control Buttons Footer */}
                     <div className="flex gap-2 mt-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
                       {/* Left action based on status */}
@@ -19414,10 +19558,11 @@ function OrderHistoryScreen({
                         Repeat Order
                       </button>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
-            </div>
+              </AnimatePresence>
+            </motion.div>
           )}
         </main>
 
