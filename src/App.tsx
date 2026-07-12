@@ -1564,19 +1564,13 @@ export default function App() {
           }
 
           const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
-          let parsedUpdatedAt = s.updated_at;
-          if (isActive) {
-            let isDateValid = false;
-            if (parsedUpdatedAt) {
-              const d = new Date(parsedUpdatedAt);
-              if (!isNaN(d.getTime())) {
-                isDateValid = true;
-              }
-            }
-            if (!isDateValid) {
-              parsedUpdatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-            }
+          
+          // Master switch override
+          if (!isActive) {
+            isOpen = false;
           }
+
+          let parsedUpdatedAt = s.updated_at;
 
           const correctSpelling = (str: string) => {
             if (!str) return str;
@@ -1638,13 +1632,11 @@ export default function App() {
           };
         })
         .filter((shop) => {
-          if (shop.is_active) {
-            if (!shop.updated_at) return false;
-            const updatedAtDate = new Date(shop.updated_at);
-            const ageHours = (Date.now() - updatedAtDate.getTime()) / (1000 * 60 * 60);
-            if (ageHours > 144) {
-              return false; // older than 6 days (144 hours) is considered abandoned
-            }
+          if (!shop.updated_at) return false;
+          const updatedAtDate = new Date(shop.updated_at);
+          const ageHours = (Date.now() - updatedAtDate.getTime()) / (1000 * 60 * 60);
+          if (ageHours > 96) {
+            return false; // older than 4 days (96 hours) is considered abandoned
           }
           return true;
         })
@@ -2569,8 +2561,12 @@ export default function App() {
     };
     fetchOrders();
 
+    // Polling fallback to improve reliability in case WebSockets drop
+    const timer = setInterval(fetchOrders, 30000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(timer);
     };
   }, [session?.user?.id, shops]);
 
@@ -2604,7 +2600,7 @@ export default function App() {
   }, [fetchShopsData]);
 
   useEffect(() => {
-    if (currentScreen === "home" || currentScreen === "explore") {
+    if (currentScreen === "home" || currentScreen === "explore" || currentScreen === "discover") {
       requestLocation(true);
     }
   }, [requestLocation, currentScreen]);
@@ -6283,16 +6279,11 @@ function HomeScreen({
 
       return matchesSearch && matchesCategory;
     });
-  }, [
-    shops,
-    searchQuery,
-    selectedCategory,
-    favorites,
-  ]);
+  }, [shops, searchQuery, selectedCategory, favorites]);
 
   const sortedShops = useMemo(() => {
     return [...filteredShops].sort((a, b) => {
-      // Smart Sort Logic: Prioritize Open -> Specials -> Distance -> Rating
+      // Smart Sort Logic: Prioritize Open -> Distance -> Specials -> Rating
       const statusA = getShopStatus(a);
       const statusB = getShopStatus(b);
 
@@ -6300,11 +6291,7 @@ function HomeScreen({
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
-      // 2. Prioritize "Local Eats Special"
-      if (a.is_special && !b.is_special) return -1;
-      if (!a.is_special && b.is_special) return 1;
-
-      // 3. Distance Sort (Nearby Priority)
+      // 2. Distance Sort (Nearby Priority)
       if (userLocation) {
         const aLat =
           (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
@@ -6323,8 +6310,13 @@ function HomeScreen({
           Math.pow(bLat - userLocation.lat, 2) +
             Math.pow(bLng - userLocation.lng, 2),
         );
+
         if (Math.abs(distA - distB) > 0.001) return distA - distB;
       }
+
+      // 3. Prioritize "Local Eats Special"
+      if (a.is_special && !b.is_special) return -1;
+      if (!a.is_special && b.is_special) return 1;
 
       // 4. Rating Sort
       return b.rating - a.rating;
@@ -6396,17 +6388,6 @@ function HomeScreen({
       })
       .slice(0, 10);
   }, [orders, shops]);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("order_again_enabled");
-      if (saved === null && mostFrequentItems.length > 0) {
-        onEnableOrderAgain?.();
-      }
-    } catch (e) {
-      console.warn("Error reading order_again_enabled", e);
-    }
-  }, [mostFrequentItems.length, onEnableOrderAgain]);
 
   const cartCount = cart.reduce((sum, item) => sum + (item?.quantity || 0), 0);
   const cartTotal = cart.reduce(
@@ -6841,7 +6822,6 @@ function HomeScreen({
             <div className="relative flex-1">
               <input
                 id="header-search-input"
-                autoFocus
                 className="w-full bg-slate-100 dark:bg-slate-800 border-none outline-none rounded-xl py-2 pl-3 pr-10 text-xs font-bold dark:text-white"
                 placeholder="Search for the best local Kotas..."
                 value={searchQuery}
@@ -7980,6 +7960,8 @@ function DiscoverScreen({
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
+  const [maxDistance, setMaxDistance] = useState<number | null>(null);
+  const [sortPriority, setSortPriority] = useState<"smart" | "distance" | "rating" | "speed">("smart");
   
   const [pingStatus, setPingStatus] = useState<"idle" | "testing" | "online" | "offline">("idle");
   const [latency, setLatency] = useState<number | null>(null);
@@ -8030,11 +8012,66 @@ function DiscoverScreen({
 
     const matchesRating = shop.rating >= minRating;
     const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-    return matchesSearch && matchesCategory && matchesRating && matchesOpen;
+
+    // Filter by max distance if user location is loaded
+    let matchesDistance = true;
+    if (maxDistance !== null && userLocation) {
+      const sLat =
+        (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
+      const sLng =
+        (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
+      const dist = calculateDistance(
+        sLat,
+        sLng,
+        userLocation.lat,
+        userLocation.lng,
+      );
+      matchesDistance = dist <= maxDistance;
+    }
+
+    return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
   });
 
   const sortedShops = [...filteredShops].sort((a, b) => {
-    if (selectedCategory === "Nearby" && userLocation) {
+    const statusA = getShopStatus(a);
+    const statusB = getShopStatus(b);
+
+    // If sorting by smart priority:
+    if (sortPriority === "smart") {
+      // 1. Prioritize Open shops
+      if (statusA.isOpen && !statusB.isOpen) return -1;
+      if (!statusA.isOpen && statusB.isOpen) return 1;
+
+      // 2. Distance Sort (Nearby Priority)
+      if (userLocation) {
+        const aLat =
+          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
+        const aLng =
+          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
+        const bLat =
+          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
+        const bLng =
+          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+
+        const distA = Math.sqrt(
+          Math.pow(aLat - userLocation.lat, 2) +
+            Math.pow(aLng - userLocation.lng, 2),
+        );
+        const distB = Math.sqrt(
+          Math.pow(bLat - userLocation.lat, 2) +
+            Math.pow(bLng - userLocation.lng, 2),
+        );
+
+        if (Math.abs(distA - distB) > 0.001) {
+          return distA - distB;
+        }
+      }
+      
+      // 3. Rating Sort
+      return b.rating - a.rating;
+    }
+
+    if (sortPriority === "distance" && userLocation) {
       const aLat =
         (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
       const aLng =
@@ -8044,16 +8081,21 @@ function DiscoverScreen({
       const bLng =
         (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
 
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
+      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
+      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
       return distA - distB;
     }
+
+    if (sortPriority === "rating") {
+      return b.rating - a.rating;
+    }
+
+    if (sortPriority === "speed") {
+      const speedA = parseInt(a.delivery_eta || "20") || 20;
+      const speedB = parseInt(b.delivery_eta || "20") || 20;
+      return speedA - speedB;
+    }
+
     return 0;
   });
 
@@ -8119,166 +8161,6 @@ function DiscoverScreen({
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-
-          {/* App Management & Connection Center Carousel */}
-          <div className="mb-2">
-            <div className="flex items-center justify-between mb-3.5 px-1">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
-                  <Activity className="w-4 h-4 animate-pulse" />
-                </div>
-                <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">
-                  App Features & Benefits
-                </h3>
-              </div>
-              <span className="text-[10px] text-slate-400 font-bold tracking-tight">
-                Swipe to see benefits ➔
-              </span>
-            </div>
-
-            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-4 pt-1 snap-x scroll-smooth -mx-6 px-6">
-              {/* CARD 1: Diagnostic State */}
-              <div className="flex-shrink-0 w-[290px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden group">
-                {/* Decorative light effect */}
-                <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full blur-xl pointer-events-none"></div>
-                
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                      Connection Status
-                    </span>
-                    
-                    {/* GLOWING SIGNS & STATUS INDICATOR */}
-                    {isOnline ? (
-                      <span className="inline-flex items-center gap-1.5 bg-green-500/10 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-tight">
-                        <span className="size-2 rounded-full bg-green-500 animate-pulse"></span>
-                        Online
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-tight">
-                        <span className="size-2 rounded-full bg-amber-500 animate-pulse"></span>
-                        Offline Mode
-                      </span>
-                    )}
-                  </div>
-
-                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight flex items-center gap-1.5">
-                    {isOnline ? (
-                      <>
-                        <Wifi className="w-4 h-4 text-green-500" />
-                        You are online
-                      </>
-                    ) : (
-                      <>
-                        <WifiOff className="w-4 h-4 text-amber-500" />
-                        You are offline
-                      </>
-                    )}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
-                    {isOnline 
-                      ? "You have a good connection. All features like live tracking and instant orders are working."
-                      : "No internet connection. You can still browse and add items to your cart, they will be saved for when you're back online!"}
-                  </p>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-slate-50 dark:border-slate-800/50 flex items-center justify-between">
-                  <span className="text-[10px] font-mono font-bold text-slate-400 dark:text-slate-500">
-                    {pingStatus === "testing" 
-                      ? "Checking connection..." 
-                      : latency 
-                        ? `Speed: ${latency}ms` 
-                        : isOnline 
-                          ? "Connected" 
-                          : "Offline"}
-                  </span>
-                  <button
-                    onClick={handleTestPing}
-                    disabled={pingStatus === "testing"}
-                    className="px-3 py-1.5 bg-slate-900 dark:bg-slate-800 hover:bg-orange-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50 flex items-center gap-1 cursor-pointer"
-                  >
-                    {pingStatus === "testing" ? (
-                      <>
-                        <RotateCw className="w-3 h-3 animate-spin" />
-                        Testing...
-                      </>
-                    ) : (
-                      "Check Connection"
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* CARD 2: GPS Tracking Advantage */}
-              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                      Benefit 1
-                    </span>
-                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                      <Map className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
-                    Live Delivery Tracking
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
-                    Watch your delivery driver arrive live on the map from the kitchen to your door!
-                  </p>
-                </div>
-                <div className="mt-3 text-[10px] text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-widest">
-                  📍 Highly Recommended
-                </div>
-              </div>
-
-              {/* CARD 3: Safe Offline Resilience */}
-              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                      Benefit 2
-                    </span>
-                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                      <ShieldCheck className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
-                    Works Without Internet
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
-                    Browse menus, add food to your cart, and enter your address even if you lose signal. Everything is saved safely.
-                  </p>
-                </div>
-                <div className="mt-3 text-[10px] text-emerald-600 dark:text-emerald-400 font-extrabold uppercase tracking-widest">
-                  🛡️ Ultra Secure Sync
-                </div>
-              </div>
-
-              {/* CARD 4: Instant Kitchen Sync */}
-              <div className="flex-shrink-0 w-[270px] snap-center bg-gradient-to-br from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-950/80 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-md flex flex-col justify-between relative overflow-hidden">
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                      Benefit 3
-                    </span>
-                    <div className="p-1 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                      <Zap className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
-                    Fast Order Updates
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium leading-relaxed">
-                    Your order goes straight to the kitchen the moment you pay. Get instant confirmation and know exactly when your food will be ready!
-                  </p>
-                </div>
-                <div className="mt-3 text-[10px] text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-widest">
-                  ⚡ Real-time Speed
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
 
         {/* Category Chips */}
@@ -8334,6 +8216,69 @@ function DiscoverScreen({
                 </button>
               ))}
             </div>
+
+            {/* Sort Priority Section */}
+            <div className="flex flex-col gap-1.5 px-6">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                Sort Options
+              </span>
+              <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {[
+                  { id: "smart", label: "✨ Smart Sort" },
+                  { id: "distance", label: "📍 Nearest First" },
+                  { id: "rating", label: "⭐ Highest Rated" },
+                  { id: "speed", label: "⚡ Fastest ETA" }
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => {
+                      setSortPriority(opt.id as any);
+                      triggerHaptic?.(10);
+                    }}
+                    className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border ${
+                      sortPriority === opt.id
+                        ? "bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 border-slate-950 dark:border-slate-100 shadow-sm"
+                        : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Delivery Radius Section */}
+            {userLocation && (
+              <div className="flex flex-col gap-1.5 px-6">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                  Delivery Radius
+                </span>
+                <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {[
+                    { val: null, label: "Any distance" },
+                    { val: 2, label: "Within 2 km" },
+                    { val: 5, label: "Within 5 km" },
+                    { val: 10, label: "Within 10 km" },
+                    { val: 25, label: "Within 25 km" }
+                  ].map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setMaxDistance(opt.val);
+                        triggerHaptic?.(10);
+                      }}
+                      className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border ${
+                        maxDistance === opt.val
+                          ? "bg-orange-600 border-orange-600 text-white shadow-sm"
+                          : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -8393,8 +8338,21 @@ function DiscoverScreen({
                     </div>
 
                     {/* Delivery Method Overlay */}
-                    <div className="absolute bottom-4 left-4 bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                      Speed: {shop.delivery_eta || "20m"}
+                    <div className="absolute bottom-4 left-4 flex gap-2">
+                      <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
+                        Speed: {shop.delivery_eta || "20m"}
+                      </div>
+                      {(() => {
+                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
+                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
+                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
+                        return distanceVal !== null ? (
+                          <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
+                            <Navigation className="w-2.5 h-2.5" />
+                            {distanceVal.toFixed(1)} km
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
 
@@ -9871,11 +9829,16 @@ function StoreInfoScreen({
     const activeBtn = document.getElementById(
       `cat-btn-${selectedMenuCategory.replace(/\s+/g, "-")}`,
     );
-    if (activeBtn) {
-      activeBtn.scrollIntoView({
+    if (activeBtn && activeBtn.parentElement) {
+      const container = activeBtn.parentElement;
+      const scrollLeft =
+        activeBtn.offsetLeft -
+        container.offsetWidth / 2 +
+        activeBtn.offsetWidth / 2;
+        
+      container.scrollTo({
+        left: scrollLeft,
         behavior: "smooth",
-        block: "nearest",
-        inline: "center",
       });
     }
   }, [selectedMenuCategory]);
@@ -18404,6 +18367,9 @@ function AdminOrdersScreen({
   useEffect(() => {
     fetchOrders();
 
+    // Polling fallback to ensure reliability if WebSockets fail
+    const timer = setInterval(fetchOrders, 30000);
+
     // Real-time updates for admin
     const channel = supabase
       .channel("admin_orders")
@@ -18432,6 +18398,7 @@ function AdminOrdersScreen({
 
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(timer);
     };
   }, []);
 
@@ -19151,6 +19118,27 @@ function OrderHistoryScreen({
     null,
   );
 
+  const [addedToCartOrderId, setAddedToCartOrderId] = useState<string | null>(null);
+  const prevOrdersRef = useRef<any[]>(orders);
+
+  useEffect(() => {
+    // Check for status changes to trigger a toast notification
+    if (prevOrdersRef.current && prevOrdersRef.current.length > 0) {
+      orders.forEach((newOrder) => {
+        const oldOrder = prevOrdersRef.current.find((o) => o.id === newOrder.id);
+        if (oldOrder && oldOrder.status !== newOrder.status) {
+          // Toast notification for status change
+          const shopName = shops.find(s => s.id === newOrder.shop_id)?.name || "Kitchen";
+          toast.success(`Order from ${shopName} status updated to: ${newOrder.status.replace("_", " ")}`, {
+            duration: 4000,
+            icon: '🔔',
+          });
+        }
+      });
+    }
+    prevOrdersRef.current = orders;
+  }, [orders, shops]);
+
   const fetchOrders = useCallback(async () => {
     if (!session) return;
     setLoading(true);
@@ -19205,12 +19193,16 @@ function OrderHistoryScreen({
   useEffect(() => {
     fetchOrders();
 
+    // Polling fallback
+    const timer = setInterval(fetchOrders, 30000);
+
     const handleSync = () => {
       fetchOrders();
     };
     window.addEventListener("local-orders-synced", handleSync);
     return () => {
       window.removeEventListener("local-orders-synced", handleSync);
+      clearInterval(timer);
     };
   }, [fetchOrders]);
 
@@ -19371,6 +19363,33 @@ function OrderHistoryScreen({
       (a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
+  }, [filteredOrders]);
+
+  // Generate chart data for orders per month
+  const chartData = useMemo(() => {
+    const dataMap: Record<string, number> = {};
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
+    // Initialize last 6 months to 0
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = `${months[d.getMonth()]} ${d.getFullYear().toString().substring(2)}`;
+      dataMap[label] = 0;
+    }
+
+    filteredOrders.forEach((order) => {
+      const d = new Date(order.created_at);
+      const label = `${months[d.getMonth()]} ${d.getFullYear().toString().substring(2)}`;
+      if (dataMap[label] !== undefined) {
+        dataMap[label] += 1;
+      }
+    });
+
+    return Object.keys(dataMap).map(key => ({
+      name: key,
+      orders: dataMap[key]
+    }));
   }, [filteredOrders]);
 
   const handleCancelOrderSubmit = async () => {
@@ -19547,6 +19566,9 @@ function OrderHistoryScreen({
         { duration: 4000 }
       );
     }
+    
+    setAddedToCartOrderId(group.id);
+    setTimeout(() => setAddedToCartOrderId(null), 2000);
   };
 
   // Reorder confirmation flow
@@ -19594,6 +19616,10 @@ function OrderHistoryScreen({
         specialInstructions,
         order.customizations || [],
       );
+      
+      setAddedToCartOrderId(order.id);
+      setTimeout(() => setAddedToCartOrderId(null), 2000);
+      
       triggerHaptic?.([50, 30, 50]);
       showAlert(
         "Reordered!",
@@ -19822,6 +19848,9 @@ function OrderHistoryScreen({
 
     fetchOrders();
 
+    // Polling fallback to ensure reliability if WebSockets fail
+    const timer = setInterval(fetchOrders, 30000);
+
     const channel = supabase
       .channel(`order_history:${session?.user?.id}`)
       .on(
@@ -19848,6 +19877,7 @@ function OrderHistoryScreen({
 
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(timer);
     };
   }, [session]);
 
@@ -19954,6 +19984,49 @@ function OrderHistoryScreen({
                   <FileText className="w-3 h-3" />
                   PDF Summary Export
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Order Frequency Chart */}
+          {!loading && filteredOrders.length > 0 && chartData.some((d) => d.orders > 0) && (
+            <div className="bg-white dark:bg-slate-900/60 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-4 animate-in fade-in slide-in-from-top duration-500 delay-100">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Order Frequency (Last 6 Months)</h3>
+              <div className="h-40 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fontSize: 10, fill: '#94a3b8' }} 
+                      axisLine={false} 
+                      tickLine={false} 
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      tick={{ fontSize: 10, fill: '#94a3b8' }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'transparent' }}
+                      contentStyle={{
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        border: 'none',
+                        borderRadius: '12px',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        color: 'white',
+                      }}
+                      itemStyle={{ color: '#f97316' }}
+                    />
+                    <Bar 
+                      dataKey="orders" 
+                      fill="#f97316" 
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={40}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
           )}
@@ -20169,10 +20242,10 @@ function OrderHistoryScreen({
                 return (
                   <motion.div
                     layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ duration: 0.2 }}
+                    initial={{ opacity: 0, x: -20, scale: 0.95 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 20, scale: 0.95 }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
                     key={group.id}
                     className="bg-white dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-105 dark:border-slate-800 shadow-xs flex flex-col gap-3 group hover:border-orange-500/30 transition-all duration-300"
                   >
@@ -20454,10 +20527,23 @@ function OrderHistoryScreen({
                       <button
                         type="button"
                         onClick={() => handleReorderGroup(group)}
-                        className="flex-1 py-2 bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-605 text-white hover:from-orange-600 hover:to-amber-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0"
+                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0 ${
+                          addedToCartOrderId === group.id
+                            ? "bg-emerald-500 text-white shadow-emerald-500/20"
+                            : "bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-600 text-white hover:from-orange-600 hover:to-amber-600 shadow-orange-500/20"
+                        }`}
                       >
-                        <ShoppingBag className="w-3.5 h-3.5" />
-                        Repeat Order
+                        {addedToCartOrderId === group.id ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 animate-bounce" />
+                            Added!
+                          </>
+                        ) : (
+                          <>
+                            <ShoppingBag className="w-3.5 h-3.5" />
+                            Repeat Order
+                          </>
+                        )}
                       </button>
                     </div>
                   </motion.div>

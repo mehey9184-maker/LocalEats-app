@@ -120,7 +120,14 @@ interface ShopStatus {
 export const getShopStatus = (shop: {
   opening_time?: string;
   closing_time?: string;
+  is_active?: boolean | string | number;
 }): ShopStatus => {
+  const isActive = shop.is_active === true || shop.is_active === "true" || shop.is_active === "t" || shop.is_active === 1;
+  
+  if (!isActive && shop.is_active !== undefined) {
+    return { isOpen: false, message: 'Away / Not Accepting Orders' };
+  }
+
   if (!shop.opening_time || !shop.closing_time) {
     return { isOpen: true, message: 'Open Now' };
   }
@@ -331,10 +338,7 @@ export const cleanCacheStorage = async (): Promise<void> => {
  * Computes whether a shop's updated_at timestamp stands in the moderately inactive band (4 to 6 days).
  * Returns true if age is between 96 and 144 hours.
  */
-export const isShopAway = (shop: { updated_at?: string }): boolean => {
-  if (!shop.updated_at) return false;
-  const updatedAtDate = new Date(shop.updated_at);
-  const timeDiff = Date.now() - updatedAtDate.getTime();
-  const ageHours = timeDiff / (1000 * 60 * 60);
-  return ageHours > 96 && ageHours <= 144;
+export const isShopAway = (shop: { updated_at?: string; is_active?: boolean | string | number }): boolean => {
+  // The is_active switch is the absolute master control now, removing the updated_at away heuristic
+  return false;
 };
