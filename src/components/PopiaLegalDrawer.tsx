@@ -51,34 +51,37 @@ export function PopiaLegalDrawer({ onConsentChange }: PopiaLegalDrawerProps) {
   return (
     <>
       {/* Persistent Bottom Legal Compliance Bar - Glass-morphic Deep Teal */}
-      <div 
-        id="popia-legal-bar"
-        className="w-full bg-teal-950/80 backdrop-blur-md text-teal-100 py-3 px-6 text-xs flex flex-wrap items-center justify-between gap-3 border-t border-teal-500/20 tracking-wide select-none shadow-lg z-40 relative"
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="inline-flex items-center justify-center bg-emerald-500/20 text-emerald-400 p-1.5 rounded-full shrink-0 animate-pulse">
-            <ShieldCheck className="w-4 h-4" />
-          </span>
-          <p className="truncate font-semibold text-slate-100">
-            POPIA Compliant • <span className="text-emerald-400 font-bold">ZA Act 4 of 2013</span> Intermediary Safeguards Active
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <button 
-            id="popia-review-btn"
-            onClick={() => setIsOpen(true)}
-            className="text-emerald-400 hover:text-emerald-300 font-bold uppercase tracking-wider underline cursor-pointer active:scale-95 transition-all text-[11px]"
-          >
-            Review Legal Agreements & local safeguards
-          </button>
-          {!hasAcknowledged && (
-            <span className="bg-emerald-500 text-teal-950 font-black px-2 py-0.5 rounded-full text-[9px] uppercase tracking-widest animate-bounce shrink-0">
-              Required Consent
+      {!hasAcknowledged && (
+        <div 
+          id="popia-legal-bar"
+          className="fixed bottom-0 left-0 right-0 z-[999] bg-slate-950/95 backdrop-blur-md text-slate-100 py-3.5 px-6 text-xs flex flex-wrap items-center justify-between gap-3 border-t border-orange-500/20 tracking-wide select-none shadow-xl"
+        >
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <span className="inline-flex items-center justify-center bg-orange-500/20 text-orange-400 p-1.5 rounded-full shrink-0 animate-pulse">
+              <ShieldCheck className="w-4 h-4" />
             </span>
-          )}
+            <p className="font-semibold text-slate-200 text-[11px] leading-relaxed">
+              By continuing to browse local joints, you agree to our ephemeral location processing under POPIA. We do not store your data.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <button 
+              id="popia-review-btn"
+              onClick={() => setIsOpen(true)}
+              className="text-orange-400 hover:text-orange-300 font-extrabold uppercase tracking-wider underline cursor-pointer active:scale-95 transition-all text-[10px]"
+            >
+              Review Details
+            </button>
+            <button
+              onClick={handleAcknowledge}
+              className="bg-orange-500 hover:bg-orange-600 text-white font-black px-4 py-1.5 rounded-full text-[10px] uppercase tracking-wider transition-all active:scale-95 cursor-pointer"
+            >
+              Accept
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Elegant POPIA Glass-morphic Modal Drawer */}
       {isOpen && (
