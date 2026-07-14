@@ -5,6 +5,38 @@ import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import './index.css';
 
+if (typeof window !== "undefined") {
+  // Global safety net for unhandled promise rejections (primarily network errors)
+  window.addEventListener('unhandledrejection', (event) => {
+    const errorMsg = event.reason?.message || String(event.reason || '');
+    if (
+      errorMsg.includes('Failed to fetch') ||
+      errorMsg.toLowerCase().includes('failed to fetch') ||
+      errorMsg.toLowerCase().includes('network error') ||
+      errorMsg.toLowerCase().includes('load failed')
+    ) {
+      console.warn('[GlobalSafetyNet] Intercepted unhandled network rejection:', event.reason);
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  });
+
+  // Global safety net for raw uncaught exceptions and resource loading failures
+  window.addEventListener('error', (event) => {
+    const errorMsg = event.message || String(event.error?.message || '');
+    if (
+      errorMsg.includes('Failed to fetch') ||
+      errorMsg.toLowerCase().includes('failed to fetch') ||
+      errorMsg.toLowerCase().includes('network error') ||
+      errorMsg.toLowerCase().includes('load failed')
+    ) {
+      console.warn('[GlobalSafetyNet] Intercepted unhandled network error:', event.error);
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+}
+
 if ('serviceWorker' in navigator) {
   if (
     window.location.hostname.includes('run.app') ||

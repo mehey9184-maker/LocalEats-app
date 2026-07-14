@@ -25,6 +25,32 @@ if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
 }
 
 
+const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === "string" ? input : (input instanceof URL ? input.href : input.url);
+  const pushLog = (window as any).__pushDebugLog;
+  
+  if (pushLog) {
+    const method = init?.method || "GET";
+    const cleanUrl = url.split("?")[0];
+    pushLog("network", `${method} ${cleanUrl}`, "pending");
+  }
+  
+  try {
+    const response = await window.fetch(input, init);
+    if (pushLog) {
+      const cleanUrl = url.split("?")[0];
+      pushLog("network", `${init?.method || "GET"} ${cleanUrl}`, response.ok ? "success" : "error", `Status: ${response.status}`);
+    }
+    return response;
+  } catch (error: any) {
+    if (pushLog) {
+      const cleanUrl = url.split("?")[0];
+      pushLog("network", `${init?.method || "GET"} ${cleanUrl}`, "error", error.message);
+    }
+    throw error;
+  }
+};
+
 export const supabase = createClient(
   supabaseUrl || DEFAULT_URL, 
   supabaseAnonKey || DEFAULT_KEY,
@@ -38,6 +64,9 @@ export const supabase = createClient(
       lock: async (name, acquireTimeout, fn) => {
         return fn();
       },
+    },
+    global: {
+      fetch: customFetch
     }
   }
 );

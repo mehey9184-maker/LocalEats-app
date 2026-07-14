@@ -152,3 +152,63 @@ body {
 .dark .bottom-sheet {
   box-shadow: 0 -10px 40px -10px rgba(0, 0, 0, 0.5);
 }
+
+/* High Contrast Theme overrides */
+.high-contrast body, 
+.high-contrast .bg-white, 
+.high-contrast .bg-slate-50, 
+.high-contrast .bg-slate-100 {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+.high-contrast .text-slate-900, 
+.high-contrast .text-slate-800, 
+.high-contrast .text-slate-700, 
+.high-contrast .text-slate-600, 
+.high-contrast .text-slate-500 {
+  color: #ffffff !important;
+}
+.high-contrast .text-slate-400, 
+.high-contrast .text-slate-300 {
+  color: #ffffff !important;
+  text-decoration: underline;
+}
+.high-contrast button, 
+.high-contrast .btn {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  border: 3px solid #000000 !important;
+  font-weight: 900 !important;
+}
+.high-contrast input, 
+.high-contrast select, 
+.high-contrast textarea {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border: 3px solid #ffffff !important;
+}
+.high-contrast .border, 
+.high-contrast .border-slate-200, 
+.high-contrast .border-slate-100 {
+  border-color: #ffffff !important;
+  border-width: 2px !important;
+}
+.high-contrast .text-primary {
+  color: #f59e0b !important;
+}
+.high-contrast .bg-primary {
+  background-color: #f59e0b !important;
+  color: #000000 !important;
+}
+
+/* Developer Testing Suite styling */
+.developer-suite-container {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+.developer-suite-container.visible {
+  display: block !important;
+  visibility: visible !important;
+}
+

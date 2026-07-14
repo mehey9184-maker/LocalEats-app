@@ -901,6 +901,7 @@ export default function App() {
 
   const transitionHistoryRef = useRef<{ screen: Screen; timestamp: number }[]>([]);
 
+  // Pure navigation state updater
   const setCurrentScreen = useCallback((target: Screen | ((prev: Screen) => Screen)) => {
     setCurrentScreenStack((prevStack) => {
       const current = prevStack[prevStack.length - 1];
@@ -908,31 +909,6 @@ export default function App() {
       
       if (current === nextScreen) {
         return prevStack;
-      }
-
-      // Safeguard against navigation loops
-      const now = Date.now();
-      const transitionHistory = transitionHistoryRef.current;
-      
-      // Keep only last 10 transitions
-      const updatedHistory = [...transitionHistory, { screen: nextScreen, timestamp: now }].slice(-10);
-      transitionHistoryRef.current = updatedHistory;
-
-      // Check for rapid alternating cycles (e.g., home -> other -> home -> other)
-      if (updatedHistory.length >= 6) {
-        const last6 = updatedHistory.slice(-6);
-        const screenSet = new Set(last6.map(item => item.screen));
-        const timeSpan = last6[5].timestamp - last6[0].timestamp;
-        
-        if (screenSet.size <= 2 && timeSpan < 2000) {
-          console.error(`[Navigation Safeguard] Detected rapid navigation loop: ${Array.from(screenSet).join(" <-> ")} within ${timeSpan}ms. Forcing clean break to 'home' screen.`);
-          transitionHistoryRef.current = [{ screen: "home", timestamp: now }];
-          
-          if (current === "home") {
-            return ["home"];
-          }
-          return ["home"];
-        }
       }
       
       if (nextScreen === "home" || nextScreen === "splash") {
@@ -947,6 +923,41 @@ export default function App() {
       return [...prevStack, nextScreen];
     });
   }, []);
+
+  // Safe navigation side effects executed outside the render/state update phase
+  useEffect(() => {
+    if (!currentScreen) return;
+
+    if (typeof window !== "undefined") {
+      const pushLog = (window as any).__pushDebugLog;
+      if (pushLog) {
+        pushLog("navigation", `Transition to screen: '${currentScreen}'`);
+      }
+    }
+
+    // Safeguard against navigation loops
+    const now = Date.now();
+    const transitionHistory = transitionHistoryRef.current;
+    
+    // Keep only last 10 transitions
+    const updatedHistory = [...transitionHistory, { screen: currentScreen, timestamp: now }].slice(-10);
+    transitionHistoryRef.current = updatedHistory;
+
+    // Check for rapid alternating cycles (e.g., home -> other -> home -> other)
+    if (updatedHistory.length >= 6) {
+      const last6 = updatedHistory.slice(-6);
+      const screenSet = new Set(last6.map(item => item.screen));
+      const timeSpan = last6[5].timestamp - last6[0].timestamp;
+      
+      if (screenSet.size <= 2 && timeSpan < 2000) {
+        console.error(`[Navigation Safeguard] Detected rapid navigation loop: ${Array.from(screenSet).join(" <-> ")} within ${timeSpan}ms. Forcing clean break to 'home' screen.`);
+        transitionHistoryRef.current = [{ screen: "home", timestamp: now }];
+        if (currentScreen !== "home") {
+          setCurrentScreenStack(["home"]);
+        }
+      }
+    }
+  }, [currentScreen]);
 
   const setPreviousScreen = useCallback((_screen: Screen | null) => {
     // Handled automatically by the navigation stack
@@ -984,6 +995,38 @@ export default function App() {
   const [favorites, setFavorites] = useState<string[]>(() => {
     return safeLocalStorageGet("favorites", []);
   });
+
+  const [forcedTheme, setForcedTheme] = useState<"light" | "dark" | "high-contrast" | "default">(() => {
+    try {
+      return (localStorage.getItem("dev_forced_theme") as any) || "default";
+    } catch {
+      return "default";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("dev_forced_theme", forcedTheme);
+    } catch {}
+  }, [forcedTheme]);
+
+  useEffect(() => {
+    const pushDebugLog = (type: "navigation" | "network", message: string, status?: "pending" | "success" | "error", details?: string) => {
+      const newLog = {
+        type,
+        message,
+        timestamp: new Date().toLocaleTimeString(),
+        status,
+        details
+      };
+      const logs = (window as any).__devDebugLogs || [];
+      const updated = [newLog, ...logs].slice(0, 50);
+      (window as any).__devDebugLogs = updated;
+      window.dispatchEvent(new CustomEvent("dev-debug-log", { detail: updated }));
+    };
+
+    (window as any).__pushDebugLog = pushDebugLog;
+  }, []);
 
   const [isDarkMode, setIsDarkMode] = useState(() => {
     try {
@@ -1291,17 +1334,28 @@ export default function App() {
     try {
       const root = window.document.documentElement;
       const body = window.document.body;
-      if (isDarkMode) {
+      
+      root.classList.remove("dark", "high-contrast");
+      body.classList.remove("dark", "high-contrast");
+      
+      if (forcedTheme === "dark") {
         root.classList.add("dark");
         body.classList.add("dark");
+      } else if (forcedTheme === "high-contrast") {
+        root.classList.add("dark", "high-contrast");
+        body.classList.add("dark", "high-contrast");
+      } else if (forcedTheme === "light") {
+        // already removed
       } else {
-        root.classList.remove("dark");
-        body.classList.remove("dark");
+        if (isDarkMode) {
+          root.classList.add("dark");
+          body.classList.add("dark");
+        }
       }
     } catch (e) {
       console.warn("DOM Dark class toggle failed:", e);
     }
-  }, [isDarkMode]);
+  }, [isDarkMode, forcedTheme]);
 
   useEffect(() => {
     if (pendingReview) {
@@ -3269,6 +3323,7 @@ export default function App() {
                       localStorage.setItem("biometrics_enabled", String(val));
                     } catch {}
                   }}
+                  triggerHaptic={triggerHaptic}
                 />
               )}
               {/* Verify screen skipped for now */}
@@ -3598,6 +3653,8 @@ export default function App() {
                 <SettingsScreen
                   userProfile={userProfile}
                   setUserProfile={setUserProfile}
+                  forcedTheme={forcedTheme}
+                  onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onLogout={() => setCurrentScreen("splash")}
                   onProfile={() => {
@@ -3630,6 +3687,7 @@ export default function App() {
                     setIsDarkMode(!isDarkMode);
                     triggerHaptic(10);
                   }}
+                  triggerHaptic={triggerHaptic}
                   hapticEnabled={hapticEnabled}
                   onToggleHaptic={() => {
                     const next = !hapticEnabled;
@@ -4980,12 +5038,14 @@ function LoginScreen({
   setNotification,
   biometricsEnabled,
   onToggleBiometrics,
+  triggerHaptic,
 }: {
   onLogin: () => void;
   onSignUp: () => void;
   setNotification: (n: NotificationState) => void;
   biometricsEnabled: boolean;
   onToggleBiometrics: (val: boolean) => void;
+  triggerHaptic?: any;
 }) {
   const [identifier, setIdentifier] = useState(() => {
     try {
@@ -5011,7 +5071,33 @@ function LoginScreen({
 
   // New states for developer panel and biometric authentication
   const [logoClicks, setLogoClicks] = useState(0);
-  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [lastClickTime, setLastClickTime] = useState(0);
+  const [showPasscodeModal, setShowPasscodeModal] = useState(false);
+  const [enteredPasscode, setEnteredPasscode] = useState("");
+  const [devUnlockedUntil, setDevUnlockedUntil] = useState<number | null>(() => {
+    try {
+      const until = localStorage.getItem("dev_unlocked_until");
+      if (until) {
+        const parsed = parseInt(until, 10);
+        if (parsed > Date.now()) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
+  });
+  const [showDevPanel, setShowDevPanel] = useState(() => {
+    try {
+      const until = localStorage.getItem("dev_unlocked_until");
+      if (until) {
+        const parsed = parseInt(until, 10);
+        if (parsed > Date.now()) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  });
   const [isScanningBiometrics, setIsScanningBiometrics] = useState(false);
   const [tokenMeta, setTokenMeta] = useState<any>(null);
   const [hasRememberedToken, setHasRememberedToken] = useState(() => {
@@ -5024,16 +5110,94 @@ function LoginScreen({
 
   // Track logo clicks to toggle hidden Developer Session Panel
   const handleLogoClick = () => {
-    const nextClicks = logoClicks + 1;
-    setLogoClicks(nextClicks);
-    if (nextClicks >= 5) {
-      setShowDevPanel(!showDevPanel);
-      setLogoClicks(0);
-      setNotification({
-        message: !showDevPanel ? "Developer Session Panel unlocked!" : "Developer Session Panel hidden.",
-        type: "info",
-      });
+    const now = Date.now();
+    if (now - lastClickTime > 1000) {
+      setLogoClicks(1);
+    } else {
+      const nextClicks = logoClicks + 1;
+      setLogoClicks(nextClicks);
+      if (nextClicks >= 5) {
+        setLogoClicks(0);
+        setShowPasscodeModal(true);
+        setEnteredPasscode("");
+      }
     }
+    setLastClickTime(now);
+  };
+
+  const [secondsLeft, setSecondsLeft] = useState<number>(0);
+
+  // Monitor dev session expiry and tick timer
+  useEffect(() => {
+    if (!devUnlockedUntil) {
+      setSecondsLeft(0);
+      return;
+    }
+    
+    const updateTime = () => {
+      const left = Math.max(0, Math.floor((devUnlockedUntil - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left <= 0) {
+        setShowDevPanel(false);
+        setDevUnlockedUntil(null);
+        try {
+          localStorage.removeItem("dev_unlocked_until");
+        } catch {}
+        setNotification({
+          message: "Developer session has expired (30-minute limit reached).",
+          type: "info",
+        });
+      }
+    };
+
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+
+    return () => clearInterval(interval);
+  }, [devUnlockedUntil]);
+
+  const formatTimeRemaining = (totalSecs: number) => {
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const handlePasscodePress = (num: string) => {
+    triggerHaptic?.(10);
+    if (enteredPasscode.length < 4) {
+      const nextPasscode = enteredPasscode + num;
+      setEnteredPasscode(nextPasscode);
+      
+      // Auto submit when 4 digits are entered
+      if (nextPasscode === "2002") {
+        const expirationTime = Date.now() + 30 * 60 * 1000; // 30 minutes
+        setDevUnlockedUntil(expirationTime);
+        setShowDevPanel(true);
+        try {
+          localStorage.setItem("dev_unlocked_until", String(expirationTime));
+        } catch {}
+        setNotification({
+          message: "Developer Access Unlocked for 30 minutes! 🛠️",
+          type: "success",
+        });
+        setShowPasscodeModal(false);
+        setEnteredPasscode("");
+      } else if (nextPasscode.length === 4) {
+        triggerHaptic?.(50);
+        setNotification({
+          message: "Incorrect passcode. Please try again.",
+          type: "error",
+        });
+        setTimeout(() => {
+          setEnteredPasscode("");
+        }, 1500);
+      }
+    }
+  };
+
+  const handlePasscodeBackspace = () => {
+    triggerHaptic?.(10);
+    setEnteredPasscode(prev => prev.slice(0, -1));
   };
 
   // Poll and gather metadata for local storage keys and active Supabase session
@@ -5836,9 +6000,14 @@ function LoginScreen({
               className="bg-slate-900 text-slate-100 p-6 rounded-[24px] border border-slate-800 shadow-2xl space-y-4 font-mono text-xs overflow-hidden mt-4"
             >
               <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                   <span className="font-bold tracking-tight text-slate-300">DEV_SESSION_DIAGNOSTICS</span>
+                  {devUnlockedUntil && (
+                    <span className="ml-2 px-2 py-0.5 bg-orange-500/20 border border-orange-500/30 rounded-md text-[10px] font-bold text-orange-400">
+                      ⏱️ {formatTimeRemaining(secondsLeft)}
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={() => setShowDevPanel(false)}
@@ -5920,6 +6089,78 @@ function LoginScreen({
           <div className="fixed bottom-0 left-0 right-0 h-1 bg-primary/10">
             <div className="h-full bg-primary w-1/3"></div>
           </div>
+
+          {showPasscodeModal && (
+            <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-[320px] p-6 shadow-2xl flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200">
+                <div className="bg-orange-500/10 dark:bg-orange-500/20 p-4 rounded-2xl border border-orange-500/20 text-primary">
+                  <Lock className="w-6 h-6" />
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
+                    Developer Access
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold px-4">
+                    Enter the 4-digit passcode to unlock developer settings
+                  </p>
+                </div>
+
+                {/* Dots indicator */}
+                <div className="flex gap-4 justify-center py-2">
+                  {[0, 1, 2, 3].map((idx) => (
+                    <div
+                      key={idx}
+                      className={`w-4 h-4 rounded-full transition-all duration-150 ${
+                        idx < enteredPasscode.length
+                          ? "bg-primary scale-110 shadow-sm shadow-primary/30"
+                          : "bg-slate-100 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700"
+                      }`}
+                    />
+                  ))}
+                </div>
+
+                {/* Grid of Keypad */}
+                <div className="grid grid-cols-3 gap-3 w-full max-w-[240px] mt-2">
+                  {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => handlePasscodePress(num)}
+                      className="w-14 h-14 rounded-full flex items-center justify-center font-black text-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer transition-all active:scale-95"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handlePasscodeBackspace}
+                    className="w-14 h-14 rounded-full flex items-center justify-center font-semibold text-xs bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-pointer transition-all active:scale-95"
+                  >
+                    ⌫
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePasscodePress("0")}
+                    className="w-14 h-14 rounded-full flex items-center justify-center font-black text-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer transition-all active:scale-95"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic?.(10);
+                      setShowPasscodeModal(false);
+                      setEnteredPasscode("");
+                    }}
+                    className="w-14 h-14 rounded-full flex items-center justify-center font-black text-[10px] uppercase tracking-wider text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer transition-all active:scale-95"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -12183,6 +12424,7 @@ function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCountdownP
               className="stroke-orange-500 dark:stroke-orange-400 fill-transparent"
               strokeWidth={strokeWidth}
               strokeDasharray={circumference}
+              initial={{ strokeDashoffset: circumference }}
               animate={{ strokeDashoffset }}
               transition={{ duration: 1, ease: "linear" }}
               strokeLinecap="round"
@@ -12343,11 +12585,91 @@ function OrderTrackingScreen({
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     return safeLocalStorageGet("localeats_order_notifications", true);
   });
+  const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
+  const [riders, setRiders] = useState<Record<string, any>>({});
+
+  // Touch/drag tracking state for Pull-to-Refresh
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const startYRef = useRef(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const toggleOrderDetails = (orderId: string) => {
+    setExpandedOrders((prev) => ({
+      ...prev,
+      [orderId]: !prev[orderId],
+    }));
+  };
 
   // Sync props to local state if props change (e.g. from websocket updates)
   useEffect(() => {
     setLocalOrders(orders);
   }, [orders]);
+
+  // Fetch rider profiles for active delivery orders
+  useEffect(() => {
+    const fetchRiderProfiles = async () => {
+      const riderIds = Array.from(
+        new Set(localOrders.map((o) => o.rider_id).filter(Boolean))
+      ) as string[];
+      if (riderIds.length === 0) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("rider_profiles")
+          .select("*")
+          .in("id", riderIds);
+        if (data) {
+          const profilesRecord: Record<string, any> = {};
+          data.forEach((p) => {
+            profilesRecord[p.id] = p;
+          });
+          setRiders((prev) => ({ ...prev, ...profilesRecord }));
+        }
+      } catch (err) {
+        console.warn("Failed to fetch rider profiles:", err);
+      }
+    };
+
+    fetchRiderProfiles();
+  }, [localOrders]);
+
+  const handleTouchStart = (e: any) => {
+    const container = scrollContainerRef.current;
+    if (!container || container.scrollTop > 0 || isRefreshing) return;
+
+    setIsPulling(true);
+    startYRef.current = e.touches ? e.touches[0].clientY : e.clientY;
+  };
+
+  const handleTouchMove = (e: any) => {
+    if (!isPulling || isRefreshing) return;
+    const container = scrollContainerRef.current;
+    if (!container || container.scrollTop > 0) return;
+
+    const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+    const diff = currentY - startYRef.current;
+
+    if (diff > 0) {
+      // Add visual resistance for the pull action
+      const distance = Math.min(diff * 0.45, 120);
+      setPullDistance(distance);
+      
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (!isPulling) return;
+    setIsPulling(false);
+
+    if (pullDistance >= 65) {
+      handleRefresh();
+    }
+    setPullDistance(0);
+  };
 
   const prevStatusesRef = useRef<Record<string, string>>({});
 
@@ -12523,7 +12845,60 @@ function OrderTrackingScreen({
         </div>
       </header>
 
-      <main className="flex-grow overflow-y-auto px-4 py-6 space-y-6 flex flex-col justify-between">
+      <main
+        ref={scrollContainerRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleTouchStart}
+        onMouseMove={handleTouchMove}
+        onMouseUp={handleTouchEnd}
+        onMouseLeave={handleTouchEnd}
+        className="flex-grow overflow-y-auto px-4 py-6 space-y-6 flex flex-col justify-between select-none relative"
+      >
+        {/* Full Screen Loading Overlay for Pull-to-Refresh */}
+        {isRefreshing && (
+          <div className="absolute inset-0 bg-slate-900/30 dark:bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center z-50 animate-in fade-in duration-200 pointer-events-auto">
+            <div className="bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 p-5 rounded-3xl shadow-2xl flex flex-col items-center space-y-3 max-w-[240px] text-center">
+              <div className="relative flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full border-3 border-orange-500/10 border-t-orange-600 dark:border-orange-400/10 dark:border-t-orange-400 animate-spin" />
+                <RefreshCw className="w-4 h-4 text-orange-600 dark:text-orange-400 absolute animate-pulse" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-wider">Syncing Status</h4>
+                <p className="text-[10px] text-slate-500 font-semibold mt-1">Retrieving latest status live from Supabase...</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pull-To-Refresh Visual Indicator */}
+        {(pullDistance > 0 || isRefreshing) && (
+          <div 
+            className="flex justify-center items-center pointer-events-none transition-all duration-300 ease-out"
+            style={{ 
+              height: isRefreshing ? "48px" : `${pullDistance}px`,
+              opacity: isRefreshing ? 1 : Math.min(pullDistance / 60, 1),
+              marginTop: isRefreshing ? "0px" : `-${Math.max(0, 48 - pullDistance)}px`,
+              marginBottom: "12px"
+            }}
+          >
+            <div className="bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 p-2.5 rounded-full shadow-lg flex items-center justify-center gap-2">
+              <RefreshCw 
+                className={`text-orange-600 dark:text-orange-400 w-4 h-4 ${
+                  isRefreshing ? "animate-spin" : ""
+                }`} 
+                style={{ 
+                  transform: isRefreshing ? "none" : `rotate(${pullDistance * 6}deg)` 
+                }}
+              />
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                {isRefreshing ? "Refreshing..." : pullDistance >= 65 ? "Release to Refresh" : "Pull to Refresh"}
+              </span>
+            </div>
+          </div>
+        )}
+
         {activeOrders.length === 0 ? (
           <div className="flex-grow flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-500 my-auto">
             <div className="relative mb-8">
@@ -12554,65 +12929,66 @@ function OrderTrackingScreen({
           activeOrders.map((order) => {
             const shop = shops.find((s) => s.id === order.shop_id);
             const step = getStatusStep(order.status);
+            const isExpanded = !!expandedOrders[order.id];
+
+            const steps = order.is_delivery 
+              ? [
+                  { s: "pending", icon: <Hourglass className="w-3.5 h-3.5" />, label: "Placed", desc: "Order received by kitchen" },
+                  { s: "preparing", icon: <Utensils className="w-3.5 h-3.5" />, label: "Preparing", desc: "Your meal is being cooked" },
+                  { s: "ready", icon: <Bike className="w-3.5 h-3.5" />, label: "Dispatched", desc: "Courier picked up your food" },
+                  { s: "completed", icon: <CheckSquare className="w-3.5 h-3.5" />, label: "Delivered", desc: "Delivered safely to your door" },
+                ]
+              : [
+                  { s: "pending", icon: <Hourglass className="w-3.5 h-3.5" />, label: "Placed", desc: "Order received by kitchen" },
+                  { s: "preparing", icon: <Utensils className="w-3.5 h-3.5" />, label: "Preparing", desc: "Your meal is being cooked" },
+                  { s: "ready", icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: "Ready", desc: "Ready for collection at shop" },
+                  { s: "completed", icon: <CheckSquare className="w-3.5 h-3.5" />, label: "Collected", desc: "Hand-over complete" },
+                ];
 
             return (
               <div
                 key={order.id}
-                className="bg-white dark:bg-slate-900/50 rounded-2xl border border-primary/10 p-5 shadow-sm space-y-6"
+                className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 rounded-[28px] p-6 shadow-xs space-y-6 transition-all duration-300 hover:shadow-md"
               >
                 {order.status !== "pending" && order.is_delivery && (
-                  <RealTimeRiderTracking order={order} shop={shop} />
+                  <div className="rounded-[20px] overflow-hidden border border-slate-100 dark:border-slate-800">
+                    <RealTimeRiderTracking order={order} shop={shop} />
+                  </div>
                 )}
 
+                {/* Header: Shop Branding, Order Summary & ID */}
                 <div className="flex justify-between items-start">
                   <div className="flex items-center space-x-3">
-                    <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-slate-100 dark:border-slate-800 shadow-sm">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 shadow-xs shrink-0">
                       <BlurUpImage
                         src={shop?.logo || DEFAULT_SHOP_LOGO}
                         alt={shop?.name || "Shop"}
-                        className="w-full h-full"
+                        className="w-full h-full object-cover"
                         blurHash={`https://picsum.photos/seed/${shop?.id || "shop"}/10/10?blur=10`}
                       />
                     </div>
                     <div>
-                      <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                      <h3 className="font-bold text-slate-900 dark:text-white text-base tracking-tight">
                         {shop?.name || "Local Shop"}
                       </h3>
-                      <p className="text-xs text-slate-500 font-medium">
-                        {order.product_name} x{order.quantity}
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                        {order.product_name} <span className="text-slate-400 font-mono">x{order.quantity}</span>
                       </p>
                     </div>
                   </div>
-                  <div className="text-right flex flex-col items-end">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  
+                  <div className="flex flex-col items-end space-y-1 shrink-0">
+                    <div className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 font-mono text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-100/50 dark:border-slate-750">
+                      #{order.id.slice(0, 8).toUpperCase()}
+                    </div>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">
                       Order ID
-                    </p>
-                    <p className="text-[11px] font-mono font-bold text-primary">
-                      #{order.id.slice(0, 8)}
-                    </p>
-                    <button
-                      onClick={() => {
-                        const shareData = {
-                          title: `Track my order from ${shop?.name}`,
-                          text: `I just ordered ${order.product_name}. Track my delivery here!`,
-                          url: `${window.location.origin}/track/${order.id}`,
-                        };
-                        if (navigator.share) {
-                          navigator.share(shareData).catch(() => {});
-                        } else {
-                          navigator.clipboard.writeText(shareData.url);
-                          toast.success("Tracking link copied to clipboard!");
-                        }
-                      }}
-                      className="mt-2 text-[10px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-2 py-1 rounded-full flex items-center gap-1 active:scale-95 transition-transform"
-                    >
-                      <Share2 className="w-3 h-3" /> Share
-                    </button>
+                    </span>
                   </div>
                 </div>
 
-                {/* Contact Controls */}
-                <div className="flex gap-2">
+                {/* Prominent Communication Actions Row */}
+                <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-50 dark:border-slate-850/50">
                   {shop?.phone && (
                     <button
                       onClick={() => {
@@ -12620,83 +12996,129 @@ function OrderTrackingScreen({
                         const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm checking on my order #${order.id.slice(0, 5)}!`)}`;
                         window.open(url, "_blank");
                       }}
-                      className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#25D366] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-lg shadow-[#25D366]/20"
+                      className="flex-1 min-w-[100px] flex items-center justify-center gap-2 py-2.5 px-3 bg-emerald-500/[0.06] hover:bg-emerald-500/[0.12] text-emerald-600 dark:text-emerald-400 border border-emerald-500/10 dark:border-emerald-500/20 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
                     >
-                      <MessageCircle className="w-4 h-4 fill-current" />
+                      <MessageCircle className="w-3.5 h-3.5 fill-current" />
                       <span>Message Shop</span>
                     </button>
                   )}
+                  
                   <button
                     onClick={() => window.open(`tel:${shop?.phone || ""}`)}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                    className="flex-1 min-w-[80px] flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-300 border border-slate-100 dark:border-slate-800 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
                   >
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-3.5 h-3.5" />
                     <span>Call Shop</span>
                   </button>
-                </div>
-                {/* Global Support Button */}
-                <button
-                  onClick={() => {
-                    const subject = `[ORDER SUPPORT] ID: #${order.id.toString().slice(-6)}`;
-                    const body = `Hi Support Team,\n\nI am having an issue with my order from ${shop?.name || "the shop"}.\n\nOrder Info:\nProduct: ${order.product_name} x${order.quantity}\nTotal: R ${(order.price + (order.delivery_fee || 0)).toFixed(2)}\n\nPlease describe your issue below:\n\n`;
-                    window.location.href = `mailto:support@localeats.co.za?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-2 mt-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/50 dark:hover:bg-slate-800 border-dashed border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 rounded-xl text-[11px] font-bold active:scale-95 transition-all cursor-pointer"
-                >
-                  <Headset className="w-3.5 h-3.5" />
-                  <span>Report an Issue / Get App Support</span>
-                </button>
 
-                {/* Tracking Steps */}
-                <div className="relative pt-2">
-                  <div className="absolute top-5 left-0 w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full">
-                    <div
-                      className="h-full bg-primary transition-all duration-1000 ease-out rounded-full"
-                      style={{ width: `${((step - 1) / 3) * 100}%` }}
-                    ></div>
+                  <button
+                    onClick={() => {
+                      const shareData = {
+                        title: `Track my order from ${shop?.name}`,
+                        text: `I just ordered ${order.product_name}. Track my delivery here!`,
+                        url: `${window.location.origin}/track/${order.id}`,
+                      };
+                      if (navigator.share) {
+                        navigator.share(shareData).catch(() => {});
+                      } else {
+                        navigator.clipboard.writeText(shareData.url);
+                        toast.success("Tracking link copied to clipboard!");
+                      }
+                    }}
+                    className="flex-1 min-w-[80px] flex items-center justify-center gap-2 py-2.5 px-3 bg-orange-500/[0.05] hover:bg-orange-500/[0.1] text-orange-600 dark:text-orange-400 border border-orange-500/10 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Share Link</span>
+                  </button>
+                </div>
+
+                {/* Dedicated Courier / Rider Section directly on the tracking page */}
+                {order.rider_id && riders[order.rider_id] && (
+                  <div className="bg-amber-500/[0.04] dark:bg-amber-500/[0.02] border border-amber-500/10 dark:border-amber-500/20 rounded-[20px] p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
+                          <User className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900 dark:text-white">
+                            {riders[order.rider_id]?.full_name || "Assigned Courier"}
+                          </p>
+                          <p className="text-[10px] text-slate-500 capitalize">
+                            {riders[order.rider_id]?.vehicle_type || "Bicycle"} Courier
+                          </p>
+                        </div>
+                      </div>
+                      <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
+                        Active Delivery
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      {riders[order.rider_id]?.phone && (
+                        <button
+                          onClick={() => {
+                            const cleanPhone = riders[order.rider_id].phone.replace(/[^0-9]/g, "");
+                            const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${riders[order.rider_id].full_name}, I'm checking on my delivery for order #${order.id.slice(0, 5)}!`)}`;
+                            window.open(url, "_blank");
+                          }}
+                          className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-[#25D366]/10"
+                        >
+                          <svg className="w-3.5 h-3.5 fill-current shrink-0" viewBox="0 0 24 24">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.705 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                          </svg>
+                          <span>WhatsApp Courier</span>
+                        </button>
+                      )}
+                      
+                      <button
+                        onClick={() => window.open(`tel:${riders[order.rider_id]?.phone || ""}`)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-700 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Phone className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Call Courier</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Minimalist Linear Progress Stepper */}
+                <div className="relative py-2 animate-in fade-in duration-500">
+                  <div className="absolute top-5 left-4 right-4 h-0.5 bg-slate-100 dark:bg-slate-800 rounded-full">
+                    <motion.div
+                      className="h-full bg-primary rounded-full"
+                      initial={{ width: "0%" }}
+                      animate={{ width: `${((step - 1) / 3) * 100}%` }}
+                      transition={{ duration: 1.0, ease: "easeInOut" }}
+                    />
                   </div>
 
-                  <div className="relative flex justify-between">
-                    {[
-                      {
-                        s: "pending",
-                        icon: <Hourglass className="w-4 h-4" />,
-                        label: "Placed",
-                      },
-                      {
-                        s: "preparing",
-                        icon: <Utensils className="w-4 h-4" />,
-                        label: "Preparing",
-                      },
-                      {
-                        s: "ready",
-                        icon: <CheckCircle2 className="w-4 h-4" />,
-                        label: "Ready",
-                      },
-                      {
-                        s: "completed",
-                        icon: <CheckSquare className="w-4 h-4" />,
-                        label: "Collected",
-                      },
-                    ].map((item, index) => {
+                  <div className="relative flex justify-between px-1">
+                    {steps.map((item, index) => {
                       const isActive = step > index;
                       const isCurrent = step === index + 1;
 
                       return (
                         <div
                           key={item.s}
-                          className="flex flex-col items-center space-y-2"
+                          className="flex flex-col items-center space-y-1.5"
                         >
                           <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-500 z-10 relative ${isActive ? "bg-primary border-primary text-white" : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-300"} ${isCurrent ? "scale-110 shadow-lg shadow-primary/30" : ""}`}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-500 z-10 relative ${
+                              isActive
+                                ? "bg-primary border-primary text-white"
+                                : "bg-white dark:bg-slate-900 border-slate-150 dark:border-slate-800 text-slate-300"
+                            } ${isCurrent ? "scale-105 shadow-md shadow-primary/20" : ""}`}
                           >
                             {isCurrent && (
-                              <span className="absolute inset-0 rounded-full border-2 border-primary animate-ping opacity-75"></span>
+                              <span className="absolute inset-0 rounded-full border border-primary animate-ping opacity-60"></span>
                             )}
                             {item.icon}
                           </div>
                           <span
-                            className={`text-[10px] font-bold ${isActive ? "text-primary" : "text-slate-400"}`}
+                            className={`text-[9px] font-bold ${
+                              isActive ? "text-primary font-black" : "text-slate-400"
+                            }`}
                           >
                             {item.label}
                           </span>
@@ -12706,48 +13128,165 @@ function OrderTrackingScreen({
                   </div>
                 </div>
 
-                <div className="bg-primary/5 rounded-xl p-4 flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary">
-                    <Info className="w-5 h-5" />
+                {/* Dedicated Section for Order Notes & Special Instructions */}
+                {(order.notes || order.delivery_instructions || order.special_instructions) && (
+                  <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100/50 dark:border-slate-800/80 rounded-[20px] p-4 space-y-2.5 animate-in fade-in duration-500">
+                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5 leading-none">
+                      <ClipboardList className="w-3.5 h-3.5 text-orange-500" />
+                      Order Notes & Special Instructions
+                    </h4>
+                    <div className="space-y-2 text-xs font-medium">
+                      {order.notes && (
+                        <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850">
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Kitchen Notes</p>
+                          <p className="text-slate-700 dark:text-slate-300 italic">"{order.notes}"</p>
+                        </div>
+                      )}
+                      {(order.delivery_instructions || order.special_instructions) && (
+                        <div className="bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-100 dark:border-slate-850">
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Delivery / Special Instructions</p>
+                          <p className="text-slate-700 dark:text-slate-300">
+                            📍 {cleanInstructionsForDisplay(order.delivery_instructions || order.special_instructions) || "Direct Hand-over Collection"}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex-grow">
-                    <p className="text-xs font-bold text-slate-900 dark:text-white">
-                      {order.status === "pending" &&
-                        "Waiting for shop to accept..."}
-                      {order.status === "preparing" &&
-                        "Chef is working their magic!"}
-                      {order.status === "ready" &&
-                        "Your food is ready for collection!"}
-                    </p>
-                    <p className="text-[10px] text-slate-500 font-medium">
-                      Estimated time: 15-20 mins
-                    </p>
-                    <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={order.is_delivery} />
-                    <DetailedKitchenStatus createdAt={order.created_at} status={order.status} />
-                    {order.is_delivery && (
-                      <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                        {shop?.allow_external_riders === false ? (
-                          <p
-                            id="eta-subtext-inhouse"
-                            className="text-[10px] text-orange-600 dark:text-orange-400 font-extrabold flex items-start gap-1.5 leading-relaxed"
-                          >
-                            <span>🚴</span>
-                            <span>
-                              Serviced exclusively by this shop's private
-                              couriers.
-                            </span>
-                          </p>
-                        ) : (
-                          <p
-                            id="eta-subtext-ondemand"
-                            className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold flex items-start gap-1.5 leading-relaxed"
-                          >
-                            <span>📡</span>
-                            <span>
-                              Linked directly to LocalEats Public Fleet
-                            </span>
-                          </p>
-                        )}
+                )}
+
+                {/* Unified Progress & Status Banner */}
+                <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-100/50 dark:border-slate-800/80 rounded-[20px] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center text-primary shrink-0">
+                        <Info className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
+                          {order.status === "pending" && "Waiting for shop acceptance..."}
+                          {order.status === "preparing" && "Chef is working their magic!"}
+                          {order.status === "ready" && "Your meal is ready for pickup!"}
+                          {order.status === "completed" && "Order completed successfully!"}
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                          Estimated prep time: 15-20 mins
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={order.is_delivery} />
+
+                  {/* Rider Type Info */}
+                  {order.is_delivery && (
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
+                      {shop?.allow_external_riders === false ? (
+                        <p
+                          id="eta-subtext-inhouse"
+                          className="text-[10px] text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1.5 leading-none"
+                        >
+                          <span className="text-sm">🚴</span>
+                          <span>Exclusive in-house private courier team</span>
+                        </p>
+                      ) : (
+                        <p
+                          id="eta-subtext-ondemand"
+                          className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold flex items-center gap-1.5 leading-none"
+                        >
+                          <span className="text-sm">📡</span>
+                          <span>Synced live to LocalEats Public Fleet</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Collapsible Detailed Timeline Section */}
+                  <div className="pt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => toggleOrderDetails(order.id)}
+                      className="w-full flex items-center justify-between py-1 px-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-[11px] font-bold transition-colors cursor-pointer select-none"
+                    >
+                      <span className="flex items-center gap-1">
+                        <span>{isExpanded ? "Hide" : "Show"} Detailed Kitchen Steps</span>
+                      </span>
+                      {isExpanded ? (
+                        <ChevronUp className="w-3.5 h-3.5 stroke-[3]" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 stroke-[3]" />
+                      )}
+                    </button>
+
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        {/* Status Transition History Timeline (Requirement 2) */}
+                        <div className="bg-white dark:bg-slate-950 p-4 rounded-[18px] border border-slate-100 dark:border-slate-850 space-y-4 shadow-inner">
+                          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5 leading-none">
+                            <Clock className="w-3.5 h-3.5 text-orange-500" />
+                            Order Transition History
+                          </h4>
+                          <div className="relative pl-6 border-l border-slate-150 dark:border-slate-800/80 space-y-6">
+                            {steps.map((item, idx) => {
+                              const isMilestoneDone = step > idx;
+                              const isMilestoneCurrent = step === idx + 1;
+                              
+                              // Calculate beautiful simulated offsets for steps based on order creation
+                              const baseTime = new Date(order.created_at);
+                              const stepMinutes = idx === 0 ? 0 : idx === 1 ? 4 : idx === 2 ? 14 : 25;
+                              const timeString = new Date(baseTime.getTime() + stepMinutes * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                              return (
+                                <div key={item.s} className="relative">
+                                  {/* Step Circle Pin */}
+                                  <div className={`absolute -left-[31px] top-0 size-[18px] rounded-full flex items-center justify-center border transition-all duration-300 z-10 ${
+                                    isMilestoneDone 
+                                      ? "bg-emerald-500 border-emerald-550 text-white" 
+                                      : isMilestoneCurrent
+                                      ? "bg-orange-500 border-orange-500 text-white shadow-md shadow-orange-500/20"
+                                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-350 dark:text-slate-600"
+                                  }`}>
+                                    {isMilestoneDone ? (
+                                      <Check className="w-2.5 h-2.5 stroke-[4]" />
+                                    ) : (
+                                      <div className={`size-1.5 rounded-full ${isMilestoneCurrent ? "bg-white animate-pulse" : "bg-slate-300 dark:bg-slate-700"}`} />
+                                    )}
+                                  </div>
+
+                                  <div className="flex justify-between items-start">
+                                    <div>
+                                      <p className={`text-xs font-bold leading-none ${isMilestoneDone || isMilestoneCurrent ? "text-slate-900 dark:text-white" : "text-slate-400"}`}>
+                                        {item.label}
+                                      </p>
+                                      <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium mt-1">
+                                        {item.desc}
+                                      </p>
+                                    </div>
+                                    {(isMilestoneDone || isMilestoneCurrent) && (
+                                      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                                        {timeString}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <DetailedKitchenStatus createdAt={order.created_at} status={order.status} />
+
+                        {/* Support Button inside expanded view */}
+                        <button
+                          onClick={() => {
+                            const subject = `[ORDER SUPPORT] ID: #${order.id.toString().slice(-6)}`;
+                            const body = `Hi Support Team,\n\nI am having an issue with my order from ${shop?.name || "the shop"}.\n\nOrder Info:\nProduct: ${order.product_name} x${order.quantity}\nTotal: R ${(order.price + (order.delivery_fee || 0)).toFixed(2)}\n\nPlease describe your issue below:\n\n`;
+                            window.location.href = `mailto:support@localeats.co.za?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                          }}
+                          className="w-full flex items-center justify-center gap-2 py-2 bg-slate-100/50 hover:bg-slate-100 dark:bg-slate-800/30 dark:hover:bg-slate-850 border border-slate-200/50 dark:border-slate-700/60 text-slate-500 dark:text-slate-400 rounded-xl text-[10px] font-bold active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Headset className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Report an Issue / Get App Support</span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -12759,9 +13298,9 @@ function OrderTrackingScreen({
                     onClick={() =>
                       setCancellationModal({ isOpen: true, orderId: order.id })
                     }
-                    className="w-full py-3 bg-red-50 dark:bg-red-500/10 text-red-600 rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 border border-red-200/50 dark:border-red-900/30 transition-all active:scale-95 hover:bg-red-100"
+                    className="w-full py-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/[0.06] dark:hover:bg-red-500/[0.12] text-red-600 dark:text-red-400 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-red-200/30 dark:border-red-900/20 transition-all active:scale-95 cursor-pointer"
                   >
-                    <Ban className="w-4 h-4" />
+                    <Ban className="w-3.5 h-3.5" />
                     Cancel Order
                   </button>
                 )}
@@ -12869,6 +13408,9 @@ function OrderTrackingScreen({
 function SettingsScreen({
   userProfile,
   setUserProfile,
+  forcedTheme,
+  onSetForcedTheme,
+  triggerHaptic,
   onBack,
   onLogout,
   onProfile,
@@ -12901,6 +13443,9 @@ function SettingsScreen({
 }: {
   userProfile: UserProfile;
   setUserProfile: Dispatch<SetStateAction<UserProfile>>;
+  forcedTheme?: "light" | "dark" | "high-contrast" | "default";
+  onSetForcedTheme?: (theme: "light" | "dark" | "high-contrast" | "default") => void;
+  triggerHaptic?: (pattern?: number | number[], actionType?: "button_press" | "order_update" | "cart_animation") => void;
   onBack: () => void;
   onLogout: () => void;
   onProfile: () => void;
@@ -12954,6 +13499,161 @@ function SettingsScreen({
   const [showNotificationDetails, setShowNotificationDetails] = useState(false);
   const [showSoundSettings, setShowSoundSettings] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
+  const [showDevTestingSuite, setShowDevTestingSuite] = useState(false);
+  const [showDevPanel, setShowDevPanel] = useState(() => {
+    try {
+      const until = localStorage.getItem("dev_unlocked_until");
+      if (until) {
+        const parsed = parseInt(until, 10);
+        if (parsed > Date.now()) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  });
+
+  // Developer Testing Suite States
+  const [bgLatency, setBgLatency] = useState<number | null>(null);
+  const [generatingMockOrder, setGeneratingMockOrder] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<{ type: string; message: string; timestamp: string; status?: string; details?: string }[]>(() => {
+    try {
+      return (window as any).__devDebugLogs || [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Background ping interval
+  useEffect(() => {
+    let active = true;
+    const pingEndpoint = async () => {
+      if (!isOnline) {
+        setBgLatency(null);
+        return;
+      }
+      const start = performance.now();
+      try {
+        const pingTarget = supabaseUrl || window.location.origin;
+        await fetch(`${pingTarget}/rest/v1/`, { method: "HEAD", mode: "no-cors" });
+        if (active) {
+          setBgLatency(Math.round(performance.now() - start));
+        }
+      } catch (e) {
+        if (active) {
+          setBgLatency(Math.round(performance.now() - start));
+        }
+      }
+    };
+
+    pingEndpoint().catch(() => {});
+    const interval = setInterval(() => {
+      pingEndpoint().catch(() => {});
+    }, 5000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [isOnline]);
+
+  // Listen to dev-debug-log events
+  useEffect(() => {
+    const handleLogEvent = (e: Event) => {
+      setDebugLogs((e as CustomEvent).detail || []);
+    };
+    window.addEventListener("dev-debug-log", handleLogEvent);
+    return () => {
+      window.removeEventListener("dev-debug-log", handleLogEvent);
+    };
+  }, []);
+
+  const handleGenerateMockOrder = async () => {
+    setGeneratingMockOrder(true);
+    triggerHaptic?.([50, 30, 50]);
+    try {
+      let targetShopId = "shop_1";
+      let shopNameForOrder = "Gogo Nandi's Kitchen";
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      const ownerId = user?.id || userProfile.id;
+      
+      if (ownerId) {
+        const { data: shopData } = await supabase
+          .from("shops")
+          .select("*")
+          .eq("owner_id", ownerId)
+          .maybeSingle();
+        if (shopData) {
+          targetShopId = shopData.id;
+          shopNameForOrder = shopData.name;
+        }
+      }
+
+      if (targetShopId === "shop_1") {
+        try {
+          const { data: firstShop } = await supabase
+            .from("shops")
+            .select("*")
+            .limit(1)
+            .maybeSingle();
+          if (firstShop) {
+            targetShopId = firstShop.id;
+            shopNameForOrder = firstShop.name;
+          }
+        } catch (e) {}
+      }
+
+      const mockOrder = {
+        user_id: ownerId || "00000000-0000-0000-0000-000000000000",
+        shop_id: targetShopId,
+        customer_name: "Developer Test Account",
+        phone: "+27712345678",
+        email: userProfile.email || "developer@example.com",
+        city: userProfile.city || "Johannesburg",
+        address: "123 Developer Lane, Gauteng",
+        country: "South Africa",
+        product_name: "Special Developer Kota combo",
+        product_variant: "Extra Cheese, Extra Chips, Avocado",
+        quantity: 1,
+        price: 85.00,
+        notes: "MOCK TESTING ORDER generated to verify order handling.",
+        delivery_instructions: "Ring bell at the main gate.",
+        status: "pending",
+        is_delivery: true,
+        delivery_fee: 15.00,
+        delivery_status: "finding_rider",
+        payment_method: "cash",
+        latitude: userProfile.latitude || -26.2041,
+        longitude: userProfile.longitude || 28.0473
+      };
+
+      const { data, error } = await supabase
+        .from("orders")
+        .insert([mockOrder])
+        .select();
+
+      if (error) {
+        const { latitude, longitude, ...safeMockOrder } = mockOrder;
+        const { error: retryError } = await supabase
+          .from("orders")
+          .insert([safeMockOrder])
+          .select();
+        
+        if (retryError) throw retryError;
+      }
+
+      toast.success(`Successfully generated mock order for ${shopNameForOrder}! 🎉`);
+      showAlert("Mock Order Created", `A test order has been successfully generated for ${shopNameForOrder} to verify the kitchen portal order flow. Refresh the kitchen portal to see the new order!`);
+      triggerHaptic?.([100, 50, 100]);
+      audioHelper.play("placed");
+
+    } catch (err: any) {
+      console.error("Failed to generate mock order:", err);
+      toast.error(`Error generating mock order: ${err.message}`);
+    } finally {
+      setGeneratingMockOrder(false);
+    }
+  };
 
   // Address Management States
   const [newAddressInput, setNewAddressInput] = useState("");
@@ -13804,6 +14504,155 @@ function SettingsScreen({
                     >
                       Clear Storage
                     </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </section>
+
+        {/* 5. Developer Testing Suite */}
+        <section className={`space-y-3 developer-suite-container ${showDevPanel ? "visible" : ""}`} id="dev-settings-panel">
+          <div className="flex items-center gap-2 px-1">
+            <Bug className="w-4 h-4 text-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
+              Developer Testing Suite
+            </h3>
+          </div>
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            <button
+              onClick={() => {
+                setShowDevTestingSuite(!showDevTestingSuite);
+                triggerHaptic?.(10);
+              }}
+              className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer text-left"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/20 flex items-center justify-center text-orange-600">
+                  <Bug className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Developer Tools</span>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Theme override, background pings & mock order generator</p>
+                </div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform duration-200 ${showDevTestingSuite ? "rotate-180" : ""}`} />
+            </button>
+
+            <AnimatePresence>
+              {showDevTestingSuite && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="bg-slate-50 dark:bg-slate-900/30 px-5 py-4 space-y-4 border-b border-slate-100 dark:border-slate-800 text-xs text-left"
+                >
+                  {/* Theme Preview Toggle */}
+                  <div className="space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm text-slate-700 dark:text-slate-300">Theme Preview Force</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-400">UI Testing</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-1 bg-slate-100 dark:bg-slate-950 p-1 rounded-xl">
+                      {(["default", "light", "dark", "high-contrast"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => {
+                            onSetForcedTheme?.(mode);
+                            triggerHaptic?.(10);
+                          }}
+                          className={`py-1.5 px-1 text-[9px] uppercase font-black rounded-lg transition-all cursor-pointer ${
+                            (forcedTheme || "default") === mode
+                              ? "bg-primary text-white shadow-sm"
+                              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          }`}
+                        >
+                          {mode === "default" ? "Auto" : mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Background Ping / Latency to Supabase */}
+                  <div className="border-t border-slate-100 dark:border-slate-800/40 pt-3 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-sm text-slate-700 dark:text-slate-300">Supabase Connection Latency</span>
+                        <p className="text-[9px] text-slate-400">Real-time background ping tracking</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`}></span>
+                        <span className="font-mono font-black text-xs text-slate-800 dark:text-slate-100">
+                          {bgLatency !== null ? `${bgLatency}ms` : "Pinging..."}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Generate Mock Order button */}
+                  <div className="border-t border-slate-100 dark:border-slate-800/40 pt-3 space-y-2 text-left">
+                    <div className="flex flex-col text-left mb-1">
+                      <span className="font-medium text-sm text-slate-700 dark:text-slate-300">Test Order Generator</span>
+                      <p className="text-[9px] text-slate-400">Creates a mock order to verify kitchen & rider dashboard flow</p>
+                    </div>
+                    <button
+                      onClick={handleGenerateMockOrder}
+                      disabled={generatingMockOrder}
+                      className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider py-3 rounded-xl shadow-md transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer border-0"
+                    >
+                      {generatingMockOrder ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Creating test order...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingBag className="w-4 h-4" />
+                          <span>Generate Mock Order</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Visual Debug Panel: Log navigation history & network request status */}
+                  <div className="border-t border-slate-100 dark:border-slate-800/40 pt-3 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm text-slate-700 dark:text-slate-300">Visual Debug Console</span>
+                      <button
+                        onClick={() => {
+                          setDebugLogs([]);
+                          try { (window as any).__devDebugLogs = []; } catch {}
+                          triggerHaptic?.(10);
+                        }}
+                        className="text-[9px] uppercase font-black text-red-500 hover:underline cursor-pointer bg-transparent border-0"
+                      >
+                        Clear Console
+                      </button>
+                    </div>
+                    <div className="bg-slate-950 text-slate-200 p-3 rounded-xl font-mono text-[9px] space-y-1.5 max-h-40 overflow-y-auto no-scrollbar border border-slate-800/60 text-left">
+                      {debugLogs.length === 0 ? (
+                        <div className="text-slate-500 text-center py-4 italic">No live navigation or network events logged yet. Try changing screens or triggering actions.</div>
+                      ) : (
+                        debugLogs.map((log, index) => (
+                          <div key={index} className="flex gap-2 items-start border-b border-slate-900 pb-1 last:border-0 last:pb-0">
+                            <span className="text-slate-500 select-none shrink-0">{log.timestamp}</span>
+                            <span className={`px-1 rounded-[4px] font-black shrink-0 ${
+                              log.type === "navigation" ? "bg-blue-950 text-blue-400" : "bg-amber-950/80 text-amber-400"
+                            }`}>
+                              {log.type.toUpperCase()}
+                            </span>
+                            <span className="flex-grow text-slate-300 break-all">{log.message}</span>
+                            {log.status && (
+                              <span className={`font-black uppercase tracking-widest shrink-0 text-[8px] ${
+                                log.status === "success" ? "text-emerald-500" : log.status === "error" ? "text-red-500" : "text-amber-500 animate-pulse"
+                              }`}>
+                                ● {log.status}
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               )}

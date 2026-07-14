@@ -116,6 +116,13 @@ export function CheckoutScreen({
       return "";
     }
   });
+  const [orderNotes, setOrderNotes] = useState(() => {
+    try {
+      return localStorage.getItem("localeats_last_order_notes") || "";
+    } catch {
+      return "";
+    }
+  });
 
   const isCardMachineIntegrationEnabled = useMemo(() => {
     const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
@@ -863,7 +870,7 @@ export function CheckoutScreen({
           product_variant: customizationsString,
           quantity: item.quantity,
           price: finalItemPrice,
-          notes: item.specialInstructions || "",
+          notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || "",
           delivery_instructions: finalDeliveryInstructions,
           status: "queued_for_sync",
           payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
@@ -923,6 +930,9 @@ export function CheckoutScreen({
       if (deliveryInstructions.trim()) {
         localStorage.setItem("localeats_last_instructions", deliveryInstructions.trim());
       }
+      if (orderNotes.trim()) {
+        localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
+      }
       
       setCart([]);
       safeLocalStorageSet("cart", JSON.stringify([]));
@@ -933,6 +943,14 @@ export function CheckoutScreen({
     const checkoutIdempotencyKey = `checkout_${session?.user?.id || "guest"}_shop_${primaryShop?.id || "none"}_total_${totalAmount.toFixed(2)}`;
     try {
       await runWithProcessing(async () => {
+        // Save the last delivery instructions and order notes for future use
+        if (deliveryInstructions.trim()) {
+          localStorage.setItem("localeats_last_instructions", deliveryInstructions.trim());
+        }
+        if (orderNotes.trim()) {
+          localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
+        }
+
         // Calculate proportional discount per item to persist exact client payments into database
         const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
 
@@ -971,7 +989,7 @@ export function CheckoutScreen({
             product_variant: customizationsString,
             quantity: item.quantity,
             price: finalItemPrice,
-            notes: item.specialInstructions || "",
+            notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || "",
             delivery_instructions: finalDeliveryInstructions,
             status: "pending",
             payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
@@ -1416,18 +1434,35 @@ export function CheckoutScreen({
                 </button>
               </div>
 
-              {/* Delivery Notes Text Area */}
-              <div className="flex flex-col gap-2 mt-2">
-                <label className="text-xs font-black uppercase tracking-widest text-slate-500 block">
-                  Delivery Notes / Landmarks
-                </label>
-                <textarea
-                  placeholder="e.g., ring the bell, or leave at the gate"
-                  value={deliveryInstructions}
-                  onChange={(e) => setDeliveryInstructions(e.target.value)}
-                  rows={2}
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
-                />
+              {/* Dual Delivery Notes & Kitchen Notes Text Areas */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
+                    <Bike className="w-3.5 h-3.5 text-orange-500" />
+                    Delivery Notes / Landmarks
+                  </label>
+                  <textarea
+                    placeholder="e.g., ring the bell, or leave at the gate"
+                    value={deliveryInstructions}
+                    onChange={(e) => setDeliveryInstructions(e.target.value)}
+                    rows={2}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
+                    <Utensils className="w-3.5 h-3.5 text-orange-500" />
+                    Kitchen Notes / Order Notes
+                  </label>
+                  <textarea
+                    placeholder="e.g., no onions, extra spicy, or allergy details"
+                    value={orderNotes}
+                    onChange={(e) => setOrderNotes(e.target.value)}
+                    rows={2}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
+                  />
+                </div>
               </div>
               
               {/* Visual distance range helper badge */}
@@ -1549,6 +1584,21 @@ export function CheckoutScreen({
                   </div>
                 </div>
               )}
+
+              {/* Kitchen Notes / Order Notes for Pickup */}
+              <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/60">
+                <label className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                  <Utensils className="w-3.5 h-3.5 text-orange-500" />
+                  Kitchen Notes / Order Notes
+                </label>
+                <textarea
+                  placeholder="e.g., no onions, extra spicy, or allergy details"
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  rows={2}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
+                />
+              </div>
             </section>
           )}
 
