@@ -342,3 +342,24 @@ export const isShopAway = (shop: { updated_at?: string; is_active?: boolean | st
   // The is_active switch is the absolute master control now, removing the updated_at away heuristic
   return false;
 };
+
+/**
+ * Formats a numeric value into South African Rand (R) format with dynamic decimal precision.
+ * By default, shows cents only if the number has a fractional part, or as forced by options.
+ */
+export const formatRand = (
+  amount: number | string,
+  options?: { forceCents?: boolean; round?: boolean }
+): string => {
+  let val = typeof amount === "number" ? amount : parseFloat(amount) || 0;
+  if (options?.round) {
+    val = Math.round(val);
+  }
+  
+  // Dynamically adjust decimal precision: if it has cents or forced, use 2 decimals, otherwise 0.
+  const hasCents = val % 1 !== 0;
+  const precision = (options?.forceCents || hasCents) ? 2 : 0;
+  
+  return `R ${val.toFixed(precision)}`;
+};
+
