@@ -41,6 +41,34 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const cleanUrl = url.split("?")[0];
       pushLog("network", `${init?.method || "GET"} ${cleanUrl}`, response.ok ? "success" : "error", `Status: ${response.status}`);
     }
+
+    // Intercept JWT expired/invalid issues
+    if (response.status === 401) {
+      try {
+        const clone = response.clone();
+        const body = await clone.json();
+        const errMsg = body?.message || body?.error || body?.msg || "";
+        if (typeof errMsg === "string" && (errMsg.toLowerCase().includes("jwt expired") || errMsg.toLowerCase().includes("invalid jwt") || errMsg.toLowerCase().includes("token expired"))) {
+          console.warn("[Supabase Auth] Expired or invalid JWT detected in customFetch. Clearing session...");
+          
+          if (typeof window !== "undefined") {
+            // Clear Supabase session from localStorage
+            const keysToRemove = Object.keys(localStorage).filter(
+              (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
+            );
+            keysToRemove.forEach((key) => localStorage.removeItem(key));
+            localStorage.removeItem("remember_me_secure_token");
+            
+            // Dispatch event to update React app state
+            const event = new CustomEvent("supabase-jwt-expired");
+            window.dispatchEvent(event);
+          }
+        }
+      } catch (e) {
+        // Safe check failed, ignore
+      }
+    }
+
     return response;
   } catch (error: any) {
     if (pushLog) {

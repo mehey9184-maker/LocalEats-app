@@ -1,4 +1,5 @@
 import { precacheAndRoute } from "workbox-precaching";
+import { Queue } from "workbox-background-sync";
 
 // Cast self to any to safely bypass TypeScript DOM/WebWorker library declaration conflicts
 const sw = self as any;
@@ -13,123 +14,42 @@ precacheAndRoute(self.__WB_MANIFEST);
 const CACHE_NAME_APP_SHELL = "localeats-app-shell-v2";
 const CACHE_NAME_API = "localeats-api-v2";
 
-const DB_NAME = "LocalEatsOfflineDB";
-const DB_VERSION = 1;
-
 // Broadcast Channel to communicate with the React hooks instantly
 const broadcastChannel = new BroadcastChannel("localeats-sync-channel");
 
-// IndexedDB outbox helpers inside the worker scope
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains("offline_outbox")) {
-        db.createObjectStore("offline_outbox", { keyPath: "id" });
-      }
-    };
-    
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-    
-    request.onerror = () => {
-      reject(request.error);
-    };
-  });
-}
-
-async function getOutboxItems(): Promise<any[]> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("offline_outbox", "readonly");
-      const store = tx.objectStore("offline_outbox");
-      const request = store.getAll();
-      
-      request.onsuccess = () => {
-        resolve(request.result || []);
-        db.close();
-      };
-      
-      request.onerror = () => {
-        reject(request.error);
-        db.close();
-      };
-    });
-  } catch (err) {
-    console.error("[Service Worker DB] Failed to get outbox items:", err);
-    return [];
+// Instantiate workbox-background-sync Queue to implement strict 15-minute Cart Validity constraint
+const bgSyncQueue = new Queue("localeats-outbox-sync", {
+  maxRetentionTime: 15, // 15 minutes validity
+  onSync: async () => {
+    try {
+      await rehydrateAndReplayOutbox();
+    } catch (err) {
+      console.error("[Service Worker Sync] Background onSync execution failed:", err);
+    }
   }
-}
-
-async function addOutboxItem(item: any): Promise<void> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("offline_outbox", "readwrite");
-      const store = tx.objectStore("offline_outbox");
-      const request = store.put(item);
-      
-      request.onsuccess = () => {
-        resolve();
-        db.close();
-      };
-      
-      request.onerror = () => {
-        reject(request.error);
-        db.close();
-      };
-    });
-  } catch (err) {
-    console.error("[Service Worker DB] Failed to save outbox item:", err);
-  }
-}
-
-async function deleteOutboxItem(id: string): Promise<void> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("offline_outbox", "readwrite");
-      const store = tx.objectStore("offline_outbox");
-      const request = store.delete(id);
-      
-      request.onsuccess = () => {
-        resolve();
-        db.close();
-      };
-      
-      request.onerror = () => {
-        reject(request.error);
-        db.close();
-      };
-    });
-  } catch (err) {
-    console.error("[Service Worker DB] Failed to delete outbox item:", err);
-  }
-}
+});
 
 /**
  * rehydrateAndReplayOutbox
  * Chronologically processes queued database mutation events.
- * Enforces the strict 15-minute Cart Validity constraint.
+ * Enforces the strict 15-minute Cart Validity constraint using workbox-background-sync.
  */
 async function rehydrateAndReplayOutbox() {
-  const items = await getOutboxItems();
-  if (items.length === 0) return;
-
-  // Sort items chronologically by creation timestamp
-  items.sort((a, b) => a.created_at - b.created_at);
-
   const now = Date.now();
   const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
-  for (const item of items) {
-    // Evaluation: Current Time - Action Timestamp < 15 Minutes
-    if (now - item.created_at > FIFTEEN_MINUTES_MS) {
-      await deleteOutboxItem(item.id);
+  let entry;
+  while ((entry = await bgSyncQueue.shiftRequest())) {
+    const timestamp = entry.timestamp || now;
+    if (now - timestamp > FIFTEEN_MINUTES_MS) {
+      console.warn("[Service Worker Sync] WARNING: Order/cart request expired after exceeding the 15-minute validity limit. Discarding request and broadcasting failure to React UI.");
+      
+      broadcastChannel.postMessage({
+        type: "sync-failed",
+        message: "Order failed to sync due to exceeding the 15-minute validity limit.",
+        timestamp: Date.now()
+      });
+
       broadcastChannel.postMessage({
         type: "CART_EXPIRED",
         message: "Your offline changes are older than 15 minutes. Please review your cart before checking out.",
@@ -139,38 +59,36 @@ async function rehydrateAndReplayOutbox() {
     }
 
     try {
-      const headers = new Headers();
-      Object.entries(item.headers).forEach(([key, val]) => {
-        headers.set(key, val as string);
-      });
-
-      const response = await fetch(item.url, {
-        method: item.method,
-        headers: headers,
-        body: item.body || undefined
-      });
-
+      const response = await fetch(entry.request.clone());
       if (response.ok) {
-        await deleteOutboxItem(item.id);
         broadcastChannel.postMessage({
           type: "SYNC_SUCCESS",
-          message: `Synchronized transaction: ${item.method} to ${item.url.split("/").pop()}`,
+          message: `Synchronized transaction: ${entry.request.method} to ${entry.request.url.split("/").pop()}`,
           timestamp: Date.now()
         });
       } else {
         console.warn(`[Service Worker Sync] Queue replay returned status: ${response.status}`);
         if (response.status >= 400 && response.status < 500) {
-          // Drop malformed requests to avoid infinite blockers
-          await deleteOutboxItem(item.id);
+          // Drop malformed requests to avoid infinite blockers, otherwise put it back
+          console.warn(`[Service Worker Sync] Discarding permanent failure with status: ${response.status}`);
+          broadcastChannel.postMessage({
+            type: "SYNC_FAILURE",
+            message: `A queued request was discarded due to server error ${response.status}.`,
+            timestamp: Date.now()
+          });
+          continue;
         }
+        await bgSyncQueue.unshiftRequest(entry);
+        break;
       }
     } catch (err) {
       console.warn("[Service Worker Sync] Replay execution stalled (offline or backend timeout):", err);
-      // Stall subsequent executions to maintain sequential integrity
+      await bgSyncQueue.unshiftRequest(entry);
       break;
     }
   }
 }
+
 
 // Service worker lifecycle setups
 sw.addEventListener("install", () => {
@@ -229,22 +147,9 @@ sw.addEventListener("fetch", (event: any) => {
           return response;
         })
         .catch(async () => {
-          // Store request parameters into IndexedDB for background replay
+          // Store request parameters into workbox-background-sync Queue for background replay
           try {
-            const bodyText = await request.clone().text();
-            const outboxEntry = {
-              id: "tx_" + Date.now() + "_" + Math.random().toString(36).substring(2, 9),
-              url: request.url,
-              method: request.method,
-              headers: Array.from(request.headers.entries()).reduce((acc, [key, val]) => {
-                acc[key] = val;
-                return acc;
-              }, {} as Record<string, string>),
-              body: bodyText,
-              created_at: Date.now()
-            };
-
-            await addOutboxItem(outboxEntry);
+            await bgSyncQueue.pushRequest({ request: request.clone() });
 
             // Register background-sync tag if supported
             if ("sync" in sw.registration) {

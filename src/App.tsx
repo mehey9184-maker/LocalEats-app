@@ -38,6 +38,10 @@ import QRCode from "qrcode";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -127,7 +131,7 @@ import {
   AlertTriangle,
   Check,
   Smartphone,
-  Map,
+  Map as MapIcon,
   List,
   Tag,
   ShoppingBasket,
@@ -196,6 +200,7 @@ import {
   Review,
   Shop,
 } from "./types";
+import { useOfflineSync } from "./hooks/useOfflineSync";
 import {
   hashString,
   handleSupabaseError,
@@ -1136,6 +1141,9 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>(() => {
     return safeLocalStorageGet("cart", []);
   });
+  
+  // Continuous background offline cart synchronization and network state monitoring
+  useOfflineSync(cart, session);
   const [modal, setModal] = useState<ModalState>({
     isOpen: false,
     title: "",
@@ -1712,6 +1720,12 @@ export default function App() {
         err?.message === "FAILED_TO_FETCH_MENU" ||
         (err.message && err.message.toLowerCase().includes("network"));
 
+      if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
+        }
+      }
+
       if (isNetworkError) {
         setIsOnline(false);
       }
@@ -2094,6 +2108,12 @@ export default function App() {
         errStr.includes("load failed") ||
         err?.name === "TypeError";
 
+      if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
+        }
+      }
+
       if (!isNetworkError) {
         console.error("Error fetching user profile:", err);
       }
@@ -2342,8 +2362,23 @@ export default function App() {
       setIsRestoringSession(false);
     });
 
+    const handleJwtExpired = () => {
+      console.warn("React App: Handling expired JWT event. Resetting auth state...");
+      setSession(null);
+      setUserProfile(null);
+      localStorage.removeItem("remember_me_secure_token");
+      setNotification({
+        message: "Your session has expired. Please sign in again.",
+        type: "info"
+      });
+      setCurrentScreen("login");
+    };
+
+    window.addEventListener("supabase-jwt-expired", handleJwtExpired);
+
     return () => {
       subscription.unsubscribe();
+      window.removeEventListener("supabase-jwt-expired", handleJwtExpired);
       // Ensure we explicitly release locks or reset any local lock state if needed on unmount
       if (typeof navigator !== 'undefined' && 'locks' in navigator && (navigator as any).locks.query) {
         console.log("[Auth Cleanup] Explicitly releasing/checking locks on unmount to prevent orphaned lock warnings.");
@@ -2989,6 +3024,12 @@ export default function App() {
                 type: "info",
               });
             } else {
+              const errStr = (error.message || "").toLowerCase();
+              if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
+                }
+              }
               if (isFetchErr) {
                 console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
               } else {
@@ -3792,7 +3833,7 @@ export default function App() {
                     });
                   }}
                   userProfile={userProfile}
-                  completedOrdersCount={orders.filter(o => o.status === "completed" || o.status === "delivered").length}
+                  completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
                   onLogout={async () => {
                     await supabase.auth.signOut();
                     // Clear sensitive data on logout
@@ -3959,6 +4000,87 @@ export default function App() {
           <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
           {session && currentScreen === "home" && <OnboardingTour />}
           {session && currentScreen === "home" && <InteractiveTour />}
+          {/* Persistent Real-time Order Tracker Toast */}
+          <AnimatePresence>
+            {(() => {
+              const activeOrder = orders.find(
+                (o) => o && o.status && !["completed", "delivered", "cancelled"].includes((o.status || "").toLowerCase())
+              );
+              if (
+                !activeOrder ||
+                ["order-tracking", "checkout", "shop-dashboard", "admin-orders", "rider-dashboard", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
+              ) return null;
+              
+              const activeOrderShop = shops.find((s) => s.id === activeOrder.shop_id);
+              
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 100, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 50, scale: 0.95 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  className="fixed bottom-24 left-4 right-4 md:left-auto md:right-6 md:w-96 z-40 bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white p-4 rounded-[28px] shadow-2xl border border-slate-800 flex flex-col gap-3"
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Live Order Progress
+                      </span>
+                    </div>
+                    <div className="text-[10px] font-mono text-orange-400 font-bold bg-orange-950/40 px-2 py-0.5 rounded-full">
+                      #{activeOrder.id.slice(0, 5)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center font-black shrink-0 text-white">
+                        {activeOrderShop?.name?.slice(0, 2).toUpperCase() || "🍔"}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-black truncate">{activeOrderShop?.name || "Kitchen"}</h4>
+                        <p className="text-[11px] font-bold text-orange-400 flex items-center gap-1 mt-0.5">
+                          <Clock className="w-3.5 h-3.5 animate-spin duration-3000" />
+                          {activeOrder.status === "pending" && "Waiting for confirmation..."}
+                          {activeOrder.status === "confirmed" && "Order Accepted!"}
+                          {activeOrder.status === "preparing" && "Chef is Cooking..."}
+                          {activeOrder.status === "ready" && "Ready for Collection! 🔥"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setCurrentScreen("order-tracking");
+                      }}
+                      className="shrink-0 bg-white hover:bg-slate-100 text-slate-950 text-[11px] font-black px-3 py-2 rounded-full shadow-sm active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      Track <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
+                    <div 
+                      className="bg-orange-500 h-full rounded-full transition-all duration-1000 ease-out"
+                      style={{
+                        width: 
+                          activeOrder.status === "pending" ? "15%" :
+                          activeOrder.status === "confirmed" ? "40%" :
+                          activeOrder.status === "preparing" ? "70%" :
+                          activeOrder.status === "ready" ? "100%" : "0%"
+                      }}
+                    />
+                  </div>
+                </motion.div>
+              );
+            })()}
+          </AnimatePresence>
+
           <PopiaLegalDrawer />
         </div>
       </AnimatePresence>
@@ -6497,14 +6619,24 @@ function HomeScreen({
     return Array.from(new Set([...base, ...types, ...cuisines] as string[]));
   }, [shops]);
 
+  // Pre-calculate search index map for lightning-fast search matches on low-end devices
+  const shopSearchIndex = useMemo(() => {
+    const indexMap: Record<string, string> = {};
+    shops.forEach((shop) => {
+      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category} ${shop.cuisine_type || ""}`.toLowerCase();
+    });
+    return indexMap;
+  }, [shops]);
+
   const filteredShops = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const queryTerms = query === "" ? [] : query.split(/\s+/);
+
     return shops.filter((shop) => {
-      const query = searchQuery.trim().toLowerCase();
-      const shopText =
-        `${shop.name} ${shop.description} ${shop.category} ${shop.cuisine_type || ""}`.toLowerCase();
+      const shopText = shopSearchIndex[shop.id] || "";
       const matchesSearch =
         query === "" ||
-        query.split(/\s+/).every((term) => shopText.includes(term));
+        queryTerms.every((term) => shopText.includes(term));
 
       let matchesCategory = false;
       if (selectedCategory === "All") {
@@ -6521,7 +6653,7 @@ function HomeScreen({
 
       return matchesSearch && matchesCategory;
     });
-  }, [shops, searchQuery, selectedCategory, favorites]);
+  }, [shops, searchQuery, selectedCategory, favorites, shopSearchIndex]);
 
   const sortedShops = useMemo(() => {
     return [...filteredShops].sort((a, b) => {
@@ -6585,7 +6717,7 @@ function HomeScreen({
     } = {};
 
     orders.forEach((o) => {
-      if (o.status === "cancelled") return;
+      if (o.status.toLowerCase() === "cancelled") return;
       const key = `${o.shop_id}_${o.product_name}`;
       if (!itemCounts[key]) {
         itemCounts[key] = {
@@ -7236,7 +7368,7 @@ function HomeScreen({
       <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
         {/* Compact Persistent Delivery Status Widget */}
         {(() => {
-          const activeOrders = orders.filter((o) => o.status !== "completed" && o.status !== "cancelled");
+          const activeOrders = orders.filter((o) => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered");
           if (activeOrders.length === 0) return null;
 
           const latestOrder = activeOrders[0];
@@ -7597,7 +7729,7 @@ function HomeScreen({
             <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
               currentScreen === "explore" ? "bg-orange-50 dark:bg-orange-950/50" : ""
             }`}>
-              <Map className="w-5 h-5" />
+              <MapIcon className="w-5 h-5" />
             </div>
             <span className="text-[9px] font-black uppercase tracking-widest mt-1">
               {t("map")}
@@ -8084,44 +8216,56 @@ function DiscoverScreen({
     ...new Set(shops.map((s) => s.category)),
   ];
 
-  const filteredShops = shops.filter((shop) => {
+  // Pre-calculate search index map for DiscoverScreen to optimize searching
+  const shopSearchIndex = useMemo(() => {
+    const indexMap: Record<string, string> = {};
+    shops.forEach((shop) => {
+      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
+    });
+    return indexMap;
+  }, [shops]);
+
+  const filteredShops = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const shopText =
-      `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
-    const matchesSearch =
-      query === "" ||
-      query.split(/\s+/).every((term) => shopText.includes(term));
+    const queryTerms = query === "" ? [] : query.split(/\s+/);
 
-    let matchesCategory = false;
-    if (selectedCategory === "All" || selectedCategory === "Nearby") {
-      matchesCategory = true;
-    } else if (selectedCategory === "Favorites") {
-      matchesCategory = favorites.includes(shop.id);
-    } else {
-      matchesCategory = shop.category === selectedCategory;
-    }
+    return shops.filter((shop) => {
+      const shopText = shopSearchIndex[shop.id] || "";
+      const matchesSearch =
+        query === "" ||
+        queryTerms.every((term) => shopText.includes(term));
 
-    const matchesRating = shop.rating >= minRating;
-    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+      let matchesCategory = false;
+      if (selectedCategory === "All" || selectedCategory === "Nearby") {
+        matchesCategory = true;
+      } else if (selectedCategory === "Favorites") {
+        matchesCategory = favorites.includes(shop.id);
+      } else {
+        matchesCategory = shop.category === selectedCategory;
+      }
 
-    // Filter by max distance if user location is loaded
-    let matchesDistance = true;
-    if (maxDistance !== null && userLocation) {
-      const sLat =
-        (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-      const sLng =
-        (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-      const dist = calculateDistance(
-        sLat,
-        sLng,
-        userLocation.lat,
-        userLocation.lng,
-      );
-      matchesDistance = dist <= maxDistance;
-    }
+      const matchesRating = shop.rating >= minRating;
+      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
 
-    return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
-  });
+      // Filter by max distance if user location is loaded
+      let matchesDistance = true;
+      if (maxDistance !== null && userLocation) {
+        const sLat =
+          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
+        const sLng =
+          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
+        const dist = calculateDistance(
+          sLat,
+          sLng,
+          userLocation.lat,
+          userLocation.lng,
+        );
+        matchesDistance = dist <= maxDistance;
+      }
+
+      return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
+    });
+  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
 
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
@@ -8212,7 +8356,7 @@ function DiscoverScreen({
               className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
             >
               {viewMode === "list" ? (
-                <Map className="w-5 h-5" />
+                <MapIcon className="w-5 h-5" />
               ) : (
                 <List className="w-5 h-5" />
               )}
@@ -8707,7 +8851,7 @@ function DiscoverScreen({
               onClick={onExplore}
               className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer"
             >
-              <Map className="w-6 h-6 mb-1" />
+              <MapIcon className="w-6 h-6 mb-1" />
               <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">
                 {t("map")}
               </span>
@@ -10992,52 +11136,64 @@ function ExploreScreen({
     ...new Set(shops.map((s) => s.category)),
   ];
 
-  const filteredShops = shops.filter((shop) => {
+  // Pre-calculate search index map for ExploreScreen to optimize searching on low-end devices
+  const shopSearchIndex = useMemo(() => {
+    const indexMap: Record<string, string> = {};
+    shops.forEach((shop) => {
+      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
+    });
+    return indexMap;
+  }, [shops]);
+
+  const filteredShops = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const shopText =
-      `${shop.name} ${shop.description} ${shop.category}`.toLowerCase();
-    const matchesSearch =
-      query === "" ||
-      query.split(/\s+/).every((term) => shopText.includes(term));
+    const queryTerms = query === "" ? [] : query.split(/\s+/);
 
-    let matchesCategory = false;
-    if (selectedCategory === "All") {
-      matchesCategory = true;
-    } else if (selectedCategory === "Favorites") {
-      matchesCategory = favorites.includes(shop.id);
-    } else if (selectedCategory === "Nearby") {
-      matchesCategory = true; // Handled in sort
-    } else {
-      matchesCategory = shop.category === selectedCategory;
-    }
+    return shops.filter((shop) => {
+      const shopText = shopSearchIndex[shop.id] || "";
+      const matchesSearch =
+        query === "" ||
+        queryTerms.every((term) => shopText.includes(term));
 
-    const matchesRating = shop.rating >= minRating;
-    const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+      let matchesCategory = false;
+      if (selectedCategory === "All") {
+        matchesCategory = true;
+      } else if (selectedCategory === "Favorites") {
+        matchesCategory = favorites.includes(shop.id);
+      } else if (selectedCategory === "Nearby") {
+        matchesCategory = true; // Handled in sort
+      } else {
+        matchesCategory = shop.category === selectedCategory;
+      }
 
-    // Filter by max distance if user location is loaded
-    let matchesDistance = true;
-    if (maxDistance !== null && userLocation) {
-      const sLat =
-        (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-      const sLng =
-        (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-      const dist = calculateDistance(
-        sLat,
-        sLng,
-        userLocation.lat,
-        userLocation.lng,
+      const matchesRating = shop.rating >= minRating;
+      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
+
+      // Filter by max distance if user location is loaded
+      let matchesDistance = true;
+      if (maxDistance !== null && userLocation) {
+        const sLat =
+          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
+        const sLng =
+          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
+        const dist = calculateDistance(
+          sLat,
+          sLng,
+          userLocation.lat,
+          userLocation.lng,
+        );
+        matchesDistance = dist <= maxDistance;
+      }
+
+      return (
+        matchesSearch &&
+        matchesCategory &&
+        matchesRating &&
+        matchesOpen &&
+        matchesDistance
       );
-      matchesDistance = dist <= maxDistance;
-    }
-
-    return (
-      matchesSearch &&
-      matchesCategory &&
-      matchesRating &&
-      matchesOpen &&
-      matchesDistance
-    );
-  });
+    });
+  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
 
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
@@ -11112,7 +11268,7 @@ function ExploreScreen({
                 {layoutMode === "map" ? (
                   <List className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                 ) : (
-                  <Map className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                  <MapIcon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                 )}
               </button>
 
@@ -11498,7 +11654,7 @@ function ExploreScreen({
                           className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-white rounded-2xl active:scale-95 transition-all text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
                           title="View on Map"
                         >
-                          <Map className="w-4 h-4 shrink-0 text-orange-500" />
+                          <MapIcon className="w-4 h-4 shrink-0 text-orange-500" />
                           <span>On Map</span>
                         </button>
                       </div>
@@ -11769,7 +11925,7 @@ function ExploreScreen({
           </button>
           <button className="flex flex-col items-center gap-1 text-orange-600 transition-colors cursor-pointer group">
             <div className="p-1 group-hover:scale-110 transition-transform">
-              <Map className="w-6 h-6" />
+              <MapIcon className="w-6 h-6" />
             </div>
             <span className="text-[10px] font-black uppercase tracking-tighter">
               {t("map")}
@@ -14885,6 +15041,7 @@ function ShopDashboardScreen({
   const [orderFilter, setOrderFilter] = useState<
     "today" | "seven_days" | "all"
   >("today");
+  const [orderStatusFilter, setOrderStatusFilter] = useState<"active" | "history">("active");
   const [cancellationModal, setCancellationModal] = useState<{
     isOpen: boolean;
     orderId: string | null;
@@ -15617,10 +15774,19 @@ function ShopDashboardScreen({
     return true; // 'all'
   });
 
+  const displayedOrders = filteredOrders.filter((o) => {
+    const isActive = ["pending", "confirmed", "preparing", "ready", "queued_for_sync"].includes((o.status || "").toLowerCase());
+    if (orderStatusFilter === "active") {
+      return isActive;
+    } else {
+      return !isActive; // completed, delivered, cancelled
+    }
+  });
+
   const activeOrdersCount = orders.filter((o) =>
-    ["pending", "confirmed", "preparing"].includes(o.status),
+    ["pending", "confirmed", "preparing"].includes((o.status || "").toLowerCase()),
   ).length;
-  const readyOrdersCount = orders.filter((o) => o.status === "ready").length;
+  const readyOrdersCount = orders.filter((o) => o.status.toLowerCase() === "ready").length;
   const todayRevenue = orders
     .filter((o) => {
       const orderDate = new Date(o.created_at);
@@ -15628,7 +15794,7 @@ function ShopDashboardScreen({
       // Only count completed or ready orders for revenue
       return (
         orderDate.toDateString() === today.toDateString() &&
-        ["ready", "completed"].includes(o.status)
+        ["ready", "completed"].includes((o.status || "").toLowerCase())
       );
     })
     .reduce((sum, o) => sum + (o.price || 0), 0);
@@ -15647,7 +15813,7 @@ function ShopDashboardScreen({
         (o) => new Date(o.created_at).toDateString() === dayStr,
       );
       const dayRevenue = dayOrders
-        .filter((o) => ["ready", "completed"].includes(o.status))
+        .filter((o) => ["ready", "completed"].includes((o.status || "").toLowerCase()))
         .reduce((sum, o) => sum + (o.price || 0), 0);
 
       stats.push({
@@ -15985,6 +16151,23 @@ function ShopDashboardScreen({
                     : filter === "seven_days"
                       ? "Last 7 Days"
                       : "All Time"}
+                </button>
+              ))}
+            </div>
+
+            {/* Status Segmented Control */}
+            <div className="flex p-1 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+              {(["active", "history"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setOrderStatusFilter(filter)}
+                  className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                    orderStatusFilter === filter
+                      ? "bg-white dark:bg-slate-700 text-orange-600 shadow-md"
+                      : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  }`}
+                >
+                  {filter === "active" ? "Active Tracker 🔔" : "Merchant History Logs 📁"}
                 </button>
               ))}
             </div>
@@ -16640,7 +16823,7 @@ function ShopDashboardScreen({
 
                       {/* Manual Assignment Section */}
                       {orders.some(
-                        (o) => o.status === "ready" && !o.rider_id,
+                        (o) => o.status.toLowerCase() === "ready" && !o.rider_id,
                       ) &&
                         !rider.current_order_id && (
                           <div className="pt-3 border-t border-slate-50 dark:border-slate-800">
@@ -16650,7 +16833,7 @@ function ShopDashboardScreen({
                             <div className="flex flex-col gap-2">
                               {orders
                                 .filter(
-                                  (o) => o.status === "ready" && !o.rider_id,
+                                  (o) => o.status.toLowerCase() === "ready" && !o.rider_id,
                                 )
                                 .map((readyOrder) => {
                                   // Rider Suggestion Logic: Calculate Proximity
@@ -17210,22 +17393,24 @@ function ShopDashboardScreen({
               </div>
             </div>
           </div>
-        ) : orders.length === 0 ? (
+        ) : displayedOrders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center space-y-6">
             <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400">
               <Utensils className="w-10 h-10" />
             </div>
             <div>
               <p className="font-bold text-lg text-slate-900 dark:text-white">
-                No active orders
+                {orderStatusFilter === "active" ? "No active orders" : "No history records"}
               </p>
               <p className="text-slate-500 text-sm">
-                New orders will appear here in real-time.
+                {orderStatusFilter === "active"
+                  ? "New orders will appear here in real-time."
+                  : "Completed or cancelled orders will appear here."}
               </p>
             </div>
           </div>
         ) : (
-          filteredOrders.map((order) => {
+          displayedOrders.map((order) => {
             const dist =
               order.latitude &&
               order.longitude &&
@@ -17259,22 +17444,22 @@ function ShopDashboardScreen({
                       <span
                         className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${getStatusColor(order.status, order.delivery_status)}`}
                       >
-                        {order.status === "pending" && (
+                        {order.status.toLowerCase() === "pending" && (
                           <Clock className="w-3 h-3" />
                         )}
-                        {order.status === "confirmed" && (
+                        {order.status.toLowerCase() === "confirmed" && (
                           <CheckCircle2 className="w-3 h-3" />
                         )}
-                        {order.status === "preparing" && (
+                        {order.status.toLowerCase() === "preparing" && (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         )}
-                        {order.status === "ready" && (
+                        {order.status.toLowerCase() === "ready" && (
                           <Package className="w-3 h-3" />
                         )}
-                        {order.status === "completed" && (
+                        {order.status.toLowerCase() === "completed" && (
                           <CheckCircle2 className="w-3 h-3" />
                         )}
-                        {order.status === "cancelled" && (
+                        {order.status.toLowerCase() === "cancelled" && (
                           <XCircle className="w-3 h-3" />
                         )}
                         {order.delivery_status
@@ -17525,7 +17710,7 @@ function ShopDashboardScreen({
                 </div>
 
                 <div className="p-4 flex gap-2 overflow-x-auto no-scrollbar">
-                  {order.status === "pending" && (
+                  {order.status.toLowerCase() === "pending" && (
                     <button
                       onClick={() => updateOrderStatus("confirmed", order.id)}
                       className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -17533,7 +17718,7 @@ function ShopDashboardScreen({
                       Confirm Order
                     </button>
                   )}
-                  {order.status === "confirmed" && (
+                  {order.status.toLowerCase() === "confirmed" && (
                     <button
                       onClick={() => updateOrderStatus("preparing", order.id)}
                       className="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -17541,7 +17726,7 @@ function ShopDashboardScreen({
                       Start Preparing
                     </button>
                   )}
-                  {order.status === "preparing" && (
+                  {order.status.toLowerCase() === "preparing" && (
                     <button
                       onClick={() => updateOrderStatus("ready", order.id)}
                       className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -17549,7 +17734,7 @@ function ShopDashboardScreen({
                       Mark as Ready
                     </button>
                   )}
-                  {order.status === "ready" && (
+                  {order.status.toLowerCase() === "ready" && (
                     <button
                       onClick={() => updateOrderStatus("completed", order.id)}
                       className="flex-1 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold py-3 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
@@ -18150,7 +18335,7 @@ function AdminOrdersScreen({
         order.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         order.product_name?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus =
-        statusFilter === "all" || order.status === statusFilter;
+        statusFilter === "all" || order.status.toLowerCase() === statusFilter;
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
@@ -18522,7 +18707,7 @@ function AdminOrdersScreen({
                     className="flex gap-2 pt-3"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {order.status === "pending" && (
+                    {order.status.toLowerCase() === "pending" && (
                       <button
                         onClick={() => {
                           setOrderToConfirm(order);
@@ -18535,7 +18720,7 @@ function AdminOrdersScreen({
                         Confirm
                       </button>
                     )}
-                    {order.status === "confirmed" && (
+                    {order.status.toLowerCase() === "confirmed" && (
                       <button
                         onClick={() => updateOrderStatus("ready", order.id)}
                         className="flex-1 h-9 bg-emerald-500 text-white text-xs font-bold rounded-lg hover:bg-emerald-600 transition-colors cursor-pointer"
@@ -18543,7 +18728,7 @@ function AdminOrdersScreen({
                         Mark Ready
                       </button>
                     )}
-                    {order.status === "ready" && (
+                    {order.status.toLowerCase() === "ready" && (
                       <button
                         onClick={() => updateOrderStatus("completed", order.id)}
                         className="flex-1 h-9 bg-slate-900 dark:bg-white dark:text-slate-900 text-white text-xs font-bold rounded-lg hover:opacity-90 transition-colors cursor-pointer"
@@ -18759,7 +18944,7 @@ function OrderHistoryScreen({
 
   const fetchOrders = useCallback(async () => {
     if (!session) return;
-    setLoading(true);
+    if (orders.length === 0) setLoading(true);
     try {
       if (!isOnline) {
         // Retrieve offline queued and cached orders
@@ -18826,7 +19011,7 @@ function OrderHistoryScreen({
 
   // Aggregate veteran diner statistics
   const stats = useMemo(() => {
-    const completedOrders = orders.filter((o) => o.status === "completed");
+    const completedOrders = orders.filter((o) => o.status.toLowerCase() === "completed");
     const totalSpent = completedOrders.reduce(
       (sum, o) => sum + (o.price || 0) + (o.delivery_fee || 0),
       0,
@@ -18879,7 +19064,10 @@ function OrderHistoryScreen({
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
       if (filterStatus !== "All") {
-        const isActiveGroup = filterStatus === "Active" && (o.status === "pending" || o.status === "confirmed" || o.status === "queued_for_sync" || o.status === "ready");        const isCompletedGroup = filterStatus === "Completed" && o.status === "completed";        const isCancelledGroup = filterStatus === "Cancelled" && o.status === "cancelled";        if (!isActiveGroup && !isCompletedGroup && !isCancelledGroup) return false;
+        const isActiveGroup = filterStatus === "Active" && (o.status.toLowerCase() === "pending" || o.status.toLowerCase() === "confirmed" || o.status.toLowerCase() === "preparing" || o.status.toLowerCase() === "ready" || o.status.toLowerCase() === "queued_for_sync");
+        const isCompletedGroup = filterStatus === "Completed" && (o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered");
+        const isCancelledGroup = filterStatus === "Cancelled" && o.status.toLowerCase() === "cancelled";
+        if (!isActiveGroup && !isCompletedGroup && !isCancelledGroup) return false;
       }
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
@@ -18983,9 +19171,9 @@ function OrderHistoryScreen({
     );
   }, [filteredOrders]);
 
-  // Generate chart data for orders per month
+  // Generate chart data for orders per month and spending trends
   const chartData = useMemo(() => {
-    const dataMap: Record<string, number> = {};
+    const dataMap: Record<string, { orders: number; spending: number }> = {};
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     
     // Initialize last 6 months to 0
@@ -18993,20 +19181,24 @@ function OrderHistoryScreen({
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const label = `${months[d.getMonth()]} ${d.getFullYear().toString().substring(2)}`;
-      dataMap[label] = 0;
+      dataMap[label] = { orders: 0, spending: 0 };
     }
 
     filteredOrders.forEach((order) => {
       const d = new Date(order.created_at);
       const label = `${months[d.getMonth()]} ${d.getFullYear().toString().substring(2)}`;
       if (dataMap[label] !== undefined) {
-        dataMap[label] += 1;
+        dataMap[label].orders += 1;
+        if (order.status !== "cancelled") {
+          dataMap[label].spending += (order.price || 0) + (order.delivery_fee || 0);
+        }
       }
     });
 
     return Object.keys(dataMap).map(key => ({
       name: key,
-      orders: dataMap[key]
+      orders: dataMap[key].orders,
+      spending: Math.round(dataMap[key].spending)
     }));
   }, [filteredOrders]);
 
@@ -19282,15 +19474,33 @@ function OrderHistoryScreen({
         },
       ]);
 
-      if (error) throw error;
-
-      showAlert(
-        "Report Received",
-        "Your support ticket has been created! Our support team will get in touch soon.",
-      );
-      setSupportOrder(null);
-      setIssueType("");
-      setIssueDesc("");
+      if (error) {
+        console.warn(
+          "Could not insert into contact_messages, falling back to mailto",
+          error,
+        );
+        const mailSubject = encodeURIComponent(subject);
+        const mailBody = encodeURIComponent(
+          completeMessage +
+            `\n\nSent by: ${userProfile?.fullName || "Loyal Client"} (${userProfile?.email || session?.user?.email || "No Email Provided"})`
+        );
+        window.location.href = `mailto:support@localeats.co.za?subject=${mailSubject}&body=${mailBody}`;
+        showAlert(
+          "Redirecting to Email",
+          "We are opening your email client to complete sending your support issue directly to us!",
+        );
+        setSupportOrder(null);
+        setIssueType("");
+        setIssueDesc("");
+      } else {
+        showAlert(
+          "Report Received",
+          "Your support ticket has been created! Our support team will get in touch soon.",
+        );
+        setSupportOrder(null);
+        setIssueType("");
+        setIssueDesc("");
+      }
     } catch (err: any) {
       console.error("Error submitting issue:", err);
       showAlert("Error", `Failed to send issue details: ${err.message}`);
@@ -19606,45 +19816,105 @@ function OrderHistoryScreen({
             </div>
           )}
 
-          {/* Order Frequency Chart */}
-          {!loading && filteredOrders.length > 0 && chartData.some((d) => d.orders > 0) && (
-            <div className="bg-white dark:bg-slate-900/60 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-4 animate-in fade-in slide-in-from-top duration-500 delay-100">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Order Frequency (Last 6 Months)</h3>
-              <div className="h-40 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                    <XAxis 
-                      dataKey="name" 
-                      tick={{ fontSize: 10, fill: '#94a3b8' }} 
-                      axisLine={false} 
-                      tickLine={false} 
-                    />
-                    <YAxis
-                      allowDecimals={false}
-                      tick={{ fontSize: 10, fill: '#94a3b8' }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'transparent' }}
-                      contentStyle={{
-                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                        border: 'none',
-                        borderRadius: '12px',
-                        fontSize: '12px',
-                        fontWeight: 'bold',
-                        color: 'white',
-                      }}
-                      itemStyle={{ color: '#f97316' }}
-                    />
-                    <Bar 
-                      dataKey="orders" 
-                      fill="#f97316" 
-                      radius={[4, 4, 0, 0]}
-                      maxBarSize={40}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+          {/* Recharts Analytics Dashboard */}
+          {!loading && filteredOrders.length > 0 && chartData.some((d) => d.orders > 0 || d.spending > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top duration-500 delay-100">
+              {/* Monthly Spending Trends */}
+              <div className="bg-white dark:bg-slate-900/60 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Monthly Spending Trends</h3>
+                  <span className="text-xs font-bold text-orange-500">R (ZAR)</span>
+                </div>
+                <div className="h-44 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorSpending" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#f97316" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" className="dark:stroke-slate-800" />
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{ fontSize: 10, fill: '#94a3b8' }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fill: '#94a3b8' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(value) => `R${value}`}
+                      />
+                      <Tooltip
+                        cursor={{ stroke: '#f97316', strokeWidth: 1 }}
+                        contentStyle={{
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                          border: 'none',
+                          borderRadius: '12px',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          color: 'white',
+                        }}
+                        formatter={(value) => [`R ${value}`, 'Spending']}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="spending" 
+                        stroke="#f97316" 
+                        strokeWidth={2.5}
+                        fillOpacity={1} 
+                        fill="url(#colorSpending)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Order Frequency */}
+              <div className="bg-white dark:bg-slate-900/60 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Order Frequency</h3>
+                  <span className="text-xs font-bold text-orange-500">Orders Count</span>
+                </div>
+                <div className="h-44 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" className="dark:stroke-slate-800" />
+                      <XAxis 
+                        dataKey="name" 
+                        tick={{ fontSize: 10, fill: '#94a3b8' }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fontSize: 10, fill: '#94a3b8' }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(249, 115, 22, 0.05)' }}
+                        contentStyle={{
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                          border: 'none',
+                          borderRadius: '12px',
+                          fontSize: '12px',
+                          fontWeight: 'bold',
+                          color: 'white',
+                        }}
+                        formatter={(value) => [value, 'Orders']}
+                      />
+                      <Bar 
+                        dataKey="orders" 
+                        fill="#f97316" 
+                        radius={[4, 4, 0, 0]}
+                        maxBarSize={30}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </div>
           )}
@@ -19822,7 +20092,7 @@ function OrderHistoryScreen({
                 let statusLabel = "Delivered";
                 let StatusIcon = CheckCircle2;
 
-                if (group.status === "queued_for_sync" || group.allOrders.some((o: any) => o.status === "queued_for_sync" || o.is_offline_queued)) {
+                if (group.status === "queued_for_sync" || group.allOrders.some((o: any) => o.status.toLowerCase() === "queued_for_sync" || o.is_offline_queued)) {
                   badgeClass = "bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/25 animate-pulse";
                   statusLabel = "Queued for sync";
                   StatusIcon = RotateCw;

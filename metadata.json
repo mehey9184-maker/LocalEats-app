@@ -2,5 +2,6 @@
   "name": "LocalEats",
   "description": "A comprehensive food discovery and ordering app for local legendary Kota joints, featuring user authentication, profile setup, and a seamless checkout experience.",
   "version": "4.0",
-  "requestFramePermissions": ["geolocation"]
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

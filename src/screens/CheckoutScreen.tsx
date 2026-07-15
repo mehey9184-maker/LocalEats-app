@@ -972,8 +972,10 @@ export function CheckoutScreen({
           );
 
           const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
+          const orderId = self.crypto.randomUUID ? self.crypto.randomUUID() : ("ord_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now());
 
           return {
+            id: orderId,
             user_id: session?.user?.id,
             shop_id: item.shopId,
             customer_name: customerName,
@@ -995,11 +997,24 @@ export function CheckoutScreen({
             payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
             is_delivery: deliveryType === "delivery",
             delivery_fee: deliveryType === "delivery" ? deliveryFee : 0,
-            delivery_status: isCOAOrder ? "finding_rider" : "none",
+            delivery_status: (paymentMethod === "cash" || isCOAOrder) ? "finding_rider" : "none",
             latitude: currentLat,
             longitude: currentLng,
           };
         });
+
+        // Explicit frontend validation step checking mandatory fields
+        for (const order of orderData) {
+          if (!order.id) {
+            throw new Error("Frontend Validation Error: Unique order 'id' is required.");
+          }
+          if (!order.shop_id) {
+            throw new Error("Frontend Validation Error: 'shop_id' is mandatory.");
+          }
+          if (!order.status) {
+            throw new Error("Frontend Validation Error: Order 'status' is mandatory.");
+          }
+        }
 
         console.log("Submitting order with upgraded details:", orderData);
         const { error } = await supabase

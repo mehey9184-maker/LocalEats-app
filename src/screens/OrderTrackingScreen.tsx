@@ -270,12 +270,14 @@ export function OrderTrackingScreen({
   onBack,
   showAlert,
   triggerHaptic,
+  syncOfflineOrders,
 }: {
   orders: Order[];
   shops: Shop[];
   onBack: () => void;
   showAlert: (title: string, message: string) => void;
   triggerHaptic?: (pattern?: number | number[]) => void;
+  syncOfflineOrders?: () => Promise<void>;
 }) {
   const [cancellationModal, setCancellationModal] = useState<{
     isOpen: boolean;
@@ -285,6 +287,10 @@ export function OrderTrackingScreen({
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [localOrders, setLocalOrders] = useState<Order[]>(orders);
+  const [offlineOrders, setOfflineOrders] = useState<any[]>(() => {
+    return safeLocalStorageGet("offline_orders_queue", []);
+  });
+  const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     return safeLocalStorageGet("localeats_order_notifications", true);
   });
@@ -307,6 +313,36 @@ export function OrderTrackingScreen({
   useEffect(() => {
     setLocalOrders(orders);
   }, [orders]);
+
+  useEffect(() => {
+    const handleSyncSuccess = () => {
+      const freshQueue = safeLocalStorageGet("offline_orders_queue", []);
+      setOfflineOrders(freshQueue);
+    };
+    window.addEventListener("local-orders-synced", handleSyncSuccess);
+    return () => window.removeEventListener("local-orders-synced", handleSyncSuccess);
+  }, []);
+
+  const handleRetrySync = async (orderId: string) => {
+    setRetryingOrderId(orderId);
+    triggerHaptic?.(10);
+    try {
+      if (syncOfflineOrders) {
+        await syncOfflineOrders();
+        // Reload after a short delay
+        setTimeout(() => {
+          setOfflineOrders(safeLocalStorageGet("offline_orders_queue", []));
+          setRetryingOrderId(null);
+        }, 1200);
+      } else {
+        toast.error("Offline sync is currently unavailable. Please check your network.");
+        setRetryingOrderId(null);
+      }
+    } catch (err: any) {
+      toast.error("Sync failed: " + (err.message || String(err)));
+      setRetryingOrderId(null);
+    }
+  };
 
   // Fetch rider profiles for active delivery orders
   useEffect(() => {
@@ -385,18 +421,18 @@ export function OrderTrackingScreen({
     localOrders.forEach((order) => {
       const prevStatus = prevStatusesRef.current[order.id];
       if (prevStatus && prevStatus !== order.status) {
-        if (order.status === "ready" || order.status === "completed") {
+        if (order.status.toLowerCase() === "ready" || order.status.toLowerCase() === "completed") {
           if (triggerHaptic) {
             triggerHaptic([500, 100, 500, 100, 800]);
           } else if ("vibrate" in navigator) {
             navigator.vibrate([500, 100, 500, 100, 800]);
           }
           
-          if (order.status === "ready") {
+          if (order.status.toLowerCase() === "ready") {
             toast.success(`Your order #${order.id.slice(0, 5)} is ready!`, {
               description: "Please collect it or await your courier.",
             });
-          } else if (order.status === "completed") {
+          } else if (order.status.toLowerCase() === "completed") {
             toast.success(`Your order #${order.id.slice(0, 5)} has been picked up!`, {
               description: "Enjoy your meal!",
             });
@@ -456,13 +492,24 @@ export function OrderTrackingScreen({
     setIsCancelling(true);
     triggerHaptic?.(15);
     try {
-      const { error } = await supabase
+      const updatePayload: any = {
+        status: "cancelled",
+        cancellation_reason: cancelReason,
+      };
+
+      let { error } = await supabase
         .from("orders")
-        .update({
-          status: "cancelled",
-          cancellation_reason: cancelReason,
-        })
+        .update(updatePayload)
         .eq("id", orderId);
+
+      if (error && error.message?.includes("cancellation_reason")) {
+        delete updatePayload.cancellation_reason;
+        const retry = await supabase
+          .from("orders")
+          .update(updatePayload)
+          .eq("id", orderId);
+        error = retry.error;
+      }
 
       if (error) throw error;
 
@@ -484,8 +531,27 @@ export function OrderTrackingScreen({
     }
   };
 
-  const activeOrders = localOrders.filter(
-    (o) => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered"
+  const combinedOrders = useMemo(() => {
+    const merged = [...localOrders];
+    offlineOrders.forEach((offOrder) => {
+      const existsInDb = merged.some(
+        (o) => o.id === offOrder.id || (o.product_name === offOrder.product_name && o.created_at === offOrder.created_at)
+      );
+      if (!existsInDb) {
+        merged.push({
+          ...offOrder,
+          is_offline_queued: true
+        });
+      }
+    });
+    return merged;
+  }, [localOrders, offlineOrders]);
+
+  const activeOrders = combinedOrders.filter(
+    (o) => {
+      const s = (o.status || "").toLowerCase();
+      return s !== "completed" && s !== "cancelled" && s !== "delivered";
+    }
   );
 
   return (
@@ -595,6 +661,79 @@ export function OrderTrackingScreen({
             const shop = shops.find((s) => s.id === order.shop_id);
             const isExpanded = !!expandedOrders[order.id];
 
+            if (order.is_offline_queued) {
+              return (
+                <div
+                  key={order.id}
+                  className="bg-amber-50/40 dark:bg-amber-950/20 rounded-[32px] p-5 border border-amber-200 dark:border-amber-900/40 shadow-md flex flex-col gap-4 animate-in fade-in duration-500 relative overflow-hidden"
+                >
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="flex items-center gap-3">
+                      {shop?.logo ? (
+                        <img
+                          referrerPolicy="no-referrer"
+                          src={shop.logo}
+                          alt={shop.name}
+                          className="w-12 h-12 rounded-2xl object-cover border border-slate-100 dark:border-slate-800"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 flex items-center justify-center font-bold">
+                          {shop?.name?.charAt(0) || "S"}
+                        </div>
+                      )}
+                      <div>
+                        <h3 className="font-black text-sm text-slate-900 dark:text-white leading-tight">
+                          {shop?.name || "Local Kitchen"}
+                        </h3>
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 font-mono mt-0.5 uppercase tracking-wider">
+                          Unsynced Offline Order
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
+                        {formatRand(order.price + (order.delivery_fee || 0))}
+                      </p>
+                      <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
+                        {order.is_delivery ? "Delivery" : "Collection"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white dark:bg-slate-900/60 p-4 rounded-2xl border border-amber-150 dark:border-amber-900/20 space-y-2">
+                    <div className="flex items-center gap-2.5">
+                      <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                      <div>
+                        <p className="text-xs font-black text-slate-800 dark:text-slate-200">
+                          Waiting for kitchen connection
+                        </p>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                          Order is stored securely in offline outbox
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
+                    Your device is offline or the server connection was lost. The kitchen will receive your order automatically as soon as your connection is restored, or you can manually trigger a synchronization attempt below.
+                  </div>
+
+                  <button
+                    disabled={retryingOrderId === order.id}
+                    onClick={() => handleRetrySync(order.id)}
+                    className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer shadow-md shadow-orange-600/10"
+                  >
+                    {retryingOrderId === order.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    )}
+                    {retryingOrderId === order.id ? "Syncing order..." : "Send / Sync Now"}
+                  </button>
+                </div>
+              );
+            }
+
             // Define delivery milestones/steps
             const steps = [
               { s: "pending", label: "Confirmed", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Order confirmed by the shop" },
@@ -605,11 +744,11 @@ export function OrderTrackingScreen({
 
             // Numerical tracking index
             let currentStepIndex = 0;
-            if (order.status === "pending") currentStepIndex = 0;
-            else if (order.status === "confirmed") currentStepIndex = 1;
-            else if (order.status === "preparing") currentStepIndex = 1;
-            else if (order.status === "ready") currentStepIndex = 2;
-            else if (order.status === "completed" || order.status === "delivered") currentStepIndex = 3;
+            if (order.status.toLowerCase() === "pending") currentStepIndex = 0;
+            else if (order.status.toLowerCase() === "confirmed") currentStepIndex = 1;
+            else if (order.status.toLowerCase() === "preparing") currentStepIndex = 1;
+            else if (order.status.toLowerCase() === "ready") currentStepIndex = 2;
+            else if (order.status.toLowerCase() === "completed" || order.status.toLowerCase() === "delivered") currentStepIndex = 3;
 
             return (
               <div
@@ -787,10 +926,10 @@ export function OrderTrackingScreen({
                     </div>
                     <div>
                       <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
-                        {order.status === "pending" && "Waiting for shop acceptance..."}
-                        {order.status === "confirmed" && "Order accepted! Preparing..."}
-                        {order.status === "preparing" && "Chef is cooking your meal!"}
-                        {order.status === "ready" && "Your meal is ready for collection!"}
+                        {order.status.toLowerCase() === "pending" && "Waiting for shop acceptance..."}
+                        {order.status.toLowerCase() === "confirmed" && "Order accepted! Preparing..."}
+                        {order.status.toLowerCase() === "preparing" && "Chef is cooking your meal!"}
+                        {order.status.toLowerCase() === "ready" && "Your meal is ready for collection!"}
                       </p>
                       <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                         Est. preparation duration: 15-20 minutes
@@ -852,7 +991,7 @@ export function OrderTrackingScreen({
                 </div>
 
                 {/* Cancel Action */}
-                {["pending", "confirmed"].includes(order.status) && (
+                {["pending", "confirmed"].includes((order.status || "").toLowerCase()) && (
                   <button
                     onClick={() => setCancellationModal({ isOpen: true, orderId: order.id })}
                     className="w-full py-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/[0.06] dark:hover:bg-red-500/[0.12] text-red-600 dark:text-red-400 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-red-200/30 dark:border-red-900/20 transition-all active:scale-95 cursor-pointer"
