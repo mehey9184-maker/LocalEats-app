@@ -308,6 +308,8 @@ import {
 import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
 import { ShopChatModal } from "./components/ShopChatModal";
+import { QuickReorderWidget } from "./components/QuickReorderWidget";
+import { cacheBusinessResults, getCachedBusinessResults } from "./lib/offlineCache";
 
 const ShopCard = memo(
   ({
@@ -1468,7 +1470,8 @@ export default function App() {
     // Load from cache first if offline or to show immediate results
     if (!navigator.onLine) {
       try {
-        const cached = safeLocalStorageGet("cached_shops", null);
+        const idbCached = await getCachedBusinessResults("all_shops");
+        const cached = idbCached || safeLocalStorageGet("cached_shops", null);
         if (cached && Array.isArray(cached) && cached.length > 0) {
           const hydratedCached = cached.map((s: Shop) => {
             if (!s.menu || s.menu.length === 0) {
@@ -1487,7 +1490,7 @@ export default function App() {
           return;
         }
       } catch (e) {
-        console.warn("Retreiving shops from cache offline failed:", e);
+        console.warn("Retrieving shops from IndexedDB/localStorage offline failed:", e);
       }
     }
 
@@ -1744,6 +1747,7 @@ export default function App() {
       console.log(`Successfully fetched ${formattedShops.length} shops.`);
       setShops(formattedShops);
       safeLocalStorageSet("cached_shops", JSON.stringify(formattedShops)); // Instant-Load Caching
+      cacheBusinessResults("all_shops", formattedShops); // IndexedDB Offline Storage
       setIsOnline(true);
       setLoadingShops(false);
     } catch (err: any) {
@@ -2350,24 +2354,22 @@ export default function App() {
     if (hasToken || hasRememberToken) {
       setIsRestoringSession(true);
       supabase.auth.getSession().then(async ({ data: { session } }) => {
-        if (session && hasRememberToken) {
+        if (session) {
           setSession(session);
+          if (!localStorage.getItem("remember_me_secure_token")) {
+            localStorage.setItem("remember_me_secure_token", session.access_token || "true");
+          }
           fetchUserProfile(session.user.id);
           setCurrentScreen("home");
           requestNotificationPermission();
         } else {
-          if (session) {
-            await supabase.auth.signOut().catch(() => {});
-          }
           setSession(null);
           localStorage.removeItem("remember_me_secure_token");
-          setCurrentScreen("login");
         }
         setIsRestoringSession(false);
       }).catch((err) => {
         console.warn("Failed to retrieve initial user session:", err);
         localStorage.removeItem("remember_me_secure_token");
-        setCurrentScreen("login");
         setIsRestoringSession(false);
       });
     } else {
@@ -3749,6 +3751,8 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
                   loadingShops={loadingShops}
+                  orders={orders}
+                  addToCart={addToCart}
                 />
               )}
               {currentScreen === "store-info" && (
@@ -5754,15 +5758,13 @@ function LoginScreen({
       if (error) throw error;
 
       try {
+        localStorage.setItem("remember_me_secure_token", generateSecureToken());
+        setHasRememberedToken(true);
         if (rememberMe) {
           localStorage.setItem("remembered_identifier", identifier);
-          localStorage.setItem("remember_me_secure_token", generateSecureToken());
-          setHasRememberedToken(true);
           await registerBiometrics(identifier);
         } else {
           localStorage.removeItem("remembered_identifier");
-          localStorage.removeItem("remember_me_secure_token");
-          setHasRememberedToken(false);
         }
       } catch (e) {
         console.warn("Credential storage persist error:", e);
@@ -11281,6 +11283,8 @@ function ExploreScreen({
   triggerHaptic,
   isOnline,
   loadingShops = false,
+  orders = [],
+  addToCart,
 }: {
   shops: Shop[];
   onHome: () => void;
@@ -11294,6 +11298,8 @@ function ExploreScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
   loadingShops?: boolean;
+  orders?: Order[];
+  addToCart?: (item: CartItem) => void;
 }) {
   const { t, language } = useTranslation();
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -11664,9 +11670,40 @@ function ExploreScreen({
         /* Gorgeous, Premium Responsive Shop List Layout */
         <div className="flex-grow overflow-y-auto px-4 pb-28 pt-28 space-y-4">
           <div className="max-w-lg mx-auto flex flex-col gap-4">
+            {/* Power User Quick Reorder & Favorites Shortcut Widget */}
+            <QuickReorderWidget
+              orders={orders || []}
+              shops={shops}
+              favorites={favorites}
+              onQuickReorder={(ord) => {
+                const shop = shops.find((s) => s.id === ord.shop_id);
+                if (ord.product_name && ord.price && addToCart) {
+                  addToCart({
+                    id: ord.product_name.toLowerCase().replace(/\s+/g, '-'),
+                    name: ord.product_name,
+                    price: ord.price,
+                    quantity: ord.quantity || 1,
+                    shopId: ord.shop_id || (shop ? shop.id : '1'),
+                    image: shop ? shop.logo : DEFAULT_SHOP_LOGO,
+                  });
+                  toast.success(`Reordered ${ord.product_name}!`, {
+                    description: "Item added to cart for 1-tap checkout.",
+                  });
+                } else if (shop) {
+                  onStoreInfo(shop.id);
+                }
+              }}
+              onSelectShop={(shop) => {
+                onStoreInfo(shop.id);
+              }}
+              onViewAllFavorites={() => {
+                setSelectedCategory("Favorites");
+              }}
+            />
+
             <div className="flex justify-between items-center px-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Found {sortedShops.length} local eaters
+                Found {sortedShops.length} local spots
               </span>
               <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 dark:text-orange-400">
                 {sortPriority === "rating"
