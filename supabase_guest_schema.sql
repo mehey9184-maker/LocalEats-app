@@ -368,3 +368,47 @@ CREATE POLICY "Allow public select on rider_locations" ON public.rider_locations
 
 CREATE POLICY "Allow riders to upsert their locations" ON public.rider_locations
     FOR ALL USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- SECTION 12: Table 11 - chat_messages (Order Participant Delivery Chat)
+-- ============================================================================
+DROP POLICY IF EXISTS "Allow select chat_messages for participants" ON public.chat_messages;
+DROP POLICY IF EXISTS "Allow insert chat_messages" ON public.chat_messages;
+DROP POLICY IF EXISTS "Allow update chat_messages" ON public.chat_messages;
+DROP POLICY IF EXISTS "Allow select chat_messages for order participants" ON public.chat_messages;
+DROP POLICY IF EXISTS "Allow insert chat_messages for order participants" ON public.chat_messages;
+DROP POLICY IF EXISTS "Allow update chat_messages for order participants" ON public.chat_messages;
+
+CREATE TABLE IF NOT EXISTS public.chat_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_type TEXT DEFAULT 'user',
+    message_text TEXT,
+    content TEXT,
+    is_read BOOLEAN DEFAULT false,
+    read_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Safely add missing columns if chat_messages table already existed
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS sender_type TEXT DEFAULT 'user';
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS message_text TEXT;
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS content TEXT;
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false;
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+
+CREATE INDEX IF NOT EXISTS chat_messages_order_idx ON public.chat_messages (order_id);
+CREATE INDEX IF NOT EXISTS chat_messages_unread_idx ON public.chat_messages (order_id, is_read);
+CREATE INDEX IF NOT EXISTS chat_messages_read_at_idx ON public.chat_messages (order_id, read_at);
+
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow select chat_messages for order participants" ON public.chat_messages
+    FOR SELECT USING (true);
+
+CREATE POLICY "Allow insert chat_messages for order participants" ON public.chat_messages
+    FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Allow update chat_messages for order participants" ON public.chat_messages
+    FOR UPDATE USING (true) WITH CHECK (true);

@@ -11,13 +11,22 @@ import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
-import { AddressSearch, LocationPickerMap } from "../components/MapComponents";
 import { toast } from "sonner";
+import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
 import { audioHelper } from "../lib/audioHelper";
 import { detectTownship } from "../lib/townshipHelper";
 import { Tag } from "lucide-react";
+
+const LOCAL_LANDMARKS = [
+  { id: "LM01", name: "Community Hall", lat: -26.2, lng: 28.0 },
+  { id: "LM02", name: "Main Taxi Rank", lat: -26.21, lng: 28.01 },
+  { id: "LM03", name: "High School Gate", lat: -26.22, lng: 28.02 },
+  { id: "LM04", name: "Primary Clinic", lat: -26.23, lng: 28.03 },
+  { id: "LM05", name: "Shopping Complex", lat: -26.24, lng: 28.04 },
+  { id: "LM06", name: "Sports Ground", lat: -26.25, lng: 28.05 },
+];
 
 const LOCAL_PROMO_DB: Record<
   string,
@@ -102,8 +111,8 @@ export function CheckoutScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
-    "cash",
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine" | "capitec">(
+    "capitec",
   );
   const [deliveryType, setDeliveryType] = useState<"collection" | "delivery">(
     "collection",
@@ -195,7 +204,9 @@ export function CheckoutScreen({
     "idle" | "checking" | "valid" | "already_used" | "expired" | "invalid"
   >("idle");
 
-  // Refactored state objects for precision and spatial data
+  // Landmark Selection States
+  const [selectedLandmark, setSelectedLandmark] = useState("");
+  const [landmarkDetails, setLandmarkDetails] = useState("");
   const [deliveryAddressText, setDeliveryAddressText] = useState<string>(() => {
     try {
       const cached = localStorage.getItem("delivery_location");
@@ -621,6 +632,13 @@ export function CheckoutScreen({
   }, [isCoaDisabled, paymentMethod, deliveryType]);
 
   const handleConfirm = async () => {
+    if (cart.length === 0) {
+      toast.error("Empty Cart", {
+        description: "Your cart is empty. Please add items before checking out.",
+      });
+      return;
+    }
+
     if (!session) {
       showConfirm(
         "Welcome to LocalEats!",
@@ -636,6 +654,14 @@ export function CheckoutScreen({
     }
 
     // Interactive validations in checkout directly
+    const hasInvalidShopId = cart.some(item => !item.shopId || item.shopId === "null" || item.shopId === "undefined");
+    if (hasInvalidShopId) {
+      toast.error("Invalid Cart Data", {
+        description: "Some items in your cart are missing shop information. Please clear your cart and try again."
+      });
+      return;
+    }
+
     if (!customerName.trim()) {
       toast.error("Recipient Name Required", {
         description:
@@ -2001,6 +2027,50 @@ export function CheckoutScreen({
             <div className="flex flex-col gap-2.5">
               <label
                 className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
+                  paymentMethod === "capitec"
+                    ? "border-orange-500 bg-orange-500/5 dark:bg-orange-500/10"
+                    : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50"
+                }`}
+                onClick={() => setPaymentMethod("capitec")}
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div
+                    className={`size-9 rounded-full flex items-center justify-center shrink-0 ${
+                      paymentMethod === "capitec"
+                        ? "bg-orange-600 text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                    }`}
+                  >
+                    <CreditCard className="w-4 h-4" />
+                  </div>
+                  <div className="text-left min-w-0 pr-2">
+                    <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight truncate">
+                      Capitec Pay
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold leading-snug mt-0.5 line-clamp-2">
+                      Fast and secure payment directly from your Capitec account.
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className={`size-5 rounded-full border-2 flex items-center justify-center shrink-0 ${paymentMethod === "capitec" ? "border-orange-500" : "border-slate-300"}`}
+                >
+                  {paymentMethod === "capitec" && (
+                    <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
+                  )}
+                </div>
+                <input
+                  type="radio"
+                  name="payment"
+                  value="capitec"
+                  checked={paymentMethod === "capitec"}
+                  onChange={() => setPaymentMethod("capitec")}
+                  className="hidden"
+                />
+              </label>
+
+              <label
+                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
                   isCoaDisabled
                     ? "opacity-50 cursor-not-allowed border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20"
                     : paymentMethod === "cash"
@@ -2272,6 +2342,18 @@ export function CheckoutScreen({
                   <p className="text-[9px] text-indigo-700 dark:text-indigo-400 font-semibold font-sans leading-snug">
                     Terminal Charge Authorized: By submitting, your payment details are secured on the local point-of-sale queue. The merchant will capture R {totalAmount.toFixed(2)} directly on the connected card machine ({localStorage.getItem("localeats_card_machine_brand_" + primaryShop.id) || "Yoco Terminal"}).
                   </p>
+                </div>
+              </div>
+            )}
+
+            {paymentMethod === "capitec" && (
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in slide-in-from-top-2 duration-300">
+                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-primary" />
+                  Secure Capitec Pay Integration
+                </p>
+                <div className="flex items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+                  <p className="text-sm font-bold text-slate-500 text-center">You will be securely redirected to Capitec Pay after confirmation to authorize the payment.</p>
                 </div>
               </div>
             )}
@@ -2607,40 +2689,46 @@ export function CheckoutScreen({
               </div>
 
               {/* Address Search */}
-              <AddressSearch
-                initialAddress={deliveryAddressText}
-                initialCoords={
-                  deliveryCoordinates
-                    ? {
-                        lat: deliveryCoordinates.coordinates[1],
-                        lng: deliveryCoordinates.coordinates[0],
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200/50 dark:border-slate-805 rounded-2xl text-left space-y-3">
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                    Select a Local Landmark (Optional)
+                  </label>
+                  <select
+                    value={selectedLandmark}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedLandmark(val);
+                      const landmarkObj = LOCAL_LANDMARKS.find(l => l.id === val);
+                      if (landmarkObj) {
+                        setDeliveryCoordinates({
+                          type: "Point",
+                          coordinates: [landmarkObj.lng, landmarkObj.lat]
+                        });
                       }
-                    : undefined
-                }
-                shopCoords={
-                  primaryShop.latitude && primaryShop.longitude
-                    ? { lat: primaryShop.latitude, lng: primaryShop.longitude }
-                    : undefined
-                }
-                onSelect={(data) => {
-                  setDeliveryAddressText(data.address);
-                  setDeliveryCoordinates({
-                    type: "Point",
-                    coordinates: [
-                      Number(data.lng.toFixed(6)),
-                      Number(data.lat.toFixed(6)),
-                    ],
-                  });
-                  setIsLocationConfirmed(false);
-                  safeLocalStorageSet(
-                    "delivery_location",
-                    JSON.stringify(data),
-                  );
-                  toast.info(
-                    "Address loaded! Pin your exact location on the map below.",
-                  );
-                }}
-              />
+                    }}
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-orange-500 outline-none"
+                  >
+                    <option value="" disabled>Choose the nearest landmark...</option>
+                    {LOCAL_LANDMARKS.map(l => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1">
+                    Simple Descriptive Details (Optional)
+                  </label>
+                  <textarea
+                    value={landmarkDetails}
+                    onChange={(e) => setLandmarkDetails(e.target.value)}
+                    placeholder="e.g., Green shipping container next to the tuck shop"
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-orange-500 outline-none resize-none h-20"
+                  />
+                </div>
+              </div>
+
               {/* Detected Township Target */}
               {deliveryTownship && (
                 <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200/50 dark:border-slate-805 rounded-2xl text-left">
@@ -2664,90 +2752,23 @@ export function CheckoutScreen({
               )}
 
               {/* Map Section */}
-              {deliveryCoordinates && (
-                <div className="space-y-3 pt-1 text-left">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
-                      Pin Precision Control Map
-                    </p>
-                    {isLocationConfirmed && (
-                      <div className="flex items-center gap-1.5 px-2 py-0.5 bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-md">
-                        <Target className="w-3 h-3 text-green-600" />
-                        <span className="text-[9px] font-mono font-bold text-green-600 tracking-tighter">
-                          {deliveryCoordinates.coordinates[1].toFixed(6)},{" "}
-                          {deliveryCoordinates.coordinates[0].toFixed(6)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <LocationPickerMap
-                      coords={{
-                        lat: deliveryCoordinates.coordinates[1],
-                        lng: deliveryCoordinates.coordinates[0],
-                      }}
-                      onCoordsChange={(c) => {
-                        setDeliveryCoordinates({
-                          type: "Point",
-                          coordinates: [
-                            Number(c.lng.toFixed(6)),
-                            Number(c.lat.toFixed(6)),
-                          ],
-                        });
-                        setIsLocationConfirmed(false);
-                      }}
-                      shopCoords={
-                        primaryShop.latitude && primaryShop.longitude
-                          ? {
-                              lat: primaryShop.latitude,
-                              lng: primaryShop.longitude,
-                            }
-                          : undefined
-                      }
-                    />
-
-                    {!isLocationConfirmed && (
-                      <div className="absolute inset-0 bg-slate-900/10 dark:bg-slate-950/20 backdrop-blur-[1px] pointer-events-none flex items-center justify-center border-2 border-dashed border-orange-500 rounded-2xl animate-pulse z-[1000]">
-                        <p className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 rounded-full shadow-lg transform -rotate-2">
-                          PIN UNLOCKED: PLEASE CONFIRM SPOT
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {!isLocationConfirmed ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsLocationConfirmed(true);
-                        triggerHaptic(5);
-                        toast.success("Exact spot locked in!");
-                      }}
-                      className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Target className="w-4 h-4" />
-                      <span>Confirm Exact Delivery Spot</span>
-                    </button>
-                  ) : (
-                    <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 p-3 rounded-2xl flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="w-5 h-5 text-green-600" />
-                        <p className="text-[10px] font-black text-green-800 dark:text-green-400 uppercase tracking-wider">
-                          Location Secured
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsLocationConfirmed(false)}
-                        className="text-[10px] font-black text-slate-400 hover:text-orange-600 dark:text-slate-500 dark:hover:text-orange-400 uppercase underline cursor-pointer"
-                      >
-                        Change Pin
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="mt-4 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 h-64 bg-slate-100 dark:bg-slate-800/50">
+                <LocationPickerMap
+                  coords={
+                    deliveryCoordinates
+                      ? { lat: deliveryCoordinates.coordinates[1], lng: deliveryCoordinates.coordinates[0] }
+                      : userLocation || { lat: -26.2041, lng: 28.0473 }
+                  }
+                  onCoordsChange={(c) => {
+                    setDeliveryCoordinates({ type: "Point", coordinates: [c.lng, c.lat] });
+                  }}
+                  shopCoords={
+                    primaryShop && primaryShop.latitude && primaryShop.longitude
+                      ? { lat: primaryShop.latitude, lng: primaryShop.longitude }
+                      : undefined
+                  }
+                />
+              </div>
             </div>
 
             {/* Footer */}
@@ -2765,20 +2786,24 @@ export function CheckoutScreen({
               <button
                 type="button"
                 onClick={() => {
-                  if (!deliveryAddressText) {
-                    toast.error("Please enter/search for a delivery address.");
+                  if (!deliveryCoordinates && !selectedLandmark) {
+                    toast.error("Please pin a location on the map or select a landmark.");
                     return;
                   }
-                  if (!isLocationConfirmed) {
-                    toast.error("Please confirm your location pin on the map.");
-                    return;
-                  }
+
+                  const landmarkObj = LOCAL_LANDMARKS.find(l => l.id === selectedLandmark);
+                  const baseName = landmarkObj ? landmarkObj.name : "Custom Pinned Location";
+                  const detailsString = landmarkDetails ? ` - ${landmarkDetails}` : "";
+
+                  setDeliveryAddressText(`${baseName}${detailsString}`);
+                  setIsLocationConfirmed(true);
+
                   setShowAddressModal(false);
                   triggerHaptic(10);
                   toast.success("Delivery coordinates fully applied!");
                 }}
                 className={`flex-1 py-3.5 text-white rounded-2xl font-black uppercase tracking-wider text-xs text-center cursor-pointer ${
-                  deliveryAddressText && isLocationConfirmed
+                  deliveryCoordinates || selectedLandmark
                     ? "bg-orange-500 hover:bg-orange-600 shadow-md"
                     : "bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed"
                 }`}

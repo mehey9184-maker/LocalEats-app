@@ -19,12 +19,16 @@ import {
   MapPin,
   Utensils,
   Truck,
-  CheckCircle2
+  CheckCircle2,
+  ShieldCheck,
+  Sparkles,
+  MessageCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Order, Shop } from "../types";
 import { supabase } from "../lib/supabase";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
+import { ChatWidget, DeliveryChatWidget } from "../components/ChatWidget";
 
 interface RealTimeCountdownProps {
   createdAt: string;
@@ -296,6 +300,80 @@ export function OrderTrackingScreen({
   });
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [riders, setRiders] = useState<Record<string, any>>({});
+  const [openChatOrderId, setOpenChatOrderId] = useState<string | null>(null);
+  const [showChat, setShowChat] = useState<boolean>(false);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+
+  // Fetch unread chat message counts for active delivery orders where read_at is NULL
+  useEffect(() => {
+    if (!localOrders || localOrders.length === 0) return;
+
+    const activeDeliveryOrders = localOrders.filter(
+      (o) => o.is_delivery && o.status !== "completed" && o.status !== "cancelled"
+    );
+
+    const fetchUnreadCounts = async () => {
+      for (const ord of activeDeliveryOrders) {
+        try {
+          const { count, error } = await supabase
+            .from("chat_messages")
+            .select("id", { count: "exact", head: true })
+            .eq("order_id", ord.id)
+            .is("read_at", null)
+            .neq("sender_id", ord.user_id);
+
+          if (!error && count !== null) {
+            setUnreadCounts((prev) => ({ ...prev, [ord.id]: count }));
+          } else {
+            // Fallback for is_read boolean if read_at is not populated
+            const { count: isReadCount } = await supabase
+              .from("chat_messages")
+              .select("id", { count: "exact", head: true })
+              .eq("order_id", ord.id)
+              .eq("is_read", false)
+              .neq("sender_id", ord.user_id);
+
+            if (isReadCount !== null) {
+              setUnreadCounts((prev) => ({ ...prev, [ord.id]: isReadCount }));
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching unread chat count:", err);
+        }
+      }
+    };
+
+    fetchUnreadCounts();
+
+    // Subscribe to new chat messages to update unread badge in real-time
+    const channel = supabase
+      .channel("order_tracking_chat_unread_badge")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "chat_messages",
+        },
+        (payload) => {
+          const newMsg = payload.new as any;
+          if (newMsg && newMsg.order_id) {
+            const match = localOrders.find((o) => o.id === newMsg.order_id);
+            if (match && newMsg.sender_id !== match.user_id && !newMsg.read_at && !newMsg.is_read) {
+              setUnreadCounts((prev) => ({
+                ...prev,
+                [newMsg.order_id]: (prev[newMsg.order_id] || 0) + 1,
+              }));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [localOrders]);
 
   // Touch/drag tracking state for Pull-to-Refresh
   const [pullDistance, setPullDistance] = useState(0);
@@ -554,22 +632,52 @@ export function OrderTrackingScreen({
     }
   );
 
+  const activeChatDeliveryOrder = useMemo(() => {
+    return combinedOrders.find((o) => {
+      if (!o.is_delivery) return false;
+      const ds = (o.delivery_status || "").toLowerCase();
+      const st = (o.status || "").toLowerCase();
+      if (st === "completed" || st === "cancelled" || ds === "delivered" || ds === "cancelled") return false;
+      return ds === "accepted" || ds === "picked_up";
+    });
+  }, [combinedOrders]);
+
   return (
     <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
       <header className="sticky top-0 z-50 glass-effect border-b border-primary/10 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
-        <div className="px-4 py-4 flex items-center justify-between">
+        <div className="px-4 py-4 flex items-center justify-between gap-2">
           <button
             onClick={onBack}
-            className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer transition-colors hover:text-orange-500 focus:outline-none"
+            className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer transition-colors hover:text-orange-500 focus:outline-none shrink-0"
           >
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-xl font-black tracking-tight text-center flex-1">Track Deliveries</h1>
-          <div className="flex items-center gap-1">
+          <h1 className="text-lg font-black tracking-tight text-center flex-1 line-clamp-1">Track Deliveries</h1>
+          <div className="flex items-center gap-1 shrink-0">
+            {activeChatDeliveryOrder && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenChatOrderId(activeChatDeliveryOrder.id);
+                  setShowChat(true);
+                  setUnreadCounts((prev) => ({ ...prev, [activeChatDeliveryOrder.id]: 0 }));
+                }}
+                className="relative px-2.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
+                title="Chat with Rider"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span className="hidden xs:inline text-[11px]">Chat with Rider</span>
+                {(unreadCounts[activeChatDeliveryOrder.id] || 0) > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
+                    {unreadCounts[activeChatDeliveryOrder.id]}
+                  </span>
+                )}
+              </button>
+            )}
             <button
               type="button"
               onClick={handleToggleNotifications}
-              className={`w-10 h-10 flex items-center justify-center cursor-pointer active:scale-95 transition-transform focus:outline-none ${notificationsEnabled ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}`}
+              className={`w-9 h-9 flex items-center justify-center cursor-pointer active:scale-95 transition-transform focus:outline-none ${notificationsEnabled ? 'text-orange-600 dark:text-orange-400' : 'text-slate-400'}`}
               title="Toggle Notifications"
             >
               {notificationsEnabled ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
@@ -577,7 +685,7 @@ export function OrderTrackingScreen({
             <button
               type="button"
               onClick={handleRefresh}
-              className="w-10 h-10 flex items-center justify-end text-orange-600 dark:text-orange-400 cursor-pointer active:scale-95 transition-transform focus:outline-none"
+              className="w-9 h-9 flex items-center justify-center text-orange-600 dark:text-orange-400 cursor-pointer active:scale-95 transition-transform focus:outline-none"
               title="Refresh Status"
             >
               <RefreshCw
@@ -789,6 +897,67 @@ export function OrderTrackingScreen({
                   </div>
                 </div>
 
+                {/* 1. Pending: Looking for a Rider matching state */}
+                {order.status === "pending" && order.delivery_status === "finding_rider" && (
+                  <div className="p-5 bg-amber-500/10 border-2 border-amber-500/20 rounded-2xl flex gap-4 items-start animate-pulse">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-600 shrink-0">
+                      <Clock size={20} />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="font-bold text-sm text-amber-800 dark:text-amber-400">
+                        Pending: Looking for a Rider
+                      </h4>
+                      <p className="text-xs text-amber-700/80 dark:text-amber-500/80 leading-relaxed font-medium">
+                        We have automatically dispatched a regional courier match request. Your food preparation begins immediately when a driver accepts!
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Logistic Dispatch Classification Label */}
+                {shop && order.is_delivery && (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl space-y-3">
+                    <div className="flex items-center gap-3 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      <Truck size={16} className="text-slate-400 shrink-0" />
+                      <span>
+                        {shop.allow_external_riders ? (
+                          <span className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400">
+                            📡 Linked directly to <strong className="font-bold">LocalEats Public Fleet</strong>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                            🚴 Serviced by <strong className="font-bold">{shop.name}'s private team</strong>
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium pl-7 leading-normal">
+                      {shop.allow_external_riders 
+                        ? "Your order is broadcasted to our public courier pool for rapid fulfillment."
+                        : "This shop processes its own deliveries to guarantee personal care."
+                      }
+                    </p>
+                  </div>
+                )}
+
+                {/* 3. Cash on Arrival Trust Booster Banner */}
+                {shop?.cash_trust_enabled && (order.payment_method === "cash_on_arrival" || order.payment_method === "cash") && (
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex gap-3.5 items-start">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-600 shrink-0 mt-0.5">
+                      <ShieldCheck size={18} />
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-1">
+                        <Sparkles size={12} /> Cash-on-Arrival Trust Active
+                      </p>
+                      <p className="text-[11px] text-emerald-700/90 dark:text-emerald-500/90 font-medium leading-relaxed">
+                        Pay safely in cash once your hot meal is in your hands. No prior upfront risk.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Delivery/Rider Contact Widget */}
                 {order.is_delivery && order.rider_id && riders[order.rider_id] && (
                   <div className="bg-orange-50/50 dark:bg-orange-500/[0.04] p-4 rounded-2xl border border-orange-100/50 dark:border-orange-950/20 space-y-3">
@@ -812,6 +981,23 @@ export function OrderTrackingScreen({
                     </div>
 
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setOpenChatOrderId(order.id);
+                          setUnreadCounts((prev) => ({ ...prev, [order.id]: 0 }));
+                        }}
+                        className="relative flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-orange-600/20"
+                        title="Chat with Rider"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Chat with Rider</span>
+                        {(unreadCounts[order.id] || 0) > 0 && (
+                          <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
+                            {unreadCounts[order.id]}
+                          </span>
+                        )}
+                      </button>
+
                       {riders[order.rider_id]?.phone && (
                         <button
                           onClick={() => {
@@ -819,21 +1005,21 @@ export function OrderTrackingScreen({
                             const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${riders[order.rider_id].full_name}, I'm checking on my delivery for order #${order.id.slice(0, 5)}!`)}`;
                             window.open(url, "_blank");
                           }}
-                          className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-[#25D366]/10"
+                          className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-[#25D366]/10"
+                          title="WhatsApp Rider"
                         >
                           <svg className="w-3.5 h-3.5 fill-current shrink-0" viewBox="0 0 24 24">
                             <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.705 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
                           </svg>
-                          <span>WhatsApp Courier</span>
                         </button>
                       )}
-                      
+
                       <button
                         onClick={() => window.open(`tel:${riders[order.rider_id]?.phone || ""}`)}
-                        className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-700 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer"
+                        className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-700 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer flex items-center justify-center"
+                        title="Call Courier"
                       >
                         <Phone className="w-3.5 h-3.5 text-slate-500" />
-                        <span>Call Courier</span>
                       </button>
                     </div>
                   </div>
@@ -1080,6 +1266,35 @@ export function OrderTrackingScreen({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Active Rider Chat Widget */}
+      {(() => {
+        const activeChatOrder = localOrders.find((o) => o.id === openChatOrderId) || activeChatDeliveryOrder;
+        if (!activeChatOrder) return null;
+        const riderProfile = activeChatOrder.rider_id ? riders[activeChatOrder.rider_id] : null;
+        const isOpen = showChat || openChatOrderId === activeChatOrder.id;
+
+        return (
+          <ChatWidget
+            orderId={activeChatOrder.id}
+            userId={activeChatOrder.user_id}
+            riderName={riderProfile?.full_name || "Assigned Rider"}
+            isActive={
+              activeChatOrder.status !== "completed" &&
+              activeChatOrder.status !== "cancelled" &&
+              activeChatOrder.delivery_status !== "delivered"
+            }
+            isOpen={isOpen}
+            onClose={() => {
+              setShowChat(false);
+              setOpenChatOrderId(null);
+            }}
+            onUnreadCountChange={(count) =>
+              setUnreadCounts((prev) => ({ ...prev, [activeChatOrder.id]: count }))
+            }
+          />
+        );
+      })()}
     </div>
   );
 }

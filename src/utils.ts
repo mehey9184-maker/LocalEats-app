@@ -208,8 +208,9 @@ export const validateSAPhone = (phone: string): boolean => {
 export const safeLocalStorageGet = <T>(key: string, fallback: T): T => {
   try {
     const saved = localStorage.getItem(key);
-    if (!saved) return fallback;
-    return JSON.parse(saved) as T;
+    if (!saved || saved === "null" || saved === "undefined") return fallback;
+    const parsed = JSON.parse(saved);
+    return parsed !== null ? (parsed as T) : fallback;
   } catch (err) {
     console.warn(`[SafeStorage] Failed parsing or getting item for key "${key}", reverting to fallback.`, err);
     return fallback;

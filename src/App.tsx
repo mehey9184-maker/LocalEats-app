@@ -306,6 +306,8 @@ import {
   StatsSkeleton,
 } from "./components/FacebookSkeleton";
 import { audioHelper } from "./lib/audioHelper";
+import { GlobalChatListener } from "./components/GlobalChatListener";
+import { ShopChatModal } from "./components/ShopChatModal";
 
 const ShopCard = memo(
   ({
@@ -313,11 +315,13 @@ const ShopCard = memo(
     isFollowed,
     onStoreInfo,
     triggerHaptic,
+    dataSaverEnabled,
   }: {
     shop: Shop;
     isFollowed: boolean;
     onStoreInfo: (id: string) => void;
     triggerHaptic: (pattern?: number | number[]) => void;
+    dataSaverEnabled?: boolean;
   }) => {
     const status = getShopStatus(shop);
 
@@ -389,12 +393,20 @@ const ShopCard = memo(
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
         <div className="h-44 w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
-          <BlurUpImage
-            src={heroImage}
-            alt={shop.name}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
-          />
+          {dataSaverEnabled ? (
+            <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
+              <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
+                [ Image Hidden - Data Saver ]
+              </span>
+            </div>
+          ) : (
+            <BlurUpImage
+              src={heroImage}
+              alt={shop.name}
+              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
+            />
+          )}
 
           {/* Absolute Overlays */}
           {shop.is_special && (
@@ -423,8 +435,11 @@ const ShopCard = memo(
         {/* Bottom Half: Merchant Info & Decision Metrics */}
         <div className="p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px]">
           <div className="flex justify-between items-start gap-2">
-            <h4 className="text-base sm:text-[17px] font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors">
+            <h4 className="text-base sm:text-[17px] font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
+              <div className="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Verified active merchant">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
             </h4>
           </div>
 
@@ -1054,6 +1069,16 @@ export default function App() {
     }
   });
 
+  const [dataSaverEnabled, setDataSaverEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem("data_saver_enabled");
+      if (saved === null) return false;
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+
   const [orderAgainEnabled, setOrderAgainEnabled] = useState(() => {
     try {
       const saved = localStorage.getItem("order_again_enabled");
@@ -1139,9 +1164,16 @@ export default function App() {
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
-    return safeLocalStorageGet("cart", []);
+    const loadedCart = safeLocalStorageGet("cart", []) as CartItem[];
+    if (Array.isArray(loadedCart)) {
+      return loadedCart.filter((item: CartItem) => item && item.shopId && item.shopId !== "null" && item.shopId !== "undefined");
+    }
+    return [];
   });
   
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
   // Continuous background offline cart synchronization and network state monitoring
   useOfflineSync(cart, session);
   const [modal, setModal] = useState<ModalState>({
@@ -1337,6 +1369,10 @@ export default function App() {
   useEffect(() => {
     safeLocalStorageSet("order_again_enabled", String(orderAgainEnabled));
   }, [orderAgainEnabled]);
+
+  useEffect(() => {
+    safeLocalStorageSet("data_saver_enabled", String(dataSaverEnabled));
+  }, [dataSaverEnabled]);
 
   useEffect(() => {
     safeLocalStorageSet("dark_mode", String(isDarkMode));
@@ -1810,17 +1846,37 @@ export default function App() {
     }
   }, []);
 
-  const syncOfflineOrders = useCallback(async () => {
+  const syncOfflineOrders = useCallback(async (retryCount = 0) => {
     const queue = safeLocalStorageGet("offline_orders_queue", []);
-    if (!queue || queue.length === 0) return;
+    if (!queue || queue.length === 0) {
+      setSyncError(null);
+      setIsSyncing(false);
+      return;
+    }
 
-    console.log("[Offline Sync] Found queued offline orders of length:", queue.length);
-    toast.info(`Sending ${queue.length} saved offline order(s) to the kitchen... 🍟`, {
-      position: "top-center"
-    });
+    console.log(`[Offline Sync] Attempt ${retryCount + 1}: Found queued offline orders of length:`, queue.length);
+    if (retryCount === 0) {
+      toast.info(`Sending ${queue.length} saved offline order(s) to the kitchen... 🍟`, {
+        position: "top-center"
+      });
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
 
     try {
-      const ordersToInsert = queue.map((o: any) => {
+      const validQueue = queue.filter((o: any) => o.shop_id && o.shop_id !== "null" && o.shop_id !== "undefined");
+      
+      if (validQueue.length < queue.length) {
+        console.warn(`[Offline Sync] Dropped ${queue.length - validQueue.length} invalid queued orders missing shop_id.`);
+        if (validQueue.length === 0) {
+           safeLocalStorageSet("offline_orders_queue", "[]");
+           setIsSyncing(false);
+           return;
+        }
+      }
+
+      const ordersToInsert = validQueue.map((o: any) => {
         const { id, is_offline_queued, status, ...rest } = o;
         return {
           ...rest,
@@ -1835,17 +1891,15 @@ export default function App() {
         .select();
 
       if (error) {
-        console.error("[Offline Sync] Failed to sync offline orders:", error);
-        toast.error("We couldn't send your saved offline orders right now. We'll try again shortly.", {
-          position: "top-center"
-        });
-        return;
+        throw error;
       }
 
       console.log("[Offline Sync] Successfully synced offline orders:", data);
       
       // Clear the offline queue
       safeLocalStorageSet("offline_orders_queue", JSON.stringify([]));
+      setSyncError(null);
+      setIsSyncing(false);
 
       if (session?.user?.id) {
         const { data: freshOrders, error: fetchError } = await supabase
@@ -1865,6 +1919,17 @@ export default function App() {
       });
     } catch (syncErr: any) {
       console.error("[Offline Sync] Error during synchronization:", syncErr);
+      
+      if (retryCount < 3) {
+        console.log(`[Offline Sync] Retrying in ${Math.pow(2, retryCount) * 2} seconds...`);
+        setTimeout(() => syncOfflineOrders(retryCount + 1), Math.pow(2, retryCount) * 2000);
+      } else {
+        setIsSyncing(false);
+        setSyncError("Failed to sync offline orders. They are saved on your device.");
+        toast.error("We couldn't send your saved offline orders right now. We'll try again when you are back online.", {
+          position: "top-center"
+        });
+      }
     }
   }, [session]);
 
@@ -2365,7 +2430,7 @@ export default function App() {
     const handleJwtExpired = () => {
       console.warn("React App: Handling expired JWT event. Resetting auth state...");
       setSession(null);
-      setUserProfile(null);
+      setUserProfile({ fullName: "", email: "", phone: "", city: "Johannesburg", address: "", country: "South Africa", role: "user" });
       localStorage.removeItem("remember_me_secure_token");
       setNotification({
         message: "Your session has expired. Please sign in again.",
@@ -2829,6 +2894,11 @@ export default function App() {
       specialInstructions: string = "",
       selectedCustomizations: { name: string; price: number }[] = [],
     ) => {
+      if (!shopId || shopId === "null" || shopId === "undefined") {
+        toast.error("Cannot add item to cart: Shop information is missing.");
+        return;
+      }
+
       // Defensive Copy and Deep Freeze of Pricing Core Data
       const secureCustomizations = [...selectedCustomizations].map((c) => 
         Object.freeze({ name: String(c.name), price: Number(c.price) })
@@ -3073,6 +3143,37 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative">
           <Toaster position="top-center" expand={true} richColors closeButton />
+          <GlobalChatListener 
+            activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
+            currentScreen={currentScreen} 
+            onNavigateToTracking={() => setCurrentScreen('order-tracking')} 
+          />
+
+          {/* Sync Error Banner */}
+          <AnimatePresence>
+            {syncError && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="fixed top-0 left-0 right-0 z-[100] bg-rose-600 text-white p-3 text-center text-sm font-medium shadow-md flex items-center justify-center gap-2"
+              >
+                <span>⚠️ {syncError}</span>
+                <button 
+                  onClick={() => syncOfflineOrders(0)}
+                  className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-xs ml-2 transition-colors"
+                >
+                  Retry Now
+                </button>
+                <button
+                  onClick={() => setSyncError(null)}
+                  className="absolute right-3 p-1 hover:bg-white/10 rounded-full"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Global Saving/Success Overlay */}
           <AnimatePresence>
@@ -3471,6 +3572,7 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   orderAgainEnabled={orderAgainEnabled}
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
+                  dataSaverEnabled={dataSaverEnabled}
                 />
               )}
               {currentScreen === "notifications" && (
@@ -3773,6 +3875,12 @@ export default function App() {
                   orderAgainEnabled={orderAgainEnabled}
                   onToggleOrderAgain={() => {
                     setOrderAgainEnabled(!orderAgainEnabled);
+                    triggerHaptic(10, "button_press");
+                  }}
+                  dataSaverEnabled={dataSaverEnabled}
+                  onToggleDataSaver={() => {
+                    const next = !dataSaverEnabled;
+                    setDataSaverEnabled(next);
                     triggerHaptic(10, "button_press");
                   }}
                   biometricsEnabled={biometricsEnabled}
@@ -6473,6 +6581,7 @@ function HomeScreen({
   orderAgainEnabled = true,
   onEnableOrderAgain,
   changeToDelivery,
+  dataSaverEnabled,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -6514,6 +6623,7 @@ function HomeScreen({
   orderAgainEnabled?: boolean;
   onEnableOrderAgain?: () => void;
   changeToDelivery: (orderId: string) => void;
+  dataSaverEnabled?: boolean;
 }) {
   const { t, language } = useTranslation();
   const currentTownship = useMemo(() => {
@@ -6543,6 +6653,7 @@ function HomeScreen({
     }
   }, [session?.user?.id]);
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [selectedQuickFilter, setSelectedQuickFilter] = useState<string | null>(null);
 
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
@@ -6651,9 +6762,20 @@ function HomeScreen({
           shop.cuisine_type === selectedCategory;
       }
 
-      return matchesSearch && matchesCategory;
+      let matchesQuickFilter = true;
+      if (selectedQuickFilter === "Top Rated") {
+        matchesQuickFilter = shop.rating !== undefined && shop.rating >= 4.5;
+      } else if (selectedQuickFilter === "Fastest") {
+        matchesQuickFilter = shop.prepTime === "15-20 min" || shop.prepTime === "10-15 min";
+      } else if (selectedQuickFilter === "Open Now") {
+        matchesQuickFilter = getShopStatus(shop).isOpen;
+      } else if (selectedQuickFilter === "Halal") {
+        matchesQuickFilter = shopText.includes("halal") || shopText.includes("halaal");
+      }
+
+      return matchesSearch && matchesCategory && matchesQuickFilter;
     });
-  }, [shops, searchQuery, selectedCategory, favorites, shopSearchIndex]);
+  }, [shops, searchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
 
   const sortedShops = useMemo(() => {
     return [...filteredShops].sort((a, b) => {
@@ -6793,11 +6915,12 @@ function HomeScreen({
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
+            dataSaverEnabled={dataSaverEnabled}
           />
         ))}
       </motion.div>
     );
-  }, [sortedShops, favorites, onStoreInfo, triggerHaptic]);
+  }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
   if (fetchError && shops.length === 0) {
     return (
@@ -7361,6 +7484,34 @@ function HomeScreen({
                 );
               })}
             </div>
+
+            {/* Quick Filters - Top Rated, Fastest, Open Now, Halal */}
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-4 px-4 mask-gradient items-center">
+              {["Open Now", "Top Rated", "Fastest", "Halal"].map((filter) => {
+                const isSelected = selectedQuickFilter === filter;
+                return (
+                  <motion.button
+                    key={filter}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setSelectedQuickFilter(isSelected ? null : filter);
+                      triggerHaptic(3);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1 ${
+                      isSelected 
+                        ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-700/50" 
+                        : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    {filter === "Open Now" && <Activity className="w-3 h-3" />}
+                    {filter === "Top Rated" && <Star className="w-3 h-3" />}
+                    {filter === "Fastest" && <Zap className="w-3 h-3" />}
+                    {filter === "Halal" && <ShieldCheck className="w-3 h-3" />}
+                    {filter}
+                  </motion.button>
+                );
+              })}
+            </div>
           </div>
         )}
       </header>
@@ -7601,10 +7752,6 @@ function HomeScreen({
             </div>
           </section>
         )}
-
-
-
-
 
         {/* Local Merchants */}
         <section className="mb-20">
@@ -8374,6 +8521,35 @@ function DiscoverScreen({
       </header>
 
       <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
+        {/* What's Fresh Visual Feed */}
+        <section className="px-6 py-6 bg-white dark:bg-slate-900 shadow-sm border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
+            <Camera className="w-3.5 h-3.5 text-orange-500" />
+            What's Fresh Right Now
+          </h3>
+          
+          <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
+            {[
+              { id: 1, shopName: "Bra Joe's Kota", image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop", time: "2 mins ago", caption: "Fresh batch of chips just came out! 🍟🔥" },
+              { id: 2, shopName: "Sis Ouma's Kitchen", image: "https://images.unsplash.com/photo-1626804475297-41609ea084eb?q=80&w=600&auto=format&fit=crop", time: "15 mins ago", caption: "Our signature sphatlho is ready for you! 🥪" },
+              { id: 3, shopName: "The Kota King", image: "https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=600&auto=format&fit=crop", time: "1 hour ago", caption: "Double cheese, double meat. Come hungry! 🥩🧀" }
+            ].map(feed => (
+              <div key={feed.id} className="flex-shrink-0 w-64 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
+                <div className="relative h-36 w-full bg-slate-100 dark:bg-slate-800">
+                  <img src={feed.image} alt="Food photo" className="w-full h-full object-cover" />
+                  <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase px-2 py-1 rounded-md">
+                    {feed.time}
+                  </div>
+                </div>
+                <div className="p-3">
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white">{feed.shopName}</h4>
+                  <p className="text-[10px] font-bold text-slate-500 mt-1 line-clamp-2">{feed.caption}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
@@ -9789,6 +9965,7 @@ function StoreInfoScreen({
     null,
   );
   const [copiedAddress, setCopiedAddress] = useState(false);
+  const [isShopChatOpen, setIsShopChatOpen] = useState(false);
   const isScrollingRef = useRef(false);
   const [showTrustTooltip, setShowTrustTooltip] = useState(false);
   const [userOrderCount, setUserOrderCount] = useState<number>(() => {
@@ -10300,6 +10477,13 @@ function StoreInfoScreen({
               <QrCode className="w-6 h-6 text-orange-500" />
             </button>
             <button
+              onClick={() => setIsShopChatOpen(true)}
+              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
+              title="Chat with Shop"
+            >
+              <MessageCircle className="w-6 h-6 text-orange-400" />
+            </button>
+            <button
               onClick={onToggleFavorite}
               className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
               title="Toggle Favorite"
@@ -10372,21 +10556,14 @@ function StoreInfoScreen({
               <Navigation className="w-4 h-4" />
               Directions
             </button>
-            {shop.phone && (
-              <button
-                onClick={() => {
-                  const cleanPhone = shop.phone!.replace(/[^0-9]/g, "");
-                  const waPhone = cleanPhone.startsWith("0")
-                    ? "27" + cleanPhone.substring(1)
-                    : cleanPhone;
-                  const url = `https://wa.me/${waPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering from your shop!`)}`;
-                  window.open(url, "_blank");
-                }}
-                className="size-[52px] bg-[#25D366] text-white rounded-2xl flex items-center justify-center shadow-xl shadow-green-500/20 active:scale-95 transition-all cursor-pointer"
-              >
-                <MessageCircle className="w-6 h-6" />
-              </button>
-            )}
+            <button
+              onClick={() => setIsShopChatOpen(true)}
+              className="flex-grow md:flex-grow-0 px-6 py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl flex items-center justify-center gap-2 font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
+              title="Chat with Shop"
+            >
+              <MessageCircle className="w-5 h-5" />
+              <span>Chat with Shop</span>
+            </button>
           </div>
         </div>
 
@@ -10922,18 +11099,12 @@ function StoreInfoScreen({
                           <Phone className="w-6 h-6" />
                         </button>
                         <button
-                          onClick={() => {
-                            const cleanPhone = shop.phone!.replace(
-                              /[^0-9]/g,
-                              "",
-                            );
-                            const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${shop.name}, I'm interested in ordering!`)}`;
-                            window.open(url, "_blank");
-                          }}
-                          className="p-4 bg-[#25D366] text-white rounded-xl shadow-lg shadow-[#25D366]/20 hover:bg-[#20ba59] active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
-                          title="Chat on WhatsApp"
+                          onClick={() => setIsShopChatOpen(true)}
+                          className="px-5 py-4 bg-orange-600 text-white rounded-xl shadow-lg shadow-orange-600/20 hover:bg-orange-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 font-bold text-xs uppercase tracking-wider cursor-pointer"
+                          title="In-App Shop Chat"
                         >
-                          <MessageCircle className="w-6 h-6" />
+                          <MessageCircle className="w-5 h-5" />
+                          <span>Chat</span>
                         </button>
                       </div>
                     )}
@@ -11059,6 +11230,14 @@ function StoreInfoScreen({
           </div>
         </div>
       )}
+
+      {/* In-App Direct Shop Chat Modal */}
+      <ShopChatModal
+        isOpen={isShopChatOpen}
+        onClose={() => setIsShopChatOpen(false)}
+        shop={shop}
+        userProfile={userProfile}
+      />
     </div>
   );
 }
@@ -11880,19 +12059,13 @@ function ExploreScreen({
                 <Navigation className="w-5 h-5" />
                 Directions
               </button>
-              {activeShop.phone && (
-                <button
-                  onClick={() => {
-                    const cleanPhone = activeShop.phone!.replace(/[^0-9]/g, "");
-                    const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${activeShop.name}, I found you on LocalEats!`)}`;
-                    window.open(url, "_blank");
-                  }}
-                  className="bg-[#25D366] text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer col-span-2 md:col-span-1"
-                >
-                  <MessageCircle className="w-5 h-5" />
-                  WhatsApp
-                </button>
-              )}
+              <button
+                onClick={() => onStoreInfo(activeShop.id)}
+                className="bg-orange-600 text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer col-span-2 md:col-span-1 shadow-lg shadow-orange-600/20"
+              >
+                <MessageCircle className="w-5 h-5" />
+                Chat with Shop
+              </button>
             </div>
           </motion.div>
         )}
@@ -12355,6 +12528,8 @@ function SettingsScreen({
   onToggleHapticOrderUpdate,
   hapticCartAnimation = true,
   onToggleHapticCartAnimation,
+  dataSaverEnabled = false,
+  onToggleDataSaver,
   orderAgainEnabled = true,
   onToggleOrderAgain,
   biometricsEnabled = true,
@@ -12390,6 +12565,8 @@ function SettingsScreen({
   onToggleHapticOrderUpdate: () => void;
   hapticCartAnimation?: boolean;
   onToggleHapticCartAnimation: () => void;
+  dataSaverEnabled?: boolean;
+  onToggleDataSaver: () => void;
   orderAgainEnabled?: boolean;
   onToggleOrderAgain: () => void;
   biometricsEnabled?: boolean;
@@ -13312,6 +13489,28 @@ function SettingsScreen({
             </h3>
           </div>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            {/* Data Saver Mode toggle */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800/40">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+                  <Wifi className="w-5 h-5 text-teal-500" />
+                </div>
+                <div>
+                  <span className="font-medium text-sm">Data-Saver Mode</span>
+                  <p className="text-[10px] text-slate-500">Hide heavy images & save mobile data</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleDataSaver}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${dataSaverEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${dataSaverEnabled ? "translate-x-6" : "translate-x-1"}`}
+                />
+              </button>
+            </div>
+
             {/* Order Again toggle */}
             <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800/40">
               <div className="flex items-center space-x-3">
@@ -15784,7 +15983,7 @@ function ShopDashboardScreen({
   });
 
   const activeOrdersCount = orders.filter((o) =>
-    ["pending", "confirmed", "preparing"].includes((o.status || "").toLowerCase()),
+    ["pending", "confirmed", "preparing", "ready", "queued_for_sync"].includes((o.status || "").toLowerCase()),
   ).length;
   const readyOrdersCount = orders.filter((o) => o.status.toLowerCase() === "ready").length;
   const todayRevenue = orders
