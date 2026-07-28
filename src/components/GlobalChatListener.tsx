@@ -35,10 +35,16 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
         },
         (payload) => {
           const newMsg = payload.new as any;
-          // Only notify if sender is a rider and we are NOT on the order-tracking screen
-          if (newMsg.sender_type === "rider" && currentScreen !== "order-tracking") {
+          const isRider =
+            newMsg.sender_type === "rider" ||
+            newMsg.sender_type === "driver" ||
+            newMsg.sender_role === "rider" ||
+            newMsg.sender_role === "driver";
+          const msgText = newMsg.message_text || newMsg.content || newMsg.text || "New message from courier";
+
+          if (isRider && currentScreen !== "order-tracking") {
             toast("New Courier Message", {
-              description: newMsg.content,
+              description: msgText,
               icon: <MessageCircle className="w-4 h-4 text-orange-500" />,
               action: {
                 label: "View Chat",

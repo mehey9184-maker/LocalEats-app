@@ -221,12 +221,12 @@ export const safeLocalStorageGet = <T>(key: string, fallback: T): T => {
  * Cleanly saves serialization payloads while tracking storage capacity states dynamically.
  * Implements strict size limit checks to prevent buffer bloat.
  */
-export const safeLocalStorageSet = (key: string, value: string): void => {
+export const safeLocalStorageSet = (key: string, value: any): void => {
   try {
-    let safeVal = value;
-    if (value.startsWith('[') && value.endsWith(']')) {
+    let safeVal = typeof value === "string" ? value : JSON.stringify(value);
+    if (safeVal && safeVal.startsWith('[') && safeVal.endsWith(']')) {
       try {
-        const parsed = JSON.parse(value);
+        const parsed = JSON.parse(safeVal);
         if (Array.isArray(parsed) && parsed.length > 50) {
           console.warn(`[SafeStorage] Truncating oversized block payload for "${key}" list.`);
           safeVal = JSON.stringify(parsed.slice(0, 50));
@@ -244,7 +244,8 @@ export const safeLocalStorageSet = (key: string, value: string): void => {
         localStorage.removeItem('cached_shops');
         localStorage.removeItem('cached_orders');
         localStorage.removeItem('admin_cached_orders');
-        localStorage.setItem(key, value);
+        const retryVal = typeof value === "string" ? value : JSON.stringify(value);
+        localStorage.setItem(key, retryVal);
       } catch (retryErr) {
         console.error('[SafeStorage] Recovery eviction failed to clear sufficient quota.', retryErr);
       }

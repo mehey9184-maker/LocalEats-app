@@ -181,10 +181,44 @@ export function CheckoutScreen({
     fetchUserOrderCount();
   }, [session]);
 
-  // Recipient details editable inline to prevent block/exit funnel
-  const [customerName, setCustomerName] = useState(userProfile.fullName || "");
-  const [customerPhone, setCustomerPhone] = useState(userProfile.phone || "");
+  // Recipient details editable inline to prevent block/exit funnel - auto-populates from account details
+  const [customerName, setCustomerName] = useState(() => {
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    return (
+      userProfile?.fullName ||
+      (userProfile as any)?.name ||
+      cachedProfile?.fullName ||
+      cachedProfile?.name ||
+      (userProfile?.email ? userProfile.email.split("@")[0] : "") ||
+      ""
+    );
+  });
+  const [customerPhone, setCustomerPhone] = useState(() => {
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    return userProfile?.phone || cachedProfile?.phone || "";
+  });
   const [saveToProfile, setSaveToProfile] = useState(true);
+
+  // Sync recipient details with userProfile updates
+  useEffect(() => {
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const resolvedName =
+      userProfile?.fullName ||
+      (userProfile as any)?.name ||
+      cachedProfile?.fullName ||
+      cachedProfile?.name ||
+      (userProfile?.email ? userProfile.email.split("@")[0] : "");
+    if (!customerName.trim() && resolvedName) {
+      setCustomerName(resolvedName);
+    }
+    const resolvedPhone = userProfile?.phone || cachedProfile?.phone;
+    if (!customerPhone.trim() && resolvedPhone) {
+      setCustomerPhone(resolvedPhone);
+    }
+    if (!cardHolder.trim() && resolvedName) {
+      setCardHolder(resolvedName);
+    }
+  }, [userProfile]);
 
   // Cash change options
   const [cashChangeOption, setCashChangeOption] = useState<
@@ -662,15 +696,30 @@ export function CheckoutScreen({
       return;
     }
 
-    if (!customerName.trim()) {
-      toast.error("Recipient Name Required", {
-        description:
-          "Please enter a name for the delivery / collection record.",
-      });
-      return;
+    // Auto-populate recipient details from account details / profile if not filled in
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    let activeCustomerName = customerName.trim();
+    if (!activeCustomerName) {
+      activeCustomerName =
+        userProfile?.fullName ||
+        (userProfile as any)?.name ||
+        cachedProfile?.fullName ||
+        cachedProfile?.name ||
+        (userProfile?.email ? userProfile.email.split("@")[0] : "") ||
+        "Valued Customer";
+      setCustomerName(activeCustomerName);
     }
 
-    if (!customerPhone.trim() || customerPhone.replace(/\D/g, "").length < 9) {
+    let activeCustomerPhone = customerPhone.trim();
+    if (!activeCustomerPhone || activeCustomerPhone.replace(/\D/g, "").length < 9) {
+      const fallbackPhone = userProfile?.phone || cachedProfile?.phone;
+      if (fallbackPhone && fallbackPhone.replace(/\D/g, "").length >= 9) {
+        activeCustomerPhone = fallbackPhone;
+        setCustomerPhone(activeCustomerPhone);
+      }
+    }
+
+    if (!activeCustomerPhone || activeCustomerPhone.replace(/\D/g, "").length < 9) {
       toast.error("Valid Mobile Number Required", {
         description:
           "Please input a proper mobile number so our riders can call you!",
@@ -771,14 +820,30 @@ export function CheckoutScreen({
       }
     }
 
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const finalCustomerName =
+      customerName.trim() ||
+      userProfile?.fullName ||
+      (userProfile as any)?.name ||
+      cachedProfile?.fullName ||
+      cachedProfile?.name ||
+      (userProfile?.email ? userProfile.email.split("@")[0] : "") ||
+      "Valued Customer";
+
+    const finalCustomerPhone =
+      customerPhone.trim() ||
+      userProfile?.phone ||
+      cachedProfile?.phone ||
+      "";
+
     // Save profile background sync if requested
     if (saveToProfile && session?.user?.id) {
       try {
         await supabase
           .from("profiles")
           .update({
-            full_name: customerName,
-            phone: customerPhone,
+            full_name: finalCustomerName,
+            phone: finalCustomerPhone,
             ...(deliveryType === "delivery"
               ? {
                   address: deliveryAddressText,
@@ -883,8 +948,8 @@ export function CheckoutScreen({
         return {
           user_id: session?.user?.id,
           shop_id: item.shopId,
-          customer_name: customerName,
-          phone: customerPhone,
+          customer_name: finalCustomerName,
+          phone: finalCustomerPhone,
           email: userProfile.email,
           city: userProfile.city,
           address:
@@ -1004,8 +1069,8 @@ export function CheckoutScreen({
             id: orderId,
             user_id: session?.user?.id,
             shop_id: item.shopId,
-            customer_name: customerName,
-            phone: customerPhone,
+            customer_name: finalCustomerName,
+            phone: finalCustomerPhone,
             email: userProfile.email,
             city: userProfile.city,
             address:

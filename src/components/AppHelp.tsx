@@ -30,7 +30,7 @@ export function AppHelp({
             exit={{ scale: 0, opacity: 0, y: 15 }}
             transition={{ type: "spring", stiffness: 280, damping: 22 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-[92px] left-4 md:left-auto md:bottom-6 md:right-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 flex items-center justify-center active:scale-95 group cursor-pointer"
+            className="fixed bottom-[92px] right-4 md:right-6 md:bottom-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 flex items-center justify-center active:scale-95 group cursor-pointer"
             title="App Guide"
           >
             <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />

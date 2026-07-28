@@ -153,6 +153,7 @@ import {
   Wallet,
   ChevronLeft,
   Bug,
+  Server,
   Eye,
   EyeOff,
   FileText,
@@ -918,7 +919,27 @@ const getShopCategoryIcon = (category: string) => {
 // Storage utilities and cache cleaners outsourced to ./utils
 
 export default function App() {
-  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(["splash"]);
+  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(() => {
+    try {
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        const cachedProfile = safeLocalStorageGet("userProfile", null);
+        const hasSupabaseToken = Object.keys(localStorage).some(
+          (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
+                   key === "supabase.auth.token"
+        );
+        const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
+        const hasSessionToken = !!localStorage.getItem("localeats_session") || !!sessionStorage.getItem("localeats_session");
+        const hasUserProfile = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
+        if (hasSupabaseToken || hasRememberToken || hasSessionToken || hasUserProfile) {
+          console.info("[Auth Init] Active session token or saved login found. Skipping splash directly to Home screen.");
+          return ["home"];
+        }
+      }
+    } catch (e) {
+      console.warn("Auth screen initialization error:", e);
+    }
+    return ["splash"];
+  });
   const currentScreen = currentScreenStack[currentScreenStack.length - 1];
   const previousScreen = currentScreenStack.length > 1 ? currentScreenStack[currentScreenStack.length - 2] : null;
 
@@ -1002,6 +1023,15 @@ export default function App() {
       role: "user",
     });
   });
+
+  useEffect(() => {
+    if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
+      safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
+      if (!localStorage.getItem("remember_me_secure_token")) {
+        localStorage.setItem("remember_me_secure_token", userProfile.id || userProfile.email || "true");
+      }
+    }
+  }, [userProfile]);
 
   const [isRestoringSession, setIsRestoringSession] = useState(() => {
     try {
@@ -1163,6 +1193,35 @@ export default function App() {
       category: correctSpelling(s.category),
     }));
   });
+
+  const visibleShops = useMemo(() => {
+    const currentUserId = userProfile?.id || session?.user?.id;
+    const currentEmail = (userProfile?.email || session?.user?.email || "").toLowerCase();
+
+    const activeBaseShops = shops && shops.length > 0 ? shops : DEFAULT_FALLBACK_SHOPS;
+
+    const filtered = activeBaseShops.filter((s) => {
+      const nameLower = (s.name || "").toLowerCase();
+      const isExplicitPrivateTest =
+        nameLower.includes("[private]") ||
+        (s as any).is_private === true;
+
+      if (!isExplicitPrivateTest) return true;
+
+      const isOwner =
+        (s.owner_id && currentUserId && String(s.owner_id) === String(currentUserId)) ||
+        (currentEmail && (s as any).owner_email && (s as any).owner_email.toLowerCase() === currentEmail);
+      const isAdmin = userProfile?.role === "admin";
+
+      return isOwner || isAdmin;
+    });
+
+    if (filtered.length > 0) {
+      return filtered;
+    }
+
+    return activeBaseShops;
+  }, [shops, userProfile, session]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -1463,6 +1522,15 @@ export default function App() {
     }
   }, [shops, currentScreen, triggerHaptic]);
 
+  const logEmptyShopListDiagnostic = useCallback((reason: string) => {
+    console.warn(`🔍 [Shop List Diagnostic] Shop list is currently empty. Reason/Context: ${reason}`, {
+      timestamp: new Date().toISOString(),
+      isOnline: navigator.onLine,
+      supabaseUrl: supabaseUrl || "Not configured",
+      localStorageKeys: typeof localStorage !== "undefined" ? Object.keys(localStorage).filter(k => k.includes("shop") || k.includes("sb")) : [],
+    });
+  }, []);
+
   const fetchShopsData = useCallback(async (retries = 3) => {
     setLoadingShops(true);
     setFetchError(null);
@@ -1745,6 +1813,9 @@ export default function App() {
         .sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
 
       console.log(`Successfully fetched ${formattedShops.length} shops.`);
+      if (formattedShops.length === 0) {
+        logEmptyShopListDiagnostic("Backend returned 0 active non-abandoned shops matching visibility criteria.");
+      }
       setShops(formattedShops);
       safeLocalStorageSet("cached_shops", JSON.stringify(formattedShops)); // Instant-Load Caching
       cacheBusinessResults("all_shops", formattedShops); // IndexedDB Offline Storage
@@ -2015,7 +2086,7 @@ export default function App() {
 
   useEffect(() => {
     if (searchQuery.length > 1) {
-      const filtered = shops
+      const filtered = visibleShops
         .map((s) => s.name)
         .filter((name) =>
           name.toLowerCase().includes(searchQuery.toLowerCase()),
@@ -2025,7 +2096,7 @@ export default function App() {
     } else {
       setSuggestions([]);
     }
-  }, [searchQuery, shops]);
+  }, [searchQuery, visibleShops]);
 
   const subscribeToPushNotifications = useCallback(
     async (customUserId?: string) => {
@@ -2350,8 +2421,10 @@ export default function App() {
       (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
     );
     const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
+    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const hasCachedUser = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
 
-    if (hasToken || hasRememberToken) {
+    if (hasToken || hasRememberToken || hasCachedUser) {
       setIsRestoringSession(true);
       supabase.auth.getSession().then(async ({ data: { session } }) => {
         if (session) {
@@ -2360,16 +2433,38 @@ export default function App() {
             localStorage.setItem("remember_me_secure_token", session.access_token || "true");
           }
           fetchUserProfile(session.user.id);
-          setCurrentScreen("home");
+          setCurrentScreen((prev) => {
+            const preLoginScreens: Screen[] = [
+              "splash",
+              "signup",
+              "login",
+              "verify",
+              "setup-pin",
+              "setup-password",
+              "success"
+            ];
+            return preLoginScreens.includes(prev) ? "home" : prev;
+          });
           requestNotificationPermission();
-        } else {
-          setSession(null);
-          localStorage.removeItem("remember_me_secure_token");
+        } else if (hasCachedUser) {
+          // Keep user logged in with cached local profile in offline mode
+          console.info("[Auth] Retaining local cached user profile session");
+          setCurrentScreen((prev) => {
+            const preLoginScreens: Screen[] = [
+              "splash",
+              "signup",
+              "login",
+              "verify",
+              "setup-pin",
+              "setup-password",
+              "success"
+            ];
+            return preLoginScreens.includes(prev) ? "home" : prev;
+          });
         }
         setIsRestoringSession(false);
       }).catch((err) => {
-        console.warn("Failed to retrieve initial user session:", err);
-        localStorage.removeItem("remember_me_secure_token");
+        console.info("[Auth] Session check offline/failed, retaining local profile:", err?.message || String(err));
         setIsRestoringSession(false);
       });
     } else {
@@ -3524,7 +3619,7 @@ export default function App() {
                 <HomeScreen
                   userProfile={userProfile}
                   session={session}
-                  shops={shops}
+                  shops={visibleShops}
                   loadingShops={loadingShops}
                   fetchError={fetchError}
                   isOnline={isOnline}
@@ -3594,7 +3689,7 @@ export default function App() {
               {currentScreen === "order-tracking" && (
                 <OrderTrackingScreen
                   orders={orders}
-                  shops={shops}
+                  shops={visibleShops}
                   showAlert={showAlert}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   triggerHaptic={triggerHaptic}
@@ -3709,7 +3804,7 @@ export default function App() {
               {currentScreen === "discover" && (
                 <DiscoverScreen
                   userProfile={userProfile}
-                  shops={shops}
+                  shops={visibleShops}
                   onHome={() => setCurrentScreen("home")}
                   onExplore={() => {
                     setPreviousScreen("discover");
@@ -3732,7 +3827,7 @@ export default function App() {
               )}
               {currentScreen === "explore" && (
                 <ExploreScreen
-                  shops={shops}
+                  shops={visibleShops}
                   onHome={() => setCurrentScreen("home")}
                   onDiscover={() => {
                     setPreviousScreen("explore");
@@ -3905,7 +4000,7 @@ export default function App() {
               )}
               {currentScreen === "admin-orders" && (
                 <AdminOrdersScreen
-                  shops={shops}
+                  shops={visibleShops}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   showAlert={showAlert}
                   showConfirm={showConfirm}
@@ -3983,7 +4078,7 @@ export default function App() {
                 <CheckoutScreen
                   userProfile={userProfile}
                   session={session}
-                  shops={shops}
+                  shops={visibleShops}
                   isOnline={isOnline}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onConfirm={() => {
@@ -4022,7 +4117,7 @@ export default function App() {
                     setCurrentScreen("home");
                   }}
                   cart={cart}
-                  shops={shops}
+                  shops={visibleShops}
                   triggerHaptic={triggerHaptic}
                 />
               )}
@@ -4034,7 +4129,7 @@ export default function App() {
                   showAlert={showAlert}
                   showConfirm={showConfirm}
                   isOnline={isOnline}
-                  shops={shops}
+                  shops={visibleShops}
                   addToCart={addToCart}
                   setCart={setCart}
                   setCurrentScreen={setCurrentScreen}
@@ -4106,7 +4201,7 @@ export default function App() {
             isOpen={showQRScanner}
             onClose={() => setShowQRScanner(false)}
             onScanSuccess={handleQRScanSuccess}
-            shops={shops}
+            shops={visibleShops}
           />
 
           <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
@@ -6634,6 +6729,16 @@ function HomeScreen({
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  // Debounce search input updates to reduce shop filtering operations during typing
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
   const [isHeaderSearching, setIsHeaderSearching] = useState(false);
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
     try {
@@ -6700,12 +6805,12 @@ function HomeScreen({
   }, [orders, shops]);
 
   const suggestions = useMemo(() => {
-    if (searchQuery.length < 2) return [];
+    if (debouncedSearchQuery.length < 2) return [];
     return shops
-      .filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
       .map((s) => s.name)
       .slice(0, 5);
-  }, [shops, searchQuery]);
+  }, [shops, debouncedSearchQuery]);
 
   const activeOrders = useMemo(
     () =>
@@ -6742,7 +6847,7 @@ function HomeScreen({
   }, [shops]);
 
   const filteredShops = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = debouncedSearchQuery.trim().toLowerCase();
     const queryTerms = query === "" ? [] : query.split(/\s+/);
 
     return shops.filter((shop) => {
@@ -6777,7 +6882,7 @@ function HomeScreen({
 
       return matchesSearch && matchesCategory && matchesQuickFilter;
     });
-  }, [shops, searchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
 
   const sortedShops = useMemo(() => {
     return [...filteredShops].sort((a, b) => {
@@ -6908,7 +7013,7 @@ function HomeScreen({
             },
           },
         }}
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-hidden isolate"
+        className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate"
       >
         {sortedShops.map((shop) => (
           <ShopCard
@@ -6969,6 +7074,13 @@ function HomeScreen({
             ? fetchError
             : "It looks like there are no active shops in your area yet."}
         </p>
+        <button
+          onClick={onRetry}
+          className="px-6 py-3 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-bold text-sm rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-2 mb-4"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Reload Shops & Live Data
+        </button>
 
         {fetchError &&
           (fetchError.includes("Network Error") ||
@@ -6999,16 +7111,31 @@ function HomeScreen({
             </div>
           )}
 
-        <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-xl mb-6 text-[10px] font-mono text-slate-400 border border-slate-100 dark:border-slate-700 w-full max-w-xs overflow-hidden">
-          <div className="flex justify-between items-center mb-1">
-            <span>Supabase Endpoint</span>
-            <span className="text-[8px] bg-slate-200 dark:bg-slate-700 px-1 rounded uppercase">
+        <div className="bg-emerald-50/90 dark:bg-emerald-950/40 p-4 rounded-2xl mb-6 text-left w-full max-w-xs border border-emerald-200 dark:border-emerald-800/50 shadow-sm transition-all">
+          <div className="flex justify-between items-center mb-2">
+            <span className="font-bold text-xs text-slate-800 dark:text-slate-100 flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              Cloud Service Status
+            </span>
+            <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-300 dark:border-emerald-700">
               Active
             </span>
           </div>
-          <div className="truncate text-slate-500 dark:text-slate-300">
-            Connected to Supabase Cloud
-          </div>
+          <p className="text-[11px] font-medium text-slate-700 dark:text-slate-300 leading-snug mb-1">
+            Connected to <strong>Supabase Cloud Database</strong>
+          </p>
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-normal">
+            Your app is communicating with live database servers and ready for real-time orders.
+          </p>
+          {supabaseUrl && (
+            <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between text-[10px] font-mono text-emerald-800 dark:text-emerald-400">
+              <span className="opacity-75">Endpoint Domain</span>
+              <span className="truncate max-w-[150px] font-bold">{supabaseUrl.replace(/^https?:\/\//, '')}</span>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -7038,27 +7165,45 @@ function HomeScreen({
       {/* TopBar */}
       <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
         {!isHeaderSearching ? (
-          <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center justify-between">
-            <div className="flex flex-col justify-center relative">
+          <div className="max-w-screen-xl mx-auto px-2.5 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-1.5">
+            <div className="flex flex-col justify-center relative min-w-0 shrink">
               <div className="flex items-center gap-1.5 relative">
                 <motion.div
                   layoutId="session-bg-glow"
                   className="absolute -inset-6 bg-primary/10 dark:bg-primary/15 rounded-full blur-xl pointer-events-none"
                   transition={{ type: "spring", stiffness: 80, damping: 15 }}
                 />
-                <LocalEatsLogo width={130} height={34} />
-                <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded z-10">
+                <LocalEatsLogo width={115} height={30} className="shrink-0 scale-95 sm:scale-100 origin-left" />
+                <span className="text-[9px] sm:text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded z-10 whitespace-nowrap shrink-0">
                   v{APP_VERSION.split(" ")[0]}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 ml-0.5 mt-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]"></div>
-                <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-1.5 ml-0.5 mt-0.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)] shrink-0"></div>
+                <p className="text-[8px] sm:text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 whitespace-nowrap truncate">
                   Serving Local Flavours
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              {/* Persistent Supabase Connection Status Badge */}
+              <div 
+                className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-black border transition-all flex items-center gap-1 sm:gap-1.5 shadow-2xs shrink-0 select-none ${
+                  isOnline 
+                    ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60" 
+                    : "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/60"
+                }`}
+                title={isOnline ? "Supabase Cloud project is active & connected" : "Connecting to Supabase Cloud..."}
+              >
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
+                </span>
+                <span className="truncate max-w-[60px] sm:max-w-none">
+                  {isOnline ? "Connected" : "Connecting..."}
+                </span>
+              </div>
+
               {/* WhatsApp-style Search Button */}
               <button
                 onClick={() => {
@@ -7066,19 +7211,19 @@ function HomeScreen({
                   setShowSuggestions(true);
                   triggerHaptic(10);
                 }}
-                className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
+                className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
                 aria-label="Search stores"
               >
-                <Search className="w-5 h-5" />
+                <Search className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
 
               <button
                 onClick={onNotifications}
-                className="relative p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
+                className="relative p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
               >
-                <Bell className="w-5 h-5" />
+                <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
+                  <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-red-500 text-white text-[9px] sm:text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
                     {unreadCount > 9 ? "9+" : unreadCount}
                   </span>
                 )}
@@ -7087,7 +7232,7 @@ function HomeScreen({
                 <button
                   onClick={() => setIsSettingsOpen(!isSettingsOpen)}
                   aria-label="Settings"
-                  className={`p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-gray-100 dark:bg-slate-800" : "hover:bg-gray-100 dark:hover:bg-slate-800"}`}
+                  className={`p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-gray-100 dark:bg-slate-800" : "hover:bg-gray-100 dark:hover:bg-slate-800"}`}
                 >
                   <svg
                     className="h-5 w-5 text-gray-700 dark:text-slate-300"
@@ -7155,7 +7300,7 @@ function HomeScreen({
             </div>
           </div>
         ) : (
-          <div className="max-w-screen-xl mx-auto px-4 py-3 flex items-center gap-3 animate-in fade-in duration-200">
+          <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-center gap-2 sm:gap-3 transition-all duration-300 w-full min-h-[52px]">
             <button
               onClick={() => {
                 setIsHeaderSearching(false);
@@ -7163,15 +7308,17 @@ function HomeScreen({
                 setShowSuggestions(false);
                 triggerHaptic(5);
               }}
-              className="p-2 -ml-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-700 dark:text-slate-300"
+              className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-700 dark:text-slate-300 cursor-pointer shrink-0"
+              aria-label="Close search"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="relative flex-1">
+            <div className="relative flex-1 max-w-md sm:max-w-xl mx-auto flex items-center">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 id="header-search-input"
-                className="w-full bg-slate-100 dark:bg-slate-800 border-none outline-none rounded-xl py-2 pl-3 pr-10 text-xs font-bold dark:text-white"
-                placeholder="Search for the best local Kotas..."
+                className="w-full bg-slate-100 dark:bg-slate-800 border border-transparent focus:border-orange-500/50 outline-none rounded-xl py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white shadow-xs transition-all duration-200"
+                placeholder="Search for local kitchens, Kotas, meals..."
                 value={searchQuery}
                 onBlur={() => {
                   if (searchQuery.trim().length >= 2) {
@@ -7197,7 +7344,8 @@ function HomeScreen({
                     setSearchQuery("");
                     setShowSuggestions(true);
                   }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
+                  aria-label="Clear search text"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -7283,8 +7431,24 @@ function HomeScreen({
                   {/* Recent Searches Section */}
                   {recentSearches.length > 0 && (
                     <>
-                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                        🕒 Recent Searches
+                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <History className="w-3 h-3 text-slate-400" />
+                          Recent Searches
+                        </span>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setRecentSearches([]);
+                            try {
+                              localStorage.removeItem("recent_searches");
+                            } catch {}
+                          }}
+                          className="text-[10px] font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 cursor-pointer"
+                        >
+                          Clear All
+                        </button>
                       </div>
                       {recentSearches.map((s, idx) => (
                         <div
@@ -7462,9 +7626,9 @@ function HomeScreen({
 
         {/* Sticky Sub-Header with Category Filters (only on home screen) */}
         {currentScreen === "home" && (
-          <div className="max-w-screen-xl mx-auto px-4 pb-3 pt-1 border-t border-slate-100 dark:border-slate-850 flex flex-col gap-2 overflow-hidden">
-            {/* Quick Filters */}
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-4 px-4 mask-gradient items-center">
+          <div className="max-w-screen-xl mx-auto px-3 sm:px-4 pb-2 pt-1 border-t border-slate-100 dark:border-slate-850 flex flex-col gap-1.5 overflow-hidden">
+            {/* Quick Categories Horizontal Scroll */}
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
               {categories.map((cat) => {
                 const isSelected = selectedCategory === cat;
                 return (
@@ -7475,9 +7639,9 @@ function HomeScreen({
                       setSelectedCategory(cat);
                       triggerHaptic(5);
                     }}
-                    className={`px-3 py-1.5 rounded-full text-[11px] font-black tracking-tight transition-all whitespace-nowrap cursor-pointer border ${
+                    className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-[11px] font-black tracking-tight transition-all whitespace-nowrap cursor-pointer border shrink-0 ${
                       isSelected 
-                        ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm" 
+                        ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs" 
                         : "bg-slate-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400 border-transparent hover:bg-slate-200 dark:hover:bg-slate-700"
                     }`}
                   >
@@ -7488,7 +7652,7 @@ function HomeScreen({
             </div>
 
             {/* Quick Filters - Top Rated, Fastest, Open Now, Halal */}
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-4 px-4 mask-gradient items-center">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
               {["Open Now", "Top Rated", "Fastest", "Halal"].map((filter) => {
                 const isSelected = selectedQuickFilter === filter;
                 return (
@@ -7499,7 +7663,7 @@ function HomeScreen({
                       setSelectedQuickFilter(isSelected ? null : filter);
                       triggerHaptic(3);
                     }}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1 ${
+                    className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9.5px] sm:text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1 shrink-0 ${
                       isSelected 
                         ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-700/50" 
                         : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
@@ -8328,6 +8492,36 @@ function DiscoverScreen({
 }) {
   const { t, language } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("recent_searches");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Debounce search input updates
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  const saveRecentSearch = useCallback((query: string) => {
+    if (!query.trim()) return;
+    setRecentSearches(prev => {
+      const newSearches = [query, ...prev.filter(q => q.toLowerCase() !== query.toLowerCase())].slice(0, 5);
+      try {
+        localStorage.setItem("recent_searches", JSON.stringify(newSearches));
+      } catch {}
+      return newSearches;
+    });
+  }, []);
+
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
@@ -8375,7 +8569,7 @@ function DiscoverScreen({
   }, [shops]);
 
   const filteredShops = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const query = debouncedSearchQuery.trim().toLowerCase();
     const queryTerms = query === "" ? [] : query.split(/\s+/);
 
     return shops.filter((shop) => {
@@ -8414,7 +8608,15 @@ function DiscoverScreen({
 
       return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
     });
-  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
+
+  const suggestions = useMemo(() => {
+    if (debouncedSearchQuery.length < 2) return [];
+    return shops
+      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
+      .map((s) => s.name)
+      .slice(0, 5);
+  }, [shops, debouncedSearchQuery]);
 
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
@@ -8562,17 +8764,169 @@ function DiscoverScreen({
               Discover the finest local Kota spots.
             </p>
           </div>
-          <div className="relative group mb-6">
+          <div className="relative group mb-6 max-w-xl mx-auto z-30">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
             </div>
             <input
-              className="w-full h-14 pl-12 pr-4 bg-[#ffffff] dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-[0_8px_32px_rgba(45,47,49,0.04)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none transition-all"
+              className="w-full h-14 pl-12 pr-10 bg-[#ffffff] dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-[0_8px_32px_rgba(45,47,49,0.04)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none transition-all"
               placeholder="Search stores nearby..."
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                if (searchQuery.trim().length >= 2) {
+                  saveRecentSearch(searchQuery.trim());
+                }
+                setTimeout(() => setShowSuggestions(false), 200);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                  saveRecentSearch(searchQuery.trim());
+                  setShowSuggestions(false);
+                }
+              }}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setShowSuggestions(true);
+              }}
             />
+            {searchQuery && (
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setShowSuggestions(true);
+                }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
+                aria-label="Clear search text"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Float Suggestions relative to search bar */}
+            {showSuggestions && (
+              <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-40">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto">
+                  {debouncedSearchQuery.length < 2 ? (
+                    <>
+                      {/* Recent Searches */}
+                      {recentSearches.length > 0 && (
+                        <>
+                          <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <History className="w-3 h-3 text-slate-400" />
+                              Recent Searches
+                            </span>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setRecentSearches([]);
+                                try {
+                                  localStorage.removeItem("recent_searches");
+                                } catch {}
+                              }}
+                              className="text-[10px] font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 cursor-pointer"
+                            >
+                              Clear All
+                            </button>
+                          </div>
+                          {recentSearches.map((s, idx) => (
+                            <div
+                              key={`recent-${idx}`}
+                              className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                            >
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setSearchQuery(s);
+                                  setShowSuggestions(false);
+                                  saveRecentSearch(s);
+                                }}
+                                className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
+                              >
+                                <History className="w-3.5 h-3.5 text-slate-400" />
+                                {s}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRecentSearches((prev) => {
+                                    const updated = prev.filter((item) => item !== s);
+                                    try {
+                                      localStorage.setItem("recent_searches", JSON.stringify(updated));
+                                    } catch {}
+                                    return updated;
+                                  });
+                                }}
+                                className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* Search Suggestions Based on query */}
+                      {suggestions.length > 0 && (
+                        <>
+                          <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                            🔍 Search Suggestions
+                          </div>
+                          {suggestions.map((s, idx) => (
+                            <button
+                              key={`sugg-${idx}`}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSearchQuery(s);
+                                setShowSuggestions(false);
+                                saveRecentSearch(s);
+                              }}
+                              className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                            >
+                              <Search className="w-3.5 h-3.5 text-orange-500" />
+                              {s}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                      {recentSearches.filter(s => s.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) && s.toLowerCase() !== debouncedSearchQuery.toLowerCase()).length > 0 && (
+                        <>
+                          <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                            🕒 Matching Past Searches
+                          </div>
+                          {recentSearches
+                            .filter(s => s.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) && s.toLowerCase() !== debouncedSearchQuery.toLowerCase())
+                            .map((s, idx) => (
+                              <button
+                                key={`recent-match-${idx}`}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setSearchQuery(s);
+                                  setShowSuggestions(false);
+                                  saveRecentSearch(s);
+                                }}
+                                className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                              >
+                                <History className="w-3.5 h-3.5 text-slate-400" />
+                                {s}
+                              </button>
+                            ))}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -8612,6 +8966,20 @@ function DiscoverScreen({
                 />
                 Open Now
               </button>
+              
+              <button
+                onClick={() => setSortPriority(sortPriority === "distance" ? "smart" : "distance")}
+                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  sortPriority === "distance"
+                    ? "bg-blue-100/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-800/80 shadow-sm"
+                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                }`}
+              >
+                <Navigation
+                  className={`w-3 h-3 ${sortPriority === "distance" ? "text-blue-600 dark:text-blue-400" : ""}`}
+                />
+                Sort by Distance
+              </button>
               {[0, 3, 4, 4.5].map((rating) => (
                 <button
                   key={rating}
@@ -8633,30 +9001,24 @@ function DiscoverScreen({
             {/* Sort Priority Section */}
             <div className="flex flex-col gap-1.5 px-6">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Sort Options
+                Sort By
               </span>
-              <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {[
-                  { id: "smart", label: "✨ Smart Sort" },
-                  { id: "distance", label: "📍 Nearest First" },
-                  { id: "rating", label: "⭐ Highest Rated" },
-                  { id: "speed", label: "⚡ Fastest ETA" }
-                ].map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => {
-                      setSortPriority(opt.id as any);
-                      triggerHaptic?.(10);
-                    }}
-                    className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border ${
-                      sortPriority === opt.id
-                        ? "bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 border-slate-950 dark:border-slate-100 shadow-sm"
-                        : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="relative w-full max-w-xs">
+                <select
+                  value={sortPriority}
+                  onChange={(e) => {
+                    setSortPriority(e.target.value as any);
+                    triggerHaptic?.(10);
+                  }}
+                  className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-shadow pr-10 cursor-pointer"
+                >
+                  <option value="smart">Most Popular</option>
+                  <option value="rating">Highest Rated</option>
+                  <option value="speed">Fastest Delivery</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <ChevronDown className="w-4 h-4" />
+                </div>
               </div>
             </div>
 
@@ -8697,7 +9059,7 @@ function DiscoverScreen({
 
         {/* Store Grid or Map */}
         {viewMode === "list" ? (
-          <section className="px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <section className="px-3 sm:px-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
             {loadingShops ? (
               Array.from({ length: 6 }).map((_, idx) => (
                 <ShopCardSkeleton key={idx} />
@@ -10759,7 +11121,7 @@ function StoreInfoScreen({
                                   },
                                 },
                               }}
-                              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4"
                             >
                               {itemsUnderCategory.map((item) => (
                                 <MenuItemCard
@@ -12540,6 +12902,155 @@ function ChangeView({ center }: { center: { lat: number; lng: number } }) {
   return null;
 }
 
+function SystemStatusDrawer({
+  isOpen,
+  onClose,
+  isOnline,
+  bgLatency,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  isOnline: boolean;
+  bgLatency?: number | null;
+}) {
+  const [pinging, setPinging] = useState(false);
+  const [latency, setLatency] = useState<number | null>(bgLatency ?? null);
+  const [dbStatus, setDbStatus] = useState<"ok" | "checking" | "error">("ok");
+  const [authStatus, setAuthStatus] = useState<string>("Checking auth...");
+
+  const handleTestConnection = async () => {
+    setPinging(true);
+    setDbStatus("checking");
+    const start = performance.now();
+    try {
+      const { error } = await supabase.from("shops").select("id").limit(1);
+      const end = performance.now();
+      setLatency(Math.round(end - start));
+      setDbStatus(error ? "error" : "ok");
+    } catch {
+      setDbStatus("error");
+    } finally {
+      setPinging(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      supabase.auth.getSession().then(({ data }) => {
+        if (data?.session) {
+          setAuthStatus(`Authenticated (${data.session.user.email || "Active User"})`);
+        } else {
+          setAuthStatus("Guest Session / Local Token");
+        }
+      });
+      if (latency === null) {
+        handleTestConnection();
+      }
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="fixed inset-0" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[90vh] flex flex-col animate-in slide-in-from-bottom-5 duration-250">
+        <div className="px-6 py-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-700/50">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
+              <Server className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <h2 className="text-base font-black tracking-tight">System & Backend Status</h2>
+              <p className="text-[11px] text-slate-300 font-medium">Live Supabase Cloud health diagnostic</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-5 text-left text-xs">
+          <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <div>
+                <p className="font-extrabold text-sm text-emerald-900 dark:text-emerald-200">
+                  {isOnline ? "Connected to Supabase Cloud" : "Reconnecting to Backend..."}
+                </p>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
+                  {isOnline ? "Backend active & ready for real-time sync" : "Attempting network reconnection..."}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-emerald-200 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200 rounded-full border border-emerald-300 dark:border-emerald-700">
+              {isOnline ? "Active" : "Pending"}
+            </span>
+          </div>
+
+          <div className="space-y-3 bg-slate-50 dark:bg-slate-950/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+            <div className="flex flex-col gap-1 pb-3 border-b border-slate-200/60 dark:border-slate-800">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Supabase API URL</span>
+              <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-xs break-all">
+                {supabaseUrl || "https://placeholder.supabase.co"}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Database Cluster</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">PostgreSQL Cloud</span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Response Latency</span>
+              <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                {latency !== null ? `${latency} ms` : "Measuring..."}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between py-1 border-b border-slate-200/60 dark:border-slate-800">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Realtime Channel</span>
+              <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Subscribed
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="font-semibold text-slate-600 dark:text-slate-400">Auth Token State</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[170px]">
+                {authStatus}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-2">
+            <button
+              onClick={handleTestConnection}
+              disabled={pinging}
+              className="flex-1 py-3 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${pinging ? "animate-spin" : ""}`} />
+              {pinging ? "Testing Ping..." : "Ping Endpoint Now"}
+            </button>
+            <button
+              onClick={onClose}
+              className="px-5 py-3 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsScreen({
   userProfile,
   setUserProfile,
@@ -13039,6 +13550,8 @@ function SettingsScreen({
     });
   };
 
+  const [showSystemStatusDrawer, setShowSystemStatusDrawer] = useState(false);
+
   return (
     <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
       {/* Hidden File Input */}
@@ -13067,6 +13580,36 @@ function SettingsScreen({
       </header>
 
       <main className="px-4 py-6 space-y-8 pb-24 flex-grow overflow-y-auto">
+        {/* System Status & Cloud Health launcher card */}
+        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 shadow-lg border border-slate-700/60 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+              <Server className="w-5 h-5" />
+            </div>
+            <div className="text-left">
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-sm text-white">System Status & Backend</span>
+                <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Active
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5 truncate max-w-[190px] sm:max-w-xs font-mono">
+                {supabaseUrl || "Supabase Cloud"}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setShowSystemStatusDrawer(true);
+              triggerHaptic?.(10);
+            }}
+            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0"
+          >
+            <span>Status</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
         {/* Profile Section Quick View */}
         <div className="flex items-center space-x-4 bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-primary/5 shadow-sm">
           <div className="relative group">
@@ -14341,6 +14884,13 @@ function SettingsScreen({
           </div>
         )}
       </AnimatePresence>
+
+      {/* System Status Drawer */}
+      <SystemStatusDrawer
+        isOpen={showSystemStatusDrawer}
+        onClose={() => setShowSystemStatusDrawer(false)}
+        isOnline={isOnline}
+      />
     </div>
   );
 }
@@ -16742,8 +17292,8 @@ function ShopDashboardScreen({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                  <div className="h-48 w-full flex items-center justify-center relative">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="h-48 w-full min-w-0 flex items-center justify-center relative">
+                    <ResponsiveContainer minWidth={0} width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={orderStatusBreakdown.filter(item => item.value > 0)}
@@ -16824,8 +17374,8 @@ function ShopDashboardScreen({
                   <p className="text-[10px] text-slate-400 max-w-[200px] mt-1">Once orders are placed today, hourly distribution peaks will be charted here automatically.</p>
                 </div>
               ) : (
-                <div className="h-60 w-full pr-2">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-60 w-full min-w-0 pr-2">
+                  <ResponsiveContainer minWidth={0} width="100%" height="100%">
                     <BarChart
                       data={hourlyOrdersVolume.filter(h => h.volume > 0 || (h.hour >= 8 && h.hour <= 22))}
                       margin={{ top: 10, right: 0, left: -25, bottom: 0 }}
@@ -20061,8 +20611,8 @@ function OrderHistoryScreen({
                   <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Monthly Spending Trends</h3>
                   <span className="text-xs font-bold text-orange-500">R (ZAR)</span>
                 </div>
-                <div className="h-44 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-44 w-full min-w-0">
+                  <ResponsiveContainer minWidth={0} width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <defs>
                         <linearGradient id="colorSpending" x1="0" y1="0" x2="0" y2="1">
@@ -20114,8 +20664,8 @@ function OrderHistoryScreen({
                   <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Order Frequency</h3>
                   <span className="text-xs font-bold text-orange-500">Orders Count</span>
                 </div>
-                <div className="h-44 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-44 w-full min-w-0">
+                  <ResponsiveContainer minWidth={0} width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" className="dark:stroke-slate-800" />
                       <XAxis 
@@ -20318,7 +20868,7 @@ function OrderHistoryScreen({
               )}
             </div>
           ) : (
-            <motion.div layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+            <motion.div layout className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 pb-20">
               <AnimatePresence mode="popLayout">
               {groupedOrders.map((group) => {
                 const shop = shops.find((s) => s.id === group.shop_id);

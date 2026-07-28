@@ -8,9 +8,12 @@ export interface ChatMessage {
   id: string;
   order_id: string;
   sender_id: string;
-  sender_type?: "user" | "rider";
+  user_id?: string;
+  sender_type?: "user" | "rider" | string;
+  sender_role?: "user" | "rider" | "driver" | string;
   message_text?: string;
   content?: string;
+  text?: string;
   is_read?: boolean;
   read_at?: string | null;
   created_at: string;
@@ -40,15 +43,51 @@ export function ChatWidget({
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const channelRef = useRef<any>(null);
 
-  // Fetch messages and subscribe to real-time changes
+  // Helper to check if a message belongs to current user
+  const isUserMessage = (m: ChatMessage) => {
+    return (
+      m.sender_id === userId ||
+      m.sender_type === "user" ||
+      m.sender_role === "user" ||
+      (m.user_id && m.user_id === userId)
+    );
+  };
+
+  // Helper to extract message text across schema field variations
+  const getMessageText = (m: ChatMessage) => {
+    return m.message_text || m.content || m.text || "";
+  };
+
+  // Deduplicating append helper
+  const appendMessage = (newMsg: ChatMessage) => {
+    setMessages((prev) => {
+      if (
+        prev.some(
+          (m) =>
+            m.id === newMsg.id ||
+            (m.created_at === newMsg.created_at && getMessageText(m) === getMessageText(newMsg))
+        )
+      ) {
+        return prev;
+      }
+      const updated = [...prev, newMsg];
+      const unread = updated.filter(
+        (m) => (!m.read_at && !m.is_read) && !isUserMessage(m)
+      ).length;
+      if (onUnreadCountChange) onUnreadCountChange(unread);
+      return updated;
+    });
+  };
+
+  // Fetch messages with network reconnect sync
   useEffect(() => {
     if (!orderId) return;
 
     let isMounted = true;
 
     const fetchMessages = async () => {
-      setIsLoading(true);
       try {
         const { data, error } = await supabase
           .from("chat_messages")
@@ -57,19 +96,24 @@ export function ChatWidget({
           .order("created_at", { ascending: true });
 
         if (error) {
-          console.error("Error fetching chat messages:", error);
+          const errMsg = (error.message || "").toLowerCase();
+          if (!errMsg.includes("fetch") && !errMsg.includes("network")) {
+            console.warn("Error fetching chat messages:", error.message || error);
+          }
         } else if (isMounted) {
           const list = data || [];
           setMessages(list);
 
-          // Calculate unread count using read_at (fallback to is_read)
           const unread = list.filter(
-            (m) => (!m.read_at && !m.is_read) && m.sender_id !== userId && m.sender_type !== "user"
+            (m) => (!m.read_at && !m.is_read) && !isUserMessage(m)
           ).length;
           if (onUnreadCountChange) onUnreadCountChange(unread);
         }
-      } catch (err) {
-        console.error("Chat error:", err);
+      } catch (err: any) {
+        const errStr = (err?.message || String(err)).toLowerCase();
+        if (!errStr.includes("fetch") && !errStr.includes("network")) {
+          console.warn("Chat fetch error:", err?.message || err);
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -77,8 +121,16 @@ export function ChatWidget({
 
     fetchMessages();
 
-    // Subscribe to new messages & updates
-    const channel = supabase
+    // Re-sync messages when network comes back online or tab regains focus
+    const handleReconnect = () => {
+      fetchMessages();
+    };
+
+    window.addEventListener("online", handleReconnect);
+    window.addEventListener("focus", handleReconnect);
+
+    // Subscribe to BOTH Postgres DB changes and WebSockets Broadcast channels ('order_chat_123' & 'order-chat-123')
+    const primaryChannel = supabase
       .channel(`chat_widget_${orderId}`)
       .on(
         "postgres_changes",
@@ -91,22 +143,11 @@ export function ChatWidget({
         (payload) => {
           if (payload.eventType === "INSERT") {
             const newMsg = payload.new as ChatMessage;
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newMsg.id)) return prev;
-              const updated = [...prev, newMsg];
-              
-              // Calculate unread count
-              const unread = updated.filter(
-                (m) => (!m.read_at && !m.is_read) && m.sender_id !== userId && m.sender_type !== "user"
-              ).length;
-              if (onUnreadCountChange) onUnreadCountChange(unread);
+            appendMessage(newMsg);
 
-              return updated;
-            });
-
-            if (newMsg.sender_id !== userId && newMsg.sender_type !== "user") {
+            if (!isUserMessage(newMsg)) {
               toast(`Message from ${riderName}`, {
-                description: newMsg.message_text || newMsg.content || "New message",
+                description: getMessageText(newMsg) || "New message",
                 icon: <MessageCircle className="w-4 h-4 text-orange-500" />,
               });
             }
@@ -118,11 +159,21 @@ export function ChatWidget({
           }
         }
       )
+      .on("broadcast", { event: "*" }, (payload) => {
+        if (payload.payload) {
+          const bMsg = payload.payload as ChatMessage;
+          appendMessage(bMsg);
+        }
+      })
       .subscribe();
+
+    channelRef.current = primaryChannel;
 
     return () => {
       isMounted = false;
-      supabase.removeChannel(channel);
+      window.removeEventListener("online", handleReconnect);
+      window.removeEventListener("focus", handleReconnect);
+      supabase.removeChannel(primaryChannel);
     };
   }, [orderId, userId, riderName, onUnreadCountChange]);
 
@@ -191,8 +242,10 @@ export function ChatWidget({
         sender_id: effectiveSenderId,
         user_id: validUserId,
         sender_type: "user",
+        sender_role: "user",
         message_text: messageText,
         content: messageText,
+        text: messageText,
         is_read: false,
       };
 
@@ -213,8 +266,11 @@ export function ChatWidget({
             order_id: effectiveOrderId,
             sender_id: effectiveSenderId,
             user_id: validUserId,
+            sender_type: "user",
+            sender_role: "user",
             message_text: messageText,
             content: messageText,
+            text: messageText,
           })
           .select()
           .maybeSingle();
@@ -233,9 +289,12 @@ export function ChatWidget({
         id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         order_id: effectiveOrderId,
         sender_id: effectiveSenderId,
+        user_id: validUserId,
         sender_type: "user",
+        sender_role: "user",
         message_text: messageText,
         content: messageText,
+        text: messageText,
         is_read: false,
         created_at: new Date().toISOString(),
       };
@@ -244,8 +303,25 @@ export function ChatWidget({
       }
     }
 
+    // Broadcast message on active channel to notify riders instantly across WebSockets
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "chat_message",
+        payload: insertedData,
+      }).catch(() => {});
+    }
+
     setMessages((prev) => {
-      if (prev.some((m) => m.id === insertedData!.id)) return prev;
+      if (
+        prev.some(
+          (m) =>
+            m.id === insertedData!.id ||
+            (m.created_at === insertedData!.created_at && getMessageText(m) === messageText)
+        )
+      ) {
+        return prev;
+      }
       return [...prev, insertedData!];
     });
 
