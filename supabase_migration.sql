@@ -392,6 +392,8 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
 );
 
 -- Safely add missing columns if chat_messages table already existed
+ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE public.chat_messages ALTER COLUMN user_id DROP NOT NULL;
 ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS sender_type TEXT DEFAULT 'user';
 ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS message_text TEXT;
 ALTER TABLE public.chat_messages ADD COLUMN IF NOT EXISTS content TEXT;

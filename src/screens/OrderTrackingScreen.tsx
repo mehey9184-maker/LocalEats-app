@@ -637,8 +637,7 @@ export function OrderTrackingScreen({
       if (!o.is_delivery) return false;
       const ds = (o.delivery_status || "").toLowerCase();
       const st = (o.status || "").toLowerCase();
-      if (st === "completed" || st === "cancelled" || ds === "delivered" || ds === "cancelled") return false;
-      return ds === "accepted" || ds === "picked_up";
+      return st !== "completed" && st !== "cancelled" && ds !== "delivered" && ds !== "cancelled";
     });
   }, [combinedOrders]);
 
@@ -959,70 +958,81 @@ export function OrderTrackingScreen({
                 )}
 
                 {/* Delivery/Rider Contact Widget */}
-                {order.is_delivery && order.rider_id && riders[order.rider_id] && (
-                  <div className="bg-orange-50/50 dark:bg-orange-500/[0.04] p-4 rounded-2xl border border-orange-100/50 dark:border-orange-950/20 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 font-black">
-                          {riders[order.rider_id].full_name?.charAt(0) || "🚴"}
+                {order.is_delivery && (
+                  (() => {
+                    const assignedRider = order.rider_id ? riders[order.rider_id] : null;
+                    const riderName = assignedRider?.full_name || (order.rider_id ? "Assigned Courier" : "Dispatching Courier...");
+                    const riderPhone = assignedRider?.phone;
+
+                    return (
+                      <div className="bg-orange-50/50 dark:bg-orange-500/[0.04] p-4 rounded-2xl border border-orange-100/50 dark:border-orange-950/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 font-black">
+                              {assignedRider?.full_name?.charAt(0) || "🚴"}
+                            </div>
+                            <div>
+                              <p className="text-xs font-black text-slate-800 dark:text-slate-200">
+                                {riderName}
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                                {assignedRider ? "Courier En Route" : "Finding Nearby Courier"}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
+                            Active Delivery
+                          </span>
                         </div>
-                        <div>
-                          <p className="text-xs font-black text-slate-800 dark:text-slate-200">
-                            {riders[order.rider_id].full_name || "Assigned Courier"}
-                          </p>
-                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                            Courier En Route
-                          </p>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setOpenChatOrderId(order.id);
+                              setShowChat(true);
+                              setUnreadCounts((prev) => ({ ...prev, [order.id]: 0 }));
+                            }}
+                            className="relative flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-orange-600/20"
+                            title="Chat with Rider"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>Chat with Driver</span>
+                            {(unreadCounts[order.id] || 0) > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
+                                {unreadCounts[order.id]}
+                              </span>
+                            )}
+                          </button>
+
+                          {riderPhone && (
+                            <button
+                              onClick={() => {
+                                const cleanPhone = riderPhone.replace(/[^0-9]/g, "");
+                                const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${riderName}, I'm checking on my delivery for order #${order.id.slice(0, 5)}!`)}`;
+                                window.open(url, "_blank");
+                              }}
+                              className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-[#25D366]/10"
+                              title="WhatsApp Rider"
+                            >
+                              <svg className="w-3.5 h-3.5 fill-current shrink-0" viewBox="0 0 24 24">
+                                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.705 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+                              </svg>
+                            </button>
+                          )}
+
+                          {riderPhone && (
+                            <button
+                              onClick={() => window.open(`tel:${riderPhone}`)}
+                              className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-700 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer flex items-center justify-center"
+                              title="Call Courier"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-slate-500" />
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
-                        Active Delivery
-                      </span>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          setOpenChatOrderId(order.id);
-                          setUnreadCounts((prev) => ({ ...prev, [order.id]: 0 }));
-                        }}
-                        className="relative flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-orange-600/20"
-                        title="Chat with Rider"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Chat with Rider</span>
-                        {(unreadCounts[order.id] || 0) > 0 && (
-                          <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] font-black min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
-                            {unreadCounts[order.id]}
-                          </span>
-                        )}
-                      </button>
-
-                      {riders[order.rider_id]?.phone && (
-                        <button
-                          onClick={() => {
-                            const cleanPhone = riders[order.rider_id].phone.replace(/[^0-9]/g, "");
-                            const url = `https://wa.me/${cleanPhone.startsWith("0") ? "27" + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Hi ${riders[order.rider_id].full_name}, I'm checking on my delivery for order #${order.id.slice(0, 5)}!`)}`;
-                            window.open(url, "_blank");
-                          }}
-                          className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-[#25D366] hover:bg-[#20ba5a] text-white rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer shadow-md shadow-[#25D366]/10"
-                          title="WhatsApp Rider"
-                        >
-                          <svg className="w-3.5 h-3.5 fill-current shrink-0" viewBox="0 0 24 24">
-                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.746.953 3.71 1.456 5.705 1.457h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
-                          </svg>
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => window.open(`tel:${riders[order.rider_id]?.phone || ""}`)}
-                        className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-900 dark:text-white border border-slate-200/50 dark:border-slate-700 rounded-xl text-xs font-bold active:scale-95 transition-all cursor-pointer flex items-center justify-center"
-                        title="Call Courier"
-                      >
-                        <Phone className="w-3.5 h-3.5 text-slate-500" />
-                      </button>
-                    </div>
-                  </div>
+                    );
+                  })()
                 )}
 
                 {/* Progress Stepper Visual Progress Tracker */}
@@ -1269,7 +1279,10 @@ export function OrderTrackingScreen({
 
       {/* Active Rider Chat Widget */}
       {(() => {
-        const activeChatOrder = localOrders.find((o) => o.id === openChatOrderId) || activeChatDeliveryOrder;
+        const activeChatOrder =
+          combinedOrders.find((o) => o.id === openChatOrderId) ||
+          localOrders.find((o) => o.id === openChatOrderId) ||
+          activeChatDeliveryOrder;
         if (!activeChatOrder) return null;
         const riderProfile = activeChatOrder.rider_id ? riders[activeChatOrder.rider_id] : null;
         const isOpen = showChat || openChatOrderId === activeChatOrder.id;
