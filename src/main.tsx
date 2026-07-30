@@ -6,34 +6,16 @@ import ErrorBoundary from './components/ErrorBoundary.tsx';
 import './index.css';
 
 if (typeof window !== "undefined") {
-  // Global safety net for unhandled promise rejections (primarily network errors)
+  // Global safety net for unhandled promise rejections (network errors, audio autoplay, async background tasks)
   window.addEventListener('unhandledrejection', (event) => {
-    const errorMsg = event.reason?.message || String(event.reason || '');
-    if (
-      errorMsg.includes('Failed to fetch') ||
-      errorMsg.toLowerCase().includes('failed to fetch') ||
-      errorMsg.toLowerCase().includes('network error') ||
-      errorMsg.toLowerCase().includes('load failed')
-    ) {
-      console.warn('[GlobalSafetyNet] Intercepted unhandled network rejection:', event.reason);
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    console.warn('[GlobalSafetyNet] Intercepted unhandled promise rejection:', event.reason);
+    event.preventDefault();
   });
 
   // Global safety net for raw uncaught exceptions and resource loading failures
   window.addEventListener('error', (event) => {
-    const errorMsg = event.message || String(event.error?.message || '');
-    if (
-      errorMsg.includes('Failed to fetch') ||
-      errorMsg.toLowerCase().includes('failed to fetch') ||
-      errorMsg.toLowerCase().includes('network error') ||
-      errorMsg.toLowerCase().includes('load failed')
-    ) {
-      console.warn('[GlobalSafetyNet] Intercepted unhandled network error:', event.error);
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    console.warn('[GlobalSafetyNet] Intercepted unhandled error:', event.error || event.message);
+    event.preventDefault();
   }, true);
 }
 
@@ -50,9 +32,9 @@ if ('serviceWorker' in navigator) {
           if (success) {
             console.log('Cleaned up active service worker in development environment to maintain HMR stability.');
           }
-        });
+        }).catch(() => {});
       }
-    });
+    }).catch(() => {});
   } else {
     // Register Service Worker in production
     window.addEventListener('load', () => {

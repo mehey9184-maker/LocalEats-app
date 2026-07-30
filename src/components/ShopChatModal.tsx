@@ -20,6 +20,7 @@ interface ShopChatModalProps {
 
 const QUICK_PROMPTS = [
   "🍔 What's your top recommended meal?",
+  "🔥 What are your current popular specials?",
   "⏱️ How long is prep time right now?",
   "💵 Is Cash on Delivery accepted?",
   "🥬 Do you have vegetarian or halal options?"
@@ -37,7 +38,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
       const initialMessage: Message = {
         id: "msg-welcome",
         sender: "shop",
-        text: `Hi ${userProfile?.full_name ? userProfile.full_name.split(" ")[0] : "there"}! 👋 Welcome to ${shop.name}. How can we help you with your order or questions today?`,
+        text: `Hi ${userProfile?.full_name ? userProfile.full_name.split(" ")[0] : "there"}! 👋 Welcome to ${shop.name}. I'm your AI Kitchen Assistant. How can I help with recommendations, prep time, or order customisations today?`,
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages([initialMessage]);
@@ -72,7 +73,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
     return `Thanks for reaching out! A kitchen team member at ${shop.name} has received your message. Feel free to place your order or ask any other questions!`;
   };
 
-  const handleSendMessage = (textToSend?: string) => {
+  const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text) return;
 
@@ -87,16 +88,43 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
       time: now,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const currentHistory = [...messages, userMsg];
+    setMessages(currentHistory);
     if (typeof navigator !== "undefined" && "vibrate" in navigator) {
       navigator.vibrate(10);
     }
 
-    // Simulate shop assistant typing response
     setIsTyping(true);
 
-    setTimeout(() => {
-      setIsTyping(false);
+    try {
+      const response = await fetch("/api/shop-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shop,
+          userProfile,
+          messages: currentHistory,
+          userQuery: text,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("API request failed");
+      }
+
+      const data = await response.json();
+      const replyText = data.reply || generateShopReply(text);
+
+      const shopMsg: Message = {
+        id: `shop-${Date.now()}`,
+        sender: "shop",
+        text: replyText,
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, shopMsg]);
+      try { audioHelper.play("alert"); } catch { /* ignore */ }
+    } catch (err) {
+      // Fallback if offline or server endpoint unavailable
       const replyText = generateShopReply(text);
       const shopMsg: Message = {
         id: `shop-${Date.now()}`,
@@ -106,7 +134,9 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
       };
       setMessages((prev) => [...prev, shopMsg]);
       try { audioHelper.play("alert"); } catch { /* ignore */ }
-    }, 1200);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   return (
@@ -146,7 +176,10 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
                 <div>
                   <h3 className="font-black text-white text-sm line-clamp-1 flex items-center gap-1.5">
                     {shop.name}
-                    <span className="bg-orange-500/30 text-orange-300 text-[9px] px-1.5 py-0.5 rounded uppercase font-extrabold tracking-wider">In-App Chat</span>
+                    <span className="bg-gradient-to-r from-orange-500/40 to-amber-500/40 text-orange-200 text-[9px] px-2 py-0.5 rounded-full uppercase font-extrabold tracking-wider border border-orange-400/30 flex items-center gap-1">
+                      <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+                      AI Kitchen Desk
+                    </span>
                   </h3>
                   <p className="text-[10px] text-slate-300 font-medium flex items-center gap-1">
                     <Clock className="w-3 h-3 text-emerald-400" />

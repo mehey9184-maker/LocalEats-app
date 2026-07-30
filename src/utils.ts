@@ -133,7 +133,23 @@ export const getShopStatus = (shop: {
   }
 
   const now = new Date();
-  const currentTime = now.getHours() * 60 + now.getMinutes();
+  
+  // Always evaluate store hours in South African Time (SAST)
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Johannesburg',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  });
+  
+  const formattedParts = formatter.formatToParts(now);
+  const hourString = formattedParts.find(p => p.type === 'hour')?.value || "0";
+  const minuteString = formattedParts.find(p => p.type === 'minute')?.value || "0";
+  
+  const currentSastHour = parseInt(hourString, 10) === 24 ? 0 : parseInt(hourString, 10);
+  const currentSastMinute = parseInt(minuteString, 10);
+  
+  const currentTime = currentSastHour * 60 + currentSastMinute;
 
   const [openHours, openMinutes] = shop.opening_time.split(':').map(Number);
   const [closeHours, closeMinutes] = shop.closing_time.split(':').map(Number);

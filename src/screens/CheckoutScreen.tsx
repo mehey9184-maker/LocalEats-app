@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff
+  ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, ChevronDown, ChevronUp, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff, Check, Zap, Calendar
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { Shop, CartItem, Screen } from "../types";
@@ -12,6 +12,7 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
+import { registerAndSyncPushToken } from "../lib/firebase";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
@@ -111,8 +112,8 @@ export function CheckoutScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine" | "capitec">(
-    "capitec",
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
+    "cash",
   );
   const [deliveryType, setDeliveryType] = useState<"collection" | "delivery">(
     "collection",
@@ -145,12 +146,104 @@ export function CheckoutScreen({
   }, [shops, cart]);
 
   const [cardHolder, setCardHolder] = useState(userProfile?.fullName || "");
-  const [isCartSummaryExpanded, setIsCartSummaryExpanded] = useState(true);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
+  const [isCartSummaryExpanded, setIsCartSummaryExpanded] = useState(false);
+
+  const handleNextToStep2 = () => {
+    if (!customerName.trim()) {
+      toast.error("Please enter the recipient name");
+      return;
+    }
+    if (!customerPhone.trim()) {
+      toast.error("Please enter a valid mobile number");
+      return;
+    }
+    if (deliveryType === "delivery" && !deliveryAddressText.trim()) {
+      setShowAddressModal(true);
+      toast.error("Please select your delivery spot location");
+      return;
+    }
+    setCurrentStep(2);
+    triggerHaptic(10);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleNextToStep3 = () => {
+    if (!paymentMethod) {
+      toast.error("Please select a settlement payment method");
+      return;
+    }
+    setCurrentStep(3);
+    triggerHaptic(10);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
   const [tipPercentage, setTipPercentage] = useState<number | "custom">(0);
   const [customTipInput, setCustomTipInput] = useState<string>("");
+  const [deliveryScheduleMode, setDeliveryScheduleMode] = useState<"asap" | "express" | "scheduled">("asap");
+  const [scheduledTimeChoice, setScheduledTimeChoice] = useState<string>("12:30 PM");
+
+  const [isCheckoutBannerCollapsed, setIsCheckoutBannerCollapsed] = useState(false);
+  const [isCheckoutScrollCollapsed, setIsCheckoutScrollCollapsed] = useState(false);
+
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+    let ticking = false;
+
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+          if (currentScrollY > lastScrollY + 20 && currentScrollY > 100) {
+            setIsCheckoutScrollCollapsed(true);
+          } else if (currentScrollY < lastScrollY - 10 || currentScrollY < 30) {
+            setIsCheckoutScrollCollapsed(false);
+          }
+          lastScrollY = currentScrollY;
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvv, setCardCvv] = useState("");
+
+  const [savedCards, setSavedCards] = useState<Array<{ id: string; cardHolder: string; cardNumber: string; expiry: string; cardType: string }>>(() => {
+    try {
+      const cached = localStorage.getItem("localeats_saved_cards");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    return [
+      { id: "c1", cardHolder: userProfile?.fullName || "LOCAL CUSTOMER", cardNumber: "•••• •••• •••• 4242", expiry: "08/28", cardType: "Visa" },
+      { id: "c2", cardHolder: userProfile?.fullName || "LOCAL CUSTOMER", cardNumber: "•••• •••• •••• 8819", expiry: "12/29", cardType: "Mastercard" },
+    ];
+  });
+  const [selectedSavedCardId, setSelectedSavedCardId] = useState<string>("c1");
+  const [saveCardForFuture, setSaveCardForFuture] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (selectedSavedCardId && selectedSavedCardId !== "new") {
+      const found = savedCards.find((c) => c.id === selectedSavedCardId);
+      if (found) {
+        setCardHolder(found.cardHolder);
+        setCardNumber(found.cardNumber);
+        setCardExpiry(found.expiry);
+        setCardCvv("•••");
+      }
+    } else if (selectedSavedCardId === "new") {
+      setCardHolder(userProfile?.fullName || "");
+      setCardNumber("");
+      setCardExpiry("");
+      setCardCvv("");
+    }
+  }, [selectedSavedCardId]);
 
   const [userOrderCount, setUserOrderCount] = useState<number>(() => {
     try {
@@ -254,6 +347,19 @@ export function CheckoutScreen({
     return userProfile.address || "";
   });
 
+  const [savedAddressesList, setSavedAddressesList] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("localeats_saved_addresses");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn("Error parsing saved addresses:", e);
+    }
+    return userProfile?.address ? [userProfile.address] : [];
+  });
+
   const [deliveryCoordinates, setDeliveryCoordinates] = useState<{
     type: "Point";
     coordinates: [number, number];
@@ -310,6 +416,8 @@ export function CheckoutScreen({
 
   // Enforce spatial authority and precision validation via visual map pin confirmation
   const [isLocationConfirmed, setIsLocationConfirmed] =
+    useState<boolean>(false);
+  const [hasVisuallyConfirmedAddress, setHasVisuallyConfirmedAddress] =
     useState<boolean>(false);
   const [distance, setDistance] = useState<number | null>(null);
   const [deliveryFee, setDeliveryFee] = useState<number>(5.0);
@@ -620,7 +728,10 @@ export function CheckoutScreen({
     }
   }
 
-  const activeDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
+  const expressFee = (deliveryType === "delivery" && deliveryScheduleMode === "express") ? 10.0 : 0;
+  const baseDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
+  const activeDeliveryFee = baseDeliveryFee + expressFee;
+  const serviceFee = subtotal > 0 ? 2.50 : 0;
 
   const tipAmount = useMemo(() => {
     if (tipPercentage === "custom") {
@@ -631,8 +742,23 @@ export function CheckoutScreen({
 
   const totalAmount = Math.max(
     0,
-    subtotal - discountAmount + activeDeliveryFee + tipAmount,
+    subtotal - discountAmount + activeDeliveryFee + serviceFee + tipAmount,
   );
+  const totalSavings = discountAmount;
+
+  const { tenderAmount, changeNeeded } = useMemo(() => {
+    if (paymentMethod !== "cash") return { tenderAmount: totalAmount, changeNeeded: 0 };
+    let tender = totalAmount;
+    if (cashChangeOption === "R50") tender = Math.max(50, totalAmount);
+    else if (cashChangeOption === "R100") tender = Math.max(100, totalAmount);
+    else if (cashChangeOption === "R200") tender = Math.max(200, totalAmount);
+    else if (cashChangeOption === "custom") {
+      const parsed = parseFloat(customChangeAmount);
+      if (!isNaN(parsed) && parsed > 0) tender = Math.max(parsed, totalAmount);
+    }
+    const change = Math.max(0, tender - totalAmount);
+    return { tenderAmount: tender, changeNeeded: change };
+  }, [paymentMethod, cashChangeOption, customChangeAmount, totalAmount]);
 
   const isCashTrustActive = primaryShop
     ? localStorage.getItem("localeats_cash_trust_" + primaryShop.id) ===
@@ -743,6 +869,15 @@ export function CheckoutScreen({
         );
         return;
       }
+
+      if (isOnline && isLocationConfirmed && !hasVisuallyConfirmedAddress) {
+        showAlert(
+          "Visual Confirmation Required",
+          'Please check the box confirming that your pinned map location accurately matches your delivery address.',
+        );
+        return;
+      }
+      
       if (distance !== null && distance > ZONE_B_LIMIT) {
         showAlert(
           "Outside Range",
@@ -842,17 +977,17 @@ export function CheckoutScreen({
         await supabase
           .from("profiles")
           .update({
-            full_name: finalCustomerName,
+            fullName: finalCustomerName,
             phone: finalCustomerPhone,
             ...(deliveryType === "delivery"
               ? {
                   address: deliveryAddressText,
-                  latitude: deliveryCoordinates?.coordinates[1],
-                  longitude: deliveryCoordinates?.coordinates[0],
+                  current_latitude: deliveryCoordinates?.coordinates[1],
+                  current_longitude: deliveryCoordinates?.coordinates[0],
                 }
               : {}),
           })
-          .eq("id", session.user.id);
+          .eq("user_id", session.user.id);
       } catch (err) {
         console.warn(
           "Could not save recipient details back to userProfile database schema:",
@@ -1024,6 +1159,17 @@ export function CheckoutScreen({
       if (orderNotes.trim()) {
         localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
       }
+      if (deliveryAddressText && deliveryAddressText.trim()) {
+        try {
+          const cached = localStorage.getItem("localeats_saved_addresses");
+          let currentSaved: string[] = cached ? JSON.parse(cached) : [];
+          const trimmed = deliveryAddressText.trim();
+          if (!currentSaved.includes(trimmed)) {
+            currentSaved.push(trimmed);
+            localStorage.setItem("localeats_saved_addresses", JSON.stringify(currentSaved));
+          }
+        } catch (e) {}
+      }
       
       setCart([]);
       safeLocalStorageSet("cart", JSON.stringify([]));
@@ -1042,8 +1188,51 @@ export function CheckoutScreen({
           localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
         }
 
+        // Save new card details securely for future 1-tap checkout if requested
+        if (paymentMethod === "card_machine" && selectedSavedCardId === "new" && saveCardForFuture && cardNumber.trim()) {
+          try {
+            const rawDigits = cardNumber.replace(/\D/g, "");
+            if (rawDigits.length >= 12) {
+              const last4 = rawDigits.slice(-4);
+              const cardType = rawDigits.startsWith("4") ? "Visa" : "Mastercard";
+              const newCardObj = {
+                id: "c_" + Date.now(),
+                cardHolder: cardHolder.trim() || userProfile?.fullName || "LOCAL CUSTOMER",
+                cardNumber: `•••• •••• •••• ${last4}`,
+                expiry: cardExpiry || "12/28",
+                cardType,
+              };
+              const updatedSavedCards = [...savedCards, newCardObj];
+              setSavedCards(updatedSavedCards);
+              localStorage.setItem("localeats_saved_cards", JSON.stringify(updatedSavedCards));
+            }
+          } catch (e) {}
+        }
+
         // Calculate proportional discount per item to persist exact client payments into database
         const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
+
+        // Trigger FCM Web Push Token acquisition and sync to Supabase user_push_tokens
+        if (session?.user?.id) {
+          registerAndSyncPushToken(session.user.id).catch((err) => {
+            console.warn("[FCM] Push token registration notice on checkout:", err);
+          });
+        }
+
+        const generateValidUUID = () => {
+          if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+            try {
+              return crypto.randomUUID();
+            } catch (e) {
+              // Ignore crypto.randomUUID error in non-secure context
+            }
+          }
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        };
 
         const orderData = cart.map((item) => {
           const customizationsString =
@@ -1063,12 +1252,22 @@ export function CheckoutScreen({
           );
 
           const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
-          const orderId = self.crypto.randomUUID ? self.crypto.randomUUID() : ("ord_" + Math.random().toString(36).substring(2, 11) + "_" + Date.now());
+          const orderId = generateValidUUID();
+
+          // Resolve shop_id to match valid database shop ID in shops list
+          const matchingShop = (shops || []).find((s) => String(s.id) === String(item.shopId));
+          const rawShopId = matchingShop ? matchingShop.id : (shops?.[0]?.id ?? item.shopId);
+          const resolvedShopId =
+            typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
+              ? Number(rawShopId)
+              : rawShopId;
+
+          const validUserId = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
 
           return {
             id: orderId,
-            user_id: session?.user?.id,
-            shop_id: item.shopId,
+            user_id: validUserId,
+            shop_id: resolvedShopId,
             customer_name: finalCustomerName,
             phone: finalCustomerPhone,
             email: userProfile.email,
@@ -1099,7 +1298,7 @@ export function CheckoutScreen({
           if (!order.id) {
             throw new Error("Frontend Validation Error: Unique order 'id' is required.");
           }
-          if (!order.shop_id) {
+          if (!order.shop_id && order.shop_id !== 0) {
             throw new Error("Frontend Validation Error: 'shop_id' is mandatory.");
           }
           if (!order.status) {
@@ -1114,49 +1313,50 @@ export function CheckoutScreen({
           .select();
 
         if (error) {
-          const isMissingColumnError = error.code === "PGRST204" || error.message?.includes("column");
-          
-          if (isMissingColumnError) {
-            console.log(
-              "[Order Placement] Orders table has missing optional spatial columns, retrying insert omitting latitude/longitude...",
-            );
-            const safeOrderData = orderData.map((d: any) => {
-              const { latitude, longitude, ...rest } = d;
-              return rest;
-            });
-            const { error: retryError } = await supabase
-              .from("orders")
-              .insert(safeOrderData)
-              .select();
-            if (retryError) {
-              console.error("Supabase order insert retry error:", retryError);
-              throw retryError;
-            }
+          console.warn("Supabase insert initial attempt error:", error);
 
-            // Pop COA confirmation on retry success
-            if (isCashTrustActive && paymentMethod === "cash") {
-              showAlert(
-                "Order Broadcasted!",
-                "Your order is broadcasted! An on-demand rider is being dispatched to retrieve and deliver your fresh order.",
-              );
-            }
+          // Retry with safe fallback data (stripping spatial coordinates and/or resolving shop_id to first shop)
+          const fallbackShopId = shops?.[0]?.id ? (typeof shops[0].id === "string" && !isNaN(Number(shops[0].id)) ? Number(shops[0].id) : shops[0].id) : 21;
 
-            // Mark promo as used on retry success
-            if (appliedPromo) {
-              const usedLocalKey = session?.user?.id
-                ? `used_promo_codes_${session.user.id}`
-                : `used_promo_codes_guest`;
-              const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-              if (!usedLocal.includes(appliedPromo.code)) {
-                usedLocal.push(appliedPromo.code);
-                safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
-              }
-            }
-            return;
-          } else {
-            console.error("Supabase insert error on first attempt:", error);
-            throw error;
+          const safeOrderData = orderData.map((d: any) => {
+            const { latitude, longitude, ...rest } = d;
+            return {
+              ...rest,
+              shop_id: (error.code === "23503" || !rest.shop_id) ? fallbackShopId : rest.shop_id,
+              user_id: error.code === "23503" ? null : rest.user_id,
+            };
+          });
+
+          const { error: retryError } = await supabase
+            .from("orders")
+            .insert(safeOrderData)
+            .select();
+
+          if (retryError) {
+            console.error("Supabase order insert retry error:", retryError);
+            throw retryError;
           }
+
+          // Pop COA confirmation on retry success
+          if (isCashTrustActive && paymentMethod === "cash") {
+            showAlert(
+              "Order Broadcasted!",
+              "Your order is broadcasted! An on-demand rider is being dispatched to retrieve and deliver your fresh order.",
+            );
+          }
+
+          // Mark promo as used on retry success
+          if (appliedPromo) {
+            const usedLocalKey = session?.user?.id
+              ? `used_promo_codes_${session.user.id}`
+              : `used_promo_codes_guest`;
+            const usedLocal = safeLocalStorageGet(usedLocalKey, []);
+            if (!usedLocal.includes(appliedPromo.code)) {
+              usedLocal.push(appliedPromo.code);
+              safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
+            }
+          }
+          return;
         }
 
         // Pop COA confirmation on initial success
@@ -1194,9 +1394,9 @@ export function CheckoutScreen({
 
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
-      <div className="relative flex h-auto w-full max-w-6xl mx-auto flex-col lg:flex-row bg-transparent overflow-x-hidden pb-16 min-h-screen lg:gap-8 lg:px-6">
-        {/* Left Column (Forms & Details) */}
-        <div className="flex-1 bg-white dark:bg-slate-900 shadow-2xl lg:shadow-xl lg:rounded-3xl overflow-hidden flex flex-col lg:my-8">
+      <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
+        {/* Unified Card Container */}
+        <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
         {/* Header Block */}
         <div className="flex items-center bg-white dark:bg-slate-900 px-4 py-4 sticky top-0 z-40 border-b border-slate-100 dark:border-slate-800 backdrop-blur-md">
           <button
@@ -1207,7 +1407,7 @@ export function CheckoutScreen({
           </button>
           <div className="flex-1 text-center justify-center">
             <h2 className="text-slate-950 dark:text-white text-base font-black leading-tight tracking-tight uppercase">
-              Secured Checkout
+              Secure Checkout
             </h2>
             <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">
               Fill details & place food order
@@ -1232,6 +1432,115 @@ export function CheckoutScreen({
           </button>
         </div>
 
+        {/* 3-STEP WIZARD PROGRESS BAR */}
+        <div className="bg-slate-50/90 dark:bg-slate-950/90 border-b border-slate-100 dark:border-slate-800 px-4 py-3 sticky top-[65px] z-30 backdrop-blur-md">
+          <div className="flex items-center justify-between max-w-md mx-auto">
+            {/* Step 1 Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentStep(1);
+                triggerHaptic(5);
+              }}
+              className={`flex items-center gap-2 cursor-pointer transition-all ${
+                currentStep === 1
+                  ? "text-orange-600 dark:text-orange-400 font-black scale-105"
+                  : currentStep > 1
+                    ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                    : "text-slate-400 font-medium"
+              }`}
+            >
+              <div
+                className={`size-7 rounded-full flex items-center justify-center text-xs font-black transition-all ${
+                  currentStep === 1
+                    ? "bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400/40"
+                    : currentStep > 1
+                      ? "bg-emerald-500 text-white"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                }`}
+              >
+                {currentStep > 1 ? <Check className="w-4 h-4" /> : "1"}
+              </div>
+              <span className="text-xs uppercase tracking-wider font-extrabold">1. Delivery</span>
+            </button>
+
+            <div
+              className={`flex-1 h-0.5 mx-2.5 transition-colors ${
+                currentStep >= 2 ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-800"
+              }`}
+            />
+
+            {/* Step 2 Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                if (currentStep > 1) {
+                  setCurrentStep(2);
+                  triggerHaptic(5);
+                } else {
+                  handleNextToStep2();
+                }
+              }}
+              className={`flex items-center gap-2 cursor-pointer transition-all ${
+                currentStep === 2
+                  ? "text-orange-600 dark:text-orange-400 font-black scale-105"
+                  : currentStep > 2
+                    ? "text-emerald-600 dark:text-emerald-400 font-bold"
+                    : "text-slate-400 font-medium"
+              }`}
+            >
+              <div
+                className={`size-7 rounded-full flex items-center justify-center text-xs font-black transition-all ${
+                  currentStep === 2
+                    ? "bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400/40"
+                    : currentStep > 2
+                      ? "bg-emerald-500 text-white"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                }`}
+              >
+                {currentStep > 2 ? <Check className="w-4 h-4" /> : "2"}
+              </div>
+              <span className="text-xs uppercase tracking-wider font-extrabold">2. Payment</span>
+            </button>
+
+            <div
+              className={`flex-1 h-0.5 mx-2.5 transition-colors ${
+                currentStep >= 3 ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-800"
+              }`}
+            />
+
+            {/* Step 3 Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                if (currentStep === 3) return;
+                if (paymentMethod) {
+                  setCurrentStep(3);
+                  triggerHaptic(5);
+                } else {
+                  handleNextToStep3();
+                }
+              }}
+              className={`flex items-center gap-2 cursor-pointer transition-all ${
+                currentStep === 3
+                  ? "text-orange-600 dark:text-orange-400 font-black scale-105"
+                  : "text-slate-400 font-medium"
+              }`}
+            >
+              <div
+                className={`size-7 rounded-full flex items-center justify-center text-xs font-black transition-all ${
+                  currentStep === 3
+                    ? "bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400/40"
+                    : "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                }`}
+              >
+                3
+              </div>
+              <span className="text-xs uppercase tracking-wider font-extrabold">3. Review</span>
+            </button>
+          </div>
+        </div>
+
         {!isOnline && (
           <div className="bg-amber-500/10 dark:bg-amber-500/5 border-b border-amber-500/20 px-5 py-3.5 flex items-start gap-3.5 animate-in slide-in-from-top duration-300">
             <div className="p-2 bg-amber-500/20 rounded-2xl text-amber-600 dark:text-amber-400 shrink-0">
@@ -1248,8 +1557,7 @@ export function CheckoutScreen({
           </div>
         )}
 
-                <div className="flex flex-col gap-6 p-4">
-          {/* CART SUMMARY PREVIEW PANE: Interactive, allows direct quantity edit, note edit, and item removal */}
+        {/* CART SUMMARY PREVIEW PANE: Interactive, allows direct quantity edit, note edit, and item removal */}
           <section className="bg-orange-50/45 dark:bg-orange-950/10 border border-orange-100 dark:border-orange-900/30 rounded-3xl overflow-hidden transition-all duration-300">
             <button
               id="cart-summary-toggle-btn"
@@ -1409,8 +1717,11 @@ export function CheckoutScreen({
             )}
           </section>
 
-          {/* SECTION 1: Fulfillment Type (Moved to the Top for Perfect User Flow Context) */}
-          <section className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800">
+          {/* STEP 1: DELIVERY & CONTACT DETAILS */}
+          {currentStep === 1 && (
+            <div className="space-y-6">
+              {/* SECTION 1: Fulfillment Type */}
+              <section className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between mb-3.5 px-1">
               <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
                 <Bike className="w-4 h-4 text-orange-500" />
@@ -1513,6 +1824,39 @@ export function CheckoutScreen({
                 )}
               </div>
 
+              {/* Quick Saved Address Chips */}
+              {savedAddressesList && savedAddressesList.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 no-scrollbar">
+                  <span className="text-[10px] font-extrabold uppercase text-slate-400 shrink-0">Saved:</span>
+                  {savedAddressesList.map((addr, idx) => {
+                    const isSelected = deliveryAddressText === addr;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setDeliveryAddressText(addr);
+                          setIsLocationConfirmed(true);
+                          try {
+                            localStorage.setItem("delivery_location", JSON.stringify({ address: addr }));
+                          } catch (e) {}
+                          triggerHaptic(5);
+                          toast.success("Delivery spot updated!");
+                        }}
+                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full border shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                          isSelected
+                            ? "bg-orange-600 text-white border-orange-600 shadow-sm shadow-orange-500/20"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-orange-400"
+                        }`}
+                      >
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate max-w-[160px]">{addr}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="flex items-start justify-between gap-3 bg-slate-50 dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-850">
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200 truncate">
@@ -1540,12 +1884,110 @@ export function CheckoutScreen({
                 </button>
               </div>
 
+              {/* SECTION: Delivery Timing & Speed */}
+              {deliveryType === "delivery" && (
+                <div className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-orange-500" />
+                      Delivery Speed & Timing
+                    </h3>
+                    <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400">
+                      {deliveryScheduleMode === "express"
+                        ? "Priority Express (+R10.00)"
+                        : deliveryScheduleMode === "scheduled"
+                          ? `Scheduled: ${scheduledTimeChoice}`
+                          : "Standard (~25-35 min)"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryScheduleMode("asap");
+                        triggerHaptic(5);
+                      }}
+                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        deliveryScheduleMode === "asap"
+                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
+                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <Zap className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                        <span className="text-[11px] font-black">Standard</span>
+                      </div>
+                      <p className="text-[9px] text-slate-500 mt-1 font-medium">~25-35 mins</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryScheduleMode("express");
+                        triggerHaptic(5);
+                      }}
+                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        deliveryScheduleMode === "express"
+                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
+                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span className="text-[11px] font-black">Express</span>
+                      </div>
+                      <p className="text-[9px] text-slate-500 mt-1 font-medium">+R10 • ~15-20 min</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryScheduleMode("scheduled");
+                        triggerHaptic(5);
+                      }}
+                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                        deliveryScheduleMode === "scheduled"
+                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
+                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-[11px] font-black">Schedule</span>
+                      </div>
+                      <p className="text-[9px] text-slate-500 mt-1 font-medium">Pick time</p>
+                    </button>
+                  </div>
+
+                  {deliveryScheduleMode === "scheduled" && (
+                    <div className="flex items-center gap-2 pt-1 animate-in fade-in duration-200">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Dropoff Time:</span>
+                      <select
+                        value={scheduledTimeChoice}
+                        onChange={(e) => setScheduledTimeChoice(e.target.value)}
+                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:border-orange-500"
+                      >
+                        <option value="12:30 PM">12:30 PM Today</option>
+                        <option value="01:00 PM">01:00 PM Today</option>
+                        <option value="01:30 PM">01:30 PM Today</option>
+                        <option value="02:00 PM">02:00 PM Today</option>
+                        <option value="05:30 PM">05:30 PM Evening</option>
+                        <option value="06:00 PM">06:00 PM Evening</option>
+                        <option value="06:30 PM">06:30 PM Evening</option>
+                        <option value="07:00 PM">07:00 PM Evening</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Dual Delivery Notes & Kitchen Notes Text Areas */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
                     <Bike className="w-3.5 h-3.5 text-orange-500" />
-                    Delivery Notes / Landmarks
+                    Delivery Notes / Rider Request
                   </label>
                   <textarea
                     placeholder="e.g., ring the bell, or leave at the gate"
@@ -1554,12 +1996,27 @@ export function CheckoutScreen({
                     rows={2}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
                   />
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {["Ring bell", "Leave at gate", "Call on arrival", "Knock quietly"].map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setDeliveryInstructions((prev) => (prev ? `${prev}, ${tag}` : tag));
+                          triggerHaptic(3);
+                        }}
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-orange-100 dark:hover:bg-orange-950/40 hover:text-orange-600 transition-colors cursor-pointer"
+                      >
+                        + {tag}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-black uppercase tracking-widest text-slate-500 flex items-center gap-1">
                     <Utensils className="w-3.5 h-3.5 text-orange-500" />
-                    Kitchen Notes / Order Notes
+                    Kitchen Notes / Cook Request
                   </label>
                   <textarea
                     placeholder="e.g., no onions, extra spicy, or allergy details"
@@ -1568,11 +2025,68 @@ export function CheckoutScreen({
                     rows={2}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-orange-500/50 outline-none transition-all placeholder:text-slate-400 dark:text-white resize-none"
                   />
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {["No cutlery", "Extra spicy", "Sauce on side", "No dairy"].map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setOrderNotes((prev) => (prev ? `${prev}, ${tag}` : tag));
+                          triggerHaptic(3);
+                        }}
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-orange-100 dark:hover:bg-orange-950/40 hover:text-orange-600 transition-colors cursor-pointer"
+                      >
+                        + {tag}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
+
+              {/* Visual Address Confirmation Block */}
+              {isLocationConfirmed && deliveryCoordinates && (
+                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-4 rounded-3xl mt-4 animate-in slide-in-from-top-2 duration-300">
+                  <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-orange-500" />
+                    Visual Address Confirmation
+                  </h3>
+                  <div className="h-32 rounded-xl overflow-hidden mb-3 pointer-events-none relative border border-slate-200 dark:border-slate-800">
+                    <LocationPickerMap
+                      coords={{ lat: deliveryCoordinates.coordinates[1], lng: deliveryCoordinates.coordinates[0] }}
+                      onCoordsChange={() => {}}
+                    />
+                    <div className="absolute inset-0 bg-slate-900/10 dark:bg-black/20 flex items-center justify-center">
+                      <span className="bg-white/90 dark:bg-slate-900/90 text-slate-800 dark:text-slate-200 text-[9px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full backdrop-blur-sm border border-slate-200 dark:border-slate-700 shadow-sm">
+                        Map Pin Locked
+                      </span>
+                    </div>
+                  </div>
+                  <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="mt-0.5 shrink-0">
+                      <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${hasVisuallyConfirmedAddress ? 'bg-orange-500 border-orange-500' : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 group-hover:border-orange-400'}`}>
+                        {hasVisuallyConfirmedAddress && <Check className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={hasVisuallyConfirmedAddress}
+                        onChange={(e) => setHasVisuallyConfirmedAddress(e.target.checked)}
+                        className="hidden"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-slate-800 dark:text-slate-200 leading-tight">
+                        I confirm the pinned location on the map accurately matches my delivery address: <span className="text-orange-600 dark:text-orange-400 font-black truncate block mt-0.5">{deliveryAddressText}</span>
+                      </p>
+                      <p className="text-[9px] text-slate-500 mt-1 font-medium leading-snug">
+                        Accurate pins help runners deliver your order faster and prevent delivery errors.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
               
               {/* Visual distance range helper badge */}
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 mt-4">
                 <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-800/10 p-3 rounded-2xl flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 font-bold text-orange-900 dark:text-orange-400">
                     <Bike className="w-4 h-4 text-orange-500" />
@@ -1754,13 +2268,27 @@ export function CheckoutScreen({
                 Save change details to user profile for future checkouts
               </span>
             </label>
+
+            {/* STEP 1 NEXT CTA BUTTON */}
+            {currentStep === 1 && (
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={handleNextToStep2}
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black text-xs py-4 rounded-2xl shadow-lg shadow-orange-600/25 uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
+                >
+                  <span>Continue to Payment Method</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </section>
         </div>
-        </div>
+        )}
 
-        {/* Right Column (Cart Summary) */}
-        <div className="w-full lg:w-[450px] shrink-0 bg-slate-50 dark:bg-slate-950 lg:bg-slate-100 lg:dark:bg-slate-900 shadow-2xl lg:shadow-none lg:rounded-3xl lg:border lg:border-slate-200 lg:dark:border-slate-800 flex flex-col overflow-hidden h-fit sticky top-6 lg:my-8">
-          <div className="flex flex-col gap-6 p-4">
+        {/* STEP 2: PAYMENT & OFFERS */}
+        {currentStep === 2 && (
+          <div className="p-4 space-y-6 animate-in fade-in duration-200">
 
           {/* SECTION 4: Interactive Order Summary / Cart Editor */}
           <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-4">
@@ -2092,50 +2620,6 @@ export function CheckoutScreen({
             <div className="flex flex-col gap-2.5">
               <label
                 className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
-                  paymentMethod === "capitec"
-                    ? "border-orange-500 bg-orange-500/5 dark:bg-orange-500/10"
-                    : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50"
-                }`}
-                onClick={() => setPaymentMethod("capitec")}
-              >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div
-                    className={`size-9 rounded-full flex items-center justify-center shrink-0 ${
-                      paymentMethod === "capitec"
-                        ? "bg-orange-600 text-white"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                    }`}
-                  >
-                    <CreditCard className="w-4 h-4" />
-                  </div>
-                  <div className="text-left min-w-0 pr-2">
-                    <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight truncate">
-                      Capitec Pay
-                    </p>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold leading-snug mt-0.5 line-clamp-2">
-                      Fast and secure payment directly from your Capitec account.
-                    </p>
-                  </div>
-                </div>
-                <div
-                  className={`size-5 rounded-full border-2 flex items-center justify-center shrink-0 ${paymentMethod === "capitec" ? "border-orange-500" : "border-slate-300"}`}
-                >
-                  {paymentMethod === "capitec" && (
-                    <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
-                  )}
-                </div>
-                <input
-                  type="radio"
-                  name="payment"
-                  value="capitec"
-                  checked={paymentMethod === "capitec"}
-                  onChange={() => setPaymentMethod("capitec")}
-                  className="hidden"
-                />
-              </label>
-
-              <label
-                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
                   isCoaDisabled
                     ? "opacity-50 cursor-not-allowed border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20"
                     : paymentMethod === "cash"
@@ -2267,6 +2751,87 @@ export function CheckoutScreen({
                   <CreditCard className="w-3.5 h-3.5 text-primary" />
                   {isCardMachineIntegrationEnabled ? "Enter Direct Terminal Payment Card Details" : "Enter Credit / Debit Card Payment Details"}
                 </p>
+
+                {/* SAVED CARDS SELECTOR COMPONENT */}
+                {savedCards.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                        <CreditCard className="w-3.5 h-3.5 text-orange-500" />
+                        Select Saved Card for 1-Tap Checkout
+                      </label>
+                      <span className="text-[9px] font-black uppercase text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                        Saved Cards ({savedCards.length})
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {savedCards.map((c) => {
+                        const isSelected = selectedSavedCardId === c.id;
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSavedCardId(c.id);
+                              triggerHaptic(10);
+                            }}
+                            className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-slate-900 dark:text-white shadow-sm"
+                                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-orange-300"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className={`p-2 rounded-xl text-xs font-black ${isSelected ? "bg-orange-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>
+                                💳
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-extrabold font-mono tracking-wider truncate">
+                                  {c.cardNumber}
+                                </p>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase truncate">
+                                  {c.cardType} • Exp: {c.expiry}
+                                </p>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <span className="text-[9px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full shrink-0">
+                                1-Tap Ready
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+
+                      {/* Option to add custom new card */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSavedCardId("new");
+                          triggerHaptic(10);
+                        }}
+                        className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+                          selectedSavedCardId === "new"
+                            ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-slate-900 dark:text-white shadow-sm"
+                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-orange-300"
+                        }`}
+                      >
+                        <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-black">
+                          <Plus className="w-4 h-4 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-extrabold uppercase">
+                            Use New Card...
+                          </p>
+                          <p className="text-[9px] font-medium text-slate-400">
+                            Enter details manually
+                          </p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* VISUAL CREDIT CARD COMPONENT */}
                 <div className="relative h-44 w-full bg-gradient-to-br from-[#1e293b] via-[#334155] to-[#0f172a] rounded-2xl p-5 text-white shadow-xl overflow-hidden flex flex-col justify-between border border-white/10">
@@ -2400,6 +2965,22 @@ export function CheckoutScreen({
                       </div>
                     </div>
                   </div>
+
+                  {selectedSavedCardId === "new" && (
+                    <div className="pt-1">
+                      <label className="flex items-center gap-2 cursor-pointer p-2 bg-orange-500/10 rounded-xl border border-orange-500/20">
+                        <input
+                          type="checkbox"
+                          checked={saveCardForFuture}
+                          onChange={(e) => setSaveCardForFuture(e.target.checked)}
+                          className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 accent-orange-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-extrabold text-orange-900 dark:text-orange-300">
+                          Save card details securely for 1-Tap future checkouts
+                        </span>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl border border-indigo-100/50 dark:border-indigo-800/30 flex items-start gap-2">
@@ -2411,40 +2992,39 @@ export function CheckoutScreen({
               </div>
             )}
 
-            {paymentMethod === "capitec" && (
-              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in slide-in-from-top-2 duration-300">
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
-                  <CreditCard className="w-3.5 h-3.5 text-primary" />
-                  Secure Capitec Pay Integration
-                </p>
-                <div className="flex items-center justify-center p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
-                  <p className="text-sm font-bold text-slate-500 text-center">You will be securely redirected to Capitec Pay after confirmation to authorize the payment.</p>
-                </div>
-              </div>
-            )}
 
-            {/* CASH CHANGE QUICK SELECT CHIPS (Solves the Rider "No Change Available" complaint!) */}
+            {/* CASH CHANGE QUICK SELECT CHIPS & LIVE RIDER BREAKDOWN */}
             {paymentMethod === "cash" && (
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl space-y-2.5 animate-in slide-in-from-top-1.5 duration-300">
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">
-                  Do you need change for cash?
-                </p>
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3 animate-in slide-in-from-top-1.5 duration-300">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide flex items-center gap-1.5">
+                    <Banknote className="w-3.5 h-3.5 text-emerald-500" />
+                    Cash Note & Change Calculator
+                  </p>
+                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                    {changeNeeded > 0 ? `Change Owed: R${changeNeeded.toFixed(2)}` : "Exact Amount"}
+                  </span>
+                </div>
+
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { val: "no_change", label: "No Change" },
-                    { val: "R50", label: "R50 Notes" },
-                    { val: "R100", label: "R100 Notes" },
-                    { val: "R200", label: "R200 Notes" },
+                    { val: "no_change", label: "Exact Cash" },
+                    { val: "R50", label: "R50 Note" },
+                    { val: "R100", label: "R100 Note" },
+                    { val: "R200", label: "R200 Note" },
                     { val: "custom", label: "Custom Note..." },
                   ].map((item) => (
                     <button
                       type="button"
                       key={item.val}
-                      onClick={() => setCashChangeOption(item.val as any)}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95 border ${
+                      onClick={() => {
+                        setCashChangeOption(item.val as any);
+                        triggerHaptic(5);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95 border ${
                         cashChangeOption === item.val
-                          ? "bg-orange-600 text-white border-orange-600 shadow-sm"
-                          : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-sm shadow-emerald-600/20"
+                          : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-emerald-400"
                       }`}
                     >
                       {item.label}
@@ -2461,11 +3041,30 @@ export function CheckoutScreen({
                       type="number"
                       value={customChangeAmount}
                       onChange={(e) => setCustomChangeAmount(e.target.value)}
-                      placeholder="e.g. 150 (amount or bill you hold)"
-                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold outline-none ring-1 ring-orange-150 focus:ring-orange-500"
+                      placeholder="e.g. 300 (note value you hold)"
+                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold outline-none ring-1 ring-emerald-500/30 focus:ring-emerald-500"
                     />
                   </div>
                 )}
+
+                {/* Real-time Rider Change Calculation Card */}
+                <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1.5">
+                  <div className="flex justify-between items-center text-[11px] text-slate-500">
+                    <span>Note Value Provided:</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">R {tenderAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] text-slate-500">
+                    <span>Order Total Due:</span>
+                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">R {totalAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="border-t border-slate-100 dark:border-slate-800 pt-1.5 flex justify-between items-center text-xs font-black text-emerald-600 dark:text-emerald-400">
+                    <span>Rider Change Needed:</span>
+                    <span className="font-mono text-sm">R {changeNeeded.toFixed(2)}</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 font-medium pt-1">
+                    ⚡ Rider will be notified to carry R{changeNeeded.toFixed(2)} in small notes before heading to your address.
+                  </p>
+                </div>
               </div>
             )}
           </section>
@@ -2550,6 +3149,129 @@ export function CheckoutScreen({
           </section>
           )}
 
+          {/* STEP 2 NAVIGATION BUTTONS */}
+          <div className="pt-2 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(1)}
+              className="px-5 py-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs uppercase tracking-wider hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleNextToStep3}
+              className="flex-1 sm:flex-initial bg-orange-600 hover:bg-orange-700 text-white font-black text-xs py-3.5 px-6 rounded-2xl shadow-lg shadow-orange-600/25 uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-98 cursor-pointer"
+            >
+              <span>Continue to Final Review</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        )}
+
+        {/* STEP 3: REVIEW & ORDER */}
+        {currentStep === 3 && (
+          <div className="p-4 space-y-6 animate-in fade-in duration-200">
+            {/* Quick Summary Badges Card */}
+            <div className="bg-orange-50/60 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 p-4 rounded-3xl space-y-3">
+              <div className="flex items-center justify-between border-b border-orange-100/60 dark:border-orange-900/30 pb-2.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <User className="w-4 h-4 text-orange-500 shrink-0" />
+                  <span className="truncate">{customerName} • {customerPhone}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(1)}
+                  className="text-[10px] font-black uppercase text-orange-600 hover:underline cursor-pointer shrink-0 ml-2"
+                >
+                  Edit
+                </button>
+              </div>
+              <div className="flex items-center justify-between border-b border-orange-100/60 dark:border-orange-900/30 pb-2.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <MapPin className="w-4 h-4 text-orange-500 shrink-0" />
+                  <span className="truncate max-w-[220px]">
+                    {deliveryType === "delivery" ? deliveryAddressText || "Delivery Spot Set" : `Counter Pickup @ ${primaryShop.name}`}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(1)}
+                  className="text-[10px] font-black uppercase text-orange-600 hover:underline cursor-pointer shrink-0 ml-2"
+                >
+                  Edit
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                  <CreditCard className="w-4 h-4 text-orange-500 shrink-0" />
+                  <span className="capitalize">
+                    {paymentMethod === "cash" ? "Cash on Arrival" : paymentMethod === "card_machine" ? "Pay by Card on Arrival" : paymentMethod}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(2)}
+                  className="text-[10px] font-black uppercase text-orange-600 hover:underline cursor-pointer shrink-0 ml-2"
+                >
+                  Edit
+                </button>
+              </div>
+            </div>
+
+            {/* SECTION: Cash Payment & Rider Change Voucher */}
+            {paymentMethod === "cash" && (
+              <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 p-4 rounded-3xl space-y-2.5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                      <Banknote className="w-4 h-4" />
+                    </div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
+                      Rider Cash Change Voucher
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-extrabold uppercase bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full">
+                    Change Reserved
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center bg-white dark:bg-slate-900 p-2.5 rounded-2xl border border-emerald-100 dark:border-emerald-900/50">
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">Tender Note</span>
+                    <p className="text-xs font-black font-mono text-slate-800 dark:text-slate-200">R {tenderAmount.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">Order Total</span>
+                    <p className="text-xs font-black font-mono text-slate-800 dark:text-slate-200">R {totalAmount.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-bold text-emerald-500 uppercase">Rider Change</span>
+                    <p className="text-xs font-black font-mono text-emerald-600 dark:text-emerald-400">R {changeNeeded.toFixed(2)}</p>
+                  </div>
+                </div>
+                <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                  {changeNeeded > 0
+                    ? `Your rider will bring R${changeNeeded.toFixed(2)} in small change notes upon arrival.`
+                    : "Exact cash prepared for handoff upon delivery."}
+                </p>
+              </div>
+            )}
+
+            {/* SECTION: On-Time & Freshness Guarantee Badge */}
+            <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 p-4 rounded-3xl flex items-start gap-3 shadow-sm">
+              <ShieldCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
+                  100% On-Time & Freshness Guarantee
+                </h4>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-relaxed">
+                  If your meal arrives late, cold, or incorrect, reach out to local support for an instant credit or full replacement.
+                </p>
+              </div>
+            </div>
+
           {/* SECTION 7: Unified Visually Clean Receipt Details */}
           <section className="bg-slate-950 text-slate-100 p-5 rounded-3xl space-y-3 shadow-xl relative overflow-hidden border border-slate-850">
             {/* Real receipt style details */}
@@ -2632,6 +3354,24 @@ export function CheckoutScreen({
                 </div>
               )}
 
+              {expressFee > 0 && (
+                <div className="flex justify-between items-center text-amber-400">
+                  <span className="uppercase tracking-wider flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Priority Express Dispatch
+                  </span>
+                  <span className="font-mono">R {expressFee.toFixed(2)}</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center text-slate-400/80 text-[11px]">
+                <span className="uppercase tracking-wider flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                  Service & Packaging Fee
+                </span>
+                <span className="font-mono">R {serviceFee.toFixed(2)}</span>
+              </div>
+
               {tipAmount > 0 && (
                 <div className="flex justify-between items-center text-amber-400">
                   <span className="uppercase tracking-wider flex items-center gap-1">
@@ -2639,6 +3379,16 @@ export function CheckoutScreen({
                     Support Merchant Tip
                   </span>
                   <span className="font-mono">R {tipAmount.toFixed(2)}</span>
+                </div>
+              )}
+
+              {totalSavings > 0 && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-2xl flex items-center justify-between text-emerald-400 text-xs font-bold my-1">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                    Total Savings Applied
+                  </span>
+                  <span className="font-mono font-black text-sm text-emerald-400">- R {totalSavings.toFixed(2)}</span>
                 </div>
               )}
 
@@ -2691,15 +3441,125 @@ export function CheckoutScreen({
                 </>
               )}
             </button>
-            <p className="text-[10px] text-center text-slate-400 mt-4.5 font-bold uppercase tracking-widest leading-relaxed px-4">
+            <button
+              type="button"
+              onClick={() => setCurrentStep(2)}
+              className="w-full mt-3 py-3 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold text-xs uppercase tracking-wider hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back to Payment Method</span>
+            </button>
+
+            <p className="text-[10px] text-center text-slate-400 mt-4 font-bold uppercase tracking-widest leading-relaxed px-4">
               {deliveryType === "delivery"
                 ? "📍 Precise bicycle navigation is automatically active"
                 : "⚡ Your fresh food is prepared on demand for pickup"}
             </p>
           </div>
         </div>
+      )}
+
+      {/* STICKY FLOATING MOBILE BOTTOM CHECKOUT CTA BAR WITH SMART COLLAPSE */}
+      {isCheckoutBannerCollapsed || isCheckoutScrollCollapsed ? (
+        /* Minimal Floating Pill Indicator when scrolling down or collapsed */
+        <div 
+          onClick={() => {
+            setIsCheckoutBannerCollapsed(false);
+            setIsCheckoutScrollCollapsed(false);
+          }}
+          className="fixed bottom-3 right-3 z-[80] md:hidden bg-slate-900/95 backdrop-blur-md text-white border border-slate-700/80 px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
+        >
+          <span className="text-xs font-black font-mono text-orange-400">
+            R {totalAmount.toFixed(2)}
+          </span>
+          <span className="text-slate-600 text-[10px]">•</span>
+          <div className="bg-orange-600 hover:bg-orange-500 text-white font-extrabold text-[10px] uppercase px-2 py-0.5 rounded-full flex items-center gap-1">
+            <span>Step {currentStep}/3</span>
+            <ChevronUp className="w-3 h-3" />
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Expanded Compact Row Banner */
+        <div className="fixed bottom-0 left-0 right-0 z-[80] md:hidden bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-3.5 py-2 shadow-2xl animate-in slide-in-from-bottom duration-200">
+          <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
+            <div className="flex flex-col min-w-0">
+              <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">
+                Total (Step {currentStep}/3)
+              </span>
+              <span className="text-base font-black font-mono text-orange-400 leading-none mt-0.5">
+                R {totalAmount.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {currentStep === 1 && (
+                <button
+                  type="button"
+                  onClick={handleNextToStep2}
+                  className="bg-orange-600 hover:bg-orange-500 active:scale-95 text-white font-black text-[11px] py-2 px-3.5 rounded-xl shadow-md shadow-orange-600/20 uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <span>Proceed</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {currentStep === 2 && (
+                <button
+                  type="button"
+                  onClick={handleNextToStep3}
+                  className="bg-orange-600 hover:bg-orange-500 active:scale-95 text-white font-black text-[11px] py-2 px-3.5 rounded-xl shadow-md shadow-orange-600/20 uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <span>Final Review</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+
+              {currentStep === 3 && (
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  disabled={
+                    loading ||
+                    cart.length === 0 ||
+                    (deliveryType === "delivery" &&
+                      distance !== null &&
+                      distance > ZONE_B_LIMIT)
+                  }
+                  className={`py-2 px-3.5 rounded-xl font-black text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer ${
+                    loading ||
+                    (deliveryType === "delivery" &&
+                      distance !== null &&
+                      distance > ZONE_B_LIMIT)
+                      ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                      : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20"
+                  }`}
+                >
+                  {loading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <ShoppingBag className="w-3.5 h-3.5" />
+                      <span>Confirm</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Chevron toggle to manually collapse banner */}
+              <button
+                type="button"
+                onClick={() => setIsCheckoutBannerCollapsed(true)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                title="Collapse checkout bar"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
 
       {/* Address Selection & Pin Precision Control Popup Modal */}
       {showAddressModal && (

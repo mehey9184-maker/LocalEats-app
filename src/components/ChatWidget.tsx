@@ -49,6 +49,8 @@ export function ChatWidget({
   const isUserMessage = (m: ChatMessage) => {
     return (
       m.sender_id === userId ||
+      m.sender_type === "customer" ||
+      m.sender_type === "client" ||
       m.sender_type === "user" ||
       m.sender_role === "user" ||
       (m.user_id && m.user_id === userId)
@@ -83,9 +85,20 @@ export function ChatWidget({
 
   // Fetch messages with network reconnect sync
   useEffect(() => {
-    if (!orderId) return;
+    if (!orderId) {
+      setIsLoading(false);
+      return;
+    }
 
     let isMounted = true;
+    setIsLoading(true);
+
+    // Timeout safety fallback (2 seconds) so loading state never gets stuck indefinitely
+    const timeoutId = setTimeout(() => {
+      if (isMounted) {
+        setIsLoading(false);
+      }
+    }, 2000);
 
     const fetchMessages = async () => {
       try {
@@ -98,7 +111,7 @@ export function ChatWidget({
         if (error) {
           const errMsg = (error.message || "").toLowerCase();
           if (!errMsg.includes("fetch") && !errMsg.includes("network")) {
-            console.warn("Error fetching chat messages:", error.message || error);
+            console.warn("Notice fetching chat messages:", error.message || error);
           }
         } else if (isMounted) {
           const list = data || [];
@@ -112,10 +125,13 @@ export function ChatWidget({
       } catch (err: any) {
         const errStr = (err?.message || String(err)).toLowerCase();
         if (!errStr.includes("fetch") && !errStr.includes("network")) {
-          console.warn("Chat fetch error:", err?.message || err);
+          console.warn("Chat fetch notice:", err?.message || err);
         }
       } finally {
-        if (isMounted) setIsLoading(false);
+        clearTimeout(timeoutId);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -129,9 +145,9 @@ export function ChatWidget({
     window.addEventListener("online", handleReconnect);
     window.addEventListener("focus", handleReconnect);
 
-    // Subscribe to BOTH Postgres DB changes and WebSockets Broadcast channels ('order_chat_123' & 'order-chat-123')
+    // Subscribe to BOTH Postgres DB changes and WebSockets Broadcast channels ('chat_widget:123' & 'chat_widget_123')
     const primaryChannel = supabase
-      .channel(`chat_widget_${orderId}`)
+      .channel(`chat_widget:${orderId}`)
       .on(
         "postgres_changes",
         {
@@ -237,15 +253,13 @@ export function ChatWidget({
     let lastError: any = null;
 
     try {
-      const payload = {
+      const payload: any = {
         order_id: effectiveOrderId,
         sender_id: effectiveSenderId,
         user_id: validUserId,
-        sender_type: "user",
-        sender_role: "user",
+        sender_type: "customer",
         message_text: messageText,
         content: messageText,
-        text: messageText,
         is_read: false,
       };
 
@@ -259,19 +273,21 @@ export function ChatWidget({
         insertedData = data as ChatMessage;
       } else {
         lastError = error;
-        // Fallback with minimal payload including user_id
+        console.warn("Primary chat insert notice:", error?.message || error);
+        
+        // Fallback with minimal payload
+        const fbPayload: any = {
+          order_id: effectiveOrderId,
+          sender_id: effectiveSenderId,
+          user_id: validUserId,
+          sender_type: "customer",
+          message_text: messageText,
+          content: messageText,
+        };
+
         const { data: fbData, error: fbError } = await supabase
           .from("chat_messages")
-          .insert({
-            order_id: effectiveOrderId,
-            sender_id: effectiveSenderId,
-            user_id: validUserId,
-            sender_type: "user",
-            sender_role: "user",
-            message_text: messageText,
-            content: messageText,
-            text: messageText,
-          })
+          .insert(fbPayload)
           .select()
           .maybeSingle();
 
@@ -281,51 +297,49 @@ export function ChatWidget({
       }
     } catch (err: any) {
       lastError = err;
-    }
-
-    // Always fallback to optimistic local message so chat experience never breaks
-    if (!insertedData) {
-      insertedData = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        order_id: effectiveOrderId,
-        sender_id: effectiveSenderId,
-        user_id: validUserId,
-        sender_type: "user",
-        sender_role: "user",
-        message_text: messageText,
-        content: messageText,
-        text: messageText,
-        is_read: false,
-        created_at: new Date().toISOString(),
-      };
-      if (lastError) {
-        console.warn("Notice: Chat message saved locally (remote sync fallback)", lastError?.message || lastError);
+    } finally {
+      // Always fallback to optimistic local message so chat experience never breaks
+      if (!insertedData) {
+        insertedData = {
+          id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          order_id: effectiveOrderId,
+          sender_id: effectiveSenderId,
+          user_id: validUserId || undefined,
+          sender_type: "customer",
+          message_text: messageText,
+          content: messageText,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        };
+        if (lastError) {
+          console.warn("Notice: Chat message saved locally (remote sync fallback)", lastError?.message || lastError);
+        }
       }
-    }
 
-    // Broadcast message on active channel to notify riders instantly across WebSockets
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "chat_message",
-        payload: insertedData,
-      }).catch(() => {});
-    }
-
-    setMessages((prev) => {
-      if (
-        prev.some(
-          (m) =>
-            m.id === insertedData!.id ||
-            (m.created_at === insertedData!.created_at && getMessageText(m) === messageText)
-        )
-      ) {
-        return prev;
+      // Broadcast message on active channel to notify riders instantly across WebSockets
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "chat_message",
+          payload: insertedData,
+        }).catch(() => {});
       }
-      return [...prev, insertedData!];
-    });
 
-    setIsSending(false);
+      setMessages((prev) => {
+        if (
+          prev.some(
+            (m) =>
+              m.id === insertedData!.id ||
+              (m.created_at === insertedData!.created_at && getMessageText(m) === messageText)
+          )
+        ) {
+          return prev;
+        }
+        return [...prev, insertedData!];
+      });
+
+      setIsSending(false);
+    }
   };
 
   const formatTime = (isoStr: string) => {
@@ -403,7 +417,7 @@ export function ChatWidget({
                 </div>
               ) : (
                 messages.map((msg) => {
-                  const isUser = msg.sender_id === userId || msg.sender_type === "user";
+                  const isUser = isUserMessage(msg);
                   const text = msg.message_text || msg.content || "";
                   return (
                     <div

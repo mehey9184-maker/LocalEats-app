@@ -221,6 +221,7 @@ import {
   cleanCacheStorage,
   DEFAULT_FALLBACK_SHOPS,
 } from "./utils";
+import { onForegroundMessage, registerAndSyncPushToken } from "./lib/firebase";
 
 const LOCAL_PROMO_DB: Record<
   string,
@@ -299,6 +300,7 @@ import { AppHelp } from "./components/AppHelp";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { InteractiveTour } from "./components/InteractiveTour";
 import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
+import { CookieConsentBanner } from "./components/CookieConsentBanner";
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
   OrderHistorySkeleton,
@@ -395,7 +397,7 @@ const ShopCard = memo(
         className="flex flex-col bg-white dark:bg-slate-900 rounded-[32px] overflow-hidden transition-all cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm hover:shadow-xl hover:border-orange-300 dark:hover:border-orange-500/30 w-full h-full"
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
-        <div className="h-44 w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
+        <div className="h-36 sm:h-44 w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
               <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
@@ -436,7 +438,7 @@ const ShopCard = memo(
         </div>
 
         {/* Bottom Half: Merchant Info & Decision Metrics */}
-        <div className="p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px]">
+        <div className="p-4 sm:p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px]">
           <div className="flex justify-between items-start gap-2">
             <h4 className="text-base sm:text-[17px] font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
@@ -1011,6 +1013,33 @@ export default function App() {
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  const [isOrderBannerCollapsed, setIsOrderBannerCollapsed] = useState(false);
+  const [isScrollCollapsed, setIsScrollCollapsed] = useState(false);
+
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+    let ticking = false;
+
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScrollY = window.scrollY;
+          if (currentScrollY > lastScrollY + 15 && currentScrollY > 60) {
+            setIsScrollCollapsed(true);
+          } else if (currentScrollY < lastScrollY - 10 || currentScrollY < 30) {
+            setIsScrollCollapsed(false);
+          }
+          lastScrollY = currentScrollY;
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     return safeLocalStorageGet("userProfile", {
@@ -1726,19 +1755,12 @@ export default function App() {
           const currentMinute = now.getMinutes();
           const currentTimeStr = `${currentHour.toString().padStart(2, "0")}:${currentMinute.toString().padStart(2, "0")}`;
 
-          let isOpen = true;
-          if (s.opening_time && s.closing_time) {
-            isOpen =
-              currentTimeStr >= s.opening_time &&
-              currentTimeStr <= s.closing_time;
-          }
-
           const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
-          
-          // Master switch override
-          if (!isActive) {
-            isOpen = false;
-          }
+          const { isOpen } = getShopStatus({
+            opening_time: s.opening_time,
+            closing_time: s.closing_time,
+            is_active: isActive
+          });
 
           let parsedUpdatedAt = s.updated_at;
 
@@ -1953,8 +1975,16 @@ export default function App() {
 
       const ordersToInsert = validQueue.map((o: any) => {
         const { id, is_offline_queued, status, ...rest } = o;
+        const matchingShop = (shops || []).find((s) => String(s.id) === String(rest.shop_id));
+        const rawShopId = matchingShop ? matchingShop.id : (shops?.[0]?.id ?? rest.shop_id);
+        const resolvedShopId =
+          typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
+            ? Number(rawShopId)
+            : rawShopId;
+
         return {
           ...rest,
+          shop_id: resolvedShopId,
           status: "pending",
           delivery_status: rest.payment_method === "cash_on_arrival" ? "finding_rider" : "none"
         };
@@ -2204,10 +2234,42 @@ export default function App() {
         if (session?.user?.id) {
           // Sync with push notifications in background
           subscribeToPushNotifications(session.user.id);
+          registerAndSyncPushToken(session.user.id);
         }
       }
     }
   }, [session, subscribeToPushNotifications]);
+
+  // Listen for FCM foreground web push messages and display sonner toast notifications
+  useEffect(() => {
+    let unsubscribe: (() => void) | void;
+    onForegroundMessage((payload) => {
+      const title = payload.notification?.title || payload.data?.title || "LocalEats Notification";
+      const body = payload.notification?.body || payload.data?.body || payload.data?.message || "You have an update regarding your order.";
+      toast.success(title, {
+        description: body,
+        duration: 5000,
+      });
+    }).then((unsub) => {
+      unsubscribe = unsub;
+    }).catch(console.warn);
+
+    return () => {
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  useEffect(() => {
+    const activeUserId = session?.user?.id || userProfile?.id;
+    if (activeUserId) {
+      registerAndSyncPushToken(activeUserId).catch((err) => {
+        console.warn("[FCM] Auto push token registration notice:", err);
+      });
+    }
+  }, [session?.user?.id, userProfile?.id]);
 
   useEffect(() => {
     localStorage.setItem("app_notifications", JSON.stringify(notifications));
@@ -2215,26 +2277,49 @@ export default function App() {
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
-      const { data, error } = await supabase
+      let data: any = null;
+      let error: any = null;
+
+      // Primary attempt by user_id
+      const res = await supabase
         .from("profiles")
         .select("*")
         .eq("user_id", userId)
         .maybeSingle();
 
-      if (error) throw error;
+      if (res.error) {
+        // Secondary attempt by id
+        const altRes = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+        if (!altRes.error) {
+          data = altRes.data;
+        } else {
+          error = res.error;
+        }
+      } else {
+        data = res.data;
+      }
+
+      if (error && error.code !== "PGRST116") {
+        console.warn("Notice fetching user profile from database:", error.message || error);
+      }
+
       if (data) {
         setUserProfile({
-          id: data.user_id,
-          fullName: data.fullName || "",
+          id: data.user_id || data.id || userId,
+          fullName: data.fullName || data.full_name || data.name || "",
           email: data.email || "",
           phone: data.phone || "",
           city: data.city || "",
           address: data.address || "",
           country: data.country || "South Africa",
           role: data.role || "user",
-          photoURL: data.photo_url || "",
-          latitude: data.latitude,
-          longitude: data.longitude,
+          photoURL: data.photo_url || data.photoURL || "",
+          latitude: data.current_latitude || data.latitude,
+          longitude: data.current_longitude || data.longitude,
         });
         if (data.favorites) {
           setFavorites(data.favorites);
@@ -2255,7 +2340,7 @@ export default function App() {
       }
 
       if (!isNetworkError) {
-        console.error("Error fetching user profile:", err);
+        console.warn("Notice fetching user profile:", err?.message || err);
       }
 
       if (isNetworkError && retries > 0) {
@@ -2367,11 +2452,13 @@ export default function App() {
 
         // Only include location if available and likely to be in schema
         if (updated.latitude !== undefined && updated.longitude !== undefined) {
-          payload.latitude = updated.latitude;
-          payload.longitude = updated.longitude;
+          payload.current_latitude = updated.latitude;
+          payload.current_longitude = updated.longitude;
         }
 
-        const { error } = await supabase.from("profiles").upsert(payload);
+        const { error } = await supabase
+          .from("profiles")
+          .upsert(payload, { onConflict: "user_id" });
 
         if (error) {
           // If columns are missing, try one more time without them
@@ -2384,11 +2471,17 @@ export default function App() {
               fullName: updated.fullName,
               email: updated.email,
               phone: updated.phone,
+              role: updated.role || "user",
+              city: updated.city || "",
+              address: updated.address || "",
+              country: updated.country || "South Africa",
+              photo_url: updated.photoURL || "",
+              language: updated.language || "en",
               updated_at: new Date().toISOString(),
             };
             const { error: retryError } = await supabase
               .from("profiles")
-              .upsert(safePayload);
+              .upsert(safePayload, { onConflict: "user_id" });
             if (retryError) throw retryError;
             return;
           }
@@ -3149,11 +3242,13 @@ export default function App() {
             userProfile.latitude !== undefined &&
             userProfile.longitude !== undefined
           ) {
-            payload.latitude = userProfile.latitude;
-            payload.longitude = userProfile.longitude;
+            payload.current_latitude = userProfile.latitude;
+            payload.current_longitude = userProfile.longitude;
           }
 
-          const { error } = await supabase.from("profiles").upsert(payload);
+          const { error } = await supabase
+            .from("profiles")
+            .upsert(payload, { onConflict: "user_id" });
 
           if (error) {
             const isFetchErr = 
@@ -3172,13 +3267,20 @@ export default function App() {
                 fullName: userProfile.fullName,
                 email: userProfile.email,
                 phone: userProfile.phone,
+                role: userProfile.role || "user",
+                city: userProfile.city || "",
+                address: userProfile.address || "",
+                country: userProfile.country || "South Africa",
+                photo_url: userProfile.photoURL || "",
+                language: userProfile.language || "en",
                 updated_at: new Date().toISOString(),
               };
               try {
-                const { error: fallbackError } = await supabase.from("profiles").upsert(safePayload);
+                const { error: fallbackError } = await supabase
+                  .from("profiles")
+                  .upsert(safePayload, { onConflict: "user_id" });
                 if (fallbackError) {
-                  // Fallback also failed, now log the error
-                  console.error("Error syncing fallback profile to Supabase:", fallbackError);
+                  console.warn("Notice syncing fallback profile to Supabase:", fallbackError.message || fallbackError);
                 } else {
                   console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
                 }
@@ -3200,7 +3302,7 @@ export default function App() {
               if (isFetchErr) {
                 console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
               } else {
-                console.error("Error syncing profile to Supabase:", error);
+                console.warn("Notice syncing profile to Supabase:", error.message || error);
               }
             }
           }
@@ -4174,25 +4276,20 @@ export default function App() {
                     setPreviousScreen(currentScreen);
                     setCurrentScreen("checkout");
                   }}
-                  className="fixed bottom-24 right-6 z-50 bg-slate-900 dark:bg-orange-600 text-white p-5 rounded-[32px] shadow-2xl flex items-center gap-4 active:scale-95 transition-all cursor-pointer group"
+                  className={`fixed bottom-20 right-4 z-50 bg-slate-900/90 dark:bg-orange-600/90 backdrop-blur-md text-white py-2 px-3.5 rounded-full shadow-lg border border-white/10 flex items-center gap-2.5 active:scale-95 transition-all cursor-pointer group ${
+                    isScrollCollapsed ? "scale-90 opacity-80" : "scale-100 opacity-100"
+                  }`}
                 >
-                  <div className="relative">
-                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
-                      <ShoppingBag className="w-6 h-6" />
-                    </div>
-                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center shadow-sm border-2 border-slate-900 dark:border-orange-600">
+                  <div className="relative flex items-center gap-1.5">
+                    <ShoppingBag className="w-4 h-4 text-orange-400 dark:text-white" />
+                    <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full shadow-sm">
                       {cartCount}
                     </span>
                   </div>
-                  <div className="text-left pr-2">
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">
-                      Checkout
-                    </p>
-                    <p className="text-lg font-black">
-                      <AnimatedPrice value={cartTotal} />
-                    </p>
+                  <div className="text-left font-black text-xs font-mono tracking-tight">
+                    <AnimatedPrice value={cartTotal} />
                   </div>
-                  <ChevronRight className="w-5 h-5 opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 transition-all" />
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:translate-x-0.5 transition-transform" />
                 </motion.button>
               )}
           </AnimatePresence>
@@ -4207,7 +4304,7 @@ export default function App() {
           <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
           {session && currentScreen === "home" && <OnboardingTour />}
           {session && currentScreen === "home" && <InteractiveTour />}
-          {/* Persistent Real-time Order Tracker Toast */}
+          {/* Persistent Real-time Order Tracker Banner with Smart Collapse */}
           <AnimatePresence>
             {(() => {
               const activeOrder = orders.find(
@@ -4219,66 +4316,107 @@ export default function App() {
               ) return null;
               
               const activeOrderShop = shops.find((s) => s.id === activeOrder.shop_id);
+              const isCollapsed = isOrderBannerCollapsed || isScrollCollapsed;
               
-              return (
+              return isCollapsed ? (
+                /* Smart Collapsed Minimal Floating Pill Indicator */
                 <motion.div
-                  initial={{ opacity: 0, y: 100, scale: 0.95 }}
+                  key="order-tracker-collapsed"
+                  initial={{ opacity: 0, y: 30, scale: 0.9 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 50, scale: 0.95 }}
-                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                  className="fixed bottom-24 left-4 right-4 md:left-auto md:right-6 md:w-96 z-40 bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white p-4 rounded-[28px] shadow-2xl border border-slate-800 flex flex-col gap-3"
+                  exit={{ opacity: 0, y: 20, scale: 0.9 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                  onClick={() => {
+                    setIsOrderBannerCollapsed(false);
+                    setIsScrollCollapsed(false);
+                  }}
+                  className="fixed bottom-20 left-3 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-xl border border-slate-800/90 flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
                 >
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
-                      </span>
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                        Live Order Progress
-                      </span>
-                    </div>
-                    <div className="text-[10px] font-mono text-orange-400 font-bold bg-orange-950/40 px-2 py-0.5 rounded-full">
-                      #{activeOrder.id.slice(0, 5)}
-                    </div>
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
+                  </span>
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                    <span className="text-orange-400 font-mono">#{activeOrder.id.slice(0, 4)}</span>
+                    <span className="text-slate-600">•</span>
+                    <span className="truncate max-w-[100px] text-slate-200">
+                      {activeOrder.status === "pending" && "Waiting..."}
+                      {activeOrder.status === "confirmed" && "Accepted"}
+                      {activeOrder.status === "preparing" && "Cooking"}
+                      {activeOrder.status === "ready" && "Ready! 🔥"}
+                    </span>
                   </div>
-
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center font-black shrink-0 text-white">
+                  <div className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm ml-0.5">
+                    <span>Track</span>
+                    <ChevronUp className="w-3 h-3" />
+                  </div>
+                </motion.div>
+              ) : (
+                /* Expanded Compact Row-Based Grid Banner */
+                <motion.div
+                  key="order-tracker-expanded"
+                  initial={{ opacity: 0, y: 40, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 30, scale: 0.95 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                  className="fixed bottom-20 left-3 right-3 md:left-auto md:right-4 md:w-80 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-2 rounded-2xl shadow-2xl border border-slate-800/80 flex flex-col gap-1.5 overflow-hidden"
+                >
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className="w-8 h-8 bg-gradient-to-tr from-orange-600 to-amber-500 rounded-xl flex items-center justify-center font-black text-xs shrink-0 text-white shadow-sm">
                         {activeOrderShop?.name?.slice(0, 2).toUpperCase() || "🍔"}
                       </div>
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-black truncate">{activeOrderShop?.name || "Kitchen"}</h4>
-                        <p className="text-[11px] font-bold text-orange-400 flex items-center gap-1 mt-0.5">
-                          <Clock className="w-3.5 h-3.5 animate-spin duration-3000" />
-                          {activeOrder.status === "pending" && "Waiting for confirmation..."}
-                          {activeOrder.status === "confirmed" && "Order Accepted!"}
-                          {activeOrder.status === "preparing" && "Chef is Cooking..."}
-                          {activeOrder.status === "ready" && "Ready for Collection! 🔥"}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="relative flex h-1.5 w-1.5 shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500"></span>
+                          </span>
+                          <h4 className="text-xs font-bold text-white truncate">{activeOrderShop?.name || "Kitchen"}</h4>
+                          <span className="text-[9px] font-mono text-orange-400 font-bold opacity-90 shrink-0 bg-orange-500/10 px-1.5 py-0.2 rounded border border-orange-500/20">
+                            #{activeOrder.id.slice(0, 4)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] font-medium text-orange-400 truncate flex items-center gap-1 leading-none mt-1">
+                          <Clock className="w-3 h-3 animate-spin shrink-0" />
+                          {activeOrder.status === "pending" && "Waiting confirmation..."}
+                          {activeOrder.status === "confirmed" && "Order Accepted"}
+                          {activeOrder.status === "preparing" && "Chef Cooking"}
+                          {activeOrder.status === "ready" && "Ready for Pickup! 🔥"}
                         </p>
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        setCurrentScreen("order-tracking");
-                      }}
-                      className="shrink-0 bg-white hover:bg-slate-100 text-slate-950 text-[11px] font-black px-3 py-2 rounded-full shadow-sm active:scale-95 transition-all cursor-pointer flex items-center gap-1"
-                    >
-                      Track <ArrowRight className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => {
+                          setCurrentScreen("order-tracking");
+                        }}
+                        className="bg-orange-500 hover:bg-orange-600 active:scale-95 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                      >
+                        <span>Track</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+
+                      <button
+                        onClick={() => setIsOrderBannerCollapsed(true)}
+                        className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                        title="Collapse order tracker"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Progress Bar */}
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
-                    <div 
-                      className="bg-orange-500 h-full rounded-full transition-all duration-1000 ease-out"
+                  {/* Thin Integrated Progress Line */}
+                  <div className="w-full bg-slate-800/80 h-1 rounded-full overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-orange-500 to-amber-400 h-full rounded-full transition-all duration-700 ease-out"
                       style={{
-                        width: 
-                          activeOrder.status === "pending" ? "15%" :
-                          activeOrder.status === "confirmed" ? "40%" :
-                          activeOrder.status === "preparing" ? "70%" :
+                        width:
+                          activeOrder.status === "pending" ? "20%" :
+                          activeOrder.status === "confirmed" ? "45%" :
+                          activeOrder.status === "preparing" ? "75%" :
                           activeOrder.status === "ready" ? "100%" : "0%"
                       }}
                     />
@@ -4289,6 +4427,7 @@ export default function App() {
           </AnimatePresence>
 
           <PopiaLegalDrawer />
+          <CookieConsentBanner />
         </div>
       </AnimatePresence>
     </div>
@@ -4681,14 +4820,27 @@ function SetupPasswordScreen({
 
       // Manually sync to profiles table in case trigger isn't set up
       if (data.user) {
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          user_id: data.user.id,
-          fullName: signupData.fullName,
-          email: signupData.email,
-          phone: signupData.phone,
-          updated_at: new Date().toISOString(),
-        });
-        if (profileError) throw profileError;
+        const { error: profileError } = await supabase.from("profiles").upsert(
+          {
+            user_id: data.user.id,
+            fullName: signupData.fullName,
+            email: signupData.email,
+            phone: signupData.phone,
+            role: "user",
+            city: "",
+            address: "",
+            country: "South Africa",
+            language: "en",
+            photo_url: "",
+            favorites: [],
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        );
+        if (profileError) {
+          console.error("Profile creation error on signup:", profileError);
+          // Don't throw here, the user is created in Auth and the trigger might have already created the profile
+        }
       }
     }, onNext);
   };
@@ -4984,7 +5136,7 @@ function CompleteProfileScreen({
     <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-[100dvh] flex flex-col">
       <div className="flex-1 flex flex-col w-full max-w-screen-xl mx-auto overflow-x-hidden pb-24 relative">
         {/* Top App Bar */}
-        <div className="flex items-center bg-white dark:bg-slate-950 p-4 pb-2 sticky top-0 z-10 border-b border-primary/10">
+        <div className="flex items-center bg-white dark:bg-slate-950 p-4 pb-2 sticky top-0 z-10 border-b border-primary/10 pt-[calc(1rem+env(safe-area-inset-top))]">
           <button
             onClick={onBack}
             className="text-primary flex size-12 shrink-0 items-center justify-center rounded-full hover:bg-primary/5 transition-colors cursor-pointer"
@@ -5204,7 +5356,7 @@ function CompleteProfileScreen({
       </div>
 
       {/* Sticky Save Button Container */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 bg-white/80 dark:bg-slate-950/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
+      <div className="fixed bottom-0 left-0 right-0 p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] bg-white/80 dark:bg-slate-950/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
         <button
           onClick={handleSave}
           disabled={isSaving}
@@ -6740,6 +6892,16 @@ function HomeScreen({
   }, [searchQuery]);
 
   const [isHeaderSearching, setIsHeaderSearching] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
     try {
       return localStorage.getItem("localeats_winter_banner_dismissed") === "true";
@@ -7163,162 +7325,50 @@ function HomeScreen({
         </button>
       )}
       {/* TopBar */}
-      <header className="bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5">
-        {!isHeaderSearching ? (
-          <div className="max-w-screen-xl mx-auto px-2.5 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-1.5">
-            <div className="flex flex-col justify-center relative min-w-0 shrink">
-              <div className="flex items-center gap-1.5 relative">
-                <motion.div
-                  layoutId="session-bg-glow"
-                  className="absolute -inset-6 bg-primary/10 dark:bg-primary/15 rounded-full blur-xl pointer-events-none"
-                  transition={{ type: "spring", stiffness: 80, damping: 15 }}
-                />
-                <LocalEatsLogo width={115} height={30} className="shrink-0 scale-95 sm:scale-100 origin-left" />
-                <span className="text-[9px] sm:text-[10px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded z-10 whitespace-nowrap shrink-0">
-                  v{APP_VERSION.split(" ")[0]}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 ml-0.5 mt-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)] shrink-0"></div>
-                <p className="text-[8px] sm:text-[9px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400 whitespace-nowrap truncate">
-                  Serving Local Flavours
-                </p>
-              </div>
+      <header className={`bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled ? 'py-1 sm:py-1.5 shadow-sm' : 'py-2 sm:py-3'}`}>
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 min-h-[40px] sm:min-h-[48px] relative">
+          
+          {/* Logo & Version */}
+          <div className={`flex flex-col justify-center relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className="flex items-center gap-1 sm:gap-1.5 relative">
+              <motion.div
+                layoutId="session-bg-glow"
+                className="absolute -inset-4 bg-primary/10 dark:bg-primary/15 rounded-full blur-xl pointer-events-none"
+                transition={{ type: "spring", stiffness: 80, damping: 15 }}
+              />
+              <LocalEatsLogo width={100} height={26} className="shrink-0 scale-90 sm:scale-100 origin-left" />
+              <span className="text-[8px] sm:text-[9px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded z-10 whitespace-nowrap shrink-0">
+                v{APP_VERSION.split(" ")[0]}
+              </span>
             </div>
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Persistent Supabase Connection Status Badge */}
-              <div 
-                className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full text-[9px] sm:text-[10px] font-black border transition-all flex items-center gap-1 sm:gap-1.5 shadow-2xs shrink-0 select-none ${
-                  isOnline 
-                    ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60" 
-                    : "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/60"
-                }`}
-                title={isOnline ? "Supabase Cloud project is active & connected" : "Connecting to Supabase Cloud..."}
-              >
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOnline ? "bg-emerald-400" : "bg-amber-400"}`}></span>
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-amber-500"}`}></span>
-                </span>
-                <span className="truncate max-w-[60px] sm:max-w-none">
-                  {isOnline ? "Connected" : "Connecting..."}
-                </span>
-              </div>
-
-              {/* WhatsApp-style Search Button */}
-              <button
-                onClick={() => {
-                  setIsHeaderSearching(true);
-                  setShowSuggestions(true);
-                  triggerHaptic(10);
-                }}
-                className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
-                aria-label="Search stores"
-              >
-                <Search className="w-4 h-4 sm:w-5 sm:h-5" />
-              </button>
-
-              <button
-                onClick={onNotifications}
-                className="relative p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-gray-700 dark:text-slate-300"
-              >
-                <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-red-500 text-white text-[9px] sm:text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900">
-                    {unreadCount > 9 ? "9+" : unreadCount}
-                  </span>
-                )}
-              </button>
-              <div className="relative">
-                <button
-                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                  aria-label="Settings"
-                  className={`p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-gray-100 dark:bg-slate-800" : "hover:bg-gray-100 dark:hover:bg-slate-800"}`}
-                >
-                  <svg
-                    className="h-5 w-5 text-gray-700 dark:text-slate-300"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                    ></path>
-                  </svg>
-                </button>
-
-                {isSettingsOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-[50]"
-                      onClick={() => setIsSettingsOpen(false)}
-                    ></div>
-                    <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                      <button
-                        onClick={() => {
-                          setIsSettingsOpen(false);
-                          onSettings();
-                        }}
-                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                      >
-                        <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                          Settings
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setIsSettingsOpen(false);
-                          onProfile();
-                        }}
-                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                      >
-                        <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                          Profile
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setIsSettingsOpen(false);
-                          onOrderHistory();
-                        }}
-                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
-                      >
-                        <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
-                        <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
-                          {t("order_history")}
-                        </span>
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+            <div className="flex items-center gap-1 sm:gap-1.5 ml-0.5 mt-0.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)] shrink-0"></div>
+              <p className="text-[7.5px] sm:text-[8.5px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 whitespace-nowrap truncate">
+                Serving Local Flavours
+              </p>
             </div>
           </div>
-        ) : (
-          <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-center gap-2 sm:gap-3 transition-all duration-300 w-full min-h-[52px]">
-            <button
+
+          {/* Absolute Search Overlay (Appears on click) */}
+          <div className={`absolute inset-x-3 sm:inset-x-4 top-1/2 -translate-y-1/2 flex items-center justify-center gap-2 sm:gap-3 transition-all duration-300 ${isHeaderSearching ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}>
+             <button
               onClick={() => {
                 setIsHeaderSearching(false);
                 setSearchQuery("");
                 setShowSuggestions(false);
                 triggerHaptic(5);
               }}
-              className="p-1.5 sm:p-2 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors text-gray-700 dark:text-slate-300 cursor-pointer shrink-0"
+              className="p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-gray-700 dark:text-slate-300 cursor-pointer shrink-0"
               aria-label="Close search"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
-            <div className="relative flex-1 max-w-md sm:max-w-xl mx-auto flex items-center">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className="relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border border-slate-200 dark:border-slate-700">
+              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 id="header-search-input"
-                className="w-full bg-slate-100 dark:bg-slate-800 border border-transparent focus:border-orange-500/50 outline-none rounded-xl py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white shadow-xs transition-all duration-200"
-                placeholder="Search for local kitchens, Kotas, meals..."
+                className="w-full bg-transparent border-none outline-none py-2 sm:py-2.5 pl-9 sm:pl-10 pr-9 text-[11px] sm:text-sm font-semibold dark:text-white transition-all duration-200"
+                placeholder="Search local kitchens..."
                 value={searchQuery}
                 onBlur={() => {
                   if (searchQuery.trim().length >= 2) {
@@ -7343,16 +7393,112 @@ function HomeScreen({
                   onClick={() => {
                     setSearchQuery("");
                     setShowSuggestions(true);
+                    document.getElementById("header-search-input")?.focus();
                   }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
                   aria-label="Clear search text"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                 </button>
               )}
             </div>
           </div>
-        )}
+
+          {/* Right Nav Icons */}
+          <div className={`flex items-center gap-0.5 sm:gap-1.5 shrink-0 transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <button
+              onClick={() => {
+                setIsHeaderSearching(true);
+                setShowSuggestions(true);
+                triggerHaptic(10);
+                setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
+              }}
+              className="p-1.5 sm:p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-slate-700 dark:text-slate-300"
+              aria-label="Search stores"
+            >
+              <Search className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+            <button
+              onClick={onNotifications}
+              className="relative p-1.5 sm:p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-slate-700 dark:text-slate-300"
+            >
+              <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-red-500 text-white text-[9px] sm:text-[10px] font-bold rounded-full flex items-center justify-center border-[1.5px] border-white dark:border-slate-900">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+            <div className="relative">
+              <button
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                aria-label="Settings"
+                className={`p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-slate-100 dark:bg-slate-800" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+              >
+                <svg
+                  className="h-4 w-4 sm:h-5 sm:w-5 text-slate-700 dark:text-slate-300"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                  ></path>
+                </svg>
+              </button>
+              {isSettingsOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-[50]"
+                    onClick={() => setIsSettingsOpen(false)}
+                  ></div>
+                  <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <button
+                      onClick={() => {
+                        setIsSettingsOpen(false);
+                        onSettings();
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                    >
+                      <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                        Settings
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsSettingsOpen(false);
+                        onProfile();
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                    >
+                      <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                        Profile
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsSettingsOpen(false);
+                        onOrderHistory();
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                    >
+                      <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
+                        {t("order_history")}
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Dynamic Compact Promo Banner (Disappears when used/dismissed) */}
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
@@ -7682,138 +7828,8 @@ function HomeScreen({
         )}
       </header>
 
-      <main className="flex-grow flex flex-col p-4 overflow-y-auto max-w-screen-xl mx-auto w-full">
-        {/* Compact Persistent Delivery Status Widget */}
-        {(() => {
-          const activeOrders = orders.filter((o) => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered");
-          if (activeOrders.length === 0) return null;
-
-          const latestOrder = activeOrders[0];
-          
-          // Calculate realistic ETA based on created_at (35 min delivery window)
-          const elapsedMs = Date.now() - new Date(latestOrder.created_at).getTime();
-          const deliveryWindowMs = 35 * 60 * 1000; // 35 minutes
-          const remainingMinutes = Math.max(1, Math.ceil((deliveryWindowMs - elapsedMs) / (60 * 1000)));
-          const isAlmostThere = remainingMinutes <= 3;
-
-          // Status messaging & progress
-          let statusLabel = "Processing";
-          let progressPercent = 25;
-
-          if (latestOrder.status === "preparing") {
-            statusLabel = "Preparing your food";
-            progressPercent = 50;
-          } else if (latestOrder.status === "ready") {
-            statusLabel = "Ready for Collection/Rider";
-            progressPercent = 75;
-          } else if (latestOrder.status === "confirmed") {
-            statusLabel = "Order Confirmed";
-            progressPercent = 35;
-          }
-
-          return (
-            <div 
-              onClick={() => {
-                setCurrentScreen("order-tracking");
-                triggerHaptic?.(10);
-              }}
-              className={`mb-6 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-slate-950 dark:to-slate-900 text-white rounded-2xl shadow-xl border border-white/5 cursor-pointer hover:scale-[1.01] active:scale-[0.99] transition-all flex flex-col group relative overflow-hidden ${
-                isOrderStatusExpanded ? "p-4 gap-3" : "p-3 gap-0"
-              }`}
-            >
-              {/* Decorative Pulse Background */}
-              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl group-hover:bg-orange-500/20 transition-all pointer-events-none"></div>
-              
-              <div className="flex items-center justify-between z-10">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8.5 h-8.5 rounded-lg bg-orange-500/10 flex items-center justify-center border border-orange-500/20 text-orange-500">
-                    {latestOrder.is_delivery ? (
-                      <Bike className="w-4 h-4 animate-bounce" />
-                    ) : (
-                      <ShoppingBag className="w-4 h-4 animate-pulse" />
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-[8px] uppercase font-black tracking-widest text-slate-400 block">
-                      Active Order Status
-                    </span>
-                    <h4 className="text-xs font-black text-white flex items-center gap-1 leading-tight">
-                      {statusLabel}
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-ping"></span>
-                    </h4>
-                  </div>
-                </div>
-                
-                {/* ETA COUNTDOWN */}
-                <div className="flex items-center gap-2.5">
-                  <div className="text-right">
-                    <span className="text-[8px] uppercase font-black tracking-widest text-slate-400 block">
-                      ETA
-                    </span>
-                    <p className="text-xs font-black text-orange-500 font-mono">
-                      {isAlmostThere ? "⚡ Almost there!" : `~${remainingMinutes} mins`}
-                    </p>
-                  </div>
-                  
-                  {/* EXPAND / COLLAPSE TRIGGER */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsOrderStatusExpanded(!isOrderStatusExpanded);
-                      triggerHaptic?.(5);
-                    }}
-                    className="p-1 rounded-md hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                  >
-                    {isOrderStatusExpanded ? (
-                      <ChevronUp className="w-4 h-4" />
-                    ) : (
-                      <ChevronDown className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Status Progress Line */}
-              {isOrderStatusExpanded && (
-                <div className="w-full space-y-1 z-10 mt-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <div className="w-full bg-slate-700 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div 
-                      className="bg-gradient-to-r from-orange-500 to-amber-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${progressPercent}%` }}
-                    ></div>
-                  </div>
-                  <div className="flex justify-between text-[8px] uppercase font-black tracking-wider text-slate-500 dark:text-slate-400 pt-0.5">
-                    <span className={latestOrder.status === "pending" ? "text-orange-500 font-black" : ""}>Ordered</span>
-                    <span className={latestOrder.status === "confirmed" || latestOrder.status === "preparing" ? "text-orange-500 font-black" : ""}>Preparing</span>
-                    <span className={latestOrder.status === "ready" ? "text-orange-500 font-black" : ""}>Ready</span>
-                    <span>{latestOrder.is_delivery ? "Arriving" : "Collect"}</span>
-                  </div>
-                  {!latestOrder.is_delivery && (latestOrder.status === "ready" || latestOrder.status === "preparing") && (
-                    <div className="pt-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          changeToDelivery(latestOrder.id);
-                        }}
-                        className="w-full py-1.5 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 hover:text-orange-300 text-[10px] font-black uppercase tracking-wider rounded-lg border border-orange-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <Bike className="w-3 h-3" />
-                        Change to Delivery (R15)
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tiny Arrow to indicate clickable action */}
-              {isOrderStatusExpanded && (
-                <div className="absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all text-orange-500">
-                  <ChevronRight className="w-4 h-4 translate-x-1 group-hover:translate-x-0 transition-transform" />
-                </div>
-              )}
-            </div>
-          );
-        })()}
+      <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full">
+        {/* Compact Persistent Delivery Status Widget (Removed to prevent duplication with global persistent tracker) */}
 
         <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -7980,7 +7996,7 @@ function HomeScreen({
       </main>
 
       {/* Sleek Glassmorphic Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-5 pt-2 bg-gradient-to-t from-slate-100/50 via-transparent to-transparent dark:from-slate-950/40 pointer-events-none">
+      <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/50 via-transparent to-transparent dark:from-slate-950/40 pointer-events-none">
         <nav className="max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] border border-slate-100 dark:border-slate-800/80 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
           {/* Home Button */}
           <button
@@ -8688,7 +8704,7 @@ function DiscoverScreen({
   return (
     <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
       {/* TopAppBar */}
-      <header className="bg-[#f6f6f9] dark:bg-slate-900 w-full top-0 sticky z-40 transition-opacity duration-200">
+      <header className="bg-[#f6f6f9] dark:bg-slate-900 w-full top-0 sticky z-40 transition-opacity duration-200 pt-[env(safe-area-inset-top)]">
         <div className="flex justify-between items-center px-6 py-4 w-full max-w-screen-xl mx-auto">
           <div className="flex items-center gap-4">
             <button
@@ -9369,7 +9385,7 @@ function DiscoverScreen({
         </section>
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
+      <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none pb-[env(safe-area-inset-bottom)]">
         <nav className="mx-auto w-full max-w-md md:max-w-xl rounded-t-[2rem] bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-[0_-8px_32px_rgba(45,47,49,0.06)] pointer-events-auto">
           <div className="flex justify-around items-center px-6 pb-8 pt-4">
             <button
@@ -9674,7 +9690,7 @@ function ProfileScreen({
   return (
     <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
       {/* Header */}
-      <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10">
+      <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10 pt-[calc(1rem+env(safe-area-inset-top))]">
         <button
           onClick={onBack}
           className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
@@ -10224,7 +10240,7 @@ const ImageCarousel = ({ images }: { images: string[] }) => {
   }, [images.length]);
 
   return (
-    <div className="relative w-full h-64 md:h-96 rounded-[32px] overflow-hidden group shadow-2xl">
+    <div className="relative w-full h-full overflow-hidden group">
       <AnimatePresence mode="wait">
         <motion.img
           key={currentIndex}
@@ -10374,16 +10390,15 @@ function StoreInfoScreen({
     return reviews.filter((r) => r.rating === selectedStarFilter);
   }, [reviews, selectedStarFilter]);
 
-  // Determine if the store is open or closed based on current hour
+  // Determine if the store is open or closed based on shop status
   const getStoreStatus = () => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const isOpen = currentHour >= 8 && currentHour < 20;
+    const status = getShopStatus(shop);
+    const hoursText = shop.opening_time && shop.closing_time ? `${shop.opening_time} - ${shop.closing_time}` : "08:00 - 20:00";
     return {
-      isOpen,
-      text: isOpen ? "Open" : "Closed",
-      hours: "08:00 - 20:00",
-      closingText: isOpen ? "Closes at 20:00" : "Opens at 08:00",
+      isOpen: status.isOpen,
+      text: status.isOpen ? "Open" : "Closed",
+      hours: hoursText,
+      closingText: status.isOpen ? `Closes at ${shop.closing_time || "20:00"}` : `Opens at ${shop.opening_time || "08:00"}`,
     };
   };
 
@@ -10701,28 +10716,47 @@ function StoreInfoScreen({
         ? shop.id
         : (parseInt(String(shop.id).replace(/\D/g, "")) || 1);
 
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("reviews")
         .select("*")
         .eq("shop_id", dbShopId)
         .order("createdAt", { ascending: false });
 
+      // If createdAt column fails or table missing, retry with created_at or without order clause
       if (error) {
-        if (error.code === "PGRST205") {
+        if (error.code === "PGRST205" || error.code === "42P01" || error.message?.includes("does not exist")) {
           setTableMissing(true);
           return;
         }
-        throw error;
+
+        const retry = await supabase
+          .from("reviews")
+          .select("*")
+          .eq("shop_id", dbShopId);
+
+        if (retry.error) {
+          if (retry.error.code === "PGRST205" || retry.error.code === "42P01") {
+            setTableMissing(true);
+            return;
+          }
+          console.warn("Notice fetching reviews:", retry.error.message || retry.error);
+        } else {
+          data = retry.data;
+          error = null;
+        }
       }
 
-      const mappedReviews = (data || []).map((r: any) => ({
-        ...r,
-        userName: r.userName || r.username || "Anonymous",
-      }));
+      const mappedReviews = (data || [])
+        .map((r: any) => ({
+          ...r,
+          userName: r.userName || r.username || "Anonymous",
+          createdAt: r.createdAt || r.created_at || new Date().toISOString(),
+        }))
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
       setReviews(mappedReviews);
-    } catch (error) {
-      console.error("Error fetching reviews:", error);
+    } catch (error: any) {
+      console.warn("Notice fetching reviews:", error?.message || error);
     } finally {
       setLoadingReviews(false);
     }
@@ -10788,7 +10822,7 @@ function StoreInfoScreen({
       <RestaurantSchema shop={shop} />
 
       {/* Immersive Header with Carousel */}
-      <div className="relative h-80 w-full group overflow-hidden">
+      <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
         {shop.images && shop.images.length > 0 ? (
           <ImageCarousel images={shop.images} />
         ) : (
@@ -10878,7 +10912,7 @@ function StoreInfoScreen({
                 {shop.delivery_eta || "30-45 mins"}
               </div>
             </div>
-            <h1 className="text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-2xl">
+            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-2xl">
               {shop.name}
             </h1>
             <p className="text-white/80 text-xs font-medium max-w-sm line-clamp-1">
@@ -10915,14 +10949,14 @@ function StoreInfoScreen({
                 const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
                 window.open(url, "_blank");
               }}
-              className="flex-grow flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all cursor-pointer"
+              className="flex-grow flex items-center justify-center gap-1.5 md:gap-2 px-3 md:px-6 py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl font-black text-[10px] md:text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all cursor-pointer"
             >
               <Navigation className="w-4 h-4" />
               Directions
             </button>
             <button
               onClick={() => setIsShopChatOpen(true)}
-              className="flex-grow md:flex-grow-0 px-6 py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl flex items-center justify-center gap-2 font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
+              className="flex-grow md:flex-grow-0 px-3 md:px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl flex items-center justify-center gap-1.5 md:gap-2 font-black text-[10px] md:text-xs uppercase tracking-widest shadow-xl shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
               title="Chat with Shop"
             >
               <MessageCircle className="w-5 h-5" />
@@ -10956,7 +10990,7 @@ function StoreInfoScreen({
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`relative px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap ${
+              className={`relative px-4 sm:px-8 py-3 rounded-xl text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === tab
                   ? "text-orange-600"
                   : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -10997,13 +11031,13 @@ function StoreInfoScreen({
 
               {/* Search Bar */}
               <div id="store-menu-search" className="relative group">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
                 <input
                   type="text"
                   placeholder={`Search dishes at ${shop.name}...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-xs font-bold outline-none transition-all focus:ring-2 focus:ring-orange-600/20"
+                  className="w-full pl-10 md:pl-12 pr-4 py-3 md:py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-[10px] md:text-xs font-bold outline-none transition-all focus:ring-2 focus:ring-orange-600/20"
                 />
               </div>
 
@@ -11541,6 +11575,8 @@ function StoreInfoScreen({
             </div>
           )}
         </div>
+        {/* Bottom Spacer for floating action buttons */}
+        <div className="h-32 w-full shrink-0"></div>
       </main>
 
       <QuantityModal
@@ -12471,7 +12507,7 @@ function ExploreScreen({
       </AnimatePresence>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pointer-events-none">
+      <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pointer-events-none">
         <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-2xl pointer-events-auto transition-all">
           <button
             onClick={onHome}
@@ -12942,7 +12978,7 @@ function SystemStatusDrawer({
         } else {
           setAuthStatus("Guest Session / Local Token");
         }
-      });
+      }).catch(console.warn);
       if (latency === null) {
         handleTestConnection();
       }
@@ -13580,36 +13616,7 @@ function SettingsScreen({
       </header>
 
       <main className="px-4 py-6 space-y-8 pb-24 flex-grow overflow-y-auto">
-        {/* System Status & Cloud Health launcher card */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-4 shadow-lg border border-slate-700/60 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
-              <Server className="w-5 h-5" />
-            </div>
-            <div className="text-left">
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm text-white">System Status & Backend</span>
-                <span className="text-[9px] font-black uppercase px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-full flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Active
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-300 mt-0.5 truncate max-w-[190px] sm:max-w-xs font-mono">
-                {supabaseUrl || "Supabase Cloud"}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => {
-              setShowSystemStatusDrawer(true);
-              triggerHaptic?.(10);
-            }}
-            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0"
-          >
-            <span>Status</span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
+
         {/* Profile Section Quick View */}
         <div className="flex items-center space-x-4 bg-white dark:bg-slate-900/50 p-4 rounded-xl border border-primary/5 shadow-sm">
           <div className="relative group">
@@ -16292,6 +16299,7 @@ function ShopDashboardScreen({
           owner_id: shopData.owner_id,
           opening_time: shopData.opening_time,
           closing_time: shopData.closing_time,
+          is_active: shopData.is_active === true || shopData.is_active === "true" || shopData.is_active === "t" || shopData.is_active === 1,
           phone: shopData.phone,
           latitude: shopData.latitude,
           longitude: shopData.longitude,
