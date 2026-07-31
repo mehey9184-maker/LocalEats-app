@@ -90,7 +90,12 @@ export const supabase = createClient(
       storageKey: `sb-${supabaseUrl.split('.')[0].split('//')[1]}-auth-token`,
       flowType: 'pkce',
       lock: async (name, acquireTimeout, fn) => {
-        return fn();
+        try {
+          return await fn();
+        } catch (err) {
+          console.warn("[Supabase Lock] Bypassed lock error gracefully:", err);
+          return null as any;
+        }
       },
     },
     global: {

@@ -33,7 +33,7 @@ import {
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import { MapLegend } from "./components/MapLegend";
-import { riderMapIcon } from "./components/MapComponents";
+import { riderMapIcon, userMapIcon, createShopMapIcon } from "./components/MapComponents";
 
 // Fix for default marker icons in react-leaflet
 import icon from "leaflet/dist/images/marker-icon.png";
@@ -11712,6 +11712,7 @@ function MapRecenter({ center }: { center: [number, number] }) {
   }, [center, map]);
   return null;
 }
+
 function ExploreScreen({
   shops,
   onHome,
@@ -11750,11 +11751,46 @@ function ExploreScreen({
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
   >("rating");
+
+  // Fetch real registered riders from Supabase (no fake pins)
+  const [realRiders, setRealRiders] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadRealRiders = async () => {
+      try {
+        const { data, error } = await supabase.from("rider_profiles").select("*");
+        if (!error && data && isMounted) {
+          setRealRiders(data);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch real rider profiles:", err);
+      }
+    };
+    loadRealRiders();
+
+    const channel = supabase
+      .channel("explore-map-riders-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rider_profiles" },
+        () => {
+          loadRealRiders();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const categories = [
     "All",
@@ -11864,278 +11900,290 @@ function ExploreScreen({
         ? [userLocation.lat, userLocation.lng]
         : [-25.9964, 28.2268];
 
+  // Real-time Rider Proximity Observer: Filter riders to ONLY active/online couriers within 5km radius of user location or map center
+  const activeProximityRiders = useMemo(() => {
+    const refLat = userLocation?.lat ?? mapCenter[0];
+    const refLng = userLocation?.lng ?? mapCenter[1];
+
+    return realRiders.filter((rider) => {
+      const isOnline = rider.is_online === true || rider.is_online === "true";
+      if (!isOnline) return false;
+
+      const rLat = typeof rider.latitude === "number" && rider.latitude !== 0 ? rider.latitude : null;
+      const rLng = typeof rider.longitude === "number" && rider.longitude !== 0 ? rider.longitude : null;
+
+      if (rLat === null || rLng === null) return false;
+
+      const dist = calculateDistance(rLat, rLng, refLat, refLng);
+      return dist <= 5.0; // Strictly within 5.0 km radius limit
+    });
+  }, [realRiders, userLocation, mapCenter]);
+
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
-      {/* Search & Filter Header Overlay */}
-      <div className="absolute top-6 left-4 right-4 z-[1000] flex flex-col gap-3">
-        <div className="max-w-lg md:mx-auto w-full">
-          <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-2xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
-            <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
-            <input
-              type="text"
-              placeholder="Filter by name, food, or street..."
-              className="flex-grow outline-none text-sm font-bold bg-transparent dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <div className="flex items-center gap-2">
-              {/* Map / List Layout Switcher Button */}
-              <button
-                onClick={() => {
-                  setLayoutMode(layoutMode === "map" ? "list" : "map");
-                  triggerHaptic(10);
-                }}
-                className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer"
-                title={
-                  layoutMode === "map"
-                    ? "Switch to List View"
-                    : "Switch to Map View"
-                }
-              >
-                {layoutMode === "map" ? (
-                  <List className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                ) : (
-                  <MapIcon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-                )}
-              </button>
-
-              <button
-                onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className={`p-2 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
-              >
-                <SlidersHorizontal className="w-4 h-4" />
-              </button>
-              <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
-              <button
-                className="text-orange-500 active:scale-95 transition-transform p-1.5 hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
-                onClick={onRequestLocation}
-              >
-                {userLocation ? (
-                  <LocateFixed className="w-6 h-6" />
-                ) : (
-                  <Locate className="w-6 h-6" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Quick Filter Chips & Distance Radius Toggles */}
-          <div className="flex gap-2 overflow-x-auto no-scrollbar py-1 mt-2 px-1 items-center">
-            <button
-              onClick={() => {
-                if (!userLocation) {
-                  onRequestLocation();
-                }
-                setSortPriority("distance");
-                triggerHaptic(10);
-              }}
-              className={`flex shrink-0 items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-all border shadow-sm ${
-                sortPriority === "distance"
-                  ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100"
-                  : "bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-slate-800/50"
-              }`}
-            >
-              <Navigation className="w-3.5 h-3.5" />
-              Sort by Distance
-            </button>
-
-            <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-0.5" />
-
-            {/* Distance Radius Quick Chips: 1km, 5km, 10km */}
-            {([null, 1, 5, 10] as (number | null)[]).map((dist) => {
-              const isActive = maxDistance === dist;
-              return (
+      {/* List Layout Header Overlay - Only rendered in List mode for full map visibility */}
+      {layoutMode === "list" && (
+        <div className="absolute top-6 left-4 right-4 z-[1000] flex flex-col gap-3">
+          <div className="max-w-lg md:mx-auto w-full">
+            <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-2xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
+              <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
+              <input
+                type="text"
+                placeholder="Filter by name, food, or street..."
+                className="flex-grow outline-none text-sm font-bold bg-transparent dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <div className="flex items-center gap-2">
                 <button
-                  key={dist === null ? "radius-all" : `radius-${dist}`}
                   onClick={() => {
-                    if (dist !== null && !userLocation) {
-                      toast.info("Locating your spot to filter by radius...");
-                      onRequestLocation();
-                    }
-                    setMaxDistance(dist);
+                    setLayoutMode("map");
                     triggerHaptic(10);
                   }}
-                  className={`flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black transition-all border shadow-sm ${
-                    isActive
-                      ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/20"
-                      : "bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-slate-800/50 hover:border-orange-300"
-                  }`}
+                  className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer"
+                  title="Switch to Map View"
                 >
-                  {dist === null ? "All Distance" : `Within ${dist} km`}
+                  <MapIcon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                 </button>
-              );
-            })}
-          </div>
 
-          {/* Expanded Filters Drawer Style */}
-          <motion.div
-            initial={false}
-            animate={{
-              height: isFilterOpen ? "auto" : 0,
-              opacity: isFilterOpen ? 1 : 0,
-            }}
-            className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
-          >
-            <div className="p-6 flex flex-col gap-6 max-h-[70vh] overflow-y-auto">
-              {/* Category Toggles */}
-              <div>
-                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
-                  Browse by Category
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {categories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => {
-                        setSelectedCategory(cat);
-                        triggerHaptic(10);
-                      }}
-                      className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
-                        selectedCategory === cat
-                          ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-xl"
-                          : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
-                      }`}
-                    >
-                      {getCategorySlang(cat, language)}
-                    </button>
-                  ))}
-                </div>
+                <button
+                  onClick={() => setIsFilterOpen(!isFilterOpen)}
+                  className={`p-2 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                </button>
+                <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+                <button
+                  className="text-orange-500 active:scale-95 transition-transform p-1.5 hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
+                  onClick={onRequestLocation}
+                >
+                  {userLocation ? (
+                    <LocateFixed className="w-6 h-6" />
+                  ) : (
+                    <Locate className="w-6 h-6" />
+                  )}
+                </button>
               </div>
+            </div>
 
-              {/* Advanced Sort Order */}
-              <div>
-                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
-                  Sort Results By
-                </p>
-                <div className="grid grid-cols-3 gap-2">
+            {/* Quick Filter Chips & Distance Radius Toggles */}
+            <div className="flex gap-2 overflow-x-auto no-scrollbar py-1 mt-2 px-1 items-center">
+              <button
+                onClick={() => {
+                  if (!userLocation) {
+                    onRequestLocation();
+                  }
+                  setSortPriority("distance");
+                  triggerHaptic(10);
+                }}
+                className={`flex shrink-0 items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-all border shadow-sm ${
+                  sortPriority === "distance"
+                    ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100"
+                    : "bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-slate-800/50"
+                }`}
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                Sort by Distance
+              </button>
+
+              <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-0.5" />
+
+              {/* Distance Radius Quick Chips: 1km, 5km, 10km */}
+              {([null, 1, 5, 10] as (number | null)[]).map((dist) => {
+                const isActive = maxDistance === dist;
+                return (
                   <button
+                    key={dist === null ? "radius-all" : `radius-${dist}`}
                     onClick={() => {
-                      setSortPriority("rating");
-                      triggerHaptic(10);
-                    }}
-                    className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
-                      sortPriority === "rating"
-                        ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                        : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
-                    }`}
-                  >
-                    ★ Rating
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!userLocation) {
+                      if (dist !== null && !userLocation) {
+                        toast.info("Locating your spot to filter by radius...");
                         onRequestLocation();
                       }
-                      setSortPriority("distance");
+                      setMaxDistance(dist);
                       triggerHaptic(10);
                     }}
-                    className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center relative ${
-                      sortPriority === "distance"
-                        ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                        : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                    className={`flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black transition-all border shadow-sm ${
+                      isActive
+                        ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/20"
+                        : "bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-slate-800/50 hover:border-orange-300"
                     }`}
                   >
-                    {!userLocation && (
-                      <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500"></span>
-                      </span>
-                    )}
-                    📍 Distance
+                    {dist === null ? "All Distance" : `Within ${dist} km`}
                   </button>
-                  <button
-                    onClick={() => {
-                      setSortPriority("name");
-                      triggerHaptic(10);
-                    }}
-                    className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
-                      sortPriority === "name"
-                        ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                        : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
-                    }`}
-                  >
-                    🔤 A-Z Name
-                  </button>
-                </div>
-              </div>
+                );
+              })}
+            </div>
 
-              {/* Maximum Distance Radius */}
-              <div>
-                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
-                  Maximum Distance Radius
-                </p>
-                <div className="grid grid-cols-4 gap-2">
-                  {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+            {/* Expanded Filters Drawer Style */}
+            <motion.div
+              initial={false}
+              animate={{
+                height: isFilterOpen ? "auto" : 0,
+                opacity: isFilterOpen ? 1 : 0,
+              }}
+              className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
+            >
+              <div className="p-6 flex flex-col gap-6 max-h-[70vh] overflow-y-auto">
+                {/* Category Toggles */}
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
+                    Browse by Category
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => {
+                          setSelectedCategory(cat);
+                          triggerHaptic(10);
+                        }}
+                        className={`px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 ${
+                          selectedCategory === cat
+                            ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-xl"
+                            : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                        }`}
+                      >
+                        {getCategorySlang(cat, language)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Advanced Sort Order */}
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
+                    Sort Results By
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
                     <button
-                      key={dist === null ? "any" : dist}
                       onClick={() => {
-                        if (dist !== null && !userLocation) {
-                          toast.info("Locating your spot to filter by radius...");
-                          onRequestLocation();
-                        }
-                        setMaxDistance(dist);
+                        setSortPriority("rating");
                         triggerHaptic(10);
                       }}
-                      className={`px-2 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
-                        maxDistance === dist
+                      className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
+                        sortPriority === "rating"
                           ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
                           : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
                       }`}
                     >
-                      {dist === null ? "Any" : `${dist} km`}
+                      ★ Rating
                     </button>
-                  ))}
+                    <button
+                      onClick={() => {
+                        if (!userLocation) {
+                          onRequestLocation();
+                        }
+                        setSortPriority("distance");
+                        triggerHaptic(10);
+                      }}
+                      className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center relative ${
+                        sortPriority === "distance"
+                          ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
+                          : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                      }`}
+                    >
+                      {!userLocation && (
+                        <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500"></span>
+                        </span>
+                      )}
+                      📍 Distance
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSortPriority("name");
+                        triggerHaptic(10);
+                      }}
+                      className={`px-3 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
+                        sortPriority === "name"
+                          ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
+                          : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                      }`}
+                    >
+                      🔤 A-Z Name
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              {/* Advanced Utility Filters */}
-              <div className="flex flex-col gap-4">
-                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] ml-1">
-                  Refine Results
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => {
-                      setShowOnlyOpen(!showOnlyOpen);
-                      triggerHaptic(10);
-                    }}
-                    className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
-                      showOnlyOpen
-                        ? "bg-green-500/10 text-green-600 border-green-500/30 shadow-inner"
-                        : "bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800"
-                    }`}
-                  >
-                    <Clock
-                      className={`w-5 h-5 ${showOnlyOpen ? "fill-current" : ""}`}
-                    />
-                    <span className="text-[10px] font-black uppercase tracking-widest">
-                      Open Now
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMinRating(minRating > 0 ? 0 : 4);
-                      triggerHaptic(10);
-                    }}
-                    className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
-                      minRating > 0
-                        ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/30 shadow-inner"
-                        : "bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800"
-                    }`}
-                  >
-                    <Star
-                      className={`w-5 h-5 ${minRating > 0 ? "fill-current" : ""}`}
-                    />
-                    <span className="text-[10px] font-black uppercase tracking-widest">
-                      4+ Stars
-                    </span>
-                  </button>
+                {/* Maximum Distance Radius */}
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
+                    Maximum Distance Radius
+                  </p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+                      <button
+                        key={dist === null ? "any" : dist}
+                        onClick={() => {
+                          if (dist !== null && !userLocation) {
+                            toast.info("Locating your spot to filter by radius...");
+                            onRequestLocation();
+                          }
+                          setMaxDistance(dist);
+                          triggerHaptic(10);
+                        }}
+                        className={`px-2 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
+                          maxDistance === dist
+                            ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
+                            : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                        }`}
+                      >
+                        {dist === null ? "Any" : `${dist} km`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Advanced Utility Filters */}
+                <div className="flex flex-col gap-4">
+                  <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] ml-1">
+                    Refine Results
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => {
+                        setShowOnlyOpen(!showOnlyOpen);
+                        triggerHaptic(10);
+                      }}
+                      className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                        showOnlyOpen
+                          ? "bg-green-500/10 text-green-600 border-green-500/30 shadow-inner"
+                          : "bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800"
+                      }`}
+                    >
+                      <Clock
+                        className={`w-5 h-5 ${showOnlyOpen ? "fill-current" : ""}`}
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        Open Now
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMinRating(minRating > 0 ? 0 : 4);
+                        triggerHaptic(10);
+                      }}
+                      className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                        minRating > 0
+                          ? "bg-yellow-500/10 text-yellow-600 border-yellow-500/30 shadow-inner"
+                          : "bg-slate-50 dark:bg-slate-800/30 text-slate-400 border-slate-100 dark:border-slate-800"
+                      }`}
+                    >
+                      <Star
+                        className={`w-5 h-5 ${minRating > 0 ? "fill-current" : ""}`}
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        4+ Stars
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          </div>
         </div>
-      </div>
+      )}
 
       {layoutMode === "list" ? (
         /* Gorgeous, Premium Responsive Shop List Layout */
@@ -12353,7 +12401,7 @@ function ExploreScreen({
           </div>
         </div>
       ) : (
-        /* Original Map flow with enhanced contrast dimming */
+        /* Mobile-Optimized Map View with Compact Floating Action Menu */
         <div className="flex-grow relative z-10 overflow-hidden dark:[&_.leaflet-tile-container]:invert dark:[&_.leaflet-tile-container]:hue-rotate-[180deg] dark:[&_.leaflet-tile-container]:brightness-[0.75] dark:[&_.leaflet-tile-container]:contrast-[1.2]">
           {!isOnline && (
             <div className="absolute inset-0 z-20 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
@@ -12376,12 +12424,13 @@ function ExploreScreen({
               </button>
             </div>
           )}
-          {/* Interactive Map Legend Overlay */}
-          <div className="absolute top-28 left-4 z-[1000] pointer-events-auto">
+
+          {/* Interactive Map Legend Overlay - Clean Floating Top Position */}
+          <div className="absolute top-4 left-3 z-[1000] pointer-events-auto max-w-[calc(100vw-1.5rem)]">
             <MapLegend
               userLocation={userLocation}
               shopCount={filteredShops.length}
-              riderCount={2}
+              riderCount={activeProximityRiders.length}
               onFocusCustomer={() => {
                 if (!userLocation) {
                   onRequestLocation();
@@ -12397,7 +12446,11 @@ function ExploreScreen({
                 }
               }}
               onFocusRider={() => {
-                toast.info("Viewing active delivery riders");
+                if (activeProximityRiders.length > 0) {
+                  toast.info(`Showing ${activeProximityRiders.length} active couriers within 5km radius`);
+                } else {
+                  toast.info("No active couriers currently within 5km radius.");
+                }
               }}
             />
           </div>
@@ -12430,11 +12483,11 @@ function ExploreScreen({
               />
             )}
 
-            {/* Customer Location Pin */}
+            {/* Customer Location Pin (Distinct Visual Style with Blue Aura) */}
             {userLocation && (
               <Marker
                 position={[userLocation.lat, userLocation.lng]}
-                icon={userIcon}
+                icon={userMapIcon}
               >
                 <Popup>
                   <motion.div
@@ -12448,52 +12501,68 @@ function ExploreScreen({
                       <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
                       <p className="font-extrabold text-xs text-blue-600 dark:text-blue-400">Your Location</p>
                     </div>
-                    <p className="text-[10px] text-slate-500 font-medium">Verified current spot</p>
+                    <p className="text-[10px] text-slate-500 font-medium">Verified customer location</p>
                   </motion.div>
                 </Popup>
               </Marker>
             )}
 
-            {/* Active Live Rider Pins */}
-            {userLocation && (
-              <>
-                <Marker
-                  position={[userLocation.lat + 0.0035, userLocation.lng + 0.0028]}
-                  icon={riderMapIcon}
-                >
-                  <Popup>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
-                      transition={{ duration: 0.2 }}
-                      className="p-1 min-w-[150px]"
-                    >
-                      <p className="font-bold text-xs text-indigo-600 dark:text-indigo-400">Rider Tshepo 🛵</p>
-                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">En route for pickup</p>
-                    </motion.div>
-                  </Popup>
-                </Marker>
-                <Marker
-                  position={[userLocation.lat - 0.0042, userLocation.lng - 0.0031]}
-                  icon={riderMapIcon}
-                >
-                  <Popup>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
-                      transition={{ duration: 0.2 }}
-                      className="p-1 min-w-[150px]"
-                    >
-                      <p className="font-bold text-xs text-indigo-600 dark:text-indigo-400">Rider Kabelo 🛵</p>
-                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">Delivering order #108</p>
-                    </motion.div>
-                  </Popup>
-                </Marker>
-              </>
-            )}
+            {/* Real-time Rider Proximity Observer: Renders ONLY active couriers within 5km radius */}
+            {activeProximityRiders.map((rider) => {
+              const rLat = rider.latitude;
+              const rLng = rider.longitude;
 
+              const vehicleIcon =
+                rider.vehicle_type === "car"
+                  ? "🚗"
+                  : rider.vehicle_type === "motorbike"
+                    ? "🏍️"
+                    : "🛵";
+
+              const refLat = userLocation?.lat ?? mapCenter[0];
+              const refLng = userLocation?.lng ?? mapCenter[1];
+              const distVal = calculateDistance(rLat, rLng, refLat, refLng);
+
+              return (
+                <Marker key={rider.id} position={[rLat, rLng]} icon={riderMapIcon}>
+                  <Popup>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                      transition={{ duration: 0.2 }}
+                      className="p-1 min-w-[170px]"
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="font-extrabold text-xs text-indigo-700 dark:text-indigo-300">
+                          {rider.full_name || `Courier #${rider.id.slice(0, 4)}`} {vehicleIcon}
+                        </p>
+                        <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                          {distVal.toFixed(1)} km away
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mb-2">
+                        {rider.current_order_id
+                          ? `Delivering Order #${rider.current_order_id.slice(0, 5)}`
+                          : "Active & Available for Dispatch"}
+                      </p>
+                      {rider.phone && (
+                        <button
+                          type="button"
+                          onClick={() => window.open(`tel:${rider.phone}`)}
+                          className="w-full py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-sm"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>Call Courier ({rider.phone.slice(-4)})</span>
+                        </button>
+                      )}
+                    </motion.div>
+                  </Popup>
+                </Marker>
+              );
+            })}
+
+            {/* Shop Pins: Distinct Open vs Closed Visual Indicators */}
             <MarkerClusterGroup
               chunkedLoading
               maxClusterRadius={40}
@@ -12501,6 +12570,9 @@ function ExploreScreen({
             >
               {filteredShops.map((shop) => {
                 const isFollowed = favorites.includes(shop.id);
+                const status = getShopStatus(shop);
+                const shopIcon = createShopMapIcon(status.isOpen);
+
                 return (
                   <Marker
                     key={shop.id}
@@ -12530,13 +12602,17 @@ function ExploreScreen({
                             <Heart className="w-3 h-3 text-red-500 fill-current" />
                           )}
                         </div>
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
                           <div className="flex items-center gap-1">
                             <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
                             <span className="text-xs font-black">{shop.rating}</span>
                           </div>
-                          <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-tight bg-orange-50 dark:bg-orange-950/40 px-1.5 py-0.5 rounded-md">
-                            {shop.category}
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                            status.isOpen
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/30"
+                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                          }`}>
+                            {status.isOpen ? "Open Now" : "Closed"}
                           </span>
                         </div>
                       </motion.div>
@@ -12547,23 +12623,210 @@ function ExploreScreen({
             </MarkerClusterGroup>
           </MapContainer>
 
-          {/* Floating Action Buttons */}
-          <div className="absolute bottom-24 left-0 right-0 z-[1000] pointer-events-none">
-            <div className="max-w-screen-xl mx-auto flex flex-col items-end gap-3 px-6">
+          {/* Compact Map Overlay: Floating Bottom-Right Action Menu */}
+          <div className="absolute bottom-24 right-4 z-[1000] flex flex-col items-end gap-2.5 pointer-events-none">
+            {/* Primary Action Trigger: Expand Compact Filters Overlay */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsMapOverlayMenuOpen(true);
+                triggerHaptic(10);
+              }}
+              className="bg-slate-900/95 dark:bg-slate-900/95 text-white backdrop-blur-xl px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 border border-slate-700/60 font-black text-xs active:scale-95 transition-all cursor-pointer pointer-events-auto hover:bg-slate-800"
+            >
+              <Search className="w-4 h-4 text-orange-400 shrink-0" />
+              <span>Search & Filters</span>
+              {(searchQuery || selectedCategory !== "All" || showOnlyOpen || maxDistance !== null) && (
+                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse border border-white"></span>
+              )}
+            </button>
+
+            {/* Quick Action Column */}
+            <div className="flex items-center gap-2 pointer-events-auto">
               <button
-                onClick={onHome}
-                className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer pointer-events-auto active:scale-95"
+                type="button"
+                onClick={() => {
+                  setLayoutMode("list");
+                  triggerHaptic(10);
+                }}
+                className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                title="Switch to List View"
               >
-                <Home className="w-6 h-6" />
+                <List className="w-4.5 h-4.5 text-orange-600 dark:text-orange-400" />
               </button>
               <button
-                onClick={onRequestLocation}
-                className="bg-white dark:bg-slate-800 p-3 rounded-full shadow-lg text-gray-600 dark:text-slate-300 hover:text-orange-500 transition-colors cursor-pointer pointer-events-auto active:scale-95"
+                type="button"
+                onClick={() => {
+                  onRequestLocation();
+                  triggerHaptic(10);
+                }}
+                className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                title="Center My Location"
               >
-                <LocateFixed className="w-6 h-6" />
+                <LocateFixed className="w-4.5 h-4.5 text-blue-500" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onHome();
+                  triggerHaptic(10);
+                }}
+                className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                title="Return Home"
+              >
+                <Home className="w-4.5 h-4.5 text-slate-600 dark:text-slate-300" />
               </button>
             </div>
           </div>
+
+          {/* Compact Map Overlay Drawer Modal */}
+          <AnimatePresence>
+            {isMapOverlayMenuOpen && (
+              <div className="fixed inset-0 z-[2000] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200">
+                <motion.div
+                  initial={{ opacity: 0, y: 40, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 40, scale: 0.95 }}
+                  className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-[32px] p-5 shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-orange-500" />
+                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-tight">
+                        Map Filters & Search
+                      </h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsMapOverlayMenuOpen(false)}
+                      className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="bg-slate-100 dark:bg-slate-800/80 rounded-2xl flex items-center px-4 py-3 border border-slate-200/60 dark:border-slate-700/60">
+                    <Search className="w-4 h-4 text-orange-500 mr-2.5 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Search food, street, or spot name..."
+                      className="w-full bg-transparent outline-none text-xs font-bold dark:text-white placeholder:text-slate-400"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        className="text-xs text-slate-400 hover:text-slate-600 font-bold ml-1"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Category Chips */}
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">
+                      Filter Category
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto no-scrollbar">
+                      {categories.map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCategory(cat);
+                            triggerHaptic(10);
+                          }}
+                          className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+                            selectedCategory === cat
+                              ? "bg-orange-600 text-white border-orange-500 shadow-md"
+                              : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
+                          }`}
+                        >
+                          {getCategorySlang(cat, language)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Proximity Radius Chips */}
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">
+                      Radius Limit
+                    </p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+                        <button
+                          key={dist === null ? "rad-any" : `rad-${dist}`}
+                          type="button"
+                          onClick={() => {
+                            if (dist !== null && !userLocation) {
+                              onRequestLocation();
+                            }
+                            setMaxDistance(dist);
+                            triggerHaptic(10);
+                          }}
+                          className={`py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border text-center ${
+                            maxDistance === dist
+                              ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900"
+                              : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
+                          }`}
+                        >
+                          {dist === null ? "Any" : `${dist}km`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Quick Toggles */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOnlyOpen(!showOnlyOpen);
+                        triggerHaptic(10);
+                      }}
+                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                        showOnlyOpen
+                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+                          : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Open Now Only</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMinRating(minRating > 0 ? 0 : 4);
+                        triggerHaptic(10);
+                      }}
+                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                        minRating > 0
+                          ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
+                          : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
+                      }`}
+                    >
+                      <Star className="w-3.5 h-3.5" />
+                      <span>4+ Stars Only</span>
+                    </button>
+                  </div>
+
+                  {/* Apply / Close Button */}
+                  <button
+                    type="button"
+                    onClick={() => setIsMapOverlayMenuOpen(false)}
+                    className="w-full py-3.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer mt-1"
+                  >
+                    View Map Results ({filteredShops.length} spots)
+                  </button>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 

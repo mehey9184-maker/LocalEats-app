@@ -16,32 +16,22 @@ if (typeof window !== "undefined") {
   };
 
   // Global safety net for unhandled promise rejections
-  window.addEventListener('unhandledrejection', (event) => {
-    const reasonStr = (event.reason && (event.reason instanceof Error ? event.reason.message : String(event.reason))) || '';
-    
-    // Silence network fetch rejections, HMR, and empty rejections
-    if (
-      !event.reason || 
-      reasonStr === '' || 
-      reasonStr === 'undefined' ||
-      reasonStr === 'null' ||
-      reasonStr.includes('WebSocket closed without opened') || 
-      reasonStr.includes('failed to connect to websocket') ||
-      reasonStr.includes('Failed to fetch') ||
-      reasonStr.includes('NetworkError') ||
-      reasonStr.includes('Load failed') ||
-      reasonStr.includes('CircuitBreaker')
-    ) {
-      event.preventDefault(); 
-      event.stopImmediatePropagation();
-      return;
+  const handleRejection = (event: PromiseRejectionEvent) => {
+    if (event && typeof event.preventDefault === 'function') {
+      event.preventDefault();
     }
-    
-    // Prevent platform's error popup for benign issues
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    console.warn('[UnhandledRejection caught]', event.reason);
-  }, true); // useCapture = true to catch it before other listeners
+    if (event && typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+    const reasonStr = (event?.reason && (event.reason instanceof Error ? event.reason.message : String(event.reason))) || '';
+    if (reasonStr) {
+      console.warn('[UnhandledRejection prevented]', reasonStr);
+    }
+    return true;
+  };
+
+  window.onunhandledrejection = handleRejection;
+  window.addEventListener('unhandledrejection', handleRejection, true);
 
   // Global safety net for raw uncaught exceptions
   window.addEventListener('error', (event) => {
