@@ -112,6 +112,7 @@ export type Shop = {
   prepTime?: string;
   isOpen?: boolean;
   images?: string[];
+  delivery_radius_km?: number;
   cash_trust_enabled?: boolean;
   allow_external_riders?: boolean;
   auto_look_for_rider?: boolean;

@@ -422,8 +422,23 @@ export function CheckoutScreen({
   const [distance, setDistance] = useState<number | null>(null);
   const [deliveryFee, setDeliveryFee] = useState<number>(5.0);
 
+  const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
+  const primaryShop = shops.find((s) => s.id === primaryShopId) || shops[0];
+
+  const shopRadiusLimit = useMemo(() => {
+    if (primaryShop) {
+      if (typeof primaryShop.delivery_radius_km === "number" && primaryShop.delivery_radius_km > 0) {
+        return primaryShop.delivery_radius_km;
+      }
+      if (typeof (primaryShop as any).delivery_radius === "number" && (primaryShop as any).delivery_radius > 0) {
+        return (primaryShop as any).delivery_radius;
+      }
+    }
+    return 5.0; // Standard merchant radius limit 5.0 km
+  }, [primaryShop]);
+
   const ZONE_A_LIMIT = 3.0;
-  const ZONE_B_LIMIT = 6.0;
+  const ZONE_B_LIMIT = shopRadiusLimit;
   const ZONE_A_FEE = 5.0;
   const ZONE_B_FEE = 10.0;
 
@@ -440,9 +455,6 @@ export function CheckoutScreen({
       setIsLocationConfirmed(false);
     }
   }, [userLocation, deliveryType, deliveryCoordinates]);
-
-  const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
-  const primaryShop = shops.find((s) => s.id === primaryShopId) || shops[0];
 
   const [hasInHouseRiderOnline, setHasInHouseRiderOnline] = useState(false);
 
@@ -482,8 +494,7 @@ export function CheckoutScreen({
 
       // Distance Warnings & Dynamic Pricing
       if (dist > ZONE_B_LIMIT) {
-        toast.error("Outside Delivery Range", {
-          description: `Store is ${dist.toFixed(1)}km away. We only deliver within ${ZONE_B_LIMIT}km.`,
+        toast.error(`Delivery Unavailable at this Location — Distance (${dist.toFixed(1)} km) exceeds shop limit (${ZONE_B_LIMIT.toFixed(1)} km)`, {
           duration: 5000,
           position: "top-center",
         });
@@ -2117,16 +2128,39 @@ export function CheckoutScreen({
                 </div>
 
                 {distance !== null && distance > ZONE_B_LIMIT && (
-                  <div className="bg-rose-50 dark:bg-red-950/20 border border-rose-150 p-3.5 rounded-2xl flex items-start gap-2.5">
-                    <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-                    <div className="text-left">
-                      <p className="text-xs font-black text-rose-700 uppercase tracking-wide">
-                        Out of service area
-                      </p>
-                      <p className="text-[10px] text-rose-500 mt-0.5 leading-relaxed font-semibold">
-                        Max range limit is {ZONE_B_LIMIT}km. Adjust your
-                        delivery pin closer or switch to Counter Pickup!
-                      </p>
+                  <div className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-200 dark:border-rose-900/60 p-4 rounded-2xl flex flex-col gap-3 shadow-sm animate-in fade-in duration-200">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-rose-100 dark:bg-rose-900/40 rounded-xl text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-black text-rose-900 dark:text-rose-100 uppercase tracking-wide">
+                          Delivery Unavailable at this Location — Distance ({distance.toFixed(1)} km) exceeds shop limit ({ZONE_B_LIMIT.toFixed(1)} km)
+                        </h4>
+                        <p className="text-xs text-rose-700 dark:text-rose-300 font-semibold leading-relaxed">
+                          Your location is outside this shop's home delivery radius. We automatically offer Store Pickup as a zero-fee alternative.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-rose-800 dark:text-rose-300">
+                        Collect your fresh meal at the counter with no delivery fees!
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveryType("collection");
+                          toast.success("Switched to Store Pickup as an alternative", {
+                            icon: "🛍️"
+                          });
+                          triggerHaptic(15);
+                        }}
+                        className="px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shrink-0 transition-all active:scale-95 cursor-pointer min-h-[46px] flex items-center gap-2 shadow-md shadow-orange-600/20"
+                      >
+                        <ShoppingBag className="w-4 h-4" />
+                        <span>Switch to Store Pickup</span>
+                      </button>
                     </div>
                   </div>
                 )}

@@ -1,9 +1,58 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useMap, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
+import { useMap, useMapEvents, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
-import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass } from 'lucide-react';
+import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass, Crosshair } from 'lucide-react';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'motion/react';
 import { calculateDistance, DEFAULT_COORDS } from '../utils';
+import { MapLegend } from './MapLegend';
+
+
+const userMapIcon = L.divIcon({
+  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+    <div class="bg-blue-600 p-2 rounded-full border-4 border-white shadow-lg text-white flex items-center justify-center relative z-10 animate-bounce">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+    </div>
+    <div class="w-1.5 h-1.5 bg-blue-600 rounded-full mt-1"></div>
+  </div>`,
+  className: '',
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48]
+});
+
+export const storeMapIcon = L.divIcon({
+  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+    <div class="bg-orange-600 p-2.5 rounded-xl border-2 border-white shadow-lg text-white flex items-center justify-center relative z-10">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
+      </svg>
+    </div>
+    <div class="w-1.5 h-1.5 bg-orange-600 rounded-full mt-1"></div>
+  </div>`,
+  className: '',
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48]
+});
+
+export const riderMapIcon = L.divIcon({
+  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+    <div class="bg-indigo-600 p-2 rounded-full border-4 border-white shadow-lg text-white flex items-center justify-center relative z-10 animate-pulse">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/>
+      </svg>
+    </div>
+    <div class="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-1"></div>
+  </div>`,
+  className: '',
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48]
+});
 
 const mapStyleUrls = {
   street: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -28,6 +77,77 @@ function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
     }
   }, [lat, lng, map]);
   return null;
+}
+
+function MapFocusTracker({
+  coords,
+  onRecenter,
+}: {
+  coords: { lat: number; lng: number } | null;
+  onRecenter?: () => void;
+}) {
+  const map = useMap();
+  const [hasPanned, setHasPanned] = useState(false);
+  const prevCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Automatically focus the map view on user's current location immediately upon successful geolocation
+  useEffect(() => {
+    if (coords && coords.lat !== undefined && coords.lng !== undefined) {
+      const prev = prevCoordsRef.current;
+      const isNew = !prev || Math.abs(prev.lat - coords.lat) > 0.0001 || Math.abs(prev.lng - coords.lng) > 0.0001;
+      if (isNew) {
+        map.flyTo({ lat: coords.lat, lng: coords.lng }, Math.max(15, map.getZoom()), {
+          animate: true,
+          duration: 1.0,
+        });
+        prevCoordsRef.current = coords;
+        setHasPanned(false);
+      }
+    }
+  }, [coords?.lat, coords?.lng, map]);
+
+  useMapEvents({
+    dragstart: () => {
+      setHasPanned(true);
+    },
+    zoomend: () => {
+      if (coords) {
+        const center = map.getCenter();
+        const dist = Math.sqrt(
+          Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2)
+        );
+        if (dist > 0.0015) {
+          setHasPanned(true);
+        }
+      }
+    },
+  });
+
+  const handleReturnToLocation = () => {
+    if (coords) {
+      map.flyTo({ lat: coords.lat, lng: coords.lng }, 16, {
+        animate: true,
+        duration: 0.8,
+      });
+      setHasPanned(false);
+      if (onRecenter) onRecenter();
+    }
+  };
+
+  if (!coords || !hasPanned) return null;
+
+  return (
+    <div className="absolute top-14 left-3 z-[1000] animate-in fade-in slide-in-from-top-2 duration-200">
+      <button
+        type="button"
+        onClick={handleReturnToLocation}
+        className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] uppercase tracking-wider px-3.5 py-2 rounded-xl shadow-xl flex items-center gap-2 transition-all active:scale-95 cursor-pointer border border-white/80 dark:border-slate-800"
+      >
+        <Crosshair className="w-3.5 h-3.5 text-white animate-spin duration-[4000ms]" />
+        <span>Return to My Spot</span>
+      </button>
+    </div>
+  );
 }
 
 function InvalidateMapSize({ trigger }: { trigger?: any }) {
@@ -339,6 +459,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         eventHandlers={eventHandlers()}
         position={markerPos}
         ref={markerRef}
+        icon={userMapIcon}
       >
         <Popup minWidth={90}>
            <div className="text-center">
@@ -350,17 +471,10 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
     );
   }
 
-  const shopIcon = L.divIcon({
-    html: `<div class="bg-orange-600 p-2 rounded-full border-2 border-white shadow-lg text-white flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
-    className: '',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-  });
-
   function ShopMarker() {
     if (!shopCoords) return null;
     return (
-      <Marker position={shopCoords} icon={shopIcon}>
+      <Marker position={shopCoords} icon={storeMapIcon}>
         <Popup>
           <p className="font-black text-xs uppercase tracking-tight text-center">Store Location</p>
         </Popup>
@@ -740,6 +854,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
         eventHandlers={eventHandlers()}
         position={coords}
         ref={markerRef}
+        icon={userMapIcon}
       >
         <Popup minWidth={90}>
           <div className="text-center">
@@ -766,13 +881,6 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
     
     return null;
   }
-
-  const shopIcon = L.divIcon({
-    html: `<div class="bg-orange-600 p-2 rounded-full border-2 border-white shadow-lg text-white flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 12 2l9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>`,
-    className: '',
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-  });
 
   return (
     <div className="w-full flex flex-col gap-2">
@@ -832,7 +940,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             
             {shopCoords && (
               <>
-                <Marker position={shopCoords} icon={shopIcon}>
+                <Marker position={shopCoords} icon={storeMapIcon}>
                   <Popup>
                     <p className="font-black text-xs uppercase tracking-tight text-center">Collection / Store Basis</p>
                   </Popup>

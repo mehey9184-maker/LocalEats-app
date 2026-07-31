@@ -4,6 +4,8 @@
  */
 
 import { CheckoutScreen } from "./screens/CheckoutScreen";
+import SystemStatusIndicator from "./components/SystemStatusIndicator";
+import { CircuitBreaker } from "./utils/circuitBreaker";
 import {
   useState,
   Dispatch,
@@ -25,10 +27,13 @@ import {
   Marker,
   Popup,
   useMap,
+  useMapEvents,
   Polyline,
   Circle,
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
+import { MapLegend } from "./components/MapLegend";
+import { riderMapIcon } from "./components/MapComponents";
 
 // Fix for default marker icons in react-leaflet
 import icon from "leaflet/dist/images/marker-icon.png";
@@ -1592,6 +1597,7 @@ export default function App() {
     }
 
     try {
+      await CircuitBreaker.execute("fetchShopsAndMenu", async () => {
       // Fetch all shops
       const { data: shopsData, error: shopsError } = await supabase
         .from("shops")
@@ -1842,6 +1848,7 @@ export default function App() {
       safeLocalStorageSet("cached_shops", JSON.stringify(formattedShops)); // Instant-Load Caching
       cacheBusinessResults("all_shops", formattedShops); // IndexedDB Offline Storage
       setIsOnline(true);
+      });
       setLoadingShops(false);
     } catch (err: any) {
       const errStr = (err?.message || String(err)).toLowerCase();
@@ -6893,10 +6900,30 @@ function HomeScreen({
 
   const [isHeaderSearching, setIsHeaderSearching] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const headerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
+    if (!headerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      if (headerRef.current) {
+        setHeaderHeight(headerRef.current.getBoundingClientRect().height);
+      }
+    });
+    observer.observe(headerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let ticking = false;
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 20);
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setIsScrolled(window.scrollY > 20);
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
@@ -7315,6 +7342,7 @@ function HomeScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+      <SystemStatusIndicator />
       {isUpdateAvailable && (
         <button
           onClick={() => window.location.reload()}
@@ -7325,7 +7353,7 @@ function HomeScreen({
         </button>
       )}
       {/* TopBar */}
-      <header className={`bg-white dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-primary/5 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled ? 'py-1 sm:py-1.5 shadow-sm' : 'py-2 sm:py-3'}`}>
+      <header ref={headerRef} className={`bg-white dark:bg-slate-900/80 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-primary/5 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 sm:py-3 ${isScrolled ? 'shadow-sm' : ''}`}>
         <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 min-h-[40px] sm:min-h-[48px] relative">
           
           {/* Logo & Version */}
@@ -7828,7 +7856,7 @@ function HomeScreen({
         )}
       </header>
 
-      <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full">
+      <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full" style={{ paddingTop: headerHeight ? `calc(${headerHeight}px + 1rem)` : "120px" }}>
         {/* Compact Persistent Delivery Status Widget (Removed to prevent duplication with global persistent tracker) */}
 
         <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -11642,24 +11670,40 @@ function StoreInfoScreen({
   );
 }
 
-const shopIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+/* replaced */
+
+
+const userIcon = L.divIcon({
+  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+    <div class="bg-blue-600 p-2 rounded-full border-4 border-white shadow-lg text-white flex items-center justify-center relative z-10 animate-bounce">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+    </div>
+    <div class="w-1.5 h-1.5 bg-blue-600 rounded-full mt-1"></div>
+  </div>`,
+  className: '',
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48]
 });
 
-const userIcon = new L.Icon({
-  iconUrl:
-    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+const shopIcon = L.divIcon({
+  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+    <div class="bg-orange-600 p-2.5 rounded-xl border-2 border-white shadow-lg text-white flex items-center justify-center relative z-10">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
+      </svg>
+    </div>
+    <div class="w-1.5 h-1.5 bg-orange-600 rounded-full mt-1"></div>
+  </div>`,
+  className: '',
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48]
 });
+
 
 function MapRecenter({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -11875,8 +11919,8 @@ function ExploreScreen({
             </div>
           </div>
 
-          {/* Quick Filter Chips */}
-          <div className="flex gap-2 overflow-x-auto no-scrollbar py-1 mt-2 px-1">
+          {/* Quick Filter Chips & Distance Radius Toggles */}
+          <div className="flex gap-2 overflow-x-auto no-scrollbar py-1 mt-2 px-1 items-center">
             <button
               onClick={() => {
                 if (!userLocation) {
@@ -11894,6 +11938,33 @@ function ExploreScreen({
               <Navigation className="w-3.5 h-3.5" />
               Sort by Distance
             </button>
+
+            <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-0.5" />
+
+            {/* Distance Radius Quick Chips: 1km, 5km, 10km */}
+            {([null, 1, 5, 10] as (number | null)[]).map((dist) => {
+              const isActive = maxDistance === dist;
+              return (
+                <button
+                  key={dist === null ? "radius-all" : `radius-${dist}`}
+                  onClick={() => {
+                    if (dist !== null && !userLocation) {
+                      toast.info("Locating your spot to filter by radius...");
+                      onRequestLocation();
+                    }
+                    setMaxDistance(dist);
+                    triggerHaptic(10);
+                  }}
+                  className={`flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-full text-xs font-black transition-all border shadow-sm ${
+                    isActive
+                      ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/20"
+                      : "bg-white/90 dark:bg-slate-900/90 backdrop-blur-md text-slate-600 dark:text-slate-300 border-slate-200/50 dark:border-slate-800/50 hover:border-orange-300"
+                  }`}
+                >
+                  {dist === null ? "All Distance" : `Within ${dist} km`}
+                </button>
+              );
+            })}
           </div>
 
           {/* Expanded Filters Drawer Style */}
@@ -11989,31 +12060,33 @@ function ExploreScreen({
               </div>
 
               {/* Maximum Distance Radius */}
-              {userLocation && (
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
-                    Maximum Distance Radius
-                  </p>
-                  <div className="grid grid-cols-4 gap-2">
-                    {([null, 3, 5, 10] as (number | null)[]).map((dist) => (
-                      <button
-                        key={dist === null ? "any" : dist}
-                        onClick={() => {
-                          setMaxDistance(dist);
-                          triggerHaptic(10);
-                        }}
-                        className={`px-2 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
-                          maxDistance === dist
-                            ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
-                            : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
-                        }`}
-                      >
-                        {dist === null ? "Any" : `${dist} km`}
-                      </button>
-                    ))}
-                  </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 ml-1">
+                  Maximum Distance Radius
+                </p>
+                <div className="grid grid-cols-4 gap-2">
+                  {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+                    <button
+                      key={dist === null ? "any" : dist}
+                      onClick={() => {
+                        if (dist !== null && !userLocation) {
+                          toast.info("Locating your spot to filter by radius...");
+                          onRequestLocation();
+                        }
+                        setMaxDistance(dist);
+                        triggerHaptic(10);
+                      }}
+                      className={`px-2 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border-2 text-center ${
+                        maxDistance === dist
+                          ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-md"
+                          : "bg-white dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-slate-200"
+                      }`}
+                    >
+                      {dist === null ? "Any" : `${dist} km`}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
               {/* Advanced Utility Filters */}
               <div className="flex flex-col gap-4">
@@ -12303,6 +12376,32 @@ function ExploreScreen({
               </button>
             </div>
           )}
+          {/* Interactive Map Legend Overlay */}
+          <div className="absolute top-28 left-4 z-[1000] pointer-events-auto">
+            <MapLegend
+              userLocation={userLocation}
+              shopCount={filteredShops.length}
+              riderCount={2}
+              onFocusCustomer={() => {
+                if (!userLocation) {
+                  onRequestLocation();
+                } else {
+                  toast.success("Centering on your location");
+                }
+              }}
+              onFocusShop={() => {
+                if (filteredShops.length > 0) {
+                  const s = filteredShops[0];
+                  setSelectedShopId(s.id);
+                  toast.info(`Focused on ${s.name}`);
+                }
+              }}
+              onFocusRider={() => {
+                toast.info("Viewing active delivery riders");
+              }}
+            />
+          </div>
+
           <MapContainer
             center={mapCenter}
             zoom={14}
@@ -12313,16 +12412,86 @@ function ExploreScreen({
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            {/* Upgrade MapRecenter with animated smooth transitions */}
-            <ExploreMapRecenter center={mapCenter} />
+            {/* Auto-focus on geolocation & Return to My Location button */}
+            <ExploreMapUserTracker userLocation={userLocation} center={mapCenter} />
 
+            {/* Distance Radius Filter Circle */}
+            {userLocation && maxDistance !== null && (
+              <Circle
+                center={[userLocation.lat, userLocation.lng]}
+                radius={maxDistance * 1000}
+                pathOptions={{
+                  color: "#f97316",
+                  fillColor: "#f97316",
+                  fillOpacity: 0.08,
+                  weight: 2,
+                  dashArray: "6, 6",
+                }}
+              />
+            )}
+
+            {/* Customer Location Pin */}
             {userLocation && (
               <Marker
                 position={[userLocation.lat, userLocation.lng]}
                 icon={userIcon}
               >
-                <Popup>You are here</Popup>
+                <Popup>
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                    transition={{ duration: 0.2 }}
+                    className="p-1 min-w-[140px]"
+                  >
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                      <p className="font-extrabold text-xs text-blue-600 dark:text-blue-400">Your Location</p>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-medium">Verified current spot</p>
+                  </motion.div>
+                </Popup>
               </Marker>
+            )}
+
+            {/* Active Live Rider Pins */}
+            {userLocation && (
+              <>
+                <Marker
+                  position={[userLocation.lat + 0.0035, userLocation.lng + 0.0028]}
+                  icon={riderMapIcon}
+                >
+                  <Popup>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                      transition={{ duration: 0.2 }}
+                      className="p-1 min-w-[150px]"
+                    >
+                      <p className="font-bold text-xs text-indigo-600 dark:text-indigo-400">Rider Tshepo 🛵</p>
+                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">En route for pickup</p>
+                    </motion.div>
+                  </Popup>
+                </Marker>
+                <Marker
+                  position={[userLocation.lat - 0.0042, userLocation.lng - 0.0031]}
+                  icon={riderMapIcon}
+                >
+                  <Popup>
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                      transition={{ duration: 0.2 }}
+                      className="p-1 min-w-[150px]"
+                    >
+                      <p className="font-bold text-xs text-indigo-600 dark:text-indigo-400">Rider Kabelo 🛵</p>
+                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">Delivering order #108</p>
+                    </motion.div>
+                  </Popup>
+                </Marker>
+              </>
             )}
 
             <MarkerClusterGroup
@@ -12348,18 +12517,29 @@ function ExploreScreen({
                     }}
                   >
                     <Popup>
-                      <div className="p-1">
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <p className="font-bold text-sm">{shop.name}</p>
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9, y: 4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.9, y: 4 }}
+                        transition={{ duration: 0.2 }}
+                        className="p-1.5 min-w-[160px]"
+                      >
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{shop.name}</p>
                           {isFollowed && (
-                            <Heart className="w-2.5 h-2.5 text-red-500 fill-current" />
+                            <Heart className="w-3 h-3 text-red-500 fill-current" />
                           )}
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                          <span className="text-xs">{shop.rating}</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1">
+                            <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
+                            <span className="text-xs font-black">{shop.rating}</span>
+                          </div>
+                          <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase tracking-tight bg-orange-50 dark:bg-orange-950/40 px-1.5 py-0.5 rounded-md">
+                            {shop.category}
+                          </span>
                         </div>
-                      </div>
+                      </motion.div>
                     </Popup>
                   </Marker>
                 );
@@ -12546,25 +12726,97 @@ function ExploreScreen({
 }
 
 {
-  /* Smooth FlyTo centered sub-component map tracker helper */
+  /* Smooth FlyTo centered & user location tracking helper component */
 }
-function ExploreMapRecenter({
+function ExploreMapUserTracker({
+  userLocation,
   center,
   zoom = 15,
 }: {
+  userLocation: { lat: number; lng: number } | null;
   center: [number, number];
   zoom?: number;
 }) {
   const map = useMap();
+  const [hasMovedFromUser, setHasMovedFromUser] = useState(false);
+  const prevUserPosRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Focus map view on user's current location immediately upon successful geolocation
+  useEffect(() => {
+    if (userLocation && userLocation.lat && userLocation.lng) {
+      const prev = prevUserPosRef.current;
+      const isNew =
+        !prev ||
+        Math.abs(prev.lat - userLocation.lat) > 0.0001 ||
+        Math.abs(prev.lng - userLocation.lng) > 0.0001;
+      if (isNew) {
+        map.flyTo([userLocation.lat, userLocation.lng], zoom, {
+          animate: true,
+          duration: 1.2,
+        });
+        prevUserPosRef.current = userLocation;
+        setHasMovedFromUser(false);
+      }
+    }
+  }, [userLocation?.lat, userLocation?.lng, map, zoom]);
+
+  // Recenter when active store/center changes
   useEffect(() => {
     if (center && center[0] && center[1]) {
       map.flyTo(center, zoom, {
         animate: true,
-        duration: 1.2,
+        duration: 1.0,
       });
     }
   }, [center[0], center[1], map, zoom]);
-  return null;
+
+  // Listen for map drag or movement
+  useMapEvents({
+    dragstart: () => {
+      setHasMovedFromUser(true);
+    },
+    zoomend: () => {
+      if (userLocation) {
+        const c = map.getCenter();
+        const dist = Math.sqrt(
+          Math.pow(c.lat - userLocation.lat, 2) +
+            Math.pow(c.lng - userLocation.lng, 2)
+        );
+        if (dist > 0.002) {
+          setHasMovedFromUser(true);
+        }
+      }
+    },
+  });
+
+  const handleReturnToLocation = () => {
+    if (userLocation) {
+      map.flyTo([userLocation.lat, userLocation.lng], zoom, {
+        animate: true,
+        duration: 1.0,
+      });
+      setHasMovedFromUser(false);
+    }
+  };
+
+  if (!userLocation || !hasMovedFromUser) return null;
+
+  return (
+    <div className="absolute top-24 right-4 z-[1000] animate-in fade-in slide-in-from-top-2 duration-200">
+      <button
+        type="button"
+        onClick={handleReturnToLocation}
+        className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 transition-all active:scale-95 cursor-pointer border-2 border-white/80 dark:border-slate-800"
+      >
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-300 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+        </span>
+        <LocateFixed className="w-4 h-4 text-white" />
+        <span>Return to My Location</span>
+      </button>
+    </div>
+  );
 }
 
 function NotificationsScreen({
