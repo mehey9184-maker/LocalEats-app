@@ -33,7 +33,15 @@ import {
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import { MapLegend } from "./components/MapLegend";
-import { riderMapIcon, userMapIcon, createShopMapIcon } from "./components/MapComponents";
+import {
+  riderMapIcon,
+  userMapIcon,
+  createShopMapIcon,
+  MemoizedCustomerMarker,
+  MemoizedShopMarker,
+  MemoizedRiderMarker,
+  InvalidateMapSize,
+} from "./components/MapComponents";
 
 // Fix for default marker icons in react-leaflet
 import icon from "leaflet/dist/images/marker-icon.png";
@@ -185,6 +193,8 @@ import {
   Activity,
   BellOff,
   Upload,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
@@ -2346,6 +2356,29 @@ export default function App() {
       registerAndSyncPushToken(activeUserId).catch((err) => {
         console.warn("[FCM] Auto push token registration notice:", err);
       });
+    }
+  }, [session?.user?.id, userProfile?.id]);
+
+  // Account switch detection: Clear old user profile if it doesn't match the new active session
+  useEffect(() => {
+    if (session?.user?.id && userProfile?.id && session.user.id !== userProfile.id) {
+      console.info("[Auth] Account switch detected. Clearing old user profile.");
+      setUserProfile({
+        fullName: "",
+        email: "",
+        phone: "",
+        city: SUPPORTED_CITIES[0] || "Johannesburg",
+        address: "",
+        country: "South Africa",
+        role: "user"
+      });
+      setCart([]);
+      setFavorites([]);
+      setOfflineOrders([]);
+      localStorage.removeItem("userProfile");
+      localStorage.removeItem("cart");
+      localStorage.removeItem("favorites");
+      localStorage.removeItem("offline_orders_queue");
     }
   }, [session?.user?.id, userProfile?.id]);
 
@@ -7442,19 +7475,19 @@ function HomeScreen({
             >
               <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
-            <div className={`group relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border transition-all duration-300 overflow-hidden ${
+            <div className={`group relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border transition-all duration-300 transform group-focus-within:scale-[1.015] overflow-hidden ${
               searchQuery.trim().length > 0 
-                ? 'border-orange-500/80 ring-2 ring-orange-500/30 shadow-[0_0_18px_rgba(249,115,22,0.3)]' 
+                ? 'border-orange-500/80 ring-2 ring-orange-500/50 shadow-[0_0_12px_rgba(249,115,22,0.4)]' 
                 : 'border-slate-200 dark:border-slate-700'
-            } focus-within:border-orange-500/50 focus-within:ring-4 focus-within:ring-orange-500/20 focus-within:shadow-[0_0_22px_rgba(249,115,22,0.35)] dark:focus-within:border-orange-500/50 dark:focus-within:ring-orange-400/25`}>
+            } focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/50 focus-within:shadow-[0_0_8px_rgba(249,115,22,0.4)] dark:focus-within:border-orange-500/50 dark:focus-within:ring-orange-400/50`}>
               <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-300 ${
                 searchQuery.trim().length > 0 
-                  ? 'text-orange-500 scale-110 animate-pulse' 
-                  : 'text-slate-400 group-focus-within:text-orange-500 group-focus-within:scale-110'
+                  ? 'text-orange-500 scale-110 animate-spin' 
+                  : 'text-slate-400 group-focus-within:text-orange-500 group-focus-within:scale-110 group-focus-within:animate-pulse'
               }`} />
               <input
                 id="header-search-input"
-                className="w-full bg-transparent border-none outline-none py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-200 focus:border-orange-500/50"
+                className="w-full bg-transparent border-none outline-none py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-300 transform focus:scale-[1.01] focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 focus:shadow-[0_0_8px_rgba(249,115,22,0.4)] rounded-lg"
                 placeholder="Search local kitchens..."
                 value={searchQuery}
                 onBlur={() => {
@@ -9470,7 +9503,7 @@ function DiscoverScreen({
                 />
               </MapContainer>
             </div>
-            <div className="absolute bottom-6 left-6 right-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20 z-[1000] pointer-events-none">
+            <div className="absolute bottom-6 left-4 sm:left-6 max-w-sm bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-white/20 dark:border-slate-800/50 z-[1000] pointer-events-none">
               <p className="text-xs font-black text-slate-900 dark:text-white mb-1 uppercase tracking-wider flex items-center gap-1.5">
                 <span className="size-2 bg-orange-500 rounded-full animate-ping"></span>
                 Interactive Leaflet Map
@@ -9629,7 +9662,7 @@ function AddressPicker({
 
   return (
     <div className="space-y-4">
-      <div className="relative">
+      <div className="relative z-30">
         <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
           {loading ? (
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -11862,6 +11895,8 @@ function ExploreScreen({
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false);
+  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'rider'>('all');
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
@@ -12510,10 +12545,14 @@ function ExploreScreen({
           </div>
         </div>
       ) : (
-        /* Mobile-Optimized Map View with Compact Floating Action Menu */
-        <div className="flex-grow relative z-10 overflow-hidden dark:[&_.leaflet-tile-container]:invert dark:[&_.leaflet-tile-container]:hue-rotate-[180deg] dark:[&_.leaflet-tile-container]:brightness-[0.75] dark:[&_.leaflet-tile-container]:contrast-[1.2]">
+        /* Mobile-Optimized Map View with Fullscreen Toggle & Custom Z-Index Overlay Management */
+        <div className={`transition-all duration-300 ${
+          isMapFullscreen 
+            ? "fixed inset-0 z-[1500] w-screen h-screen bg-slate-950 flex flex-col overflow-hidden" 
+            : "flex-grow relative z-10 overflow-hidden dark:[&_.leaflet-tile-container]:invert dark:[&_.leaflet-tile-container]:hue-rotate-[180deg] dark:[&_.leaflet-tile-container]:brightness-[0.75] dark:[&_.leaflet-tile-container]:contrast-[1.2]"
+        }`}>
           {!isOnline && (
-            <div className="absolute inset-0 z-20 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+            <div className="absolute inset-0 z-50 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
               <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 mb-6 shadow-sm border border-slate-200 dark:border-slate-800">
                 <WifiOff className="w-10 h-10" />
               </div>
@@ -12534,42 +12573,79 @@ function ExploreScreen({
             </div>
           )}
 
-          {/* Interactive Map Legend Overlay - Clean Floating Top Position */}
-          <div className="absolute top-4 left-3 z-[1000] pointer-events-auto max-w-[calc(100vw-1.5rem)]">
-            <MapLegend
-              userLocation={userLocation}
-              shopCount={filteredShops.length}
-              riderCount={activeProximityRiders.length}
-              onFocusCustomer={() => {
-                if (!userLocation) {
-                  onRequestLocation();
-                } else {
-                  toast.success("Centering on your location");
-                }
-              }}
-              onFocusShop={() => {
-                if (filteredShops.length > 0) {
-                  const s = filteredShops[0];
-                  setSelectedShopId(s.id);
-                  toast.info(`Focused on ${s.name}`);
-                }
-              }}
-              onFocusRider={() => {
-                if (activeProximityRiders.length > 0) {
-                  toast.info(`Showing ${activeProximityRiders.length} active couriers within 5km radius`);
-                } else {
-                  toast.info("No active couriers currently within 5km radius.");
-                }
-              }}
-            />
+          {/* Top Floating Controls Bar (Z-Index Strategy: 500/2000 above Leaflet panes) */}
+          <div className="absolute top-4 left-3 right-3 z-[500] flex items-start justify-between pointer-events-none gap-2">
+            {/* Interactive Map Legend Overlay - Pin Color Breakdown */}
+            <div className="pointer-events-auto max-w-[calc(100vw-7rem)] sm:max-w-md">
+              <MapLegend
+                userLocation={userLocation}
+                activeFilter={legendFilter}
+                onSelectFilter={(f) => setLegendFilter(f)}
+                shopCount={filteredShops.length}
+                riderCount={activeProximityRiders.length}
+                onFocusCustomer={() => {
+                  if (!userLocation) {
+                    onRequestLocation();
+                  } else {
+                    toast.success("Centering on your location");
+                  }
+                }}
+                onFocusShop={() => {
+                  if (filteredShops.length > 0) {
+                    const s = filteredShops[0];
+                    setSelectedShopId(s.id);
+                    toast.info(`Focused on ${s.name}`);
+                  }
+                }}
+                onFocusRider={() => {
+                  if (activeProximityRiders.length > 0) {
+                    toast.info(`Showing ${activeProximityRiders.length} active couriers within 5km radius`);
+                  } else {
+                    toast.info("No active couriers currently within 5km radius.");
+                  }
+                }}
+              />
+            </div>
+
+            {/* Top-Right Custom UI Fullscreen Toggle & Navigation Controls */}
+            <div className="flex items-center gap-2 pointer-events-auto shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMapFullscreen(!isMapFullscreen);
+                  triggerHaptic(10);
+                }}
+                className={`px-3 py-2.5 rounded-2xl border shadow-xl backdrop-blur-md transition-all flex items-center gap-2 font-black text-xs active:scale-95 cursor-pointer ${
+                  isMapFullscreen
+                    ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/30 ring-2 ring-orange-400/50"
+                    : "bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 border-slate-200/60 dark:border-slate-800/60 hover:border-orange-500"
+                }`}
+                title={isMapFullscreen ? "Exit Fullscreen Mode" : "Expand Fullscreen Mode"}
+              >
+                {isMapFullscreen ? (
+                  <>
+                    <Minimize2 className="w-4 h-4 text-white shrink-0 animate-pulse" />
+                    <span className="hidden sm:inline font-black uppercase tracking-wider text-[10px]">Exit Fullscreen</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-4 h-4 text-orange-500 shrink-0" />
+                    <span className="hidden sm:inline font-bold uppercase tracking-wider text-[10px]">Fullscreen</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <MapContainer
             center={mapCenter}
             zoom={14}
             scrollWheelZoom={true}
-            className="h-full w-full"
+            className="h-full w-full z-0"
           >
+            {/* Auto invalidates map layout on fullscreen state change */}
+            <InvalidateMapSize trigger={isMapFullscreen} />
+
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -12592,148 +12668,59 @@ function ExploreScreen({
               />
             )}
 
-            {/* Customer Location Pin (Distinct Visual Style with Blue Aura) */}
-            {userLocation && (
-              <Marker
-                position={[userLocation.lat, userLocation.lng]}
-                icon={userMapIcon}
-              >
-                <Popup>
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9, y: 4 }}
-                    transition={{ duration: 0.2 }}
-                    className="p-1 min-w-[140px]"
-                  >
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-                      <p className="font-extrabold text-xs text-blue-600 dark:text-blue-400">Your Location</p>
-                    </div>
-                    <p className="text-[10px] text-slate-500 font-medium">Verified customer location</p>
-                  </motion.div>
-                </Popup>
-              </Marker>
+            {/* Customer Location Pin (Memoized for zero redundant re-renders) */}
+            {userLocation && (legendFilter === 'all' || legendFilter === 'customer') && (
+              <MemoizedCustomerMarker
+                lat={userLocation.lat}
+                lng={userLocation.lng}
+              />
             )}
 
-            {/* Real-time Rider Proximity Observer: Renders ONLY active couriers within 5km radius */}
-            {activeProximityRiders.map((rider) => {
+            {/* Real-time Rider Proximity Observer (Memoized Riders) */}
+            {(legendFilter === 'all' || legendFilter === 'rider') && activeProximityRiders.map((rider) => {
               const rLat = rider.latitude;
               const rLng = rider.longitude;
-
-              const vehicleIcon =
-                rider.vehicle_type === "car"
-                  ? "🚗"
-                  : rider.vehicle_type === "motorbike"
-                    ? "🏍️"
-                    : "🛵";
-
               const refLat = userLocation?.lat ?? mapCenter[0];
               const refLng = userLocation?.lng ?? mapCenter[1];
               const distVal = calculateDistance(rLat, rLng, refLat, refLng);
 
               return (
-                <Marker key={rider.id} position={[rLat, rLng]} icon={riderMapIcon}>
-                  <Popup>
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: 4 }}
-                      transition={{ duration: 0.2 }}
-                      className="p-1 min-w-[170px]"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <p className="font-extrabold text-xs text-indigo-700 dark:text-indigo-300">
-                          {rider.full_name || `Courier #${rider.id.slice(0, 4)}`} {vehicleIcon}
-                        </p>
-                        <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
-                          {distVal.toFixed(1)} km away
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mb-2">
-                        {rider.current_order_id
-                          ? `Delivering Order #${rider.current_order_id.slice(0, 5)}`
-                          : "Active & Available for Dispatch"}
-                      </p>
-                      {rider.phone && (
-                        <button
-                          type="button"
-                          onClick={() => window.open(`tel:${rider.phone}`)}
-                          className="w-full py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-sm"
-                        >
-                          <Phone className="w-3 h-3" />
-                          <span>Call Courier ({rider.phone.slice(-4)})</span>
-                        </button>
-                      )}
-                    </motion.div>
-                  </Popup>
-                </Marker>
+                <MemoizedRiderMarker
+                  key={rider.id}
+                  rider={rider}
+                  distVal={distVal}
+                />
               );
             })}
 
-            {/* Shop Pins: Distinct Open vs Closed Visual Indicators */}
+            {/* Shop Pins Cluster (Memoized Shops) */}
             <MarkerClusterGroup
               chunkedLoading
               maxClusterRadius={40}
               spiderfyOnMaxZoom={true}
             >
-              {filteredShops.map((shop) => {
+              {(legendFilter === 'all' || legendFilter === 'shop') && filteredShops.map((shop) => {
                 const isFollowed = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
-                const shopIcon = createShopMapIcon(status.isOpen);
 
                 return (
-                  <Marker
+                  <MemoizedShopMarker
                     key={shop.id}
-                    position={[
-                      shop.latitude || -25.9964,
-                      shop.longitude || 28.2268,
-                    ]}
-                    icon={shopIcon}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedShopId(shop.id);
-                        triggerHaptic(10);
-                      },
+                    shop={shop}
+                    isFollowed={isFollowed}
+                    isOpen={status.isOpen}
+                    onSelectShop={(id) => {
+                      setSelectedShopId(id);
+                      triggerHaptic(10);
                     }}
-                  >
-                    <Popup>
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.9, y: 4 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9, y: 4 }}
-                        transition={{ duration: 0.2 }}
-                        className="p-1.5 min-w-[160px]"
-                      >
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{shop.name}</p>
-                          {isFollowed && (
-                            <Heart className="w-3 h-3 text-red-500 fill-current" />
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between gap-2 mb-1.5">
-                          <div className="flex items-center gap-1">
-                            <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                            <span className="text-xs font-black">{shop.rating}</span>
-                          </div>
-                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
-                            status.isOpen
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/30"
-                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                          }`}>
-                            {status.isOpen ? "Open Now" : "Closed"}
-                          </span>
-                        </div>
-                      </motion.div>
-                    </Popup>
-                  </Marker>
+                  />
                 );
               })}
             </MarkerClusterGroup>
           </MapContainer>
 
-          {/* Compact Map Overlay: Floating Bottom-Right Action Menu */}
-          <div className="absolute bottom-24 right-4 z-[1000] flex flex-col items-end gap-2.5 pointer-events-none">
+          {/* Compact Map Overlay: Floating Bottom-Right Action Menu (Z-Index Strategy: 600) */}
+          <div className="absolute bottom-24 right-4 z-[600] flex flex-col items-end gap-2.5 pointer-events-none">
             {/* Primary Action Trigger: Expand Compact Filters Overlay */}
             <button
               type="button"

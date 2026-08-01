@@ -274,9 +274,20 @@ export function CheckoutScreen({
     fetchUserOrderCount();
   }, [session]);
 
+  // Helper to safely get cached profile only if it belongs to the active user
+  const getValidCachedProfile = () => {
+    const cached = safeLocalStorageGet("userProfile", null);
+    if (!cached) return null;
+    const activeId = userProfile?.id || session?.user?.id;
+    if (activeId && cached.id && cached.id !== activeId) {
+      return null;
+    }
+    return cached;
+  };
+
   // Recipient details editable inline to prevent block/exit funnel - auto-populates from account details
   const [customerName, setCustomerName] = useState(() => {
-    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const cachedProfile = getValidCachedProfile();
     return (
       userProfile?.fullName ||
       (userProfile as any)?.name ||
@@ -287,14 +298,14 @@ export function CheckoutScreen({
     );
   });
   const [customerPhone, setCustomerPhone] = useState(() => {
-    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const cachedProfile = getValidCachedProfile();
     return userProfile?.phone || cachedProfile?.phone || "";
   });
   const [saveToProfile, setSaveToProfile] = useState(true);
 
   // Sync recipient details with userProfile updates
   useEffect(() => {
-    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const cachedProfile = getValidCachedProfile();
     const resolvedName =
       userProfile?.fullName ||
       (userProfile as any)?.name ||
@@ -834,7 +845,7 @@ export function CheckoutScreen({
     }
 
     // Auto-populate recipient details from account details / profile if not filled in
-    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const cachedProfile = getValidCachedProfile();
     let activeCustomerName = customerName.trim();
     if (!activeCustomerName) {
       activeCustomerName =
@@ -966,7 +977,7 @@ export function CheckoutScreen({
       }
     }
 
-    const cachedProfile = safeLocalStorageGet("userProfile", null);
+    const cachedProfile = getValidCachedProfile();
     const finalCustomerName =
       customerName.trim() ||
       userProfile?.fullName ||

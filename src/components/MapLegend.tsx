@@ -31,8 +31,8 @@ export const MapLegend: React.FC<MapLegendProps> = ({
     {
       id: 'customer' as const,
       title: 'Customer Location',
-      badge: 'Your Spot',
-      desc: userLocation ? 'Verified live position / delivery spot' : 'Not located yet (tap to pinpoint)',
+      badge: 'Blue Pin',
+      desc: userLocation ? 'Your verified live delivery spot' : 'Tap locate to display your spot',
       color: 'bg-blue-600',
       borderColor: 'border-blue-500',
       lightBg: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
@@ -48,9 +48,9 @@ export const MapLegend: React.FC<MapLegendProps> = ({
     },
     {
       id: 'shop' as const,
-      title: 'Shop Location',
-      badge: shopCount !== undefined ? `${shopCount} Stores` : 'Local Spots',
-      desc: 'Orange Pins — Local food vendors & collection bases',
+      title: 'Open Kitchen / Shop',
+      badge: shopCount !== undefined ? `${shopCount} Stores` : 'Orange Pin',
+      desc: 'Orange Pins — Active food vendors ready for orders',
       color: 'bg-orange-600',
       borderColor: 'border-orange-500',
       lightBg: 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300',
@@ -65,10 +65,28 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       action: onFocusShop,
     },
     {
+      id: 'closed_shop' as const,
+      title: 'Closed Kitchen',
+      badge: 'Gray Pin',
+      desc: 'Muted Slate Pins — Vendors currently offline/closed',
+      color: 'bg-slate-500',
+      borderColor: 'border-slate-400',
+      lightBg: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
+      icon: (
+        <div className="relative flex items-center justify-center opacity-75">
+          <div className="w-6 h-6 rounded-lg bg-slate-500 text-white flex items-center justify-center shadow-md border-2 border-white">
+            <Store className="w-3.5 h-3.5" />
+          </div>
+          <span className="absolute -bottom-0.5 w-1.5 h-1.5 bg-slate-500 rounded-full"></span>
+        </div>
+      ),
+      action: onFocusShop,
+    },
+    {
       id: 'rider' as const,
-      title: 'Rider Location',
-      badge: riderCount !== undefined ? `${riderCount} Active` : 'Delivery Drivers',
-      desc: 'Indigo Pins — Live courier positions on route',
+      title: 'Courier / Delivery Rider',
+      badge: riderCount !== undefined ? `${riderCount} Active` : 'Indigo Pin',
+      desc: 'Indigo & Emerald Pins — Live drivers (Green=Available, Orange=Busy)',
       color: 'bg-indigo-600',
       borderColor: 'border-indigo-500',
       lightBg: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300',

@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useMap, useMapEvents, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
-import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass, Crosshair } from 'lucide-react';
+import { CheckCircle, MapPin, AlertTriangle, AlertCircle, ExternalLink, Maximize2, Minimize2, Layers, Compass, Crosshair, Phone, Heart, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { calculateDistance, DEFAULT_COORDS } from '../utils';
@@ -173,7 +173,7 @@ function MapFocusTracker({
   );
 }
 
-function InvalidateMapSize({ trigger }: { trigger?: any }) {
+export function InvalidateMapSize({ trigger }: { trigger?: any }) {
   const map = useMap();
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -183,6 +183,177 @@ function InvalidateMapSize({ trigger }: { trigger?: any }) {
   }, [map, trigger]);
   return null;
 }
+
+// Memoized Customer Location Pin
+export const MemoizedCustomerMarker = React.memo(
+  function MemoizedCustomerMarker({ lat, lng }: { lat: number; lng: number }) {
+    return (
+      <Marker position={[lat, lng]} icon={userMapIcon}>
+        <Popup>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 4 }}
+            transition={{ duration: 0.2 }}
+            className="p-1 min-w-[140px]"
+          >
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+              <p className="font-extrabold text-xs text-blue-600 dark:text-blue-400">Your Location</p>
+            </div>
+            <p className="text-[10px] text-slate-500 font-medium">Verified customer delivery spot</p>
+          </motion.div>
+        </Popup>
+      </Marker>
+    );
+  },
+  (prev, next) => prev.lat === next.lat && prev.lng === next.lng
+);
+
+// Memoized Rider / Courier Marker
+export const MemoizedRiderMarker = React.memo(
+  function MemoizedRiderMarker({
+    rider,
+    distVal,
+  }: {
+    rider: {
+      id: string;
+      latitude: number;
+      longitude: number;
+      full_name?: string;
+      vehicle_type?: string;
+      phone?: string;
+      current_order_id?: string;
+    };
+    distVal: number;
+  }) {
+    const vehicleIcon =
+      rider.vehicle_type === "car"
+        ? "🚗"
+        : rider.vehicle_type === "motorbike"
+          ? "🏍️"
+          : "🛵";
+
+    return (
+      <Marker position={[rider.latitude, rider.longitude]} icon={riderMapIcon}>
+        <Popup>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 4 }}
+            transition={{ duration: 0.2 }}
+            className="p-1 min-w-[170px]"
+          >
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <p className="font-extrabold text-xs text-indigo-700 dark:text-indigo-300">
+                {rider.full_name || `Courier #${rider.id.slice(0, 4)}`} {vehicleIcon}
+              </p>
+              <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                {distVal.toFixed(1)} km away
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mb-2">
+              {rider.current_order_id
+                ? `Delivering Order #${rider.current_order_id.slice(0, 5)}`
+                : "Active & Available for Dispatch"}
+            </p>
+            {rider.phone && (
+              <button
+                type="button"
+                onClick={() => window.open(`tel:${rider.phone}`)}
+                className="w-full py-1.5 px-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer shadow-sm"
+              >
+                <Phone className="w-3 h-3" />
+                <span>Call Courier ({rider.phone.slice(-4)})</span>
+              </button>
+            )}
+          </motion.div>
+        </Popup>
+      </Marker>
+    );
+  },
+  (prev, next) =>
+    prev.rider.id === next.rider.id &&
+    prev.rider.latitude === next.rider.latitude &&
+    prev.rider.longitude === next.rider.longitude &&
+    prev.rider.full_name === next.rider.full_name &&
+    prev.rider.current_order_id === next.rider.current_order_id &&
+    Math.abs(prev.distVal - next.distVal) < 0.05
+);
+
+// Memoized Shop / Kitchen Marker
+export const MemoizedShopMarker = React.memo(
+  function MemoizedShopMarker({
+    shop,
+    isFollowed,
+    isOpen,
+    onSelectShop,
+  }: {
+    shop: {
+      id: string;
+      name: string;
+      rating: number;
+      latitude?: number;
+      longitude?: number;
+    };
+    isFollowed: boolean;
+    isOpen: boolean;
+    onSelectShop: (id: string) => void;
+  }) {
+    const shopIcon = useMemo(() => createShopMapIcon(isOpen), [isOpen]);
+
+    return (
+      <Marker
+        position={[
+          shop.latitude || -25.9964,
+          shop.longitude || 28.2268,
+        ]}
+        icon={shopIcon}
+        eventHandlers={{
+          click: () => onSelectShop(shop.id),
+        }}
+      >
+        <Popup>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 4 }}
+            transition={{ duration: 0.2 }}
+            className="p-1.5 min-w-[160px]"
+          >
+            <div className="flex items-center gap-1.5 mb-1">
+              <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{shop.name}</p>
+              {isFollowed && (
+                <Heart className="w-3 h-3 text-red-500 fill-current" />
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-1">
+                <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
+                <span className="text-xs font-black">{shop.rating}</span>
+              </div>
+              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                isOpen
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/30"
+                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+              }`}>
+                {isOpen ? "Open Now" : "Closed"}
+              </span>
+            </div>
+          </motion.div>
+        </Popup>
+      </Marker>
+    );
+  },
+  (prev, next) =>
+    prev.shop.id === next.shop.id &&
+    prev.shop.latitude === next.shop.latitude &&
+    prev.shop.longitude === next.shop.longitude &&
+    prev.shop.name === next.shop.name &&
+    prev.shop.rating === next.shop.rating &&
+    prev.isFollowed === next.isFollowed &&
+    prev.isOpen === next.isOpen
+);
 
 export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoords }: { 
   onSelect: (data: { address: string, lat: number, lng: number }) => void, 
@@ -507,7 +678,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="relative z-10" ref={searchRef}>
+      <div className="relative z-30" ref={searchRef}>
         <div className="flex gap-2 relative z-50">
           <div className="relative flex-1">
             <input
@@ -1001,7 +1172,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
           </MapContainer>
           
           {/* Map Precision Meter Widget */}
-          <div className="absolute top-2 left-2 z-[1000] bg-white/95 dark:bg-slate-900/95 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md flex items-center gap-2 backdrop-blur-md animate-in fade-in zoom-in duration-200">
+          <div className="absolute bottom-3 left-3 z-[1000] bg-white/95 dark:bg-slate-900/95 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md flex items-center gap-2 backdrop-blur-md animate-in fade-in zoom-in duration-200">
             <div className="relative flex items-center justify-center shrink-0">
               <svg className="w-7 h-7" viewBox="0 0 36 36">
                 <path
@@ -1034,21 +1205,8 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             </div>
           </div>
           
-          <div className="absolute bottom-2 left-2 right-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-lg text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider">
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 max-w-[85%] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider shadow-md whitespace-nowrap">
             📍 Drag the red pin to select your exact door location
-          </div>
-          
-          <div className="absolute top-2 right-12 z-[1000] flex gap-2">
-            <a 
-              href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-white/95 dark:bg-slate-800/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md text-slate-700 dark:text-slate-300 hover:text-orange-600 transition-colors flex items-center gap-1.5 backdrop-blur-md cursor-pointer"
-              title="Open in OpenStreetMap (Fallback)"
-            >
-              <ExternalLink className="w-3 h-3" />
-              <span className="text-[10px] font-bold uppercase tracking-widest leading-none">OSM Edit</span>
-            </a>
           </div>
 
           {/* Real-time Floating Overlay Controls inside the Map container wrapper */}
@@ -1074,6 +1232,16 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
             >
               <Compass className={`w-4 h-4 ${isTracking ? 'animate-spin' : 'text-orange-500'}`} />
             </button>
+
+            <a 
+              href={`https://www.openstreetmap.org/edit#map=16/${coords.lat}/${coords.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-white/95 dark:bg-slate-900/95 p-2 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md text-slate-700 dark:text-slate-300 hover:text-orange-600 transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95"
+              title="Open in OpenStreetMap (Fallback)"
+            >
+              <ExternalLink className="w-4 h-4 text-orange-500" />
+            </a>
 
             <div className="relative">
               <button
