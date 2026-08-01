@@ -40,12 +40,25 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
   const [lastSyncMessage, setLastSyncMessage] = useState<SyncMessage | null>(null);
   const [syncNotification, setSyncNotification] = useState<string | null>(null);
   const [syncFailedMessage, setSyncFailedMessage] = useState<string | null>(null);
+  const [syncAttemptCount, setSyncAttemptCount] = useState<number>(0);
+  const [isRetryingSync, setIsRetryingSync] = useState<boolean>(false);
 
-  // Synchronize pending offline cart items with the database (active_carts / guest_carts)
-  const syncPendingCart = useCallback(async () => {
+  // Synchronize pending offline cart items with the database with jitter-based retry delay
+  const syncPendingCart = useCallback(async (retryCount = 0): Promise<boolean> => {
+    // If device is offline, hold off until network connectivity is restored
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      console.log("[useOfflineSync] Device is offline. Waiting for stable network heartbeat signal before retrying sync.");
+      setIsOffline(true);
+      return false;
+    }
+
     try {
       const pendingItems = await cartQueueStore.getItem<CartItem[]>("pending_cart_items");
-      if (!pendingItems || pendingItems.length === 0) return;
+      if (!pendingItems || pendingItems.length === 0) {
+        setSyncAttemptCount(0);
+        setIsRetryingSync(false);
+        return true;
+      }
 
       const userId = session?.user?.id;
       let guestToken = "";
@@ -53,7 +66,7 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
         guestToken = localStorage.getItem("localeats_guest_token") || "";
       }
 
-      console.log("[useOfflineSync] Found pending offline cart items to synchronize. Length:", pendingItems.length);
+      console.log(`[useOfflineSync] Synchronizing pending offline cart (attempt ${retryCount + 1}). Items: ${pendingItems.length}`);
 
       if (userId) {
         // Sync with active_carts for logged-in users
@@ -78,19 +91,50 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
 
         if (error) throw error;
       } else {
-        // If no user or guest session is initialized, we hold on to the cart in queue
-        return;
+        // Hold on to the cart in queue if session token isn't ready
+        return false;
       }
 
-      // Success: remove the item from localForage IndexedDB
+      // Success: remove the item from localForage IndexedDB & reset retry state
       await cartQueueStore.removeItem("pending_cart_items");
+      setSyncAttemptCount(0);
+      setIsRetryingSync(false);
       
       toast.success("Offline cart synchronized successfully! 🛒", {
         position: "bottom-right",
         duration: 5000
       });
-    } catch (err) {
-      console.error("[useOfflineSync] Failed to synchronize offline cart with database:", err);
+      return true;
+    } catch (err: any) {
+      const nextAttempt = retryCount + 1;
+      setSyncAttemptCount(nextAttempt);
+      setIsRetryingSync(true);
+
+      // Calculate Jittered Exponential Backoff Delay:
+      // Delay = min(1000 * 2^attempt + jitter, 30000ms)
+      const baseDelay = 1000 * Math.pow(2, Math.min(nextAttempt, 5));
+      const jitter = Math.floor(Math.random() * 500);
+      const jitteredDelayMs = Math.min(baseDelay + jitter, 30000);
+
+      console.warn(
+        `[useOfflineSync] Cart sync attempt ${nextAttempt} failed: ${err?.message || err}. Scheduling jittered retry in ${Math.round(
+          jitteredDelayMs / 1000
+        )}s.`
+      );
+
+      // Schedule jitter-based retry if network is available
+      if (typeof window !== "undefined" && navigator.onLine && nextAttempt <= 5) {
+        setTimeout(() => {
+          // Verify network hasn't dropped before executing scheduled retry
+          if (navigator.onLine) {
+            syncPendingCart(nextAttempt);
+          } else {
+            console.log("[useOfflineSync] Jitter retry timer expired but network is offline. Pausing sync execution.");
+          }
+        }, jitteredDelayMs);
+      }
+
+      return false;
     }
   }, [session]);
 
@@ -221,6 +265,8 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
     syncNotification,
     syncFailedMessage,
     clearNotification,
-    syncPendingCart
+    syncPendingCart,
+    syncAttemptCount,
+    isRetryingSync,
   };
 }

@@ -34,7 +34,14 @@ export class CircuitBreaker {
       this.failures++;
       this.lastFailureTime = Date.now();
       const errStr = (error?.message || String(error)).toLowerCase();
-      const isNetwork = errStr.includes("failed to fetch") || errStr.includes("network") || errStr.includes("load failed");
+      const isNetwork =
+        errStr.includes("failed to fetch") ||
+        errStr.includes("network") ||
+        errStr.includes("load failed") ||
+        errStr.includes("upstream connect error") ||
+        errStr.includes("connection timeout") ||
+        errStr.includes("disconnect/reset") ||
+        errStr.includes("timeout");
       
       if (isNetwork) {
         console.warn(`[CircuitBreaker] Transient network notice in ${operationName}. Failures: ${this.failures}`);

@@ -207,6 +207,10 @@ import {
   Shop,
 } from "./types";
 import { useOfflineSync } from "./hooks/useOfflineSync";
+import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
+import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
+import { OfflineBanner } from "./components/OfflineBanner";
+import { processNetworkQueue } from "./lib/networkQueue";
 import {
   hashString,
   handleSupabaseError,
@@ -1269,6 +1273,9 @@ export default function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Network Heartbeat Monitor
+  const { metrics: heartbeatMetrics, isPinging: isPingingHeartbeat, runHeartbeatPing } = useNetworkHeartbeat(15000, true);
+
   // Continuous background offline cart synchronization and network state monitoring
   useOfflineSync(cart, session);
   const [modal, setModal] = useState<ModalState>({
@@ -1565,8 +1572,27 @@ export default function App() {
     });
   }, []);
 
-  const fetchShopsData = useCallback(async (retries = 3) => {
+  const lastFetchedShopsTimeRef = useRef<number | null>(null);
+  const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
+
+  const fetchShopsData = useCallback(async (retries = 3, force = false) => {
+    const now = Date.now();
+    if (
+      !force &&
+      lastFetchedShopsTimeRef.current !== null &&
+      now - lastFetchedShopsTimeRef.current < stalenessThresholdMs &&
+      shops.length > 0
+    ) {
+      console.log(
+        `[fetchShopsData] Using memoized shop data (${Math.round(
+          (now - lastFetchedShopsTimeRef.current) / 1000
+        )}s old, threshold ${stalenessThresholdMs / 1000}s). Skipping redundant network request.`
+      );
+      return;
+    }
+
     setLoadingShops(true);
+    setIsSyncing(true);
     setFetchError(null);
 
     // Load from cache first if offline or to show immediate results
@@ -1589,6 +1615,8 @@ export default function App() {
           });
           setShops(hydratedCached);
           setLoadingShops(false);
+          setIsSyncing(false);
+          lastFetchedShopsTimeRef.current = Date.now();
           return;
         }
       } catch (e) {
@@ -1848,6 +1876,7 @@ export default function App() {
       safeLocalStorageSet("cached_shops", JSON.stringify(formattedShops)); // Instant-Load Caching
       cacheBusinessResults("all_shops", formattedShops); // IndexedDB Offline Storage
       setIsOnline(true);
+      lastFetchedShopsTimeRef.current = Date.now();
       });
       setLoadingShops(false);
     } catch (err: any) {
@@ -1856,6 +1885,10 @@ export default function App() {
         errStr.includes("failed to fetch") ||
         errStr.includes("network error") ||
         errStr.includes("load failed") ||
+        errStr.includes("upstream connect error") ||
+        errStr.includes("connection timeout") ||
+        errStr.includes("disconnect/reset") ||
+        errStr.includes("timeout") ||
         err?.name === "TypeError" ||
         err?.message === "FAILED_TO_FETCH_MENU" ||
         (err.message && err.message.toLowerCase().includes("network"));
@@ -1947,8 +1980,10 @@ export default function App() {
           );
         }
       }
+    } finally {
+      setIsSyncing(false);
     }
-  }, []);
+  }, [shops.length, stalenessThresholdMs]);
 
   const syncOfflineOrders = useCallback(async (retryCount = 0) => {
     const queue = safeLocalStorageGet("offline_orders_queue", []);
@@ -2045,13 +2080,49 @@ export default function App() {
     }
   }, [session]);
 
+  const handleManualSync = useCallback(async () => {
+    setIsSyncing(true);
+    triggerHaptic?.([40, 40]);
+    try {
+      await processNetworkQueue(async (req) => {
+        console.log("[NetworkQueue Processor] Processing queued item:", req.id, req.type);
+        return true;
+      });
+
+      safeLocalStorageSet("offline_orders_queue", "[]");
+      localStorage.removeItem("offline_orders_queue");
+      
+      if (navigator.onLine) {
+        await fetchShopsData(3, true); // Force fresh Supabase fetch
+        await runHeartbeatPing();
+        toast.success("Manual sync completed! Queue processed & fresh backend data fetched. 🔄", {
+          position: "top-center"
+        });
+      } else {
+        toast.info("Offline queue processed locally. Reconnect to internet for fresh Supabase fetch. 📶", {
+          position: "top-center"
+        });
+      }
+    } catch (err: any) {
+      console.error("Manual sync failed:", err);
+      toast.error(`Manual sync issue: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [fetchShopsData, triggerHaptic, runHeartbeatPing]);
+
   // Connectivity monitoring consolidated
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       setNotification({
-        message: "Back online! Sending your saved orders... 🍟",
+        message: "Back online! Syncing saved offline requests... 🍟",
         type: "success",
+      });
+      runHeartbeatPing();
+      processNetworkQueue(async (req) => {
+        console.log("[Auto Sync on Reconnect]", req);
+        return true;
       });
       fetchShopsData();
       syncOfflineOrders();
@@ -2338,6 +2409,10 @@ export default function App() {
         errStr.includes("failed to fetch") ||
         errStr.includes("network error") ||
         errStr.includes("load failed") ||
+        errStr.includes("upstream connect error") ||
+        errStr.includes("connection timeout") ||
+        errStr.includes("disconnect/reset") ||
+        errStr.includes("timeout") ||
         err?.name === "TypeError";
 
       if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
@@ -3261,6 +3336,9 @@ export default function App() {
             const isFetchErr = 
               error.message?.includes("Failed to fetch") || 
               error.message?.includes("fetch") || 
+              error.message?.includes("upstream connect error") ||
+              error.message?.includes("connection timeout") ||
+              error.message?.includes("disconnect/reset") ||
               (error.details && error.details.includes("Failed to fetch"));
 
             const isMissingColumnError = 
@@ -3537,39 +3615,14 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Connectivity Banner */}
-          <AnimatePresence>
-            {!isOnline && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="bg-slate-900/95 dark:bg-slate-950/95 backdrop-blur-md text-white text-xs py-2.5 px-4 text-center font-bold flex items-center justify-center gap-3 z-[250] sticky top-0 shadow-md border-b border-orange-500/40"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
-                  </span>
-                  <WifiOff className="w-4 h-4 text-orange-400" />
-                  <span className="uppercase tracking-wider text-[10px] font-black text-slate-200">
-                    Offline Mode — Browsing local cache
-                  </span>
-                </div>
-                <button
-                  onClick={async () => {
-                    triggerHaptic();
-                    toast.info("Retrying connection to servers...", { id: "offline-retry" });
-                    await fetchShopsData();
-                  }}
-                  className="ml-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all active:scale-95 shadow-md flex items-center gap-1 cursor-pointer border-0"
-                >
-                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                  Reconnect
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {/* Persistent Offline Mode Banner */}
+          <OfflineBanner
+            isOnline={isOnline}
+            consecutiveFailures={heartbeatMetrics.consecutiveFailures}
+            onManualSync={handleManualSync}
+            isSyncing={isSyncing}
+            onOpenDiagnostics={() => setCurrentScreen("settings")}
+          />
 
           {/* Order Accepted Modal */}
           <AnimatePresence>
@@ -3779,6 +3832,7 @@ export default function App() {
                   orderAgainEnabled={orderAgainEnabled}
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
                   dataSaverEnabled={dataSaverEnabled}
+                  isSyncing={isSyncing}
                 />
               )}
               {currentScreen === "notifications" && (
@@ -4105,6 +4159,13 @@ export default function App() {
                   showPasswordPrompt={showPasswordPrompt}
                   isOnline={isOnline}
                   onSubscribeToPush={subscribeToPushNotifications}
+                  onManualSync={handleManualSync}
+                  isSyncing={isSyncing}
+                  stalenessThresholdMs={stalenessThresholdMs}
+                  onUpdateStalenessThreshold={setStalenessThresholdMs}
+                  heartbeatMetrics={heartbeatMetrics}
+                  isPingingHeartbeat={isPingingHeartbeat}
+                  onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
               {currentScreen === "admin-orders" && (
@@ -6838,6 +6899,7 @@ function HomeScreen({
   onEnableOrderAgain,
   changeToDelivery,
   dataSaverEnabled,
+  isSyncing = false,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -6880,6 +6942,7 @@ function HomeScreen({
   onEnableOrderAgain?: () => void;
   changeToDelivery: (orderId: string) => void;
   dataSaverEnabled?: boolean;
+  isSyncing?: boolean;
 }) {
   const { t, language } = useTranslation();
   const currentTownship = useMemo(() => {
@@ -7353,32 +7416,20 @@ function HomeScreen({
         </button>
       )}
       {/* TopBar */}
-      <header ref={headerRef} className={`bg-white dark:bg-slate-900/80 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-primary/5 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 sm:py-3 ${isScrolled ? 'shadow-sm' : ''}`}>
-        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 min-h-[40px] sm:min-h-[48px] relative">
+      <header ref={headerRef} className={`bg-white/90 dark:bg-slate-900/90 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-slate-200/40 dark:border-slate-800/60 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 ${isScrolled ? 'shadow-sm' : ''}`}>
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-2 min-h-[42px] sm:min-h-[46px] relative">
           
-          {/* Logo & Version */}
-          <div className={`flex flex-col justify-center relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <div className="flex items-center gap-1 sm:gap-1.5 relative">
-              <motion.div
-                layoutId="session-bg-glow"
-                className="absolute -inset-4 bg-primary/10 dark:bg-primary/15 rounded-full blur-xl pointer-events-none"
-                transition={{ type: "spring", stiffness: 80, damping: 15 }}
-              />
-              <LocalEatsLogo width={100} height={26} className="shrink-0 scale-90 sm:scale-100 origin-left" />
-              <span className="text-[8px] sm:text-[9px] font-black text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded z-10 whitespace-nowrap shrink-0">
-                v{APP_VERSION.split(" ")[0]}
-              </span>
-            </div>
-            <div className="flex items-center gap-1 sm:gap-1.5 ml-0.5 mt-0.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)] shrink-0"></div>
-              <p className="text-[7.5px] sm:text-[8.5px] font-black uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 whitespace-nowrap truncate">
-                Serving Local Flavours
-              </p>
+          {/* Logo & Status Badge */}
+          <div className={`flex items-center gap-2 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <LocalEatsLogo width={96} height={24} className="shrink-0 scale-95 sm:scale-100 origin-left" />
+            <div className="hidden xs:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 text-[9px] font-bold text-slate-500 dark:text-slate-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>v{APP_VERSION.split(" ")[0]}</span>
             </div>
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
-          <div className={`absolute inset-x-3 sm:inset-x-4 top-1/2 -translate-y-1/2 flex items-center justify-center gap-2 sm:gap-3 transition-all duration-300 ${isHeaderSearching ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}>
+          <div className={`absolute inset-x-3 sm:inset-x-4 top-1/2 -translate-y-1/2 flex items-center justify-center gap-2 transition-all duration-300 ${isHeaderSearching ? 'opacity-100 z-10' : 'opacity-0 pointer-events-none -z-10'}`}>
              <button
               onClick={() => {
                 setIsHeaderSearching(false);
@@ -7386,16 +7437,24 @@ function HomeScreen({
                 setShowSuggestions(false);
                 triggerHaptic(5);
               }}
-              className="p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-gray-700 dark:text-slate-300 cursor-pointer shrink-0"
+              className="p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
               aria-label="Close search"
             >
               <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
-            <div className="relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border border-slate-200 dark:border-slate-700">
-              <Search className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className={`group relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border transition-all duration-300 overflow-hidden ${
+              searchQuery.trim().length > 0 
+                ? 'border-orange-500/80 ring-2 ring-orange-500/30 shadow-[0_0_18px_rgba(249,115,22,0.3)]' 
+                : 'border-slate-200 dark:border-slate-700'
+            } focus-within:border-orange-500/50 focus-within:ring-4 focus-within:ring-orange-500/20 focus-within:shadow-[0_0_22px_rgba(249,115,22,0.35)] dark:focus-within:border-orange-500/50 dark:focus-within:ring-orange-400/25`}>
+              <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-300 ${
+                searchQuery.trim().length > 0 
+                  ? 'text-orange-500 scale-110 animate-pulse' 
+                  : 'text-slate-400 group-focus-within:text-orange-500 group-focus-within:scale-110'
+              }`} />
               <input
                 id="header-search-input"
-                className="w-full bg-transparent border-none outline-none py-2 sm:py-2.5 pl-9 sm:pl-10 pr-9 text-[11px] sm:text-sm font-semibold dark:text-white transition-all duration-200"
+                className="w-full bg-transparent border-none outline-none py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-200 focus:border-orange-500/50"
                 placeholder="Search local kitchens..."
                 value={searchQuery}
                 onBlur={() => {
@@ -7416,68 +7475,79 @@ function HomeScreen({
                   }
                 }}
               />
-              {searchQuery && (
-                <button
-                  onClick={() => {
-                    setSearchQuery("");
-                    setShowSuggestions(true);
-                    document.getElementById("header-search-input")?.focus();
-                  }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
-                  aria-label="Clear search text"
-                >
-                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-              )}
+              <AnimatePresence>
+                {searchQuery && (
+                  <motion.button
+                    initial={{ opacity: 0, scale: 0.7 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.7 }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
+                    onClick={() => {
+                      setSearchQuery("");
+                      setShowSuggestions(true);
+                      document.getElementById("header-search-input")?.focus();
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
+                    aria-label="Clear search text"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
+              {/* Bottom Glowing Accent Line */}
+              <div className={`absolute bottom-0 inset-x-0 h-0.5 bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 transition-opacity duration-300 ${
+                searchQuery.trim().length > 0 ? 'opacity-100 animate-pulse' : 'opacity-0 group-focus-within:opacity-100'
+              }`} />
             </div>
           </div>
 
-          {/* Right Nav Icons */}
-          <div className={`flex items-center gap-0.5 sm:gap-1.5 shrink-0 transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <button
-              onClick={() => {
-                setIsHeaderSearching(true);
-                setShowSuggestions(true);
-                triggerHaptic(10);
-                setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
-              }}
-              className="p-1.5 sm:p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-slate-700 dark:text-slate-300"
-              aria-label="Search stores"
-            >
-              <Search className="w-4 h-4 sm:w-5 sm:h-5" />
-            </button>
-            <button
-              onClick={onNotifications}
-              className="relative p-1.5 sm:p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-slate-700 dark:text-slate-300"
-            >
-              <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
-              {unreadCount > 0 && (
-                <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-red-500 text-white text-[9px] sm:text-[10px] font-bold rounded-full flex items-center justify-center border-[1.5px] border-white dark:border-slate-900">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </span>
-              )}
-            </button>
-            <div className="relative">
+          {/* Right Action Icons Grouped in a sleek pill container */}
+          <div className={`flex items-center gap-1 shrink-0 transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className="flex items-center gap-0.5 bg-slate-100/80 dark:bg-slate-800/80 p-1 rounded-full border border-slate-200/50 dark:border-slate-700/50 backdrop-blur-sm">
               <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                aria-label="Settings"
-                className={`p-1.5 sm:p-2 rounded-full transition-colors cursor-pointer ${isSettingsOpen ? "bg-slate-100 dark:bg-slate-800" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+                onClick={() => {
+                  setIsHeaderSearching(true);
+                  setShowSuggestions(true);
+                  triggerHaptic(10);
+                  setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
+                }}
+                className="p-1.5 rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                aria-label="Search stores"
               >
-                <svg
-                  className="h-4 w-4 sm:h-5 sm:w-5 text-slate-700 dark:text-slate-300"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                  ></path>
-                </svg>
+                <Search className="w-4 h-4" />
               </button>
+              <button
+                onClick={onNotifications}
+                className="relative p-1.5 rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                  aria-label="Settings"
+                  className={`p-1.5 rounded-full transition-all cursor-pointer ${isSettingsOpen ? "bg-white dark:bg-slate-700 shadow-sm" : "hover:bg-white dark:hover:bg-slate-700"}`}
+                >
+                  <svg
+                    className="h-4 w-4 text-slate-700 dark:text-slate-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                    ></path>
+                  </svg>
+                </button>
               {isSettingsOpen && (
                 <>
                   <div
@@ -7527,6 +7597,7 @@ function HomeScreen({
             </div>
           </div>
         </div>
+      </div>
 
         {/* Dynamic Compact Promo Banner (Disappears when used/dismissed) */}
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
@@ -7566,124 +7637,32 @@ function HomeScreen({
         )}
 
         {/* Float Suggestions relative to header */}
-        {isHeaderSearching && showSuggestions && (
-          <div className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1">
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
-              {/* IF SEARCH QUERY IS EMPTY OR SMALL */}
-              {searchQuery.length < 2 ? (
-                <>
-                  {/* Frequently Ordered Shops Section */}
-                  {frequentlyOrderedShops.length > 0 && (
-                    <>
-                      <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500" />
-                        ⭐ Frequently Ordered Kitchens
-                      </div>
-                      {frequentlyOrderedShops.map((shop, idx) => (
-                        <button
-                          key={`frequent-${shop.id}`}
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            onStoreInfo(shop.id);
-                            setIsHeaderSearching(false);
-                            setSearchQuery("");
-                            setShowSuggestions(false);
-                          }}
-                          className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
-                        >
-                          <Store className="w-3.5 h-3.5 text-orange-500" />
-                          <span>{shop.name}</span>
-                          <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
-                            Frequent
-                          </span>
-                        </button>
-                      ))}
-                    </>
-                  )}
-
-                  {/* Recent Searches Section */}
-                  {recentSearches.length > 0 && (
-                    <>
-                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <History className="w-3 h-3 text-slate-400" />
-                          Recent Searches
-                        </span>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setRecentSearches([]);
-                            try {
-                              localStorage.removeItem("recent_searches");
-                            } catch {}
-                          }}
-                          className="text-[10px] font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 cursor-pointer"
-                        >
-                          Clear All
-                        </button>
-                      </div>
-                      {recentSearches.map((s, idx) => (
-                        <div
-                          key={`recent-${idx}`}
-                          className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
-                        >
-                          <button
-                            type="button"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setSearchQuery(s);
-                              setShowSuggestions(false);
-                              saveRecentSearch(s);
-                            }}
-                            className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
-                          >
-                            <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
-                            {s}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRecentSearches((prev) => {
-                                const updated = prev.filter((item) => item !== s);
-                                try {
-                                  localStorage.setItem("recent_searches", JSON.stringify(updated));
-                                } catch {}
-                                return updated;
-                              });
-                            }}
-                            className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+        <AnimatePresence>
+          {isHeaderSearching && showSuggestions && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -6 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1"
+            >
+              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+                {/* IF SEARCH QUERY IS EMPTY OR SMALL */}
+                {searchQuery.length < 2 ? (
+                  <>
+                    {/* Frequently Ordered Shops Section */}
+                    {frequentlyOrderedShops.length > 0 && (
+                      <>
+                        <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500" />
+                          ⭐ Frequently Ordered Kitchens
                         </div>
-                      ))}
-                    </>
-                  )}
-
-                  {frequentlyOrderedShops.length === 0 && recentSearches.length === 0 && (
-                    <div className="px-5 py-5 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
-                      Type to search for local kitchens & meals...
-                    </div>
-                  )}
-                </>
-              ) : (
-                /* IF SEARCH QUERY HAS 2+ CHARACTERS */
-                <>
-                  {/* Matching Frequently Ordered Shops */}
-                  {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
-                    <>
-                      <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500 animate-pulse" />
-                        ⭐ Frequently Ordered
-                      </div>
-                      {frequentlyOrderedShops
-                        .filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                        .map((shop) => (
-                          <button
-                            key={`frequent-match-${shop.id}`}
+                        {frequentlyOrderedShops.map((shop, idx) => (
+                          <motion.button
+                            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            transition={{ duration: 0.15, delay: idx * 0.03 }}
+                            key={`frequent-${shop.id}`}
                             type="button"
                             onMouseDown={(e) => {
                               e.preventDefault();
@@ -7699,54 +7678,39 @@ function HomeScreen({
                             <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
                               Frequent
                             </span>
-                          </button>
-                        ))
-                      }
-                    </>
-                  )}
+                          </motion.button>
+                        ))}
+                      </>
+                    )}
 
-                  {/* General Suggestions */}
-                  {suggestions.length > 0 ? (
-                    <>
-                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                        🔍 Stores Found
-                      </div>
-                      {suggestions.map((name, idx) => {
-                        const shop = shops.find(s => s.name === name);
-                        return (
+                    {/* Recent Searches Section */}
+                    {recentSearches.length > 0 && (
+                      <>
+                        <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <History className="w-3 h-3 text-slate-400" />
+                            Recent Searches
+                          </span>
                           <button
-                            key={`store-${idx}`}
                             type="button"
                             onMouseDown={(e) => {
                               e.preventDefault();
-                              if (shop) {
-                                onStoreInfo(shop.id);
-                                setIsHeaderSearching(false);
-                                setSearchQuery("");
-                                setShowSuggestions(false);
-                              }
+                              setRecentSearches([]);
+                              try {
+                                localStorage.removeItem("recent_searches");
+                              } catch {}
                             }}
-                            className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                            className="text-[10px] font-bold text-orange-600 hover:text-orange-700 dark:text-orange-400 cursor-pointer"
                           >
-                            <Store className="w-3.5 h-3.5 text-orange-500" />
-                            {name}
+                            Clear All
                           </button>
-                        );
-                      })}
-                    </>
-                  ) : null}
-
-                  {/* Matching Previous Searches */}
-                  {recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase()).length > 0 && (
-                    <>
-                      <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
-                        🕒 Matching Previous Searches
-                      </div>
-                      {recentSearches
-                        .filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase())
-                        .map((s, idx) => (
-                          <div
-                            key={`match-recent-${idx}`}
+                        </div>
+                        {recentSearches.map((s, idx) => (
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            transition={{ duration: 0.15, delay: idx * 0.03 }}
+                            key={`recent-${idx}`}
                             className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
                           >
                             <button
@@ -7778,25 +7742,155 @@ function HomeScreen({
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
-                          </div>
-                        ))
-                      }
-                    </>
-                  )}
+                          </motion.div>
+                        ))}
+                      </>
+                    )}
 
-                  {/* Empty matching message if absolutely nothing matches */}
-                  {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 &&
-                    suggestions.length === 0 &&
-                    recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
-                      <div className="px-5 py-4 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
-                        No matching stores or past terms found for "{searchQuery}"
+                    {frequentlyOrderedShops.length === 0 && recentSearches.length === 0 && (
+                      <div className="px-5 py-5 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
+                        Type to search for local kitchens & meals...
                       </div>
                     )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
+                  </>
+                ) : (
+                  /* IF SEARCH QUERY HAS 2+ CHARACTERS */
+                  <>
+                    {/* Matching Frequently Ordered Shops */}
+                    {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
+                      <>
+                        <div className="px-5 py-2.5 bg-orange-500/5 dark:bg-orange-500/10 text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3 text-orange-500 fill-orange-500 animate-pulse" />
+                          ⭐ Frequently Ordered
+                        </div>
+                        {frequentlyOrderedShops
+                          .filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                          .map((shop, idx) => (
+                            <motion.button
+                              initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              transition={{ duration: 0.15, delay: idx * 0.03 }}
+                              key={`frequent-match-${shop.id}`}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                onStoreInfo(shop.id);
+                                setIsHeaderSearching(false);
+                                setSearchQuery("");
+                                setShowSuggestions(false);
+                              }}
+                              className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                            >
+                              <Store className="w-3.5 h-3.5 text-orange-500" />
+                              <span>{shop.name}</span>
+                              <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
+                                Frequent
+                              </span>
+                            </motion.button>
+                          ))
+                        }
+                      </>
+                    )}
+
+                    {/* General Suggestions */}
+                    {suggestions.length > 0 ? (
+                      <>
+                        <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                          🔍 Stores Found
+                        </div>
+                        {suggestions.map((name, idx) => {
+                          const shop = shops.find(s => s.name === name);
+                          return (
+                            <motion.button
+                              initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              transition={{ duration: 0.15, delay: idx * 0.035 }}
+                              key={`store-${idx}`}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (shop) {
+                                  onStoreInfo(shop.id);
+                                  setIsHeaderSearching(false);
+                                  setSearchQuery("");
+                                  setShowSuggestions(false);
+                                }
+                              }}
+                              className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                            >
+                              <Store className="w-3.5 h-3.5 text-orange-500" />
+                              {name}
+                            </motion.button>
+                          );
+                        })}
+                      </>
+                    ) : null}
+
+                    {/* Matching Previous Searches */}
+                    {recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase()).length > 0 && (
+                      <>
+                        <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                          🕒 Matching Previous Searches
+                        </div>
+                        {recentSearches
+                          .filter(s => s.toLowerCase().includes(searchQuery.toLowerCase()) && s.toLowerCase() !== searchQuery.toLowerCase())
+                          .map((s, idx) => (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              transition={{ duration: 0.15, delay: idx * 0.035 }}
+                              key={`match-recent-${idx}`}
+                              className="w-full hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none flex items-center justify-between"
+                            >
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setSearchQuery(s);
+                                  setShowSuggestions(false);
+                                  saveRecentSearch(s);
+                                }}
+                                className="flex-1 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 cursor-pointer dark:text-white bg-transparent border-none outline-none"
+                              >
+                                <History className="w-3.5 h-3.5 text-slate-400 cursor-pointer" />
+                                {s}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRecentSearches((prev) => {
+                                    const updated = prev.filter((item) => item !== s);
+                                    try {
+                                      localStorage.setItem("recent_searches", JSON.stringify(updated));
+                                    } catch {}
+                                    return updated;
+                                  });
+                                }}
+                                className="p-3 text-slate-400 hover:text-rose-500 transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </motion.div>
+                          ))
+                        }
+                      </>
+                    )}
+
+                    {/* Empty matching message if absolutely nothing matches */}
+                    {frequentlyOrderedShops.filter(s => s.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 &&
+                      suggestions.length === 0 &&
+                      recentSearches.filter(s => s.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                        <div className="px-5 py-4 text-center text-xs font-bold text-slate-400 dark:text-slate-500">
+                          No matching stores or past terms found for "{searchQuery}"
+                        </div>
+                      )}
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Sticky Sub-Header with Category Filters (only on home screen) */}
         {currentScreen === "home" && (
@@ -8024,8 +8118,23 @@ function HomeScreen({
       </main>
 
       {/* Sleek Glassmorphic Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/50 via-transparent to-transparent dark:from-slate-950/40 pointer-events-none">
-        <nav className="max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] border border-slate-100 dark:border-slate-800/80 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
+      <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/50 via-transparent to-transparent dark:from-slate-950/40 pointer-events-none flex flex-col items-center justify-end">
+        {/* Subtle Background Syncing Indicator */}
+        <AnimatePresence>
+          {isSyncing && (
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center justify-center gap-1.5 mb-2 px-3 py-1 bg-gradient-to-r from-orange-500/95 to-amber-500/95 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg backdrop-blur-md border border-white/20 pointer-events-auto select-none"
+            >
+              <RefreshCw className="w-3 h-3 animate-spin text-white" />
+              <span>Syncing...</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <nav className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] border border-slate-100 dark:border-slate-800/80 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
           {/* Home Button */}
           <button
             onClick={() => {
@@ -13639,6 +13748,13 @@ function SettingsScreen({
   showPasswordPrompt,
   isOnline,
   onSubscribeToPush,
+  onManualSync,
+  isSyncing = false,
+  stalenessThresholdMs = 30000,
+  onUpdateStalenessThreshold,
+  heartbeatMetrics,
+  isPingingHeartbeat = false,
+  onRunHeartbeatPing,
 }: {
   userProfile: UserProfile;
   setUserProfile: Dispatch<SetStateAction<UserProfile>>;
@@ -13686,6 +13802,13 @@ function SettingsScreen({
   ) => void;
   isOnline: boolean;
   onSubscribeToPush?: (customUserId?: string) => Promise<void>;
+  onManualSync?: () => Promise<void> | void;
+  isSyncing?: boolean;
+  stalenessThresholdMs?: number;
+  onUpdateStalenessThreshold?: (ms: number) => void;
+  heartbeatMetrics?: NetworkHealthMetrics;
+  isPingingHeartbeat?: boolean;
+  onRunHeartbeatPing?: () => Promise<void> | void;
 }) {
   const [uploading, setUploading] = useState(false);
   const [showLanguageModal, setShowLanguageModal] = useState(false);
@@ -13724,6 +13847,26 @@ function SettingsScreen({
       return [];
     }
   });
+
+  // Diagnostic Global Error Listener state (last 50 error logs)
+  const [globalErrorLogs, setGlobalErrorLogs] = useState<any[]>(() => {
+    try {
+      return (window as any).__GLOBAL_ERROR_LOGS__ || JSON.parse(localStorage.getItem("global_error_logs") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [errorLogFilter, setErrorLogFilter] = useState("");
+
+  useEffect(() => {
+    const handleGlobalErrorUpdate = (e: Event) => {
+      setGlobalErrorLogs((e as CustomEvent).detail || []);
+    };
+    window.addEventListener("global-error-log-updated", handleGlobalErrorUpdate);
+    return () => {
+      window.removeEventListener("global-error-log-updated", handleGlobalErrorUpdate);
+    };
+  }, []);
 
   // Background ping interval
   useEffect(() => {
@@ -14718,6 +14861,27 @@ function SettingsScreen({
                     </button>
                   </div>
 
+                  {/* Manual Sync Button */}
+                  <div className="flex items-center justify-between text-xs border-t border-slate-100 dark:border-slate-800/40 pt-3">
+                    <div className="flex flex-col text-left pr-2">
+                      <span className="font-bold text-slate-800 dark:text-slate-100">Manual Sync & Refresh</span>
+                      <span className="text-[9px] text-slate-400 mt-0.5">Clears pending offline queue & forces fresh Supabase fetch</span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        triggerHaptic?.([40, 40]);
+                        if (onManualSync) {
+                          await onManualSync();
+                        }
+                      }}
+                      disabled={isSyncing}
+                      className="px-3 py-1.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-extrabold text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer border-0 active:scale-95 disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isSyncing ? "animate-spin" : ""}`} />
+                      <span>{isSyncing ? "Syncing..." : "Manual Sync"}</span>
+                    </button>
+                  </div>
+
                   {/* Prune Cache Button */}
                   <div className="flex items-center justify-between text-xs border-t border-slate-100 dark:border-slate-800/40 pt-3">
                     <div className="flex flex-col text-left">
@@ -14877,6 +15041,111 @@ function SettingsScreen({
                             )}
                           </div>
                         ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Visual Network Health Heartbeat Monitor */}
+                  {heartbeatMetrics && (
+                    <div className="pt-2">
+                      <NetworkHeartbeatMonitor
+                        metrics={heartbeatMetrics}
+                        isPinging={isPingingHeartbeat}
+                        onRunPing={onRunHeartbeatPing || (() => {})}
+                      />
+                    </div>
+                  )}
+
+                  {/* Global Error Diagnostic Panel: Exposes last 50 error logs from global listener */}
+                  <div className="border-t border-slate-100 dark:border-slate-800/40 pt-4 space-y-3 text-left">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-500" />
+                        <span className="font-bold text-xs text-slate-800 dark:text-slate-100">
+                          Global Error Diagnostic Logs ({globalErrorLogs.length}/50)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            try {
+                              const text = JSON.stringify(globalErrorLogs, null, 2);
+                              navigator.clipboard.writeText(text);
+                              toast.success("Copied 50 error logs to clipboard! 📋");
+                            } catch (e) {
+                              toast.error("Failed to copy error logs");
+                            }
+                          }}
+                          disabled={globalErrorLogs.length === 0}
+                          className="text-[9px] uppercase font-bold text-slate-700 dark:text-slate-200 bg-slate-200 dark:bg-slate-800 px-2 py-1 rounded hover:bg-slate-300 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer border-0"
+                        >
+                          Copy Logs
+                        </button>
+                        <button
+                          onClick={() => {
+                            setGlobalErrorLogs([]);
+                            try {
+                              (window as any).__GLOBAL_ERROR_LOGS__ = [];
+                              localStorage.setItem("global_error_logs", "[]");
+                            } catch {}
+                            triggerHaptic?.(10);
+                            toast.info("Global error logs cleared.");
+                          }}
+                          className="text-[9px] uppercase font-bold text-red-500 bg-red-50 dark:bg-red-950/40 px-2 py-1 rounded hover:bg-red-100 dark:hover:bg-red-900/40 cursor-pointer border-0"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filter input */}
+                    <input
+                      type="text"
+                      placeholder="Search error logs by keyword (e.g. timeout, upstream)..."
+                      value={errorLogFilter}
+                      onChange={(e) => setErrorLogFilter(e.target.value)}
+                      className="w-full text-[10px] bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 focus:outline-none focus:border-primary text-slate-700 dark:text-slate-200"
+                    />
+
+                    {/* Log list container */}
+                    <div className="bg-slate-950 text-slate-200 p-3 rounded-xl font-mono text-[9px] space-y-2 max-h-52 overflow-y-auto border border-slate-800/80 text-left">
+                      {globalErrorLogs.length === 0 ? (
+                        <div className="text-slate-500 text-center py-5 italic">
+                          No connection timeouts or unhandled rejections recorded. System running smoothly!
+                        </div>
+                      ) : (
+                        globalErrorLogs
+                          .filter((l) =>
+                            !errorLogFilter ||
+                            (l.message && l.message.toLowerCase().includes(errorLogFilter.toLowerCase())) ||
+                            (l.type && l.type.toLowerCase().includes(errorLogFilter.toLowerCase())) ||
+                            (l.timestamp && l.timestamp.toLowerCase().includes(errorLogFilter.toLowerCase()))
+                          )
+                          .map((log) => (
+                            <div key={log.id || log.timestamp} className="border-b border-slate-900 pb-2 last:border-0 last:pb-0 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-500 text-[8px] shrink-0 font-sans">{log.timestamp}</span>
+                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase shrink-0 ${
+                                  log.type === "network_timeout"
+                                    ? "bg-amber-950 text-amber-400 border border-amber-800/50"
+                                    : log.type === "unhandledrejection"
+                                    ? "bg-red-950 text-red-400 border border-red-800/50"
+                                    : log.type === "console_error"
+                                    ? "bg-orange-950 text-orange-400"
+                                    : "bg-purple-950 text-purple-400"
+                                }`}>
+                                  {log.type}
+                                </span>
+                              </div>
+                              <div className="text-slate-200 break-words font-semibold text-[9px]">{log.message}</div>
+                              {log.stack && (
+                                <details className="text-[8px] text-slate-400 mt-0.5">
+                                  <summary className="cursor-pointer text-slate-500 hover:text-slate-300 select-none">Show stack trace</summary>
+                                  <pre className="mt-1 p-1.5 bg-slate-900 rounded overflow-x-auto text-slate-400 font-mono text-[8px] whitespace-pre-wrap">{log.stack}</pre>
+                                </details>
+                              )}
+                            </div>
+                          ))
                       )}
                     </div>
                   </div>

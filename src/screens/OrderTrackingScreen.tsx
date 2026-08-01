@@ -904,15 +904,51 @@ export function OrderTrackingScreen({
                       </p>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right flex flex-col items-end">
                     <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
                       {formatRand(order.price + (order.delivery_fee || 0))}
                     </p>
                     <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
-                      {order.is_delivery ? "Delivery" : "Collection"}
+                      {order.is_delivery ? "🚚 Delivery" : "🛍️ Collection"}
                     </span>
                   </div>
                 </div>
+
+                {/* Direct Driver Chat Banner for Delivery Orders */}
+                {order.is_delivery && (
+                  <div className="flex items-center justify-between bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:via-amber-500/15 dark:to-orange-500/10 p-3 rounded-2xl border border-orange-500/30 dark:border-orange-500/40 shadow-sm">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-orange-600 text-white flex items-center justify-center font-black text-sm shadow-md shrink-0">
+                        🚴
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
+                          {riders[order.rider_id]?.full_name || "Assigned Driver"}
+                        </p>
+                        <p className="text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
+                          Driver Chat Channel Connected
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenChatOrderId(order.id);
+                        setShowChat(true);
+                        setUnreadCounts((prev) => ({ ...prev, [order.id]: 0 }));
+                      }}
+                      className="relative px-3.5 py-2 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white text-xs font-black rounded-xl flex items-center gap-1.5 shadow-md shadow-orange-600/20 transition-all cursor-pointer shrink-0"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>Chat with Driver</span>
+                      {(unreadCounts[order.id] || 0) > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-black min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
+                          {unreadCounts[order.id]}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
 
                 {/* 1. Pending: Looking for a Rider matching state */}
                 {order.status === "pending" && order.delivery_status === "finding_rider" && (
