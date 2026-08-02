@@ -2646,6 +2646,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Safety max timeout to guarantee Securing Session never freezes UI
+    const safetyTimer = setTimeout(() => {
+      setIsRestoringSession(false);
+    }, 1500);
+
     const hasToken = Object.keys(localStorage).some(
       (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
     );
@@ -2768,6 +2773,7 @@ export default function App() {
     window.addEventListener("supabase-jwt-expired", handleJwtExpired);
 
     return () => {
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
       window.removeEventListener("supabase-jwt-expired", handleJwtExpired);
       // Ensure we explicitly release locks or reset any local lock state if needed on unmount
@@ -3505,6 +3511,12 @@ export default function App() {
               <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">Securing Session</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">Verifying secure connection details safely...</p>
             </div>
+            <button
+              onClick={() => setIsRestoringSession(false)}
+              className="mt-1 text-xs font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 bg-orange-50 dark:bg-orange-950/60 px-3.5 py-1.5 rounded-xl border border-orange-200 dark:border-orange-800/80 cursor-pointer active:scale-95 transition-all"
+            >
+              Continue to App
+            </button>
           </div>
         </div>
       </div>

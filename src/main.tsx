@@ -108,6 +108,7 @@ if (typeof window !== "undefined") {
     const isTimeoutOrNetwork =
       !reasonStr ||
       reasonStr === '{}' ||
+      reasonStr === 'undefined' ||
       lowerReason.includes('upstream connect error') ||
       lowerReason.includes('connection timeout') ||
       lowerReason.includes('disconnect/reset') ||
