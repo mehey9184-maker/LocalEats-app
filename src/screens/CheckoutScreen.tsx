@@ -1123,6 +1123,7 @@ export function CheckoutScreen({
           status: "queued_for_sync",
           payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
           is_delivery: deliveryType === "delivery",
+          order_type: deliveryType,
           delivery_fee: deliveryType === "delivery" ? deliveryFee : 0,
           delivery_status: isCOAOrder ? "finding_rider" : "none",
           latitude: currentLat,
@@ -1308,6 +1309,7 @@ export function CheckoutScreen({
             status: "pending",
             payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
             is_delivery: deliveryType === "delivery",
+            order_type: deliveryType,
             delivery_fee: deliveryType === "delivery" ? deliveryFee : 0,
             delivery_status: (paymentMethod === "cash" || isCOAOrder) ? "finding_rider" : "none",
             latitude: currentLat,
@@ -1337,13 +1339,19 @@ export function CheckoutScreen({
         if (error) {
           console.warn("Supabase insert initial attempt error:", error);
 
-          // Retry with safe fallback data (stripping spatial coordinates and/or resolving shop_id to first shop)
+          // Retry with safe fallback data (stripping spatial coordinates and newly added columns that might be missing)
           const fallbackShopId = shops?.[0]?.id ? (typeof shops[0].id === "string" && !isNaN(Number(shops[0].id)) ? Number(shops[0].id) : shops[0].id) : 21;
 
           const safeOrderData = orderData.map((d: any) => {
-            const { latitude, longitude, ...rest } = d;
+            const { latitude, longitude, order_type, delivery_fee, delivery_status, ...rest } = d;
+            
+            // If the error is undefined column (42703), strip the potentially missing ones
+            const dataToInsert = (error.code === "42703" || String(error.message || "").includes("column")) 
+              ? rest 
+              : { ...rest, order_type, delivery_fee, delivery_status };
+
             return {
-              ...rest,
+              ...dataToInsert,
               shop_id: (error.code === "23503" || !rest.shop_id) ? fallbackShopId : rest.shop_id,
               user_id: error.code === "23503" ? null : rest.user_id,
             };

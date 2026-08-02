@@ -1216,6 +1216,7 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -1543,6 +1544,27 @@ export default function App() {
   const handleQRScanSuccess = useCallback((text: string) => {
     if (!text) return;
     
+    const upperText = text.trim().toUpperCase();
+    const isPromoCode = 
+      upperText === "LOCALEATS10" || 
+      upperText.includes("LOCALEATS") || 
+      upperText.includes("PROMO") || 
+      upperText.includes("WINTER") || 
+      upperText.includes("DISCOUNT") || 
+      upperText.includes("OFF");
+
+    if (isPromoCode) {
+      triggerHaptic([15, 15], "button_press");
+      setShowQRScanner(false);
+      try {
+        navigator.clipboard.writeText(upperText);
+      } catch {}
+      toast.success(`Scanned Promo Code: ${upperText}! 🎁`, {
+        description: "Code copied to clipboard! You can apply it at checkout.",
+      });
+      return;
+    }
+
     // Find matching shop
     const foundShop = shops.find((s) => {
       const sId = String(s.id).toLowerCase();
@@ -1567,8 +1589,8 @@ export default function App() {
       });
     } else {
       triggerHaptic([30, 30], "button_press");
-      toast.error("Unrecognized Flyer Code", {
-        description: `Could not find any store matching "${text}".`,
+      toast.error("Unrecognized Code", {
+        description: `Could not find store or promo code matching "${text}".`,
       });
     }
   }, [shops, currentScreen, triggerHaptic]);
@@ -1985,7 +2007,7 @@ export default function App() {
           );
           setLoadingShops(false);
           toast.info(
-            "You are offline. Showing demo menus. Ready to explore! 🍟",
+            "You are offline. Showing cached menus. Ready to explore! 🍟",
             { id: "database-offline-toast", duration: 4000 },
           );
         }
@@ -2374,7 +2396,6 @@ export default function App() {
       });
       setCart([]);
       setFavorites([]);
-      setOfflineOrders([]);
       localStorage.removeItem("userProfile");
       localStorage.removeItem("cart");
       localStorage.removeItem("favorites");
@@ -2830,6 +2851,8 @@ export default function App() {
             const newStatus = payload.new?.status;
             const oldDeliveryStatus = payload.old?.delivery_status;
             const newDeliveryStatus = payload.new?.delivery_status;
+            const oldOrderType = payload.old?.order_type;
+            const newOrderType = payload.new?.order_type;
 
             // 1. Core Order Status Updates
             if (oldStatus !== newStatus) {
@@ -2990,6 +3013,40 @@ export default function App() {
                   ],
                 });
               }
+            }
+
+            // 3. Fallback to Collection
+            if (oldOrderType === "delivery" && newOrderType === "collection") {
+              const shop = shops.find((s) => s.id === payload.new.shop_id);
+              const fallbackMsg = `🚨 The shop ${shop?.name || ""} had to switch your order to COLLECTION as no riders are currently available. Please self-pickup!`;
+              toast.error(fallbackMsg, {
+                duration: 15000,
+                position: "top-center",
+                style: {
+                  background: "#b91c1c", // Red 700
+                  color: "#ffffff",
+                  border: "4px solid #ef4444",
+                  borderRadius: "16px",
+                  padding: "16px",
+                  fontSize: "16px",
+                  fontWeight: "bold",
+                }
+              });
+              audioHelper.play("cancelled");
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
+              
+              setNotification({
+                  message: fallbackMsg,
+                  type: "error",
+                  persistent: true,
+                  actions: [
+                    {
+                      label: "Track Order",
+                      onClick: () => setCurrentScreen("order-tracking"),
+                    },
+                    { label: "Dismiss", onClick: () => {} },
+                  ],
+                });
             }
 
             if (newStatus === "completed") {
@@ -4006,6 +4063,7 @@ export default function App() {
                     setPreviousScreen("discover");
                     setCurrentScreen("explore");
                   }}
+                  onScanFlyer={() => setShowQRScanner(true)}
                   favorites={favorites}
                   toggleFavorite={toggleFavorite}
                   onSelectShop={(shopId) => {
@@ -6123,16 +6181,16 @@ function LoginScreen({
         onLogin();
       }, 1500);
     } catch (error: any) {
-      let msg = error.message;
+      let msg = error?.message || error?.error_description || "";
       if (msg === "Failed to fetch" || msg?.toLowerCase().includes("network")) {
         msg =
           "It looks like you're offline. Please check your internet connection and try again.";
       } else if (msg?.toLowerCase().includes("invalid login credentials")) {
         msg = "The email or password you entered isn't quite right. Please double-check them.";
       } else {
-        msg = "We ran into an issue logging you in. Please try again.";
+        msg = "We ran into an issue logging you in. Please check your email and password and try again.";
       }
-      console.error("Login error:", error);
+      console.warn("[Auth Login Notice]", error);
       setNotification({ message: msg, type: "error" });
     } finally {
       setLoading(false);
@@ -6995,9 +7053,47 @@ function HomeScreen({
   }, [searchQuery]);
 
   const [isHeaderSearching, setIsHeaderSearching] = useState(false);
+  const [sortBy, setSortBy] = useState<'recommended' | 'popular' | 'rating' | 'fastest'>(() => {
+    try {
+      const saved = localStorage.getItem("localeats_shop_sort_preference");
+      if (saved === 'recommended' || saved === 'popular' || saved === 'rating' || saved === 'fastest') {
+        return saved;
+      }
+    } catch {}
+    return 'recommended';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("localeats_shop_sort_preference", sortBy);
+    } catch (e) {
+      console.error("Failed to save sort preference:", e);
+    }
+  }, [sortBy]);
   const [isScrolled, setIsScrolled] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerRef = useRef<HTMLElement>(null);
+
+  // Auto-focus header search input when search mode is activated
+  useEffect(() => {
+    if (isHeaderSearching) {
+      const focusSearchInput = () => {
+        const inputEl = document.getElementById("header-search-input") as HTMLInputElement | null;
+        if (inputEl) {
+          inputEl.focus();
+        }
+      };
+      focusSearchInput();
+      const t1 = setTimeout(focusSearchInput, 50);
+      const t2 = setTimeout(focusSearchInput, 150);
+      const t3 = setTimeout(focusSearchInput, 300);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [isHeaderSearching]);
 
   useEffect(() => {
     if (!headerRef.current) return;
@@ -7045,6 +7141,7 @@ function HomeScreen({
     }
   }, [session?.user?.id]);
   const [selectedCategory, setSelectedCategory] = useState("All");
+  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
   const [selectedQuickFilter, setSelectedQuickFilter] = useState<string | null>(null);
 
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -7170,8 +7267,17 @@ function HomeScreen({
   }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
 
   const sortedShops = useMemo(() => {
+    const getMinPrepTime = (shop: Shop): number => {
+      if (!shop.prepTime) return 99;
+      const match = shop.prepTime.match(/\d+/);
+      return match ? parseInt(match[0], 10) : 99;
+    };
+
+    const getPopularity = (shop: Shop): number => {
+      return (shop.reviewCount || 0) + (shop.rating || 0) * 10;
+    };
+
     return [...filteredShops].sort((a, b) => {
-      // Smart Sort Logic: Prioritize Open -> Distance -> Specials -> Rating
       const statusA = getShopStatus(a);
       const statusB = getShopStatus(b);
 
@@ -7179,7 +7285,17 @@ function HomeScreen({
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
-      // 2. Distance Sort (Nearby Priority)
+      if (sortBy === "popular") {
+        return getPopularity(b) - getPopularity(a);
+      }
+      if (sortBy === "rating") {
+        return (b.rating || 0) - (a.rating || 0);
+      }
+      if (sortBy === "fastest") {
+        return getMinPrepTime(a) - getMinPrepTime(b);
+      }
+
+      // Default 'recommended' sort (Distance -> Special -> Rating)
       if (userLocation) {
         const aLat =
           (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
@@ -7202,14 +7318,14 @@ function HomeScreen({
         if (Math.abs(distA - distB) > 0.001) return distA - distB;
       }
 
-      // 3. Prioritize "Local Eats Special"
+      // Prioritize "Local Eats Special"
       if (a.is_special && !b.is_special) return -1;
       if (!a.is_special && b.is_special) return 1;
 
-      // 4. Rating Sort
-      return b.rating - a.rating;
+      // Rating Sort
+      return (b.rating || 0) - (a.rating || 0);
     });
-  }, [filteredShops, userLocation]);
+  }, [filteredShops, userLocation, sortBy]);
 
   const recentShops = useMemo(() => {
     const ids = [...new Set(orders.map((o) => o.shop_id))].slice(0, 5);
@@ -7680,6 +7796,43 @@ function HomeScreen({
               className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1"
             >
               <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+                {/* Clickable Horizontal Recent Searches Pills */}
+                {recentSearches.length > 0 && (
+                  <div className="px-4 py-2 bg-slate-50/90 dark:bg-slate-950/70 border-b border-slate-100 dark:border-slate-800/80 flex items-center gap-2 overflow-x-auto no-scrollbar">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0 flex items-center gap-1">
+                      <History className="w-3 h-3 text-orange-500" /> Recent:
+                    </span>
+                    {recentSearches.map((term, idx) => (
+                      <button
+                        key={`recent-pill-${idx}`}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSearchQuery(term);
+                          saveRecentSearch(term);
+                          triggerHaptic(5);
+                        }}
+                        className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-orange-50 dark:hover:bg-orange-950/40 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 rounded-full text-xs font-bold border border-slate-200/80 dark:border-slate-700/80 shadow-2xs shrink-0 cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                      >
+                        <span>{term}</span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setRecentSearches([]);
+                        try {
+                          localStorage.removeItem("recent_searches");
+                        } catch {}
+                      }}
+                      className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 hover:text-rose-500 shrink-0 ml-auto cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+
                 {/* IF SEARCH QUERY IS EMPTY OR SMALL */}
                 {searchQuery.length < 2 ? (
                   <>
@@ -7986,32 +8139,19 @@ function HomeScreen({
       <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full" style={{ paddingTop: headerHeight ? `calc(${headerHeight}px + 1rem)` : "120px" }}>
         {/* Compact Persistent Delivery Status Widget (Removed to prevent duplication with global persistent tracker) */}
 
-        <div className="mb-8 px-1 pt-2 animate-in fade-in slide-in-from-left-4 duration-700 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="mb-6 px-1 pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-600 mb-1">
-              {greeting},
-            </p>
-            <h2 className="text-3xl font-black text-slate-900 dark:text-white tracking-tighter flex items-center gap-1.5 flex-wrap">
-              <span>
-                {userProfile.fullName
-                  ? userProfile.fullName.split(" ")[0]
-                  : "Legend"}
-                !
-              </span>
-              <span className="inline-flex items-center text-amber-500 select-none px-1">
-                👑
-              </span>
-              <span className="inline-block select-none animate-bounce origin-bottom">
-                👋
-              </span>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2 flex-wrap">
+              <span>{greeting}, {userProfile.fullName ? userProfile.fullName.split(" ")[0] : "there"}</span>
+              <span className="select-none">👋</span>
             </h2>
-            <p className="text-xs text-slate-800 dark:text-slate-200 mt-1.5 font-extrabold tracking-tight">
-              {currentTownship.greeting}
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 font-medium">
+              Order fresh local meals & goods delivered in <span className="font-semibold text-orange-600 dark:text-orange-400">{currentTownship.name}</span>
             </p>
           </div>
-          <div className="flex items-center">
-            <span className="inline-flex items-center gap-1 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-orange-500/20 shadow-sm">
-              📍 {currentTownship.name}
+          <div className="flex items-center shrink-0">
+            <span className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-bold border border-orange-200 dark:border-orange-800/60 shadow-xs">
+              📍 Delivering to {currentTownship.name}
             </span>
           </div>
         </div>
@@ -8092,25 +8232,48 @@ function HomeScreen({
 
         {/* Local Merchants */}
         <section className="mb-20">
-          <div className="flex items-center justify-between mb-2 px-1">
-            <div className="flex flex-col">
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-0.5">
-                Local Merchants
-              </h3>
-              <div className="h-1 w-8 bg-orange-600 rounded-full"></div>
-            </div>
-            {loadingShops ? (
-              <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-full border border-amber-100 dark:border-amber-900/40">
-                <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
-                <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest animate-pulse">
-                  Syncing...
-                </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3 px-1">
+            <div className="flex items-center gap-3 justify-between sm:justify-start">
+              <div className="flex flex-col">
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-0.5">
+                  Local Merchants
+                </h3>
+                <div className="h-1 w-8 bg-orange-600 rounded-full"></div>
               </div>
-            ) : (
-              <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                {sortedShops.length} Online
-              </span>
-            )}
+              {loadingShops ? (
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-full border border-amber-100 dark:border-amber-900/40">
+                  <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
+                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest animate-pulse">
+                    Syncing...
+                  </span>
+                </div>
+              ) : (
+                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
+                  {sortedShops.length} Online
+                </span>
+              )}
+            </div>
+
+            {/* Sorting Dropdown */}
+            <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800 shadow-xs self-start sm:self-auto">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+              <span className="text-[10px] font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider hidden xs:inline">Sort:</span>
+              <select
+                id="shop-sort-dropdown"
+                value={sortBy}
+                onChange={(e) => {
+                  setSortBy(e.target.value as 'recommended' | 'popular' | 'rating' | 'fastest');
+                  triggerHaptic(5);
+                }}
+                className="bg-transparent border-none text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer focus:ring-0 pr-1"
+                aria-label="Sort shops"
+              >
+                <option value="recommended" className="dark:bg-slate-900">✨ Recommended</option>
+                <option value="popular" className="dark:bg-slate-900">🔥 Most Popular</option>
+                <option value="rating" className="dark:bg-slate-900">⭐ Rating</option>
+                <option value="fastest" className="dark:bg-slate-900">⚡ Fastest Prep Time</option>
+              </select>
+            </div>
           </div>
 
           {loadingShops && (
@@ -8127,26 +8290,38 @@ function HomeScreen({
         </section>
 
         {sortedShops.length === 0 && (
-          <section className="py-20 text-center">
-            <div className="size-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-              <Store className="w-10 h-10" />
+          <motion.section
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+            className="py-16 text-center flex flex-col items-center justify-center px-4"
+          >
+            <div className="relative mb-6">
+              <div className="absolute inset-0 rounded-full bg-orange-500/20 animate-ping opacity-75"></div>
+              <div className="relative size-20 bg-orange-50 dark:bg-orange-950/40 rounded-full flex items-center justify-center text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/60 shadow-xs">
+                <Search className="w-9 h-9 animate-pulse" />
+              </div>
             </div>
-            <h3 className="text-lg font-black text-slate-900 dark:text-white">
-              No Shops Found
+            <h3 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
+              No Kitchens Found
             </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Try adjusting your filters or search query.
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 max-w-xs mx-auto font-medium">
+              {searchQuery
+                ? `No merchants matching "${searchQuery}". Try a different keyword.`
+                : `No kitchens currently open in "${selectedCategory}".`}
             </p>
             <button
               onClick={() => {
                 setSearchQuery("");
                 setSelectedCategory("All");
+                setSelectedQuickFilter(null);
+                triggerHaptic(5);
               }}
-              className="mt-6 px-6 py-3 bg-orange-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
+              className="mt-6 px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider shadow-md shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
             >
-              Clear All Filters
+              Reset Filters & Search
             </button>
-          </section>
+          </motion.section>
         )}
       </main>
 
@@ -8540,7 +8715,7 @@ function QRScannerModal({
           <div className="flex items-center gap-2">
             <QrCode className="w-5 h-5 text-orange-500 animate-pulse" />
             <h3 className="font-['Plus_Jakarta_Sans'] font-black text-sm uppercase tracking-wider text-slate-800 dark:text-slate-100">
-              Flyer QR Code Scanner
+              Promo Code & Flyer QR Scanner
             </h3>
           </div>
           <button
@@ -8554,7 +8729,7 @@ function QRScannerModal({
         {/* Scanner Body */}
         <div className="p-6 flex flex-col items-center">
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center mb-4 leading-relaxed">
-            Scan a store's flyer QR code to instantly open its menu.
+            Scan a store flyer or promo code QR to instantly apply discounts or view menus.
           </p>
 
           {/* Camera Viewport */}
@@ -8601,20 +8776,31 @@ function QRScannerModal({
             {/* Simulated QR Scan Section */}
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800/80">
               <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                Flyer QR Code Tester (Simulation)
+                QR Code Tester (Simulation)
               </span>
-              <div className="grid grid-cols-2 gap-2 mt-2 max-h-[120px] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 mt-2 max-h-[140px] overflow-y-auto">
+                <button
+                  onClick={() => onScanSuccess("LOCALEATS10")}
+                  className="flex flex-col text-left p-2.5 rounded-xl border border-orange-200 dark:border-orange-800/60 bg-orange-50/50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-all group col-span-2 cursor-pointer"
+                >
+                  <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 group-hover:text-orange-500 flex items-center gap-1">
+                    <Tag className="w-3.5 h-3.5 text-orange-500" /> Scan Promo: LOCALEATS10 (10% Off)
+                  </span>
+                  <span className="text-[8px] text-slate-400 font-mono mt-0.5">
+                    Applies 10% discount promo code to clipboard
+                  </span>
+                </button>
                 {shops.slice(0, 4).map((shop) => (
                   <button
                     key={shop.id}
                     onClick={() => onScanSuccess(shop.id)}
-                    className="flex flex-col text-left p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group"
+                    className="flex flex-col text-left p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-orange-500/40 hover:bg-orange-500/5 transition-all group cursor-pointer"
                   >
                     <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 group-hover:text-orange-500 truncate">
                       {shop.name}
                     </span>
                     <span className="text-[8px] text-slate-400 font-mono mt-0.5">
-                      Code: {shop.id}
+                      Flyer: {shop.id}
                     </span>
                   </button>
                 ))}
@@ -8652,6 +8838,7 @@ function DiscoverScreen({
   userProfile,
   onHome,
   onExplore,
+  onScanFlyer,
   favorites,
   toggleFavorite,
   onSelectShop,
@@ -8665,6 +8852,7 @@ function DiscoverScreen({
   shops: Shop[];
   onHome: () => void;
   onExplore: () => void;
+  onScanFlyer?: () => void;
   favorites: string[];
   toggleFavorite: (shopId: string) => void;
   onSelectShop: (shopId: string) => void;
@@ -8709,6 +8897,7 @@ function DiscoverScreen({
   }, []);
 
   const [selectedCategory, setSelectedCategory] = useState("All");
+  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
@@ -8752,6 +8941,40 @@ function DiscoverScreen({
       indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
     });
     return indexMap;
+  }, [shops]);
+
+  const realFreshItems = useMemo(() => {
+    const items: Array<{
+      id: string;
+      shopId: string;
+      shopName: string;
+      itemName: string;
+      price: number;
+      image: string;
+      description: string;
+      badge: string;
+    }> = [];
+
+    shops.forEach((shop) => {
+      if (shop.menu && shop.menu.length > 0) {
+        shop.menu.forEach((item) => {
+          if (item.image) {
+            items.push({
+              id: `${shop.id}-${item.id}`,
+              shopId: shop.id,
+              shopName: shop.name,
+              itemName: item.name,
+              price: item.price,
+              image: item.image,
+              description: item.description || `${item.name} from ${shop.name}`,
+              badge: shop.rating >= 4.5 ? "Top Rated" : "Fresh",
+            });
+          }
+        });
+      }
+    });
+
+    return items.slice(0, 8);
   }, [shops]);
 
   const filteredShops = useMemo(() => {
@@ -8887,7 +9110,20 @@ function DiscoverScreen({
               DISCOVER
             </h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {onScanFlyer && (
+              <button
+                onClick={() => {
+                  triggerHaptic(10);
+                  onScanFlyer();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition-all active:scale-95 cursor-pointer"
+                title="Scan Promo Code or Store Flyer"
+              >
+                <QrCode className="w-4 h-4 text-white" />
+                <span className="hidden sm:inline">Scan Promo Code</span>
+              </button>
+            )}
             <button
               onClick={() => setViewMode(viewMode === "list" ? "map" : "list")}
               className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
@@ -8911,34 +9147,71 @@ function DiscoverScreen({
       </header>
 
       <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
-        {/* What's Fresh Visual Feed */}
-        <section className="px-6 py-6 bg-white dark:bg-slate-900 shadow-sm border-b border-slate-100 dark:border-slate-800">
-          <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
-            <Camera className="w-3.5 h-3.5 text-orange-500" />
-            What's Fresh Right Now
-          </h3>
-          
-          <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
-            {[
-              { id: 1, shopName: "Bra Joe's Kota", image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=600&auto=format&fit=crop", time: "2 mins ago", caption: "Fresh batch of chips just came out! 🍟🔥" },
-              { id: 2, shopName: "Sis Ouma's Kitchen", image: "https://images.unsplash.com/photo-1626804475297-41609ea084eb?q=80&w=600&auto=format&fit=crop", time: "15 mins ago", caption: "Our signature sphatlho is ready for you! 🥪" },
-              { id: 3, shopName: "The Kota King", image: "https://images.unsplash.com/photo-1550547660-d9450f859349?q=80&w=600&auto=format&fit=crop", time: "1 hour ago", caption: "Double cheese, double meat. Come hungry! 🥩🧀" }
-            ].map(feed => (
-              <div key={feed.id} className="flex-shrink-0 w-64 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
-                <div className="relative h-36 w-full bg-slate-100 dark:bg-slate-800">
-                  <img src={feed.image} alt="Food photo" className="w-full h-full object-cover" />
-                  <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-[9px] font-black uppercase px-2 py-1 rounded-md">
-                    {feed.time}
-                  </div>
+        {/* Dedicated Promo Code & Flyer Scanner Action Card */}
+        {onScanFlyer && (
+          <div className="px-6 pt-4 pb-1">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:to-slate-900 rounded-2xl border border-orange-500/20 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-md shrink-0">
+                  <QrCode className="w-5 h-5" />
                 </div>
-                <div className="p-3">
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white">{feed.shopName}</h4>
-                  <p className="text-[10px] font-bold text-slate-500 mt-1 line-clamp-2">{feed.caption}</p>
+                <div>
+                  <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <span>Scan Promo Codes & Flyers</span>
+                    <span className="bg-orange-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase">Instant</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                    Scan QR codes on promotional cards or flyers to auto-apply discounts or view menus.
+                  </p>
                 </div>
               </div>
-            ))}
+              <button
+                onClick={() => {
+                  triggerHaptic(10);
+                  onScanFlyer();
+                }}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 self-start sm:self-auto"
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan Promo Code</span>
+              </button>
+            </div>
           </div>
-        </section>
+        )}
+        {/* Real Menu Items Feed from Active Shops */}
+        {realFreshItems.length > 0 && (
+          <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
+            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-orange-500" />
+              Fresh From Local Kitchens
+            </h3>
+            
+            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
+              {realFreshItems.map((feed) => (
+                <div
+                  key={feed.id}
+                  onClick={() => onSelectShop(feed.shopId)}
+                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
+                >
+                  <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
+                    <img src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
+                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
+                      {feed.badge}
+                    </div>
+                    <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
+                      R{feed.price}
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
+                    <p className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
+                    <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
@@ -11884,7 +12157,13 @@ function ExploreScreen({
   isOnline: boolean;
   loadingShops?: boolean;
   orders?: Order[];
-  addToCart?: (item: CartItem) => void;
+  addToCart?: (
+    item: any,
+    shopId?: string,
+    quantity?: number,
+    specialInstructions?: string,
+    selectedCustomizations?: any[]
+  ) => void;
 }) {
   const { t, language } = useTranslation();
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -11892,11 +12171,12 @@ function ExploreScreen({
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
+  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'rider'>('all');
+  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop'>('all');
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
@@ -12582,7 +12862,6 @@ function ExploreScreen({
                 activeFilter={legendFilter}
                 onSelectFilter={(f) => setLegendFilter(f)}
                 shopCount={filteredShops.length}
-                riderCount={activeProximityRiders.length}
                 onFocusCustomer={() => {
                   if (!userLocation) {
                     onRequestLocation();
@@ -12595,13 +12874,6 @@ function ExploreScreen({
                     const s = filteredShops[0];
                     setSelectedShopId(s.id);
                     toast.info(`Focused on ${s.name}`);
-                  }
-                }}
-                onFocusRider={() => {
-                  if (activeProximityRiders.length > 0) {
-                    toast.info(`Showing ${activeProximityRiders.length} active couriers within 5km radius`);
-                  } else {
-                    toast.info("No active couriers currently within 5km radius.");
                   }
                 }}
               />
@@ -12675,23 +12947,6 @@ function ExploreScreen({
                 lng={userLocation.lng}
               />
             )}
-
-            {/* Real-time Rider Proximity Observer (Memoized Riders) */}
-            {(legendFilter === 'all' || legendFilter === 'rider') && activeProximityRiders.map((rider) => {
-              const rLat = rider.latitude;
-              const rLng = rider.longitude;
-              const refLat = userLocation?.lat ?? mapCenter[0];
-              const refLng = userLocation?.lng ?? mapCenter[1];
-              const distVal = calculateDistance(rLat, rLng, refLat, refLng);
-
-              return (
-                <MemoizedRiderMarker
-                  key={rider.id}
-                  rider={rider}
-                  distVal={distVal}
-                />
-              );
-            })}
 
             {/* Shop Pins Cluster (Memoized Shops) */}
             <MarkerClusterGroup
@@ -22322,8 +22577,18 @@ function ReviewScreen({
   const [riderRating, setRiderRating] = useState(5);
   const [riderComment, setRiderComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
+    if (rating <= 3 && !comment.trim()) {
+      setError("Please add a reason explaining your 3-star or lower shop rating.");
+      return;
+    }
+    if (riderRating <= 3 && !riderComment.trim()) {
+      setError("Please add a reason explaining your 3-star or lower delivery rating.");
+      return;
+    }
+    setError(null);
     setSubmitting(true);
     try {
       await onSubmit(rating, comment, riderRating, riderComment);
@@ -22347,8 +22612,19 @@ function ReviewScreen({
           </p>
         </div>
 
+        {error && (
+          <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 p-4 rounded-2xl text-xs font-semibold flex items-center gap-3 animate-pulse">
+            <AlertCircle className="w-5 h-5 shrink-0 text-red-500" />
+            <span>{error}</span>
+          </div>
+        )}
+
         {/* Shop Review */}
-        <div className="space-y-4 bg-slate-50 dark:bg-slate-900/50 p-6 rounded-[32px] border border-slate-100 dark:border-slate-800">
+        <div className={`space-y-4 bg-slate-50 dark:bg-slate-900/50 p-6 rounded-[32px] border transition-colors ${
+          rating <= 3 && !comment.trim() && error
+            ? "border-red-500 dark:border-red-500/80 ring-2 ring-red-500/20"
+            : "border-slate-100 dark:border-slate-800"
+        }`}>
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
             Food & Shop Experience
           </p>
@@ -22359,7 +22635,10 @@ function ReviewScreen({
             {[1, 2, 3, 4, 5].map((star) => (
               <button
                 key={star}
-                onClick={() => setRating(star)}
+                onClick={() => {
+                  setRating(star);
+                  if (error) setError(null);
+                }}
                 className="p-1 transition-transform active:scale-90"
               >
                 <Star
@@ -22369,15 +22648,27 @@ function ReviewScreen({
             ))}
           </div>
           <textarea
-            placeholder="How was the food?"
+            placeholder={rating <= 3 ? "Please let us know what could be improved... (Required for 3 stars or lower)" : "How was the food?"}
             value={comment}
-            onChange={(e) => setComment(e.target.value)}
+            onChange={(e) => {
+              setComment(e.target.value);
+              if (error) setError(null);
+            }}
             className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-orange-500 transition-all min-h-[80px] resize-none"
           />
+          {rating <= 3 && (
+            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 text-center">
+              * Please provide a reason for ratings of 3 stars or lower.
+            </p>
+          )}
         </div>
 
         {/* Rider Review */}
-        <div className="space-y-4 bg-indigo-50/50 dark:bg-indigo-900/10 p-6 rounded-[32px] border border-indigo-100/50 dark:border-indigo-800/30">
+        <div className={`space-y-4 bg-indigo-50/50 dark:bg-indigo-900/10 p-6 rounded-[32px] border transition-colors ${
+          riderRating <= 3 && !riderComment.trim() && error
+            ? "border-red-500 dark:border-red-500/80 ring-2 ring-red-500/20"
+            : "border-indigo-100/50 dark:border-indigo-800/30"
+        }`}>
           <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest text-center">
             Rider & Delivery
           </p>
@@ -22391,7 +22682,10 @@ function ReviewScreen({
             {[1, 2, 3, 4, 5].map((star) => (
               <button
                 key={star}
-                onClick={() => setRiderRating(star)}
+                onClick={() => {
+                  setRiderRating(star);
+                  if (error) setError(null);
+                }}
                 className="p-1 transition-transform active:scale-90"
               >
                 <Star
@@ -22401,11 +22695,19 @@ function ReviewScreen({
             ))}
           </div>
           <textarea
-            placeholder="Speed, politeness, handling..."
+            placeholder={riderRating <= 3 ? "Please explain the delivery issue... (Required for 3 stars or lower)" : "Speed, politeness, handling..."}
             value={riderComment}
-            onChange={(e) => setRiderComment(e.target.value)}
+            onChange={(e) => {
+              setRiderComment(e.target.value);
+              if (error) setError(null);
+            }}
             className="w-full bg-white dark:bg-slate-800 border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500 transition-all min-h-[80px] resize-none"
           />
+          {riderRating <= 3 && (
+            <p className="text-[11px] font-medium text-amber-600 dark:text-amber-400 text-center">
+              * Please provide a reason for ratings of 3 stars or lower.
+            </p>
+          )}
         </div>
       </div>
 

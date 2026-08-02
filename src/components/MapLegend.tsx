@@ -4,13 +4,11 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export interface MapLegendProps {
   userLocation?: { lat: number; lng: number } | null;
-  activeFilter?: 'all' | 'customer' | 'shop' | 'rider';
-  onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'rider') => void;
+  activeFilter?: 'all' | 'customer' | 'shop' | 'closed_shop';
+  onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'closed_shop') => void;
   shopCount?: number;
-  riderCount?: number;
   onFocusCustomer?: () => void;
   onFocusShop?: () => void;
-  onFocusRider?: () => void;
   className?: string;
 }
 
@@ -19,10 +17,8 @@ export const MapLegend: React.FC<MapLegendProps> = ({
   activeFilter = 'all',
   onSelectFilter,
   shopCount,
-  riderCount,
   onFocusCustomer,
   onFocusShop,
-  onFocusRider,
   className = '',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -82,24 +78,6 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       ),
       action: onFocusShop,
     },
-    {
-      id: 'rider' as const,
-      title: 'Courier / Delivery Rider',
-      badge: riderCount !== undefined ? `${riderCount} Active` : 'Indigo Pin',
-      desc: 'Indigo & Emerald Pins — Live drivers (Green=Available, Orange=Busy)',
-      color: 'bg-indigo-600',
-      borderColor: 'border-indigo-500',
-      lightBg: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300',
-      icon: (
-        <div className="relative flex items-center justify-center">
-          <div className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md border-2 border-white animate-pulse">
-            <Bike className="w-3.5 h-3.5" />
-          </div>
-          <span className="absolute -bottom-0.5 w-1.5 h-1.5 bg-indigo-600 rounded-full"></span>
-        </div>
-      ),
-      action: onFocusRider,
-    },
   ];
 
   return (
@@ -120,7 +98,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
             <Sparkles className="w-2.5 h-2.5 text-amber-500" />
           </span>
           <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500 leading-none mt-0.5">
-            {isOpen ? 'Tap to hide' : 'Customer, Shop & Rider pins'}
+            {isOpen ? 'Tap to hide' : 'Customer & Shop pins'}
           </span>
         </div>
         {isOpen ? (

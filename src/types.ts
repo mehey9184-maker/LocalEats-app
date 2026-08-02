@@ -41,11 +41,12 @@ export type Order = {
   status_history?: StatusHistoryItem[];
   owner_message?: string;
   cancellation_reason?: string;
-  payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine';
+  payment_method?: 'cash' | 'card_machine' | 'Cash on Delivery' | 'Card Machine' | 'cash_on_arrival' | string;
   special_instructions?: string;
   customizations?: { name: string, price: number }[];
   latitude?: number;
   longitude?: number;
+  is_offline_queued?: boolean;
 };
 
 export type PendingReview = {
@@ -93,6 +94,7 @@ export type Shop = {
   id: string;
   name: string;
   logo: string;
+  logo_url?: string;
   rating: number;
   description: string;
   address: string;
@@ -114,6 +116,7 @@ export type Shop = {
   images?: string[];
   delivery_radius_km?: number;
   cash_trust_enabled?: boolean;
+  localeats_cash_trust?: boolean;
   allow_external_riders?: boolean;
   auto_look_for_rider?: boolean;
   updated_at?: string;

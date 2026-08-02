@@ -81,9 +81,12 @@ if (typeof window !== "undefined") {
       lower.includes('failed to connect to websocket') ||
       lower.includes('failed to fetch') ||
       lower.includes('load failed') ||
-      lower.includes('networkerror')
+      lower.includes('networkerror') ||
+      lower.includes('login error') ||
+      lower.includes('incompatible react versions')
     ) {
-      return; // Ignore Vite HMR and expected offline fetch network noise
+      originalConsoleError(...args);
+      return; // Ignore Vite HMR, auth/login user notifications, and expected offline fetch network noise
     }
     pushGlobalErrorLog("console_error", msg);
     originalConsoleError(...args);
@@ -97,11 +100,14 @@ if (typeof window !== "undefined") {
     if (event && typeof event.stopImmediatePropagation === 'function') {
       event.stopImmediatePropagation();
     }
-    const reasonStr = (event?.reason && (event.reason instanceof Error ? event.reason.message : String(event.reason))) || 'Unhandled Promise Rejection';
+    const rawReason = event?.reason;
+    const reasonStr = (rawReason && (rawReason instanceof Error ? rawReason.message : (typeof rawReason === 'object' ? (rawReason.message || JSON.stringify(rawReason)) : String(rawReason)))) || '';
     const lowerReason = reasonStr.toLowerCase();
 
-    const stack = event?.reason && event.reason instanceof Error ? event.reason.stack : undefined;
+    const stack = rawReason && rawReason instanceof Error ? rawReason.stack : undefined;
     const isTimeoutOrNetwork =
+      !reasonStr ||
+      reasonStr === '{}' ||
       lowerReason.includes('upstream connect error') ||
       lowerReason.includes('connection timeout') ||
       lowerReason.includes('disconnect/reset') ||
@@ -114,30 +120,15 @@ if (typeof window !== "undefined") {
       lowerReason.includes('aborted') ||
       lowerReason.includes('abort error');
 
-    pushGlobalErrorLog(
-      isTimeoutOrNetwork ? "network_timeout" : "unhandledrejection",
-      reasonStr,
-      stack
-    );
-
-    // Silently handle benign websocket drops, fetch failures, and network connection drops
-    if (
-      lowerReason.includes('websocket closed without opened') ||
-      lowerReason.includes('failed to connect to websocket') ||
-      lowerReason.includes('upstream connect error') ||
-      lowerReason.includes('disconnect/reset') ||
-      lowerReason.includes('connection timeout') ||
-      lowerReason.includes('failed to fetch') ||
-      lowerReason.includes('load failed') ||
-      lowerReason.includes('network error') ||
-      lowerReason.includes('fetch failed') ||
-      lowerReason.includes('aborted') ||
-      lowerReason.includes('abort error')
-    ) {
-      return true;
+    if (!isTimeoutOrNetwork && reasonStr && reasonStr !== '{}' && !lowerReason.includes('login error')) {
+      pushGlobalErrorLog(
+        "unhandledrejection",
+        reasonStr,
+        stack
+      );
     }
 
-    if (reasonStr) {
+    if (reasonStr && !isTimeoutOrNetwork) {
       console.warn('[UnhandledRejection prevented]', reasonStr);
     }
     return true;
@@ -150,8 +141,17 @@ if (typeof window !== "undefined") {
   window.addEventListener('error', (event) => {
     const errorStr = event.error && event.error instanceof Error ? event.error.message : String(event.message || 'Uncaught Script Error');
     const stack = event.error && event.error instanceof Error ? event.error.stack : undefined;
-    if (errorStr.includes('WebSocket closed without opened') || errorStr.includes('failed to connect to websocket')) {
-      event.preventDefault(); // Silently handle Vite HMR connection drops
+    const lowerError = errorStr.toLowerCase();
+
+    if (
+      lowerError.includes('websocket closed') ||
+      lowerError.includes('failed to connect to websocket') ||
+      lowerError.includes('failed to fetch') ||
+      lowerError.includes('load failed') ||
+      lowerError.includes('network error') ||
+      lowerError.includes('networkerror')
+    ) {
+      event.preventDefault(); // Silently handle Vite HMR and network connection drops
       event.stopImmediatePropagation();
       return;
     }

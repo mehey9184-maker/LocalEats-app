@@ -48,6 +48,22 @@ const customerDestIcon = L.divIcon({
   popupAnchor: [0, -40]
 });
 
+export const isRiderAttachedAndDispatched = (ord: any) => {
+  if (!ord || !ord.rider_id) return false;
+  const dStatus = (ord.delivery_status || "").toLowerCase();
+  const oStatus = (ord.status || "").toLowerCase();
+  const validDispatchedStatuses = [
+    "dispatched",
+    "accepted",
+    "rider_assigned",
+    "picked_up",
+    "out_for_delivery",
+    "delivering",
+    "in_transit"
+  ];
+  return validDispatchedStatuses.includes(dStatus) || validDispatchedStatuses.includes(oStatus);
+};
+
 interface RealTimeCountdownProps {
   createdAt: string;
   status: string;
@@ -915,7 +931,7 @@ export function OrderTrackingScreen({
                 </div>
 
                 {/* Direct Driver Chat Banner for Delivery Orders */}
-                {order.is_delivery && (
+                {order.is_delivery && isRiderAttachedAndDispatched(order) && (
                   <div className="flex items-center justify-between bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:via-amber-500/15 dark:to-orange-500/10 p-3 rounded-2xl border border-orange-500/30 dark:border-orange-500/40 shadow-sm">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-orange-600 text-white flex items-center justify-center font-black text-sm shadow-md shrink-0">
@@ -950,7 +966,7 @@ export function OrderTrackingScreen({
                   </div>
                 )}
 
-                {/* 1. Pending: Looking for a Rider matching state */}
+                {/* 1. Pending / Preparing state notice */}
                 {order.status === "pending" && order.delivery_status === "finding_rider" && (
                   <div className="p-5 bg-amber-500/10 border-2 border-amber-500/20 rounded-2xl flex gap-4 items-start animate-pulse">
                     <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-600 shrink-0">
@@ -958,10 +974,10 @@ export function OrderTrackingScreen({
                     </div>
                     <div className="space-y-1">
                       <h4 className="font-bold text-sm text-amber-800 dark:text-amber-400">
-                        Pending: Looking for a Rider
+                        Order Confirmed & Preparing
                       </h4>
                       <p className="text-xs text-amber-700/80 dark:text-amber-500/80 leading-relaxed font-medium">
-                        We have automatically dispatched a regional courier match request. Your food preparation begins immediately when a driver accepts!
+                        Your order has been received by {shop?.name || "the shop"}. Preparation is in progress, and driver details will appear once your courier is dispatched.
                       </p>
                     </div>
                   </div>
@@ -973,23 +989,14 @@ export function OrderTrackingScreen({
                     <div className="flex items-center gap-3 text-xs font-semibold text-slate-700 dark:text-slate-300">
                       <Truck size={16} className="text-slate-400 shrink-0" />
                       <span>
-                        {shop.allow_external_riders ? (
-                          <span className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400">
-                            📡 Linked directly to <strong className="font-bold">LocalEats Public Fleet</strong>
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
-                            🚴 Serviced by <strong className="font-bold">{shop.name}'s private team</strong>
-                          </span>
-                        )}
+                        <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                          🚴 Serviced by <strong className="font-bold">{shop.name}'s delivery network</strong>
+                        </span>
                       </span>
                     </div>
                     
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium pl-7 leading-normal">
-                      {shop.allow_external_riders 
-                        ? "Your order is broadcasted to our public courier pool for rapid fulfillment."
-                        : "This shop processes its own deliveries to guarantee personal care."
-                      }
+                      This order is prepared and dispatched directly through {shop.name} for quality assurance.
                     </p>
                   </div>
                 )}
@@ -1011,11 +1018,11 @@ export function OrderTrackingScreen({
                   </div>
                 )}
 
-                {/* Delivery/Rider Contact Widget & Live Telemetry Map */}
-                {order.is_delivery && (
+                {/* Delivery/Rider Contact Widget & Live Telemetry Map (Strict Fleet Isolation: Only when rider_id attached and order dispatched) */}
+                {order.is_delivery && isRiderAttachedAndDispatched(order) && (
                   (() => {
-                    const assignedRider = order.rider_id ? riders[order.rider_id] : null;
-                    const riderName = assignedRider?.full_name || (order.rider_id ? "Assigned Courier" : "Dispatching Courier...");
+                    const assignedRider = riders[order.rider_id];
+                    const riderName = assignedRider?.full_name || "Assigned Courier";
                     const riderPhone = assignedRider?.phone;
 
                     const shopLat = shop?.latitude || -26.009012;
@@ -1123,19 +1130,19 @@ export function OrderTrackingScreen({
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5">
                               <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 font-black">
-                                {assignedRider?.full_name?.charAt(0) || "🚴"}
+                                {riderName.charAt(0)}
                               </div>
                               <div>
                                 <p className="text-xs font-black text-slate-800 dark:text-slate-200">
                                   {riderName}
                                 </p>
-                                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                                  {assignedRider ? "Courier En Route" : "Finding Nearby Courier"}
+                                <p className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-widest mt-0.5">
+                                  Courier Dispatched & En Route
                                 </p>
                               </div>
                             </div>
-                            <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
-                              Active Delivery
+                            <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
+                              Dispatched
                             </span>
                           </div>
 

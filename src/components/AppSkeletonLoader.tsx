@@ -141,7 +141,9 @@ export function AppSkeletonLoader({ userProfile }: AppSkeletonLoaderProps) {
             >
               {/* Card Image Area */}
               <div className="h-44 w-full rounded-[24px] bg-slate-200 dark:bg-slate-800 relative overflow-hidden flex items-center justify-center">
-                <LocalEatsLogo width={80} height={25} opacity={0.15} />
+                <div style={{ opacity: 0.15 }}>
+                  <LocalEatsLogo width={80} height={25} />
+                </div>
               </div>
               {/* Card details */}
               <div className="px-2 pb-2 space-y-3">
