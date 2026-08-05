@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock, Sparkles, Volume2, VolumeX, Music } from 'lucide-react';
 import { audioHelper, SoundType } from '../lib/audioHelper';
 
@@ -40,19 +40,19 @@ export function AppHelp({
 
       <AnimatePresence>
         {isOpen && (
-          <>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsOpen(false)}
-              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[95]"
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-0"
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-x-4 top-1/2 -translate-y-1/2 md:max-w-md md:left-1/2 md:-translate-x-1/2 z-[100] bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[85vh]"
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative z-10 w-full max-w-md bg-white dark:bg-slate-900 rounded-[28px] sm:rounded-[32px] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col max-h-[88dvh] my-auto"
             >
               <div className="p-6 pb-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center sticky top-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md z-10">
                 <div className="flex items-center gap-3">
@@ -194,7 +194,7 @@ export function AppHelp({
                 </div>
               </div>
             </motion.div>
-          </>
+          </div>
         )}
       </AnimatePresence>
     </>

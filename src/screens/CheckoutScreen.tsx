@@ -6,7 +6,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { Shop, CartItem, Screen } from "../types";
 import { UserProfile } from "../App";
-import { calculateDistance, formatSAPhone, validateSAPhone, safeLocalStorageSet, safeLocalStorageGet, getShopStatus, DEFAULT_MENU_IMAGE } from "../utils";
+import { calculateDistance, formatSAPhone, validateSAPhone, toDBPhone, safeLocalStorageSet, safeLocalStorageGet, getShopStatus, DEFAULT_MENU_IMAGE } from "../utils";
 import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
@@ -1000,7 +1000,7 @@ export function CheckoutScreen({
           .from("profiles")
           .update({
             fullName: finalCustomerName,
-            phone: finalCustomerPhone,
+            phone: toDBPhone(finalCustomerPhone),
             ...(deliveryType === "delivery"
               ? {
                   address: deliveryAddressText,

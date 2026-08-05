@@ -6,6 +6,7 @@
 import { CheckoutScreen } from "./screens/CheckoutScreen";
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
 import { CircuitBreaker } from "./utils/circuitBreaker";
+import { uploadClientAvatar } from "./lib/avatar";
 import {
   useState,
   Dispatch,
@@ -143,6 +144,7 @@ import {
   StickyNote,
   AlertTriangle,
   Check,
+  Pencil,
   Smartphone,
   Map as MapIcon,
   List,
@@ -159,6 +161,9 @@ import {
   CheckSquare,
   XCircle,
   Hourglass,
+  ArrowUpDown,
+  TrendingUp,
+  TrendingDown,
   LogIn,
   Locate,
   LocateFixed,
@@ -178,6 +183,8 @@ import {
   Headset,
   Zap,
   WifiOff,
+  Filter,
+  Calendar,
   Edit,
   Edit2,
   SlidersHorizontal,
@@ -195,6 +202,7 @@ import {
   Upload,
   Maximize2,
   Minimize2,
+  FolderOpen,
 } from "lucide-react";
 import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
@@ -234,6 +242,7 @@ import {
   DEFAULT_SHOP_LOGO,
   formatSAPhone,
   validateSAPhone,
+  toDBPhone,
   safeLocalStorageGet,
   safeLocalStorageSet,
   pruneLargeKeys,
@@ -241,6 +250,7 @@ import {
   DEFAULT_FALLBACK_SHOPS,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken } from "./lib/firebase";
+import { upsertProfileWithRPC } from "./lib/profileService";
 
 const LOCAL_PROMO_DB: Record<
   string,
@@ -500,6 +510,32 @@ const ShopCard = memo(
   },
 );
 
+const MenuItemSkeleton = memo(() => (
+  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-4 animate-pulse shadow-sm">
+    <div className="size-20 rounded-xl bg-slate-200 dark:bg-slate-800 shrink-0 relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+    </div>
+    <div className="flex-1 flex flex-col justify-between py-1 space-y-2">
+      <div className="space-y-2">
+        <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-3/4 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+        </div>
+        <div className="h-3 bg-slate-100 dark:bg-slate-800/60 rounded-md w-full relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+        </div>
+      </div>
+      <div className="flex items-center justify-between pt-2">
+        <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-16 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+        </div>
+        <div className="h-8 bg-slate-200 dark:bg-slate-800 rounded-xl w-20 relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+        </div>
+      </div>
+    </div>
+  </div>
+));
+
 const MenuItemCard = memo(
   ({
     item,
@@ -734,42 +770,12 @@ const compressImage = (
 };
 
 const uploadAvatar = async (file: File, userId?: string) => {
-  if (!file.type.startsWith("image/")) {
+  if (file.type && !file.type.startsWith("image/")) {
     throw new Error("INVALID_FILE_TYPE");
-  }
-  if (file.size > 2 * 1024 * 1024) {
-    throw new Error("FILE_SIZE_EXCEEDED");
   }
 
   try {
-    // Compress image before upload to save database/storage space
-    const compressedBlob = await compressImage(file);
-    const fileExt = "jpg"; // We compress to jpeg
-    const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = userId ? `${userId}/${fileName}` : `${fileName}`;
-
-    const uploadPromise = supabase.storage
-      .from("avatars")
-      .upload(filePath, compressedBlob, {
-        contentType: "image/jpeg",
-      });
-      
-    const timeoutPromise = new Promise<any>((_, reject) => {
-      setTimeout(() => reject(new Error("NETWORK_TIMEOUT")), 15000);
-    });
-
-    const { error: uploadError } = await Promise.race([uploadPromise, timeoutPromise]);
-
-    if (uploadError) {
-       if (uploadError.message === "Bucket not found") throw new Error("BUCKET_NOT_FOUND");
-       throw new Error(uploadError.message || "UPLOAD_FAILED");
-    }
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("avatars").getPublicUrl(filePath);
-
-    return publicUrl;
+    return await uploadClientAvatar(userId || "", file);
   } catch (error: any) {
     console.error("Compression or Upload failed:", error);
     if (error.message === "NETWORK_TIMEOUT" || error.message === "FILE_SIZE_EXCEEDED" || error.message === "INVALID_FILE_TYPE" || error.message === "BUCKET_NOT_FOUND") {
@@ -1666,17 +1672,19 @@ export default function App() {
       if (shopsError) {
         const isNetwork =
           (shopsError.message &&
-            shopsError.message.toLowerCase().includes("failed to fetch")) ||
+            (shopsError.message.toLowerCase().includes("failed to fetch") ||
+             shopsError.message.toLowerCase().includes("schema cache") ||
+             shopsError.message.toLowerCase().includes("circuit breaker"))) ||
           (shopsError.details &&
             shopsError.details.toLowerCase().includes("failed to fetch")) ||
           shopsError.code === "PGRST301";
         if (isNetwork) {
           console.log(
-            "Network issue fetching shops, using offline mode:",
+            "Network or transient issue fetching shops, using offline fallback:",
             shopsError.message,
           );
         } else if (retries === 0) {
-          console.error("Shops fetch error:", shopsError);
+          console.warn("Shops fetch notice:", shopsError.message || shopsError);
         } else {
           console.log("Shops fetch issue (retrying):", shopsError.message);
         }
@@ -1697,18 +1705,20 @@ export default function App() {
       if (menuError) {
         const isNetwork =
           (menuError.message &&
-            menuError.message.toLowerCase().includes("failed to fetch")) ||
+            (menuError.message.toLowerCase().includes("failed to fetch") ||
+             menuError.message.toLowerCase().includes("schema cache") ||
+             menuError.message.toLowerCase().includes("circuit breaker"))) ||
           (menuError.details &&
             menuError.details.toLowerCase().includes("failed to fetch")) ||
           menuError.code === "PGRST301";
 
         if (isNetwork) {
           console.log(
-            "Network issue fetching menu items, using offline mode:",
+            "Network or transient issue fetching menu items, using offline fallback:",
             menuError.message,
           );
         } else if (retries === 0) {
-          console.error("Menu items fetch error:", menuError);
+          console.warn("Menu items fetch notice:", menuError.message || menuError);
         } else {
           console.log("Menu items fetch issue (retrying):", menuError.message);
         }
@@ -1921,6 +1931,8 @@ export default function App() {
         errStr.includes("connection timeout") ||
         errStr.includes("disconnect/reset") ||
         errStr.includes("timeout") ||
+        errStr.includes("schema cache") ||
+        errStr.includes("circuit breaker") ||
         err?.name === "TypeError" ||
         err?.message === "FAILED_TO_FETCH_MENU" ||
         (err.message && err.message.toLowerCase().includes("network"));
@@ -1931,7 +1943,7 @@ export default function App() {
         }
       }
 
-      if (isNetworkError) {
+      if (isNetworkError && typeof navigator !== "undefined" && !navigator.onLine) {
         setIsOnline(false);
       }
 
@@ -1939,11 +1951,11 @@ export default function App() {
       if (!isNetworkError || retries === 0) {
         if (err?.message === "FAILED_TO_FETCH_MENU" || isNetworkError) {
           console.log(
-            "Network connectivity issue: falling back to offline content gracefully.",
+            "Network connectivity or transient database notice: falling back to offline content gracefully.",
             err?.message || err,
           );
         } else {
-          console.error("Error fetching shops:", err);
+          console.warn("Notice fetching shops:", err?.message || err);
         }
       }
 
@@ -2572,7 +2584,7 @@ export default function App() {
 
     if (session?.user?.id) {
       const action = async () => {
-        const payload: any = {
+        const { error } = await upsertProfileWithRPC({
           user_id: session.user.id,
           fullName: updated.fullName,
           email: updated.email,
@@ -2583,44 +2595,11 @@ export default function App() {
           role: updated.role,
           photo_url: updated.photoURL,
           language: updated.language || "en",
-          updated_at: new Date().toISOString(),
-        };
-
-        // Only include location if available and likely to be in schema
-        if (updated.latitude !== undefined && updated.longitude !== undefined) {
-          payload.current_latitude = updated.latitude;
-          payload.current_longitude = updated.longitude;
-        }
-
-        const { error } = await supabase
-          .from("profiles")
-          .upsert(payload, { onConflict: "user_id" });
+          latitude: updated.latitude,
+          longitude: updated.longitude,
+        });
 
         if (error) {
-          // If columns are missing, try one more time without them
-          if (error.code === "PGRST204" || error.message?.includes("column")) {
-            console.log(
-              "[Profile Sync] Table config mismatch, re-routing via essential payload fallback",
-            );
-            const safePayload = {
-              user_id: session.user.id,
-              fullName: updated.fullName,
-              email: updated.email,
-              phone: updated.phone,
-              role: updated.role || "user",
-              city: updated.city || "",
-              address: updated.address || "",
-              country: updated.country || "South Africa",
-              photo_url: updated.photoURL || "",
-              language: updated.language || "en",
-              updated_at: new Date().toISOString(),
-            };
-            const { error: retryError } = await supabase
-              .from("profiles")
-              .upsert(safePayload, { onConflict: "user_id" });
-            if (retryError) throw retryError;
-            return;
-          }
           throw error;
         }
       };
@@ -3401,7 +3380,7 @@ export default function App() {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
-          const payload: any = {
+          const { error } = await upsertProfileWithRPC({
             user_id: session.user.id,
             fullName: userProfile.fullName,
             email: userProfile.email,
@@ -3412,21 +3391,10 @@ export default function App() {
             role: userProfile.role,
             photo_url: userProfile.photoURL,
             language: userProfile.language || "en",
+            latitude: userProfile.latitude,
+            longitude: userProfile.longitude,
             favorites: favorites,
-            updated_at: new Date().toISOString(),
-          };
-
-          if (
-            userProfile.latitude !== undefined &&
-            userProfile.longitude !== undefined
-          ) {
-            payload.current_latitude = userProfile.latitude;
-            payload.current_longitude = userProfile.longitude;
-          }
-
-          const { error } = await supabase
-            .from("profiles")
-            .upsert(payload, { onConflict: "user_id" });
+          });
 
           if (error) {
             const isFetchErr = 
@@ -3447,7 +3415,7 @@ export default function App() {
                 user_id: session.user.id,
                 fullName: userProfile.fullName,
                 email: userProfile.email,
-                phone: userProfile.phone,
+                phone: toDBPhone(userProfile.phone),
                 role: userProfile.role || "user",
                 city: userProfile.city || "",
                 address: userProfile.address || "",
@@ -3501,7 +3469,7 @@ export default function App() {
         <AuthSkeleton />
         <div id="auth-loading-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-xs">
           <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 max-w-xs text-center">
-            <div className="relative">
+            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <div className="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin"></div>
               <div className="absolute inset-0 flex items-center justify-center">
                 <Lock className="w-4 h-4 text-primary animate-pulse" />
@@ -3524,10 +3492,10 @@ export default function App() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative w-full max-w-[100vw] overflow-x-hidden">
 
       <AnimatePresence mode="wait">
-        <div className="relative">
+        <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
           <GlobalChatListener 
             activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
@@ -3572,7 +3540,7 @@ export default function App() {
               >
                 <div className="flex flex-col items-center gap-6">
                   {processingState === "saving" ? (
-                    <div className="relative">
+                    <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                       <div className="w-20 h-20 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
                       <div className="absolute inset-0 flex items-center justify-center">
                         <Sparkles className="w-8 h-8 text-primary animate-pulse" />
@@ -3810,12 +3778,6 @@ export default function App() {
               {currentScreen === "login" && (
                 <LoginScreen
                   onLogin={() => {
-                    try {
-                      localStorage.removeItem("localeats_tour_seen");
-                      localStorage.removeItem("localeats_interactive_tour_seen");
-                    } catch (e) {
-                      console.warn("Tour state reset error:", e);
-                    }
                     setCurrentScreen("login-success");
                   }}
                   onSignUp={() => setCurrentScreen("signup")}
@@ -3861,12 +3823,6 @@ export default function App() {
               {currentScreen === "login-success" && (
                 <LoginSuccessScreen
                   onHome={() => {
-                    try {
-                      localStorage.removeItem("localeats_tour_seen");
-                      localStorage.removeItem("localeats_interactive_tour_seen");
-                    } catch (e) {
-                      console.warn("Tour state reset error:", e);
-                    }
                     setCurrentScreen("home");
                   }}
                   onViewProfile={() => setCurrentScreen("profile")}
@@ -4473,8 +4429,17 @@ export default function App() {
           />
 
           <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
-          {session && currentScreen === "home" && <OnboardingTour />}
-          {session && currentScreen === "home" && <InteractiveTour />}
+          
+          {/* Guide Slide Container Wrapper with Dynamic Mobile Viewport Bounds */}
+          {currentScreen === "home" && (
+            <div 
+              id="guide-slide-container-wrapper" 
+              className="w-full max-w-[100vw] overflow-hidden flex-shrink-0 shrink-0 pointer-events-none relative z-[10000] outline outline-2 outline-red-500"
+            >
+              <OnboardingTour />
+              <InteractiveTour />
+            </div>
+          )}
           {/* Persistent Real-time Order Tracker Banner with Smart Collapse */}
           <AnimatePresence>
             {(() => {
@@ -4672,7 +4637,7 @@ function SignUpScreen({
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                   Full Name
                 </p>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={fullName}
@@ -4687,7 +4652,7 @@ function SignUpScreen({
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                   Email
                 </p>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={email}
@@ -4702,7 +4667,7 @@ function SignUpScreen({
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                   Phone Number
                 </p>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Smartphone className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={phone}
@@ -4991,23 +4956,19 @@ function SetupPasswordScreen({
 
       // Manually sync to profiles table in case trigger isn't set up
       if (data.user) {
-        const { error: profileError } = await supabase.from("profiles").upsert(
-          {
-            user_id: data.user.id,
-            fullName: signupData.fullName,
-            email: signupData.email,
-            phone: signupData.phone,
-            role: "user",
-            city: "",
-            address: "",
-            country: "South Africa",
-            language: "en",
-            photo_url: "",
-            favorites: [],
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" },
-        );
+        const { error: profileError } = await upsertProfileWithRPC({
+          user_id: data.user.id,
+          fullName: signupData.fullName,
+          email: signupData.email,
+          phone: signupData.phone,
+          role: "user",
+          city: "",
+          address: "",
+          country: "South Africa",
+          language: "en",
+          photo_url: "",
+          favorites: [],
+        });
         if (profileError) {
           console.error("Profile creation error on signup:", profileError);
           // Don't throw here, the user is created in Auth and the trigger might have already created the profile
@@ -5045,7 +5006,7 @@ function SetupPasswordScreen({
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                 Password
               </p>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={password}
@@ -5071,7 +5032,7 @@ function SetupPasswordScreen({
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                 Confirm Password
               </p>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={confirmPassword}
@@ -5260,19 +5221,16 @@ function CompleteProfileScreen({
         setNotification({ message: "Please select a valid image file.", type: "error" });
         return;
       }
-      if (file.size > 2 * 1024 * 1024) {
-        setNotification({ message: "The image size must be under 2MB.", type: "error" });
-        return;
-      }
 
       setUploading(true);
+      setNotification({ message: "Compressing photo to <200KB and uploading to Supabase Storage...", type: "info" });
       const localPreviewUrl = URL.createObjectURL(file);
       setPreviewUrl(localPreviewUrl);
 
       const publicUrl = await uploadAvatar(file, userProfile.id);
       
       onSave({ photoURL: publicUrl });
-      setNotification({ message: "Profile picture updated!", type: "success" });
+      setNotification({ message: "Profile picture uploaded & saved to Supabase (<200KB)!", type: "success" });
       setPreviewUrl(null);
       URL.revokeObjectURL(localPreviewUrl);
     } catch (error: any) {
@@ -5340,7 +5298,7 @@ function CompleteProfileScreen({
           />
           <div className="flex w-full flex-col gap-6 items-center">
             <div className="flex gap-4 flex-col items-center group">
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <div
                   className="bg-primary/5 dark:bg-primary/10 aspect-square rounded-full min-h-32 w-32 border-2 border-dashed border-primary/30 flex items-center justify-center overflow-hidden transition-all group-hover:border-primary/60 relative"
                 >
@@ -5435,7 +5393,7 @@ function CompleteProfileScreen({
               <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">
                 Email (Read Only)
               </span>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={email}
@@ -5450,7 +5408,7 @@ function CompleteProfileScreen({
               <span className="block text-slate-700 dark:text-slate-300 text-sm font-bold mb-2 ml-1">
                 City
               </span>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <MapPin className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <select
                   value={city}
@@ -5634,7 +5592,7 @@ function ResetPasswordScreen({
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                 New Password
               </p>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={password}
@@ -5656,7 +5614,7 @@ function ResetPasswordScreen({
               <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                 Confirm New Password
               </p>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   value={confirmPassword}
@@ -6319,7 +6277,7 @@ function LoginScreen({
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                   Email Address
                 </p>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={recoveryEmail}
@@ -6443,7 +6401,7 @@ function LoginScreen({
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
                   Email
                 </p>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={identifier}
@@ -6460,7 +6418,7 @@ function LoginScreen({
                     Password
                   </p>
                 </div>
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     id="login-password-input"
@@ -6842,7 +6800,7 @@ function LoginSuccessScreen({
           </h2>
         </div>
         <div className="flex flex-col items-center justify-center grow p-6 space-y-8">
-          <div className="relative">
+          <div className="relative w-full max-w-[100vw] overflow-x-hidden">
             <div className="absolute inset-0 bg-primary/20 rounded-full blur-2xl transform scale-150"></div>
             <div className="relative bg-white dark:bg-slate-800 p-8 rounded-full shadow-xl border-4 border-primary/10">
               <CheckCircle className="w-[120px] h-[120px] text-primary" />
@@ -7688,7 +7646,7 @@ function HomeScreen({
                   </span>
                 )}
               </button>
-              <div className="relative">
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <button
                   onClick={() => setIsSettingsOpen(!isSettingsOpen)}
                   aria-label="Settings"
@@ -8184,7 +8142,7 @@ function HomeScreen({
               </button>
             </div>
 
-            <div className="relative">
+            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <div className="flex overflow-x-auto gap-3 no-scrollbar pb-1 pt-0.5 touch-pan-x -mx-4 px-4">
                 {mostFrequentItems.map(({ menuItem, shopId, shopName, count }) => (
                   <motion.div
@@ -10011,6 +9969,7 @@ function AddressPicker({
 function ProfileScreen({
   onBack,
   onSave,
+  onUpdateProfile,
   userProfile,
   completedOrdersCount = 0,
   onLogout,
@@ -10019,7 +9978,8 @@ function ProfileScreen({
   isOnline,
 }: {
   onBack: () => void;
-  onSave: (data: Partial<UserProfile>) => void;
+  onSave?: (data: Partial<UserProfile>) => void | Promise<void>;
+  onUpdateProfile?: (data: Partial<UserProfile>, showSuccess?: boolean, callback?: () => void) => void | Promise<void>;
   userProfile: UserProfile;
   completedOrdersCount?: number;
   onLogout: () => void;
@@ -10027,16 +9987,33 @@ function ProfileScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
   isOnline: boolean;
 }) {
-  const [fullName, setFullName] = useState(userProfile.fullName);
-  const [phone, setPhone] = useState(formatSAPhone(userProfile.phone));
+  const [fullName, setFullName] = useState(userProfile.fullName || "");
+  const [phone, setPhone] = useState(formatSAPhone(userProfile.phone || ""));
   const [address, setAddress] = useState(userProfile.address || "");
-  const [city, setCity] = useState(userProfile.city || "");
+  const [city, setCity] = useState(userProfile.city || "Johannesburg");
   const [latitude, setLatitude] = useState<number | undefined>(
     userProfile.latitude,
   );
   const [longitude, setLongitude] = useState<number | undefined>(
     userProfile.longitude,
   );
+  const [isSaving, setIsSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+
+  const isFullNameDirty = fullName.trim() !== (userProfile.fullName || "").trim();
+  const isPhoneDirty = phone.trim() !== formatSAPhone(userProfile.phone || "").trim();
+  const isAddressDirty = address.trim() !== (userProfile.address || "").trim();
+  const isLocationDirty = latitude !== userProfile.latitude || longitude !== userProfile.longitude;
+  const isDirty = isFullNameDirty || isPhoneDirty || isAddressDirty || isLocationDirty;
+
+  useEffect(() => {
+    setFullName(userProfile.fullName || "");
+    setPhone(formatSAPhone(userProfile.phone || ""));
+    setAddress(userProfile.address || "");
+    setCity(userProfile.city || "Johannesburg");
+    setLatitude(userProfile.latitude);
+    setLongitude(userProfile.longitude);
+  }, [userProfile.fullName, userProfile.phone, userProfile.address, userProfile.city, userProfile.latitude, userProfile.longitude]);
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -10048,6 +10025,24 @@ function ProfileScreen({
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
 
+  // Camera API states
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isCameraLoading, setIsCameraLoading] = useState(false);
+  const [capturedCameraPhoto, setCapturedCameraPhoto] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Confirmation Dialog states
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [croppedFileToConfirm, setCroppedFileToConfirm] = useState<File | null>(null);
+  const [croppedPreviewUrlToConfirm, setCroppedPreviewUrlToConfirm] = useState<string | null>(null);
+  const [croppedFileSizeKB, setCroppedFileSizeKB] = useState<number>(0);
+
+  // Avatar update animation pulse ring state
+  const [justSavedPhoto, setJustSavedPhoto] = useState(false);
+
   const { t } = useTranslation();
 
   const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
@@ -10055,10 +10050,6 @@ function ProfileScreen({
       const file = event.target.files[0];
       if (!file.type.startsWith("image/")) {
         setNotification({ message: "Please select a valid image file.", type: "error" });
-        return;
-      }
-      if (file.size > 2 * 1024 * 1024) {
-        setNotification({ message: "The image size must be under 2MB.", type: "error" });
         return;
       }
       
@@ -10073,29 +10064,62 @@ function ProfileScreen({
     setCroppedAreaPixels(croppedAreaPixels);
   }, []);
 
-  const handleUploadCropped = async () => {
+  // Step 1 of Upload: Crop & proceed to Review Confirmation Dialog
+  const handleProceedToReview = async () => {
+    if (!imageToCrop || !croppedAreaPixels) return;
+    try {
+      setIsSaving(true);
+      const croppedFile = await getCroppedImg(imageToCrop, croppedAreaPixels);
+      const localPreviewUrl = URL.createObjectURL(croppedFile);
+      setCroppedFileToConfirm(croppedFile);
+      setCroppedPreviewUrlToConfirm(localPreviewUrl);
+      setCroppedFileSizeKB(Math.round(croppedFile.size / 1024));
+      setShowCropper(false);
+      setShowConfirmModal(true);
+    } catch (error: any) {
+      console.error("Error cropping image:", error);
+      setNotification({ message: "Failed to crop image. Please try again.", type: "error" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Step 2 of Upload: User confirms in dialog -> Compresses (<200KB) & Uploads to Supabase
+  const handleConfirmUploadAndSave = async () => {
+    if (!croppedFileToConfirm) return;
     if (!isOnline) {
       setNotification({ message: "No internet connection. Cannot upload photo.", type: "error" });
       return;
     }
     try {
       setUploading(true);
-      setShowCropper(false);
-      if (!imageToCrop) return;
+      setNotification({ message: "Compressing photo (<200KB) and uploading to Supabase Storage...", type: "info" });
+      setShowConfirmModal(false);
       
-      const croppedFile = await getCroppedImg(imageToCrop, croppedAreaPixels);
-      const localPreviewUrl = URL.createObjectURL(croppedFile);
-      setPreviewUrl(localPreviewUrl);
+      setPreviewUrl(croppedPreviewUrlToConfirm);
 
-      const publicUrl = await uploadAvatar(croppedFile, userProfile.id);
+      const publicUrl = await uploadAvatar(croppedFileToConfirm, userProfile.id);
       
-      onSave({ photoURL: publicUrl });
-      setNotification({ message: "Profile picture updated!", type: "success" });
-      setPreviewUrl(null);
-      URL.revokeObjectURL(localPreviewUrl);
-      URL.revokeObjectURL(imageToCrop);
+      const saveFunc = onUpdateProfile || onSave;
+      if (saveFunc) {
+        await saveFunc({ photoURL: publicUrl });
+      }
+
+      setJustSavedPhoto(true);
+      setNotification({ message: "Profile picture uploaded successfully! ✓", type: "success" });
+      triggerHaptic?.([10, 30, 10]);
+
+      setTimeout(() => {
+        setJustSavedPhoto(false);
+      }, 3500);
+
+      // Clean up
+      if (croppedPreviewUrlToConfirm) URL.revokeObjectURL(croppedPreviewUrlToConfirm);
+      if (imageToCrop) URL.revokeObjectURL(imageToCrop);
+      setCroppedFileToConfirm(null);
+      setCroppedPreviewUrlToConfirm(null);
       setImageToCrop(null);
-      triggerHaptic?.(10);
+      setPreviewUrl(publicUrl);
     } catch (error: any) {
       console.error("Error uploading avatar:", error);
       let errorMsg = "Something went wrong uploading your photo. Please try again.";
@@ -10104,7 +10128,6 @@ function ProfileScreen({
       
       setNotification({ message: errorMsg, type: "error" });
       setPreviewUrl(null);
-      setImageToCrop(null);
     } finally {
       setUploading(false);
     }
@@ -10116,13 +10139,99 @@ function ProfileScreen({
     setImageToCrop(null);
   };
 
-  const handleDeletePhoto = () => {
-    onSave({ photoURL: "" });
+  const handleCancelConfirmation = () => {
+    setShowConfirmModal(false);
+    if (croppedPreviewUrlToConfirm) URL.revokeObjectURL(croppedPreviewUrlToConfirm);
+    if (imageToCrop) URL.revokeObjectURL(imageToCrop);
+    setCroppedFileToConfirm(null);
+    setCroppedPreviewUrlToConfirm(null);
+    setImageToCrop(null);
+  };
+
+  // Camera Stream Controls
+  const stopCameraStream = useCallback(() => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+    setShowCameraModal(false);
+    setIsCameraLoading(false);
+    setCapturedCameraPhoto(null);
+  }, [cameraStream]);
+
+  const startCamera = async (mode: 'user' | 'environment' = 'user') => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+    setIsCameraLoading(true);
+    setShowCameraModal(true);
+    try {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: mode,
+          width: { ideal: 1080 },
+          height: { ideal: 1080 },
+        },
+      });
+      setCameraStream(stream);
+      setFacingMode(mode);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      console.warn("Camera getUserMedia failed or was rejected, using input fallback:", err);
+      setShowCameraModal(false);
+      setCameraStream(null);
+      setNotification({
+        message: "Opening native device camera...",
+        type: "info",
+      });
+      cameraInputRef.current?.click();
+    } finally {
+      setIsCameraLoading(false);
+    }
+  };
+
+  const capturePhotoFromCamera = () => {
+    if (!videoRef.current) return;
+    triggerHaptic?.(15);
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 720;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `camera_photo_${Date.now()}.jpg`, { type: "image/jpeg" });
+          const localUrl = URL.createObjectURL(file);
+          setCapturedCameraPhoto(localUrl);
+        }
+        if (cameraStream) {
+          cameraStream.getTracks().forEach((track) => track.stop());
+          setCameraStream(null);
+        }
+      }, "image/jpeg", 0.9);
+    }
+  };
+
+  const handleDeletePhoto = async () => {
+    const saveFunc = onUpdateProfile || onSave;
+    if (saveFunc) {
+      await saveFunc({ photoURL: "" });
+    }
     setPreviewUrl(null);
     setNotification({ message: "Profile picture removed.", type: "info" });
   };
 
-  const handleUpdateProfile = () => {
+  const handleUpdateProfile = async () => {
+    if (isSaving || uploading) return;
+
     if (!isOnline) {
       setNotification({
         message: "No internet connection. Cannot save profile changes.",
@@ -10130,16 +10239,66 @@ function ProfileScreen({
       });
       return;
     }
+
     if (!fullName.trim()) {
-      setNotification({ message: "Name cannot be empty", type: "error" });
+      setNotification({ message: "Full Name cannot be empty.", type: "error" });
       return;
     }
-    onSave({ fullName, phone, address, city, latitude, longitude });
-    setNotification({
-      message: "Profile updated successfully!",
-      type: "success",
-    });
-    triggerHaptic?.(10);
+
+    if (!phone.trim()) {
+      setNotification({ message: "Phone Number cannot be empty.", type: "error" });
+      return;
+    }
+
+    if (!validateSAPhone(phone)) {
+      setNotification({
+        message: "Invalid South African phone format. Please use a valid number like 071 234 5678 or +27 71 234 5678.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (!address.trim()) {
+      setNotification({
+        message: "Delivery address cannot be empty.",
+        type: "error",
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const updateData: Partial<UserProfile> = {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        address: address.trim(),
+        city: city.trim() || "Johannesburg",
+        latitude,
+        longitude,
+      };
+
+      const saveFunc = onUpdateProfile || onSave;
+      if (saveFunc) {
+        await saveFunc(updateData, true);
+      }
+      setJustSaved(true);
+      triggerHaptic?.([10, 30, 10]);
+      setNotification({
+        message: "Profile saved & updated!",
+        type: "success",
+      });
+      setTimeout(() => {
+        setJustSaved(false);
+      }, 3500);
+    } catch (error: any) {
+      console.error("Error updating profile:", error);
+      setNotification({
+        message: error?.message || "Failed to update profile. Please try again.",
+        type: "error",
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -10178,50 +10337,88 @@ function ProfileScreen({
             className="hidden"
           />
           <div className="relative group">
-            <div
-              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative"
+            {/* Animated Pulse Ring on successful avatar update */}
+            <AnimatePresence>
+              {justSavedPhoto && (
+                <motion.div
+                  initial={{ scale: 0.85, opacity: 1 }}
+                  animate={{ scale: 1.3, opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 1.2, ease: "easeOut" }}
+                  className="absolute -inset-2 rounded-full border-4 border-emerald-500 pointer-events-none z-10"
+                />
+              )}
+            </AnimatePresence>
+            <motion.div
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative cursor-pointer"
+              onClick={() => setShowGalleryModal(true)}
             >
               <AnimatePresence mode="wait">
                 <motion.img
                   key={previewUrl || userProfile.photoURL || "placeholder"}
                   src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
-                  alt="Profile"
+                  alt="Profile Avatar"
                   className="w-full h-full object-cover absolute inset-0"
                   referrerPolicy="no-referrer"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 1.1 }}
-                  transition={{ duration: 0.3 }}
+                  initial={{ opacity: 0, scale: 0.75, filter: "blur(4px)" }}
+                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, scale: 1.15, filter: "blur(4px)" }}
+                  transition={{ type: "spring", stiffness: 260, damping: 20 }}
                 />
               </AnimatePresence>
               {uploading && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
-                  <Loader2 className="w-8 h-8 text-white animate-spin" />
-                </div>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs flex flex-col items-center justify-center z-20 text-white gap-1.5 p-2 text-center"
+                >
+                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                  <span className="text-[10px] font-black tracking-widest uppercase text-emerald-400">
+                    Saving...
+                  </span>
+                </motion.div>
               )}
-            </div>
-            <div className="absolute -bottom-2 w-full flex justify-center gap-2">
+            </motion.div>
+            {/* Action buttons for Gallery Upload and Live Camera */}
+            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex justify-center gap-2 z-10 w-max">
               <button
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-                title="Upload Photo"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowGalleryModal(true);
+                }}
+                disabled={uploading}
+                className="px-3 py-1.5 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+                title="Choose photo from gallery"
               >
-                <Upload className="w-4 h-4" />
+                <Upload className="w-3.5 h-3.5" />
+                <span className="text-[11px] font-black">Gallery</span>
               </button>
               <button
-                onClick={() => cameraInputRef.current?.click()}
-                className="p-2 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-                title="Take Photo"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startCamera();
+                }}
+                disabled={uploading}
+                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 border-emerald-500/30"
+                title="Take photo using camera"
               >
-                <Camera className="w-4 h-4" />
+                <Camera className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[11px] font-black">Take Photo</span>
               </button>
             </div>
           </div>
-          <div className="text-center mt-2">
+
+          <div className="text-center mt-6">
             {(userProfile.photoURL || previewUrl) && (
               <button
+                type="button"
                 onClick={handleDeletePhoto}
-                className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors mb-2"
+                className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors mb-2 cursor-pointer"
               >
                 Remove Photo
               </button>
@@ -10237,7 +10434,7 @@ function ProfileScreen({
             {completedOrdersCount >= 10 ? (
               // Gold Tier VIP
               <div className="flex flex-col items-center w-full">
-                <div className="relative">
+                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <div className="absolute inset-0 bg-amber-500/10 rounded-full blur-xl animate-pulse"></div>
                   <div className="w-14 h-14 bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-300 rounded-2xl flex items-center justify-center border border-amber-400 shadow-lg relative z-10">
                     <Award className="w-8 h-8 text-white drop-shadow-md" />
@@ -10297,27 +10494,119 @@ function ProfileScreen({
 
         {/* Form Fields */}
         <div className="space-y-6">
+          {/* WhatsApp-Style Sync Status Card */}
+          <div className="-mt-2 mb-2">
+            <AnimatePresence mode="wait">
+              {justSaved ? (
+                <motion.div
+                  key="saved"
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.96 }}
+                  className="bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl p-3.5 flex items-center gap-3 shadow-md shadow-emerald-500/10"
+                >
+                  <div className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-sm animate-bounce">
+                    <Check className="w-5 h-5 stroke-[3]" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-wider">
+                        Profile Saved & Synchronized
+                      </p>
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/80 px-2 py-0.5 rounded-full">
+                        WhatsApp Style ✓
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-0.5">
+                      Your changes are saved locally and synced with your account.
+                    </p>
+                  </div>
+                </motion.div>
+              ) : isDirty ? (
+                <motion.div
+                  key="dirty"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-3.5 flex items-center justify-between shadow-sm"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex items-center justify-center">
+                      <span className="size-3 rounded-full bg-amber-500 animate-ping absolute" />
+                      <span className="size-2.5 rounded-full bg-amber-500 relative" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-amber-900 dark:text-amber-200 uppercase tracking-wider">
+                        Unsaved Profile Changes
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                        Tap "Save Changes" below to update your profile.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/80 px-2.5 py-1 rounded-full border border-amber-300/50 shrink-0">
+                    Pending
+                  </span>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="synced"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl p-3 flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                      All details verified & saved
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 font-medium">
+                    Synced to cloud
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {/* Full Name */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">
-              Full Name
+            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+              <span>Full Name</span>
+              <span className="text-[10px] font-normal text-slate-400">Required</span>
             </label>
-            <div className="relative">
+            <div className="relative group">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
                 type="text"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Your full name"
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                disabled={isSaving || uploading}
+                className="w-full pl-12 pr-24 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50"
               />
+              <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
+                {isFullNameDirty ? (
+                  <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Pencil className="w-3 h-3 text-amber-600 animate-pulse" /> Edit
+                  </span>
+                ) : fullName.trim() ? (
+                  <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Saved
+                  </span>
+                ) : null}
+              </div>
             </div>
+            <p className="text-[11px] text-slate-400 ml-1">
+              Visible to your drivers and restaurants on active orders.
+            </p>
           </div>
 
           {/* Phone Number */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">
-              Phone Number
+            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+              <span>Phone Number</span>
+              <span className="text-[10px] font-normal text-slate-400">SA format (+27 / 07X)</span>
             </label>
             <div className="relative group">
               <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
@@ -10325,17 +10614,43 @@ function ProfileScreen({
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(formatSAPhone(e.target.value))}
-                placeholder="e.g. +27 71 234 5678"
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono"
+                placeholder="e.g. 071 234 5678 or +27 71 234 5678"
+                disabled={isSaving || uploading}
+                className="w-full pl-12 pr-28 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono disabled:opacity-50"
               />
+              <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
+                {isPhoneDirty ? (
+                  <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Pencil className="w-3 h-3 text-amber-600 animate-pulse" /> Edit
+                  </span>
+                ) : validateSAPhone(phone) ? (
+                  <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Verified
+                  </span>
+                ) : null}
+              </div>
             </div>
+            <p className="text-[11px] text-slate-400 ml-1">
+              Used for WhatsApp tracking and driver calls on delivery.
+            </p>
           </div>
 
-          {/* Delivery Address */}
-          <div className="space-y-4">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1">
-              Delivery Address & Pin
-            </label>
+          {/* Delivery Address & Pin */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between ml-1">
+              <label className="text-xs font-bold text-primary uppercase tracking-widest">
+                Delivery Address & Pin
+              </label>
+              {latitude && longitude ? (
+                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/40 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-emerald-500" /> Pin Set ({latitude.toFixed(3)}, {longitude.toFixed(3)})
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800/40">
+                  Pin Needed
+                </span>
+              )}
+            </div>
             <AddressSearch
               initialAddress={address}
               initialCoords={
@@ -10349,6 +10664,9 @@ function ProfileScreen({
                 setLongitude(data.lng);
               }}
             />
+            <p className="text-[11px] text-slate-400 ml-1">
+              Pin accuracy ensures exact doorstep delivery to your house or workplace.
+            </p>
           </div>
 
           {/* City */}
@@ -10356,7 +10674,7 @@ function ProfileScreen({
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               City (Current Service Zone)
             </label>
-            <div className="relative">
+            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
@@ -10373,7 +10691,7 @@ function ProfileScreen({
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               Email Address (Primary)
             </label>
-            <div className="relative">
+            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="email"
@@ -10392,15 +10710,41 @@ function ProfileScreen({
         <div className="pt-8 space-y-4">
           <button
             onClick={handleUpdateProfile}
-            className="w-full py-4 bg-primary text-white font-bold rounded-2xl shadow-xl shadow-primary/20 hover:bg-primary/90 active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
+            disabled={isSaving || uploading}
+            className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
+              justSaved
+                ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
+                : isDirty
+                ? "bg-primary text-white shadow-primary/20 hover:bg-primary/90 active:scale-95"
+                : "bg-slate-900 dark:bg-slate-800 text-white shadow-slate-900/10 hover:bg-slate-800"
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            <Save className="w-5 h-5" />
-            Save Changes
+            {isSaving ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Saving to Account & Device...</span>
+              </>
+            ) : justSaved ? (
+              <>
+                <Check className="w-5 h-5 text-white stroke-[3] animate-in zoom-in" />
+                <span>Profile Saved ✓</span>
+              </>
+            ) : isDirty ? (
+              <>
+                <Save className="w-5 h-5" />
+                <span>Save Profile Changes</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <span>Saved & Up to Date</span>
+              </>
+            )}
           </button>
 
           <button
             onClick={onLogout}
-            className="w-full py-4 bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-bold rounded-2xl hover:shadow-xl transition-all flex items-center justify-center gap-2 text-sm"
+            className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
             Sign Out
@@ -10411,6 +10755,17 @@ function ProfileScreen({
       {/* Cropper Modal */}
       {showCropper && imageToCrop && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
+          <div className="p-4 bg-slate-900/90 text-white flex items-center justify-between border-b border-slate-800">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              Crop & Center Profile Photo
+            </span>
+            <button
+              onClick={cancelCrop}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
           <div className="flex-1 relative">
             <Cropper
               image={imageToCrop}
@@ -10423,20 +10778,281 @@ function ProfileScreen({
               onZoomChange={setZoom}
               onCropComplete={handleCropComplete}
             />
+            {/* Overlay instruction text */}
+            <div className="absolute top-6 left-0 right-0 text-center pointer-events-none z-10">
+              <span className="bg-black/50 backdrop-blur-md text-white text-xs font-bold px-4 py-2 rounded-full tracking-wide shadow-lg border border-white/20">
+                Drag and pinch to frame your perfect look
+              </span>
+            </div>
           </div>
-          <div className="p-6 bg-slate-900 flex justify-between items-center gap-4">
+          <div className="p-6 bg-slate-900 flex justify-between items-center gap-4 border-t border-slate-800">
             <button
               onClick={cancelCrop}
-              className="flex-1 py-3 bg-slate-800 text-white font-bold rounded-xl active:scale-95 transition-transform"
+              className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer"
             >
               Cancel
             </button>
             <button
-              onClick={handleUploadCropped}
-              className="flex-1 py-3 bg-primary text-white font-bold rounded-xl active:scale-95 transition-transform"
+              onClick={handleProceedToReview}
+              className="flex-1 py-3 bg-primary hover:bg-primary/90 text-white font-bold rounded-xl active:scale-95 transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-primary/20"
             >
-              Save Photo
+              <span>Review Photo</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog Modal before permanent Supabase upload */}
+      {showConfirmModal && croppedPreviewUrlToConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl flex flex-col items-center text-center space-y-5 relative">
+            <button
+              onClick={handleCancelConfirmation}
+              className="absolute right-4 top-4 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mt-2">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                Confirm Profile Photo
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Review your cropped preview before saving to Supabase Storage.
+              </p>
+            </div>
+
+            {/* Cropped Photo Preview */}
+            <div className="relative group">
+              <div className="w-28 h-28 rounded-full border-4 border-primary/30 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 relative">
+                <img
+                  src={croppedPreviewUrlToConfirm}
+                  alt="Cropped Preview"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white rounded-full p-1.5 shadow-md border-2 border-white dark:border-slate-900">
+                <Check className="w-4 h-4 stroke-[3]" />
+              </div>
+            </div>
+
+            {/* Specs / Storage details */}
+            <div className="w-full bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3.5 text-left space-y-2 border border-slate-100 dark:border-slate-800/80">
+              <div className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>Auto-compressed under 200KB</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
+                <Database className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>Saved to Supabase 'avatars' & database</span>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="w-full space-y-2.5 pt-1">
+              <button
+                onClick={handleConfirmUploadAndSave}
+                disabled={uploading}
+                className="w-full py-3.5 bg-gradient-to-r from-primary to-orange-600 hover:opacity-95 text-white font-bold rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Uploading to Supabase...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    <span>Upload & Save Photo</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowConfirmModal(false);
+                  setShowCropper(true);
+                }}
+                disabled={uploading}
+                className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-xs cursor-pointer"
+              >
+                Adjust Crop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live Camera Viewfinder Modal */}
+      {showCameraModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col justify-between p-4 animate-in fade-in duration-200">
+          {/* Header */}
+          <div className="flex items-center justify-between z-10 pt-safe">
+            <p className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+              <Camera className="w-4 h-4 text-primary animate-pulse" />
+              Take Profile Photo
+            </p>
+            <button
+              onClick={stopCameraStream}
+              className="w-9 h-9 rounded-full bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Viewfinder Video / Preview Area */}
+          <div className="flex-1 flex flex-col items-center justify-center relative my-4">
+            <div className="w-72 h-72 sm:w-80 sm:h-80 rounded-full border-4 border-primary/60 overflow-hidden relative shadow-2xl bg-slate-900 flex items-center justify-center">
+              {capturedCameraPhoto ? (
+                <img
+                  src={capturedCameraPhoto}
+                  alt="Captured"
+                  className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
+                />
+              ) : (
+                <>
+                  {isCameraLoading ? (
+                    <div className="flex flex-col items-center gap-2 text-white absolute inset-0 justify-center z-10">
+                      <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                      <span className="text-xs font-bold">Starting camera...</span>
+                    </div>
+                  ) : null}
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
+                  />
+                  {/* Circular framing overlay */}
+                  <div className="absolute inset-0 border-2 border-dashed border-white/40 rounded-full pointer-events-none" />
+                </>
+              )}
+            </div>
+            {!capturedCameraPhoto && (
+              <p className="text-xs text-slate-300 font-medium mt-4 text-center px-6">
+                Center your face inside the circle and press Quick Snap
+              </p>
+            )}
+          </div>
+
+          {/* Controls Footer */}
+          <div className="flex items-center justify-around pb-6 pt-2">
+            {capturedCameraPhoto ? (
+              <>
+                <button
+                  onClick={() => {
+                    setCapturedCameraPhoto(null);
+                    startCamera(facingMode);
+                  }}
+                  className="px-6 py-3 bg-slate-800 text-white font-bold rounded-xl active:scale-95 transition-all text-sm cursor-pointer"
+                >
+                  Retake
+                </button>
+                <button
+                  onClick={() => {
+                    setImageToCrop(capturedCameraPhoto);
+                    setShowCropper(true);
+                    setShowCameraModal(false);
+                    setCapturedCameraPhoto(null);
+                  }}
+                  className="px-8 py-3 bg-primary text-white font-bold rounded-xl active:scale-95 transition-all text-sm cursor-pointer shadow-lg shadow-primary/30 flex items-center gap-2"
+                >
+                  Use Photo <ArrowRight className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => startCamera(facingMode === 'user' ? 'environment' : 'user')}
+                  disabled={isCameraLoading}
+                  className="p-3 bg-slate-800 text-slate-200 rounded-full hover:bg-slate-700 transition-colors cursor-pointer"
+                  title="Flip Camera"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={capturePhotoFromCamera}
+                  disabled={isCameraLoading}
+                  className="px-6 py-3 rounded-full bg-white text-slate-900 border-[3px] border-primary font-black uppercase tracking-wider flex items-center justify-center shadow-[0_0_20px_rgba(249,115,22,0.3)] hover:scale-105 active:scale-95 transition-all cursor-pointer gap-2"
+                  title="Quick Snap"
+                >
+                  <Camera className="w-5 h-5 text-primary" />
+                  Quick Snap
+                </button>
+                <button
+                  onClick={stopCameraStream}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Mock Selection Gallery Overlay */}
+      {showGalleryModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex flex-col justify-end animate-in slide-in-from-bottom duration-300">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 flex flex-col h-[70dvh] shadow-2xl border-t border-slate-200 dark:border-slate-800">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">Recent Images</h3>
+              <button onClick={() => setShowGalleryModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <div className="grid grid-cols-3 gap-2 pb-4">
+                {/* Mock recent images */}
+                {Array.from({ length: 15 }).map((_, i) => (
+                  <div 
+                    key={i} 
+                    onClick={() => {
+                      const canvas = document.createElement("canvas");
+                      canvas.width = 400;
+                      canvas.height = 400;
+                      const ctx = canvas.getContext("2d");
+                      if (ctx) {
+                        ctx.fillStyle = `hsl(${i * 25}, 70%, 60%)`;
+                        ctx.fillRect(0, 0, 400, 400);
+                        canvas.toBlob((blob) => {
+                          if (blob) {
+                            const file = new File([blob], `gallery_${i}.jpg`, { type: "image/jpeg" });
+                            const localUrl = URL.createObjectURL(file);
+                            setImageToCrop(localUrl);
+                            setShowCropper(true);
+                            setShowGalleryModal(false);
+                          }
+                        }, "image/jpeg");
+                      }
+                    }}
+                    className="aspect-square bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm hover:opacity-80 active:scale-95 transition-all cursor-pointer relative"
+                  >
+                    <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, hsl(${i * 25}, 70%, 60%), hsl(${i * 25 + 40}, 80%, 50%))` }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2 shrink-0">
+              <button 
+                onClick={() => {
+                  setShowGalleryModal(false);
+                  fileInputRef.current?.click();
+                }}
+                className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition-all cursor-pointer shadow-sm"
+              >
+                <FolderOpen className="w-5 h-5" />
+                Browse Device Files
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -10801,8 +11417,46 @@ function StoreInfoScreen({
   );
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [isShopChatOpen, setIsShopChatOpen] = useState(false);
+  const [priceSort, setPriceSort] = useState<"default" | "low-to-high" | "high-to-low">("default");
+  const [copiedMenuLink, setCopiedMenuLink] = useState(false);
+  const [isMenuLoading, setIsMenuLoading] = useState(true);
   const isScrollingRef = useRef(false);
   const [showTrustTooltip, setShowTrustTooltip] = useState(false);
+
+  useEffect(() => {
+    setIsMenuLoading(true);
+    const timer = setTimeout(() => {
+      setIsMenuLoading(false);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [shop.id, priceSort]);
+
+  const handleShareMenu = async () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?shopId=${shop.id}`;
+    let copied = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        copied = true;
+      } catch (e) {
+        console.warn("Clipboard write failed:", e);
+      }
+    }
+    if (!copied && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${shop.name} Menu - LocalEats`,
+          text: `Check out ${shop.name}'s menu on LocalEats!`,
+          url: shareUrl,
+        });
+        return;
+      } catch (e) {}
+    }
+    setCopiedMenuLink(true);
+    setTimeout(() => setCopiedMenuLink(false), 2500);
+    showAlert("Menu Link Copied! 🔗", `Deep link for ${shop.name}'s menu copied to clipboard:\n${shareUrl}`);
+    if ("vibrate" in navigator) navigator.vibrate(10);
+  };
   const [userOrderCount, setUserOrderCount] = useState<number>(() => {
     try {
       const cached = localStorage.getItem("cached_orders");
@@ -10954,9 +11608,20 @@ function StoreInfoScreen({
     }
   }, [shop]);
 
-  const filteredMenu = shopMenu.filter((item) =>
-    item.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const filteredMenu = useMemo(() => {
+    let items = shopMenu.filter((item) =>
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.description && item.description.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+
+    if (priceSort === "low-to-high") {
+      items = [...items].sort((a, b) => (a.price || 0) - (b.price || 0));
+    } else if (priceSort === "high-to-low") {
+      items = [...items].sort((a, b) => (b.price || 0) - (a.price || 0));
+    }
+
+    return items;
+  }, [shopMenu, searchQuery, priceSort]);
 
   // Group filteredMenu by category
   const groupedMenu = useMemo(() => {
@@ -11302,25 +11967,16 @@ function StoreInfoScreen({
           </button>
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                const shareUrl = `${window.location.origin}${window.location.pathname}?shopId=${shop.id}`;
-                if (navigator.share) {
-                  navigator
-                    .share({
-                      title: shop.name,
-                      text: `Check out ${shop.name} on LocalEats!`,
-                      url: shareUrl,
-                    })
-                    .catch(console.error);
-                } else {
-                  navigator.clipboard.writeText(shareUrl);
-                  showAlert("Link Copied", "Link copied to clipboard!");
-                }
-              }}
-              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
-              title="Share"
+              onClick={handleShareMenu}
+              className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer flex items-center gap-1.5"
+              title="Share this menu"
             >
               <Share2 className="w-6 h-6" />
+              {copiedMenuLink && (
+                <span className="text-[10px] font-black uppercase tracking-wider bg-orange-600 text-white px-2 py-0.5 rounded-md animate-in fade-in">
+                  Copied!
+                </span>
+              )}
             </button>
             <button
               onClick={onScanFlyer}
@@ -11398,7 +12054,7 @@ function StoreInfoScreen({
 
         {/* Immersive Action Tabs & Buttons */}
         <div className="bg-white/95 dark:bg-slate-950/95 border-b border-gray-100 dark:border-slate-800 -mx-4 px-4 pt-4">
-          <div className="flex gap-3 mb-4">
+          <div className="flex flex-wrap gap-3 mb-4">
             <button
               onClick={() => {
                 const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}`;
@@ -11416,6 +12072,14 @@ function StoreInfoScreen({
             >
               <MessageCircle className="w-5 h-5" />
               <span>Chat with Shop</span>
+            </button>
+            <button
+              onClick={handleShareMenu}
+              className="flex-grow md:flex-grow-0 px-4 md:px-6 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-orange-500/40 text-slate-800 dark:text-slate-100 rounded-2xl flex items-center justify-center gap-2 font-black text-[10px] md:text-xs uppercase tracking-widest shadow-md active:scale-95 transition-all cursor-pointer"
+              title="Share this menu deep link"
+            >
+              <Share2 className="w-4 h-4 text-orange-600" />
+              <span>{copiedMenuLink ? "Link Copied! ✓" : "Share Menu"}</span>
             </button>
           </div>
         </div>
@@ -11484,16 +12148,76 @@ function StoreInfoScreen({
                 </div>
               )}
 
-              {/* Search Bar */}
-              <div id="store-menu-search" className="relative group">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
-                <input
-                  type="text"
-                  placeholder={`Search dishes at ${shop.name}...`}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 md:pl-12 pr-4 py-3 md:py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-[10px] md:text-xs font-bold outline-none transition-all focus:ring-2 focus:ring-orange-600/20"
-                />
+              {/* Search & Price Sort Bar */}
+              <div id="store-menu-search" className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <div className="relative flex-1 group">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 text-slate-400 group-focus-within:text-orange-600 transition-colors" />
+                  <input
+                    type="text"
+                    placeholder={`Search dishes at ${shop.name}...`}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 md:pl-12 pr-10 py-3 md:py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-[10px] md:text-xs font-bold outline-none transition-all focus:ring-2 focus:ring-orange-600/20"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Sort by Price Controls */}
+                <div className="flex items-center justify-between sm:justify-start gap-1 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-1.5 rounded-2xl shrink-0">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 hidden sm:inline-flex items-center gap-1">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-orange-600" /> Price:
+                  </span>
+                  <button
+                    onClick={() => {
+                      setPriceSort("default");
+                      if ("vibrate" in navigator) navigator.vibrate(5);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      priceSort === "default"
+                        ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm border border-slate-200/60 dark:border-slate-700 font-black"
+                        : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPriceSort("low-to-high");
+                      if ("vibrate" in navigator) navigator.vibrate(5);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 ${
+                      priceSort === "low-to-high"
+                        ? "bg-orange-600 text-white shadow-md shadow-orange-600/20 font-black"
+                        : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    }`}
+                    title="Sort by Price: Low to High"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    <span>Low → High</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPriceSort("high-to-low");
+                      if ("vibrate" in navigator) navigator.vibrate(5);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1 ${
+                      priceSort === "high-to-low"
+                        ? "bg-orange-600 text-white shadow-md shadow-orange-600/20 font-black"
+                        : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                    }`}
+                    title="Sort by Price: High to Low"
+                  >
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    <span>High → Low</span>
+                  </button>
+                </div>
               </div>
 
               {!session && (
@@ -11548,116 +12272,127 @@ function StoreInfoScreen({
                 </div>
               )}
 
-              <div className="space-y-8 md:space-y-12 pt-2">
-                {visibleCategories.length > 0 ? (
-                  visibleCategories
-                    .filter((category) => category !== "All")
-                    .map((category) => {
-                      const itemsUnderCategory = groupedMenu[category] || [];
-                      if (itemsUnderCategory.length === 0) return null;
+              {isMenuLoading ? (
+                <div className="space-y-4 pt-2">
+                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded-md w-36 animate-pulse mb-3" />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+                    {[...Array(6)].map((_, i) => (
+                      <MenuItemSkeleton key={i} />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8 md:space-y-12 pt-2">
+                  {visibleCategories.length > 0 ? (
+                    visibleCategories
+                      .filter((category) => category !== "All")
+                      .map((category) => {
+                        const itemsUnderCategory = groupedMenu[category] || [];
+                        if (itemsUnderCategory.length === 0) return null;
 
-                      return (
-                        <div
-                          key={category}
-                          id={`category-sec-${category.replace(/\s+/g, "-")}`}
-                          className="space-y-4 scroll-mt-44"
-                        >
+                        return (
                           <div
-                            onClick={() => {
-                              setCollapsedCategories((prev) => ({
-                                ...prev,
-                                [category]: !prev[category],
-                              }));
-                              if ("vibrate" in navigator) navigator.vibrate(5);
-                            }}
-                            className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2 cursor-pointer select-none group/cat"
+                            key={category}
+                            id={`category-sec-${category.replace(/\s+/g, "-")}`}
+                            className="space-y-4 scroll-mt-44"
                           >
-                            <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2 group-hover/cat:text-orange-600 transition-colors">
-                              <span className="text-sm md:text-base">
-                                {getCategoryEmoji(category)}
-                              </span>
-                              <span>{category}</span>
-                              <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
-                                {collapsedCategories[category]
-                                  ? "Tap to expand"
-                                  : "Tap to collapse"}
-                              </span>
-                            </h3>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-mono font-bold text-slate-400 px-2 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full">
-                                {itemsUnderCategory.length}{" "}
-                                {itemsUnderCategory.length === 1
-                                  ? "item"
-                                  : "items"}
-                              </span>
-                              <ChevronDown
-                                className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${collapsedCategories[category] ? "" : "rotate-180"}`}
-                              />
-                            </div>
-                          </div>
-
-                          {!collapsedCategories[category] ? (
-                            <motion.div
-                              initial="hidden"
-                              animate="show"
-                              variants={{
-                                hidden: { opacity: 0, y: -10 },
-                                show: {
-                                  opacity: 1,
-                                  y: 0,
-                                  transition: {
-                                    staggerChildren: 0.05,
-                                  },
-                                },
-                              }}
-                              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4"
-                            >
-                              {itemsUnderCategory.map((item) => (
-                                <MenuItemCard
-                                  key={item.id}
-                                  item={item}
-                                  shop={shop}
-                                  onSelect={(item) =>
-                                    setSelectedItemForQuantity(item)
-                                  }
-                                  showAlert={showAlert}
-                                />
-                              ))}
-                            </motion.div>
-                          ) : (
                             <div
-                              onClick={() =>
+                              onClick={() => {
                                 setCollapsedCategories((prev) => ({
                                   ...prev,
-                                  [category]: false,
-                                }))
-                              }
-                              className="py-4 text-center bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                                  [category]: !prev[category],
+                                }));
+                                if ("vibrate" in navigator) navigator.vibrate(5);
+                              }}
+                              className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2 cursor-pointer select-none group/cat"
                             >
-                              📁 {itemsUnderCategory.length}{" "}
-                              {itemsUnderCategory.length === 1
-                                ? "dish is"
-                                : "dishes are"}{" "}
-                              collapsed. Click to expand.
+                              <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2 group-hover/cat:text-orange-600 transition-colors">
+                                <span className="text-sm md:text-base">
+                                  {getCategoryEmoji(category)}
+                                </span>
+                                <span>{category}</span>
+                                <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
+                                  {collapsedCategories[category]
+                                    ? "Tap to expand"
+                                    : "Tap to collapse"}
+                                </span>
+                              </h3>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono font-bold text-slate-400 px-2 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full">
+                                  {itemsUnderCategory.length}{" "}
+                                  {itemsUnderCategory.length === 1
+                                    ? "item"
+                                    : "items"}
+                                </span>
+                                <ChevronDown
+                                  className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${collapsedCategories[category] ? "" : "rotate-180"}`}
+                                />
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })
-                ) : (
-                  <div className="py-12 text-center">
-                    <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                      <SearchX className="w-8 h-8" />
+
+                            {!collapsedCategories[category] ? (
+                              <motion.div
+                                initial="hidden"
+                                animate="show"
+                                variants={{
+                                  hidden: { opacity: 0, y: -10 },
+                                  show: {
+                                    opacity: 1,
+                                    y: 0,
+                                    transition: {
+                                      staggerChildren: 0.05,
+                                    },
+                                  },
+                                }}
+                                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4"
+                              >
+                                {itemsUnderCategory.map((item) => (
+                                  <MenuItemCard
+                                    key={item.id}
+                                    item={item}
+                                    shop={shop}
+                                    onSelect={(item) =>
+                                      setSelectedItemForQuantity(item)
+                                    }
+                                    showAlert={showAlert}
+                                  />
+                                ))}
+                              </motion.div>
+                            ) : (
+                              <div
+                                onClick={() =>
+                                  setCollapsedCategories((prev) => ({
+                                    ...prev,
+                                    [category]: false,
+                                  }))
+                                }
+                                className="py-4 text-center bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                              >
+                                📁 {itemsUnderCategory.length}{" "}
+                                {itemsUnderCategory.length === 1
+                                  ? "dish is"
+                                  : "dishes are"}{" "}
+                                collapsed. Click to expand.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <div className="py-12 text-center">
+                      <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                        <SearchX className="w-8 h-8" />
+                      </div>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">
+                        No items found
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Try searching for something else
+                      </p>
                     </div>
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      No items found
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Try searching for something else
-                    </p>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -12630,18 +13365,18 @@ function ExploreScreen({
               orders={orders || []}
               shops={shops}
               favorites={favorites}
-              onQuickReorder={(ord) => {
-                const shop = shops.find((s) => s.id === ord.shop_id);
-                if (ord.product_name && ord.price && addToCart) {
+              onQuickReorder={(item) => {
+                const shop = shops.find((s) => s.id === item.shop_id);
+                if (item.product_name && item.price && addToCart) {
                   addToCart({
-                    id: ord.product_name.toLowerCase().replace(/\s+/g, '-'),
-                    name: ord.product_name,
-                    price: ord.price,
-                    quantity: ord.quantity || 1,
-                    shopId: ord.shop_id || (shop ? shop.id : '1'),
-                    image: shop ? shop.logo : DEFAULT_SHOP_LOGO,
+                    id: item.product_name.toLowerCase().replace(/\s+/g, '-'),
+                    name: item.product_name,
+                    price: item.price,
+                    quantity: item.quantity || 1,
+                    shopId: item.shop_id || (shop ? shop.id : '1'),
+                    image: shop ? (shop.logo_url || shop.logo) : DEFAULT_SHOP_LOGO,
                   });
-                  toast.success(`Reordered ${ord.product_name}!`, {
+                  toast.success(`Reordered ${item.product_name}!`, {
                     description: "Item added to cart for 1-tap checkout.",
                   });
                 } else if (shop) {
@@ -12855,13 +13590,25 @@ function ExploreScreen({
                 Interactive maps require an active data connection to stream
                 tiles. Switch to List view to browse saved shops.
               </p>
-              <button
-                onClick={onHome}
-                className="mt-8 px-8 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
-              >
-                <Home className="w-4 h-4" />
-                Return Home
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
+                <button
+                  onClick={() => {
+                    setLayoutMode("list");
+                    triggerHaptic(5);
+                  }}
+                  className="px-6 py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+                >
+                  <List className="w-4 h-4" />
+                  Switch to List View
+                </button>
+                <button
+                  onClick={onHome}
+                  className="px-6 py-3.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Home className="w-4 h-4" />
+                  Return Home
+                </button>
+              </div>
             </div>
           )}
 
@@ -13203,7 +13950,7 @@ function ExploreScreen({
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
             className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-slate-950 rounded-t-[32px] bottom-sheet p-6 pb-24"
           >
-            <div className="relative">
+            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <div
                 className="w-12 h-1.5 bg-gray-200 dark:bg-slate-700 rounded-full mx-auto mb-6 cursor-pointer"
                 onClick={() => setSelectedShopId(null)}
@@ -21751,15 +22498,37 @@ function OrderHistoryScreen({
             </div>
           )}
 
-          {/* Advanced Search & Filtering Utilities */}
+          {/* Swiss-Modern Advanced Filtering Controls */}
           {!loading && orders.length > 0 && (
-            <div className="flex flex-col gap-2.5 bg-slate-50 dark:bg-slate-900/40 p-3 rounded-2xl border border-slate-100 dark:border-slate-800/80">
-              <div className="relative">
+            <div className="flex flex-col gap-3 bg-white dark:bg-slate-900/80 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-orange-500" />
+                  Order Filters
+                </span>
+                {(filterStatus !== "All" || filterShop !== "All" || filterDate !== "All" || searchQuery !== "") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStatus("All");
+                      setFilterShop("All");
+                      setFilterDate("All");
+                      setSearchQuery("");
+                    }}
+                    className="text-[10px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    <RotateCw className="w-3 h-3" /> Reset Filters
+                  </button>
+                )}
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search orders, items, or shops..."
-                  className="w-full bg-white dark:bg-slate-950 pl-10 pr-4 py-2.5 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white"
+                  placeholder="Search by meal name, order ID, or restaurant..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 pl-10 pr-10 py-2.5 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -21774,18 +22543,60 @@ function OrderHistoryScreen({
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-0.5">
+              {/* Status Filter Chips */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                {[
+                  { id: "All", label: "All Orders" },
+                  { id: "Active", label: "Active" },
+                  { id: "Completed", label: "Completed" },
+                  { id: "Cancelled", label: "Cancelled" },
+                ].map((st) => {
+                  const isActive = filterStatus === st.id;
+                  let count = orders.length;
+                  if (st.id === "Active") {
+                    count = orders.filter((o) => ["pending", "confirmed", "preparing", "ready", "queued_for_sync"].includes(o.status?.toLowerCase())).length;
+                  } else if (st.id === "Completed") {
+                    count = orders.filter((o) => ["completed", "delivered"].includes(o.status?.toLowerCase())).length;
+                  } else if (st.id === "Cancelled") {
+                    count = orders.filter((o) => o.status?.toLowerCase() === "cancelled").length;
+                  }
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setFilterStatus(st.id)}
+                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                        isActive
+                          ? "bg-orange-600 text-white shadow-xs"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      }`}
+                    >
+                      <span>{st.label}</span>
+                      <span className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded-md ${
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Restaurant & Date Range Dropdowns */}
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                 {/* Restaurant Filter */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">
-                    Filter by Restaurant
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                    <Store className="w-3 h-3 text-orange-500" /> Restaurant
                   </label>
                   <select
                     value={filterShop}
                     onChange={(e) => setFilterShop(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
+                    className="w-full bg-slate-50 dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
                   >
-                    <option value="All">All Restaurants</option>
+                    <option value="All">All Restaurants ({orderedShopsList.length})</option>
                     {orderedShopsList.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -21796,13 +22607,13 @@ function OrderHistoryScreen({
 
                 {/* Date range Filter */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">
-                    Date Range
+                  <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-orange-500" /> Date Range
                   </label>
                   <select
                     value={filterDate}
                     onChange={(e) => setFilterDate(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
+                    className="w-full bg-slate-50 dark:bg-slate-950 p-2 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-300 cursor-pointer"
                   >
                     <option value="All">All Time</option>
                     <option value="7days">Last 7 days</option>
@@ -21811,35 +22622,8 @@ function OrderHistoryScreen({
                   </select>
                 </div>
               </div>
-
-              {(filterShop !== "All" || filterDate !== "All" || searchQuery !== "") && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterShop("All");
-                    setFilterDate("All");
-                    setSearchQuery("");
-                  }}
-                  className="w-full py-2 bg-orange-50 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-orange-100 transition-colors cursor-pointer"
-                >
-                  Reset Active Filters
-                </button>
-              )}
             </div>
           )}
-
-          <div className="flex items-center gap-2 pb-2">
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full sm:w-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer shadow-sm appearance-none"
-            >
-              <option value="All">All Orders</option>
-              <option value="Active">Active Orders</option>
-              <option value="Completed">Completed Orders</option>
-              <option value="Cancelled">Cancelled Orders</option>
-            </select>
-          </div>
 
           {loading ? (
             <OrderHistorySkeleton />
@@ -21848,7 +22632,7 @@ function OrderHistoryScreen({
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-primary/10 rounded-full scale-[2] blur-3xl opacity-50 animate-pulse"></div>
                 <div className="size-32 bg-white dark:bg-slate-800 rounded-full shadow-2xl flex items-center justify-center text-primary relative z-10 hover:scale-105 transition-transform duration-500 border-4 border-slate-50 dark:border-slate-800/80">
-                  <div className="relative">
+                  <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                     <SearchX className="w-12 h-12 text-slate-400 dark:text-slate-500 mb-1" />
                     <Utensils className="w-6 h-6 text-orange-500 absolute -bottom-2 -right-3 rotate-12" />
                   </div>

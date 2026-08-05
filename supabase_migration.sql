@@ -134,6 +134,155 @@ CREATE POLICY "Allow public read on profiles" ON public.profiles
 CREATE POLICY "Allow users to upsert their own profiles" ON public.profiles
     FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
+-- ----------------------------------------------------------------------------
+-- SECTION 3B: Non-Blocking Migration for valid_sa_phone Constraint & Batched Data Cleanup
+-- ----------------------------------------------------------------------------
+-- 1. Drop existing constraint if present to avoid immediate locking issues
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS valid_sa_phone;
+
+-- 2. Batched Data Cleanup Script: Fix existing non-conforming phone entries safely in batches
+DO $$
+DECLARE
+    batch_size INT := 500;
+    rows_updated INT;
+BEGIN
+    LOOP
+        WITH batch AS (
+            SELECT user_id, phone
+            FROM public.profiles
+            WHERE phone IS NOT NULL 
+              AND phone <> ''
+              AND phone !~ '^(?:\+27|0)[0-9]{9}$'
+            LIMIT batch_size
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE public.profiles p
+        SET phone = CASE
+            -- Convert 0712345678 to +27712345678
+            WHEN b.phone ~ '^0[0-9]{9}$' THEN '+27' || SUBSTRING(b.phone FROM 2)
+            -- Convert 27712345678 to +27712345678
+            WHEN b.phone ~ '^27[0-9]{9}$' THEN '+' || b.phone
+            -- Convert 9-digit local phone to +27XXXXXXXXX
+            WHEN b.phone ~ '^[0-9]{9}$' THEN '+27' || b.phone
+            -- Otherwise nullify invalid string so constraint passes without dropping row
+            ELSE NULL
+        END,
+        updated_at = NOW()
+        FROM batch b
+        WHERE p.user_id = b.user_id;
+
+        GET DIAGNOSTICS rows_updated = ROW_COUNT;
+        EXIT WHEN rows_updated = 0;
+    END LOOP;
+END;
+$$;
+
+-- 3. Add constraint back as NOT VALID to avoid locking active table reads/writes
+ALTER TABLE public.profiles
+    ADD CONSTRAINT valid_sa_phone 
+    CHECK (phone IS NULL OR phone = '' OR phone ~ '^(?:\+27|0)[0-9]{9}$') 
+    NOT VALID;
+
+-- 4. Validate constraint without blocking table access
+ALTER TABLE public.profiles 
+    VALIDATE CONSTRAINT valid_sa_phone;
+
+-- ----------------------------------------------------------------------------
+-- SECTION 3C: Supabase Database Function (RPC) for Server-Side Phone Validation
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.safe_upsert_profile(
+    p_user_id UUID,
+    p_full_name TEXT DEFAULT NULL,
+    p_email TEXT DEFAULT NULL,
+    p_phone TEXT DEFAULT NULL,
+    p_city TEXT DEFAULT NULL,
+    p_address TEXT DEFAULT NULL,
+    p_country TEXT DEFAULT 'South Africa',
+    p_role TEXT DEFAULT 'user',
+    p_photo_url TEXT DEFAULT NULL,
+    p_language TEXT DEFAULT 'en',
+    p_latitude DOUBLE PRECISION DEFAULT NULL,
+    p_longitude DOUBLE PRECISION DEFAULT NULL,
+    p_favorites JSONB DEFAULT '[]'::jsonb
+)
+RETURNS JSONB AS $$
+DECLARE
+    cleaned_phone TEXT := NULL;
+    raw_digits TEXT;
+    result_profile RECORD;
+BEGIN
+    -- Server-side phone sanitization and validation logic
+    IF p_phone IS NOT NULL AND TRIM(p_phone) <> '' THEN
+        raw_digits := regexp_replace(TRIM(p_phone), '\D', '', 'g');
+        
+        IF raw_digits ~ '^0[0-9]{9}$' THEN
+            cleaned_phone := '+27' || SUBSTRING(raw_digits FROM 2);
+        ELSIF raw_digits ~ '^27[0-9]{9}$' THEN
+            cleaned_phone := '+' || raw_digits;
+        ELSIF raw_digits ~ '^[0-9]{9}$' THEN
+            cleaned_phone := '+27' || raw_digits;
+        ELSIF TRIM(p_phone) ~ '^(?:\+27|0)[0-9]{9}$' THEN
+            cleaned_phone := TRIM(p_phone);
+        ELSE
+            cleaned_phone := NULL;
+        END IF;
+    END IF;
+
+    -- Upsert profile record securely
+    INSERT INTO public.profiles (
+        user_id,
+        "fullName",
+        email,
+        phone,
+        city,
+        address,
+        country,
+        role,
+        photo_url,
+        language,
+        latitude,
+        longitude,
+        favorites,
+        updated_at
+    ) VALUES (
+        p_user_id,
+        p_full_name,
+        p_email,
+        cleaned_phone,
+        p_city,
+        p_address,
+        COALESCE(p_country, 'South Africa'),
+        COALESCE(p_role, 'user'),
+        p_photo_url,
+        COALESCE(p_language, 'en'),
+        p_latitude,
+        p_longitude,
+        COALESCE(p_favorites, '[]'::jsonb),
+        NOW()
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+        "fullName" = COALESCE(EXCLUDED."fullName", public.profiles."fullName"),
+        email = COALESCE(EXCLUDED.email, public.profiles.email),
+        phone = CASE 
+            WHEN cleaned_phone IS NOT NULL THEN cleaned_phone
+            ELSE public.profiles.phone
+        END,
+        city = COALESCE(EXCLUDED.city, public.profiles.city),
+        address = COALESCE(EXCLUDED.address, public.profiles.address),
+        country = COALESCE(EXCLUDED.country, public.profiles.country),
+        role = COALESCE(EXCLUDED.role, public.profiles.role),
+        photo_url = COALESCE(EXCLUDED.photo_url, public.profiles.photo_url),
+        language = COALESCE(EXCLUDED.language, public.profiles.language),
+        latitude = COALESCE(EXCLUDED.latitude, public.profiles.latitude),
+        longitude = COALESCE(EXCLUDED.longitude, public.profiles.longitude),
+        favorites = COALESCE(EXCLUDED.favorites, public.profiles.favorites),
+        updated_at = NOW()
+    RETURNING * INTO result_profile;
+
+    RETURN to_jsonb(result_profile);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ============================================================================
 -- SECTION 4: Table 3 - shops (Kota Joints & Kitchen Hubs)
 -- ============================================================================

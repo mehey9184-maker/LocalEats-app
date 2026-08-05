@@ -34,19 +34,22 @@ export class CircuitBreaker {
       this.failures++;
       this.lastFailureTime = Date.now();
       const errStr = (error?.message || String(error)).toLowerCase();
-      const isNetwork =
+      const isTransient =
         errStr.includes("failed to fetch") ||
         errStr.includes("network") ||
         errStr.includes("load failed") ||
         errStr.includes("upstream connect error") ||
         errStr.includes("connection timeout") ||
         errStr.includes("disconnect/reset") ||
-        errStr.includes("timeout");
+        errStr.includes("timeout") ||
+        errStr.includes("schema cache") ||
+        errStr.includes("circuit breaker") ||
+        errStr.includes("pgrst");
       
-      if (isNetwork) {
-        console.warn(`[CircuitBreaker] Transient network notice in ${operationName}. Failures: ${this.failures}`);
+      if (isTransient) {
+        console.warn(`[CircuitBreaker] Transient notice in ${operationName}. Failures: ${this.failures}`);
       } else {
-        console.error(`[CircuitBreaker] Error in ${operationName}. Failures: ${this.failures}`, error);
+        console.warn(`[CircuitBreaker] Issue in ${operationName}. Failures: ${this.failures}`, error);
       }
       if (fallback) return fallback();
       throw error;

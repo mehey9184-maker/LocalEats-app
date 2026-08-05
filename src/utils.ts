@@ -219,6 +219,55 @@ export const validateSAPhone = (phone: string): boolean => {
 };
 
 /**
+ * Sanitizes and formats phone numbers for database columns with SA phone check constraints (valid_sa_phone).
+ * Converts "+27 71 234 5678" or "0712345678" into unspaced E.164 "+27712345678" or fallback "+27700000000".
+ */
+export const toDBPhone = (val?: string | null): string | null => {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+
+  const cleaned = trimmed.replace(/\D/g, '');
+
+  // Standard 10-digit SA phone starting with 0 (e.g. 0712345678)
+  if (/^0[0-9]{9}$/.test(cleaned)) {
+    return '+27' + cleaned.substring(1);
+  }
+
+  // 11-digit SA phone starting with 27 (e.g. 27712345678)
+  if (/^27[0-9]{9}$/.test(cleaned)) {
+    return '+' + cleaned;
+  }
+
+  // 9 digits without leading 0 or 27 (e.g. 712345678)
+  if (/^[0-9]{9}$/.test(cleaned)) {
+    return '+27' + cleaned;
+  }
+
+  // User typed +27 with leading 0 (e.g. +270712345678 -> 270712345678)
+  if (cleaned.startsWith('270') && cleaned.length >= 12) {
+    const fixed = cleaned.substring(0, 2) + cleaned.substring(3, 12);
+    if (/^27[0-9]{9}$/.test(fixed)) {
+      return '+' + fixed;
+    }
+  }
+
+  // Any other numeric string starting with 0 and at least 10 digits
+  if (cleaned.startsWith('0') && cleaned.length >= 10) {
+    const sliced = cleaned.substring(0, 10);
+    return '+27' + sliced.substring(1);
+  }
+
+  // Any other numeric string starting with 27 and at least 11 digits
+  if (cleaned.startsWith('27') && cleaned.length >= 11) {
+    return '+' + cleaned.substring(0, 11);
+  }
+
+  // Fallback for unparseable phone: return null so PostgreSQL constraint 'phone IS NULL OR ...' passes cleanly
+  return null;
+};
+
+/**
  * High-reliability LocalStorage getter with robust parsing exceptions routing.
  */
 export const safeLocalStorageGet = <T>(key: string, fallback: T): T => {

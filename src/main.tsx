@@ -17,10 +17,45 @@ export interface GlobalErrorLog {
 
 const MAX_ERROR_LOGS = 50;
 
+const isIgnorableErrorLog = (msg?: string) => {
+  if (!msg) return true;
+  const trimmed = msg.trim();
+  if (
+    !trimmed ||
+    trimmed === '{}' ||
+    trimmed === 'undefined' ||
+    trimmed === 'null' ||
+    trimmed === 'Unhandled Promise Rejection, Reason:' ||
+    trimmed.toLowerCase().startsWith('unhandled promise rejection')
+  ) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    lower.includes('failed to fetch') ||
+    lower.includes('fetch failed') ||
+    lower.includes('load failed') ||
+    lower.includes('network error') ||
+    lower.includes('networkerror') ||
+    lower.includes('upstream connect error') ||
+    lower.includes('connection timeout') ||
+    lower.includes('disconnect/reset') ||
+    lower.includes('websocket') ||
+    lower.includes('aborted') ||
+    lower.includes('abort error') ||
+    lower.includes('circuit breaker') ||
+    lower.includes('schema cache') ||
+    lower.includes('error fetching shops')
+  );
+};
+
 const getStoredGlobalErrorLogs = (): GlobalErrorLog[] => {
   try {
     const raw = localStorage.getItem("global_error_logs");
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item: GlobalErrorLog) => !isIgnorableErrorLog(item?.message));
+      }
+    }
   } catch {}
   return [];
 };
@@ -36,7 +71,7 @@ export function pushGlobalErrorLog(
   stack?: string,
   details?: string
 ) {
-  if (!message) return;
+  if (isIgnorableErrorLog(message)) return;
   const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   
   // Deduplicate exact duplicate logs within 1 second
@@ -109,6 +144,7 @@ if (typeof window !== "undefined") {
       !reasonStr ||
       reasonStr === '{}' ||
       reasonStr === 'undefined' ||
+      isIgnorableErrorLog(reasonStr) ||
       lowerReason.includes('upstream connect error') ||
       lowerReason.includes('connection timeout') ||
       lowerReason.includes('disconnect/reset') ||
