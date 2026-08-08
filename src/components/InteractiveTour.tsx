@@ -60,24 +60,33 @@ export function InteractiveTour() {
     const handleStartInteractiveTour = () => {
       setCurrentStep(0);
       setIsActive(true);
+      window.dispatchEvent(new CustomEvent('localeats_tour_started'));
+    };
+
+    const handleSkipAll = () => {
+      setIsActive(false);
     };
 
     window.addEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
+    window.addEventListener('localeats_skip_all_tours', handleSkipAll);
 
     // Auto-start interactive tour on first visit after initial screen settle
     const hasSeenInteractiveTour = localStorage.getItem('localeats_interactive_tour_seen');
     if (!hasSeenInteractiveTour) {
       const timer = setTimeout(() => {
         setIsActive(true);
+        window.dispatchEvent(new CustomEvent('localeats_tour_started'));
       }, 3500);
       return () => {
         clearTimeout(timer);
         window.removeEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
+        window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
       };
     }
 
     return () => {
       window.removeEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
+      window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
     };
   }, []);
 
@@ -117,6 +126,7 @@ export function InteractiveTour() {
   const handleComplete = () => {
     localStorage.setItem('localeats_interactive_tour_seen', 'true');
     setIsActive(false);
+    window.dispatchEvent(new CustomEvent('localeats_tour_ended'));
   };
 
   if (!isActive) return null;

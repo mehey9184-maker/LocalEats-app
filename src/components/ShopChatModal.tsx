@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Send, X, MessageCircle, Store, Sparkles, Clock, CheckCheck, Loader2 } from "lucide-react";
+import { BlurUpImage } from "./BlurUpImage";
 import { Shop } from "../types";
 import { audioHelper } from "../lib/audioHelper";
 
@@ -166,7 +167,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
                 <div className="relative">
                   <div className="w-10 h-10 rounded-2xl bg-orange-500 flex items-center justify-center font-black text-white text-lg overflow-hidden border border-white/20">
                     {shop.logo ? (
-                      <img src={shop.logo} alt={shop.name} className="w-full h-full object-cover" />
+                      <BlurUpImage src={shop.logo} alt={shop.name} className="w-full h-full object-cover" />
                     ) : (
                       <Store className="w-5 h-5 text-white" />
                     )}

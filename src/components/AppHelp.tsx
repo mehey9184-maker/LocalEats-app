@@ -1,53 +1,75 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock, Sparkles, Volume2, VolumeX, Music } from 'lucide-react';
+import { HelpCircle, X, ChevronRight, Map, Bell, Star, Store, ShoppingBag, Bike, Clock, Sparkles, Volume2, VolumeX, Music, MessageCircle } from 'lucide-react';
 import { audioHelper, SoundType } from '../lib/audioHelper';
+import { DeliveryChatWidget } from './ChatWidget';
 
 export function AppHelp({
   currentScreen = "splash",
-  cartCount = 0
+  cartCount = 0,
+  activeOrder = null,
+  userProfile = null,
 }: {
   currentScreen?: string;
   cartCount?: number;
+  activeOrder?: any;
+  userProfile?: any;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [, setMuteTrigger] = useState(false);
 
   // Define screens where the floating help button is contextually helpful.
   const activeHelpScreens = ["home", "discover", "explore", "store-info", "order-history", "notifications", "contact"];
   
   // Dynamic conflict avoidance: Only show help when browsing non-critical screens AND when floating checkout is NOT active.
-  const shouldShowHelpButton = activeHelpScreens.includes(currentScreen) && cartCount === 0;
+  const shouldShowButton = activeHelpScreens.includes(currentScreen) && cartCount === 0;
+  
+  const hasActiveDelivery = activeOrder && (activeOrder.status === 'out_for_delivery' || activeOrder.status === 'ready' || activeOrder.status === 'preparing' || activeOrder.status === 'confirmed' || activeOrder.status === 'pending');
 
   return (
     <>
-      <AnimatePresence>
-        {shouldShowHelpButton && (
-          <motion.button
-            id="tour-help-trigger"
-            initial={{ scale: 0, opacity: 0, y: 15 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0, opacity: 0, y: 15 }}
-            transition={{ type: "spring", stiffness: 280, damping: 22 }}
-            onClick={() => setIsOpen(true)}
-            className="fixed bottom-[92px] right-4 md:right-6 md:bottom-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 flex items-center justify-center active:scale-95 group cursor-pointer"
-            title="App Guide"
-          >
-            <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {isOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsOpen(false)}
-              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-0"
-            />
+      {hasActiveDelivery ? (
+        <AnimatePresence>
+          {shouldShowButton && (
+            <div className="fixed bottom-[92px] right-4 md:right-6 md:bottom-6 z-[90]">
+              <DeliveryChatWidget 
+                orderId={activeOrder.id} 
+                userId={userProfile?.id || ""} 
+                riderName={activeOrder.rider_name || "Rider"} 
+                isActive={true} 
+              />
+            </div>
+          )}
+        </AnimatePresence>
+      ) : (
+        <>
+          <AnimatePresence>
+            {shouldShowButton && (
+              <motion.button
+                id="tour-help-trigger"
+                initial={{ scale: 0, opacity: 0, y: 15 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0, opacity: 0, y: 15 }}
+                transition={{ type: "spring", stiffness: 280, damping: 22 }}
+                onClick={() => setIsOpen(true)}
+                className="fixed bottom-[92px] right-4 md:right-6 md:bottom-6 z-[90] w-11 h-11 md:w-14 md:h-14 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-2 border-slate-200 dark:border-slate-700 rounded-full shadow-lg hover:shadow-xl hover:border-orange-500 hover:text-orange-500 dark:hover:border-orange-500 flex items-center justify-center active:scale-95 group cursor-pointer"
+                title="App Guide"
+              >
+                <HelpCircle className="w-5 h-5 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {isOpen && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setIsOpen(false)}
+                  className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-0"
+                />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -197,6 +219,8 @@ export function AppHelp({
           </div>
         )}
       </AnimatePresence>
+        </>
+      )}
     </>
   );
 }

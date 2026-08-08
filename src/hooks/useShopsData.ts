@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Shop } from '../types';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_FALLBACK_SHOPS } from '../App-constants';
@@ -7,19 +7,23 @@ import { getCachedBusinessResults, cacheBusinessResults } from '../lib/offlineCa
 import { CircuitBreaker } from '../utils/circuitBreaker';
 
 export interface UseShopsDataOptions {
-  /** Configurable staleness threshold in milliseconds. Defaults to 30000ms (30 seconds). */
+  /** Configurable staleness threshold in milliseconds. Defaults to 60000ms (1 minute). */
   stalenessThresholdMs?: number;
 }
 
 export function useShopsData(options: UseShopsDataOptions = {}) {
-  const stalenessThresholdMs = options.stalenessThresholdMs ?? 30000;
+  const stalenessThresholdMs = options.stalenessThresholdMs ?? 60000;
+  
   const [shops, setShops] = useState<Shop[]>([]);
+  // loadingShops indicates initial hard loading (no data yet)
   const [loadingShops, setLoadingShops] = useState<boolean>(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  // isSyncing indicates background revalidation
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
-
+  
   const lastFetchedTimeRef = useRef<number | null>(null);
+  const inFlightRequestRef = useRef<Promise<any> | null>(null);
 
   const invalidateCache = useCallback(() => {
     lastFetchedTimeRef.current = null;
@@ -28,6 +32,7 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
   const fetchShopsData = useCallback(
     async (retries = 3, force = false) => {
       const now = Date.now();
+
       // Staleness check: If not forced and last fetch occurred within threshold, skip network call
       if (
         !force &&
@@ -36,144 +41,177 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
         shops.length > 0
       ) {
         console.log(
-          `[useShopsData] Cache is fresh (fetched ${Math.round(
+          `[SWR Catalog] Cache is fresh (fetched ${Math.round(
             (now - lastFetchedTimeRef.current) / 1000
           )}s ago). Skipping redundant network request.`
         );
         return shops;
       }
 
-      setLoadingShops(true);
-      setIsSyncing(true);
-      setFetchError(null);
+      // Prevent concurrent duplicate background fetches
+      if (inFlightRequestRef.current) {
+        console.log('[SWR Catalog] Deduplicating in-flight fetch request.');
+        return inFlightRequestRef.current;
+      }
 
-      // Offline fallback check
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const fetchPromise = (async () => {
+        let currentShops = shops;
+        
+        // 1. SWR Phase 1: Stale (Immediate Cache Hit)
+        // If we don't have shops loaded yet, try to load from persistent cache first
+        if (currentShops.length === 0) {
+          try {
+            const idbCached = await getCachedBusinessResults('all_shops');
+            const cached = idbCached || safeLocalStorageGet('cached_shops', null);
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+              const hydratedCached = cached.map((s: Shop) => {
+                if (!s.menu || s.menu.length === 0) {
+                  const matchedFallback =
+                    DEFAULT_FALLBACK_SHOPS.find(
+                      (f) =>
+                        f.category?.toLowerCase() === s.category?.toLowerCase() ||
+                        f.name.toLowerCase() === s.name.toLowerCase()
+                    ) || DEFAULT_FALLBACK_SHOPS[0];
+                  return {
+                    ...s,
+                    menu: matchedFallback.menu || [],
+                  };
+                }
+                return s;
+              });
+              
+              console.log('[SWR Catalog] STALE: Hydrated from persistent cache', hydratedCached.length, 'shops');
+              setShops(hydratedCached);
+              currentShops = hydratedCached;
+              
+              // We have stale data, so we don't need a hard loading screen
+              setLoadingShops(false);
+            }
+          } catch (e) {
+            console.warn('[SWR Catalog] Failed to read stale cache:', e);
+          }
+        }
+
+        // 2. SWR Phase 2: Revalidate (Background Network Fetch)
+        // If offline and we already have some data, just abort the background fetch
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setIsOnline(false);
+          setLoadingShops(false);
+          return currentShops;
+        }
+
+        setIsSyncing(true);
+        setFetchError(null);
+        
+        // Only show hard loading spinner if we have absolutely no stale data
+        if (currentShops.length === 0) {
+          setLoadingShops(true);
+        }
+
         try {
-          const idbCached = await getCachedBusinessResults('all_shops');
-          const cached = idbCached || safeLocalStorageGet('cached_shops', null);
-          if (cached && Array.isArray(cached) && cached.length > 0) {
-            const hydratedCached = cached.map((s: Shop) => {
-              if (!s.menu || s.menu.length === 0) {
-                const matchedFallback =
-                  DEFAULT_FALLBACK_SHOPS.find(
-                    (f) =>
-                      f.category?.toLowerCase() === s.category?.toLowerCase() ||
-                      f.name.toLowerCase() === s.name.toLowerCase()
-                  ) || DEFAULT_FALLBACK_SHOPS[0];
+          await CircuitBreaker.execute('fetchShopsAndMenu', async () => {
+            const { data: shopsData, error: shopsError } = await supabase.from('shops').select('*');
+            if (shopsError) throw shopsError;
+
+            const { data: menuData, error: menuError } = await supabase.from('menu_items').select('*');
+            if (menuError) throw menuError;
+
+            if (shopsData && shopsData.length === 0) {
+              setShops(DEFAULT_FALLBACK_SHOPS);
+              safeLocalStorageSet('cached_shops', JSON.stringify(DEFAULT_FALLBACK_SHOPS));
+              setLoadingShops(false);
+              setIsSyncing(false);
+              lastFetchedTimeRef.current = Date.now();
+              return;
+            }
+
+            const formattedShops: Shop[] = (shopsData || [])
+              .map((s) => {
+                const shopHash = Math.abs(
+                  String(s.id)
+                    .split('')
+                    .reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)
+                );
                 return {
-                  ...s,
-                  menu: matchedFallback.menu || [],
+                  id: String(s.id),
+                  name: s.name,
+                  logo: s.logo_url || DEFAULT_FALLBACK_SHOPS[0].logo,
+                  rating: Number(s.rating) || 4.5,
+                  cash_trust_enabled:
+                    s.cash_trust_enabled === true || s.cash_trust_enabled === 'true',
+                  allow_external_riders:
+                    s.allow_external_riders === true || s.allow_external_riders === 'true',
+                  auto_look_for_rider:
+                    s.auto_look_for_rider === true || s.auto_look_for_rider === 'true',
+                  reviewCount: 12 + (shopHash % 88),
+                  prepTime: '15-20 min',
+                  isOpen: true,
+                  description: s.description || 'Local Flavours',
+                  address: s.location || 'Local Eats',
+                  category: s.category || 'Kota',
+                  owner_id: s.owner_id,
+                  owner_email: (s as any).owner_email || (s as any).created_by,
+                  is_test: (s as any).is_test === true || (s as any).is_test_store === true,
+                  is_test_store: (s as any).is_test_store === true,
+                  is_private: (s as any).is_private === true,
+                  opening_time: s.opening_time,
+                  closing_time: s.closing_time,
+                  phone: s.phone || '+27 12 345 6789',
+                  latitude: s.latitude || -25.9964,
+                  longitude: s.longitude || 28.2268,
+                  updated_at: s.updated_at,
+                  is_active: s.is_active !== false,
+                  images: (s as any).images || [DEFAULT_FALLBACK_SHOPS[0].logo],
+                  menu: (menuData || [])
+                    .filter((m) => String(m.shop_id) === String(s.id))
+                    .map((m) => ({
+                      id: String(m.id),
+                      name: m.name,
+                      price: Number(m.price),
+                      displayPrice: `R${Number(m.price).toFixed(2)}`,
+                      image: m.image_url || DEFAULT_FALLBACK_SHOPS[0].menu[0]?.image,
+                      description: m.description || '',
+                      category: m.category || 'Main Course',
+                      is_available: m.is_available !== false,
+                      customizations: m.customizations || [],
+                    })),
                 };
-              }
-              return s;
-            });
-            setShops(hydratedCached);
-            setLoadingShops(false);
-            setIsSyncing(false);
+              })
+              .sort((a, b) => (b.rating || 0) - (a.rating || 0));
+
+            // SWR Phase 3: Refresh UI with the newly fetched data
+            console.log('[SWR Catalog] REVALIDATE: Seamlessly updating UI with fresh network data');
+            setShops(formattedShops);
+            safeLocalStorageSet('cached_shops', JSON.stringify(formattedShops));
+            cacheBusinessResults('all_shops', formattedShops);
+            
+            setIsOnline(true);
             lastFetchedTimeRef.current = Date.now();
-            return hydratedCached;
+            return formattedShops;
+          });
+        } catch (err: any) {
+          console.warn('[SWR Catalog] Background revalidation failed. Retaining stale cache.', err);
+          setFetchError(err.message || 'Background sync failed');
+          
+          if (currentShops.length === 0) {
+            const cached = safeLocalStorageGet('cached_shops', null);
+            if (cached && Array.isArray(cached) && cached.length > 0) {
+              setShops(cached);
+            } else {
+              setShops(DEFAULT_FALLBACK_SHOPS);
+            }
           }
-        } catch (e) {
-          console.warn('Retrieving shops from offline storage failed:', e);
+        } finally {
+          setLoadingShops(false);
+          setIsSyncing(false);
+          inFlightRequestRef.current = null;
         }
-      }
+        
+        return shops;
+      })();
 
-      try {
-        await CircuitBreaker.execute('fetchShopsAndMenu', async () => {
-          const { data: shopsData, error: shopsError } = await supabase.from('shops').select('*');
-
-          if (shopsError) {
-            const errObj = new Error(shopsError.message || 'Unknown Supabase error');
-            (errObj as any).code = shopsError.code;
-            (errObj as any).details = shopsError.details;
-            throw errObj;
-          }
-
-          const { data: menuData, error: menuError } = await supabase
-            .from('menu_items')
-            .select('*');
-
-          if (menuError) {
-            throw menuError;
-          }
-
-          if (shopsData && shopsData.length === 0) {
-            setShops(DEFAULT_FALLBACK_SHOPS);
-            safeLocalStorageSet('cached_shops', JSON.stringify(DEFAULT_FALLBACK_SHOPS));
-            setLoadingShops(false);
-            setIsSyncing(false);
-            lastFetchedTimeRef.current = Date.now();
-            return;
-          }
-
-          const formattedShops: Shop[] = (shopsData || [])
-            .map((s) => {
-              const shopHash = Math.abs(
-                String(s.id)
-                  .split('')
-                  .reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)
-              );
-              return {
-                id: String(s.id),
-                name: s.name,
-                logo: s.logo_url || DEFAULT_FALLBACK_SHOPS[0].logo,
-                rating: Number(s.rating) || 4.5,
-                cash_trust_enabled:
-                  s.cash_trust_enabled === true || s.cash_trust_enabled === 'true',
-                allow_external_riders:
-                  s.allow_external_riders === true || s.allow_external_riders === 'true',
-                auto_look_for_rider:
-                  s.auto_look_for_rider === true || s.auto_look_for_rider === 'true',
-                reviewCount: 12 + (shopHash % 88),
-                prepTime: '15-20 min',
-                isOpen: true,
-                description: s.description || 'Local Flavours',
-                address: s.location || 'Local Eats',
-                category: s.category || 'Kota',
-                owner_id: s.owner_id,
-                opening_time: s.opening_time,
-                closing_time: s.closing_time,
-                phone: s.phone || '+27 12 345 6789',
-                latitude: s.latitude || -25.9964,
-                longitude: s.longitude || 28.2268,
-                updated_at: s.updated_at,
-                is_active: s.is_active !== false,
-                images: (s as any).images || [DEFAULT_FALLBACK_SHOPS[0].logo],
-                menu: (menuData || [])
-                  .filter((m) => String(m.shop_id) === String(s.id))
-                  .map((m) => ({
-                    id: String(m.id),
-                    name: m.name,
-                    price: Number(m.price),
-                    displayPrice: `R${Number(m.price).toFixed(2)}`,
-                    image: m.image_url || DEFAULT_FALLBACK_SHOPS[0].menu[0]?.image,
-                    description: m.description || '',
-                    category: m.category || 'Main Course',
-                    is_available: m.is_available !== false,
-                    customizations: m.customizations || [],
-                  })),
-              };
-            })
-            .sort((a, b) => (b.rating || 0) - (a.rating || 0));
-
-          setShops(formattedShops);
-          safeLocalStorageSet('cached_shops', JSON.stringify(formattedShops));
-          cacheBusinessResults('all_shops', formattedShops);
-          setIsOnline(true);
-          lastFetchedTimeRef.current = Date.now();
-        });
-      } catch (err: any) {
-        const cached = safeLocalStorageGet('cached_shops', null);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          setShops(cached);
-        } else {
-          setShops(DEFAULT_FALLBACK_SHOPS);
-        }
-      } finally {
-        setLoadingShops(false);
-        setIsSyncing(false);
-      }
+      inFlightRequestRef.current = fetchPromise;
+      return fetchPromise;
     },
     [stalenessThresholdMs, shops]
   );

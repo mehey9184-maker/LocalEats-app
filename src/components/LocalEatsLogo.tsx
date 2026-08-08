@@ -5,20 +5,22 @@ interface LocalEatsLogoProps {
   height?: number | string;
   className?: string;
   showBackground?: boolean;
+  iconOnly?: boolean;
 }
 
 export const LocalEatsLogo: React.FC<LocalEatsLogoProps> = ({ 
   width = 180, 
   height = 48, 
   className = '',
-  showBackground = false
+  showBackground = false,
+  iconOnly = false
 }) => {
   return (
-    <div className={`relative flex items-center justify-center ${showBackground ? 'px-4 py-2' : ''} ${className}`}>
+    <div className={`relative inline-flex items-center justify-center select-none ${showBackground ? 'px-3 py-1.5 sm:px-4 sm:py-2' : ''} ${className}`}>
       {/* Glass-Morphic Container */}
       {showBackground && (
         <div 
-          className="absolute inset-0 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md border border-white/40 dark:border-slate-700/50 rounded-2xl shadow-[0_8px_32px_0_rgba(255,84,0,0.15)]"
+          className="absolute inset-0 bg-white/60 dark:bg-slate-900/60 backdrop-blur-md border border-white/50 dark:border-slate-700/50 rounded-2xl shadow-[0_4px_20px_0_rgba(255,84,0,0.12)]"
           style={{ zIndex: 0 }}
         />
       )}
@@ -26,9 +28,11 @@ export const LocalEatsLogo: React.FC<LocalEatsLogoProps> = ({
       <svg
         width={width}
         height={height}
-        viewBox="0 0 240 64"
+        viewBox={iconOnly ? "0 0 64 64" : "0 0 240 64"}
+        preserveAspectRatio="xMidYMid meet"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
+        className="max-w-full h-auto"
         style={{ position: 'relative', zIndex: 1 }}
       >
         {/* Deep Vibrant Orange Brand Gradient */}
@@ -45,7 +49,7 @@ export const LocalEatsLogo: React.FC<LocalEatsLogoProps> = ({
           </linearGradient>
 
           <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#FF5400" floodOpacity="0.3" />
+            <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#FF5400" floodOpacity="0.25" />
           </filter>
         </defs>
 
@@ -69,18 +73,21 @@ export const LocalEatsLogo: React.FC<LocalEatsLogoProps> = ({
         </g>
 
         {/* High-End Typography: LocalEats */}
-        <text
-          x="68"
-          y="44"
-          fontFamily="system-ui, -apple-system, sans-serif"
-          fontWeight="800"
-          fontSize="34"
-          letterSpacing="-0.5"
-          className="fill-slate-900 dark:fill-white transition-colors duration-200"
-        >
-          Local<tspan fill="url(#brandGradient)">Eats</tspan>
-        </text>
+        {!iconOnly && (
+          <text
+            x="68"
+            y="44"
+            fontFamily="system-ui, -apple-system, sans-serif"
+            fontWeight="800"
+            fontSize="34"
+            letterSpacing="-0.5"
+            className="fill-slate-900 dark:fill-white transition-colors duration-200"
+          >
+            Local<tspan fill="url(#brandGradient)">Eats</tspan>
+          </text>
+        )}
       </svg>
     </div>
   );
 };
+

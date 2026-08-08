@@ -2,6 +2,7 @@ import React from 'react';
 import { RotateCcw, Heart, Zap, ArrowRight, ShoppingBag, Store } from 'lucide-react';
 import { Order, Shop } from '../types';
 import { formatRand } from '../utils';
+import { BlurUpImage } from './BlurUpImage';
 
 interface QuickReorderWidgetProps {
   orders: Order[];
@@ -174,11 +175,10 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
                 className="shrink-0 flex items-center gap-2.5 px-3 py-2 bg-slate-50 dark:bg-slate-800/80 hover:bg-orange-50 dark:hover:bg-orange-950/30 border border-slate-200 dark:border-slate-700/60 rounded-xl text-left transition-all active:scale-95 group cursor-pointer"
               >
                 <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0">
-                  <img
+                  <BlurUpImage
                     src={shop.logo_url || 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=120&q=80'}
                     alt={shop.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    loading="lazy"
                   />
                 </div>
                 <div className="min-w-0 max-w-[130px]">

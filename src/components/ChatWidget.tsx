@@ -10,9 +10,11 @@ export interface ChatMessage {
   sender_id: string;
   user_id?: string;
   sender_type?: "user" | "rider" | string;
-  sender_role?: "user" | "rider" | "driver" | string;
+  sender_role?: "user" | "rider" | "driver" | "customer" | "merchant" | "system" | string;
+  sender_name?: string;
   message_text?: string;
   content?: string;
+  message?: string;
   text?: string;
   is_read?: boolean;
   read_at?: string | null;
@@ -50,6 +52,7 @@ export function ChatWidget({
     return (
       m.sender_id === userId ||
       m.sender_type === "customer" ||
+      m.sender_role === "customer" ||
       m.sender_type === "client" ||
       m.sender_type === "user" ||
       m.sender_role === "user" ||
@@ -59,7 +62,7 @@ export function ChatWidget({
 
   // Helper to extract message text across schema field variations
   const getMessageText = (m: ChatMessage) => {
-    return m.message_text || m.content || m.text || "";
+    return m.message || m.message_text || m.content || m.text || "";
   };
 
   // Deduplicating append helper
@@ -103,7 +106,7 @@ export function ChatWidget({
     const fetchMessages = async () => {
       try {
         const { data, error } = await supabase
-          .from("chat_messages")
+          .from("order_messages")
           .select("*")
           .eq("order_id", orderId)
           .order("created_at", { ascending: true });
@@ -153,7 +156,7 @@ export function ChatWidget({
         {
           event: "*",
           schema: "public",
-          table: "chat_messages",
+          table: "order_messages",
           filter: `order_id=eq.${orderId}`,
         },
         (payload) => {
@@ -203,15 +206,15 @@ export function ChatWidget({
         try {
           const nowIso = new Date().toISOString();
           await supabase
-            .from("chat_messages")
-            .update({ read_at: nowIso, is_read: true })
+            .from("order_messages")
+            .update({ is_read: true })
             .eq("order_id", orderId)
-            .is("read_at", null)
+            .eq("is_read", false)
             .neq("sender_id", currentUserId);
 
           setMessages((prev) =>
             prev.map((m) =>
-              m.sender_id !== currentUserId ? { ...m, read_at: nowIso, is_read: true } : m
+              m.sender_id !== currentUserId ? { ...m, is_read: true } : m
             )
           );
           if (onUnreadCountChange) onUnreadCountChange(0);
@@ -256,15 +259,13 @@ export function ChatWidget({
       const payload: any = {
         order_id: effectiveOrderId,
         sender_id: effectiveSenderId,
-        user_id: validUserId,
-        sender_type: "customer",
-        message_text: messageText,
-        content: messageText,
+        sender_role: "customer",
+        message: messageText,
         is_read: false,
       };
 
       const { data, error } = await supabase
-        .from("chat_messages")
+        .from("order_messages")
         .insert(payload)
         .select()
         .maybeSingle();
@@ -279,14 +280,12 @@ export function ChatWidget({
         const fbPayload: any = {
           order_id: effectiveOrderId,
           sender_id: effectiveSenderId,
-          user_id: validUserId,
-          sender_type: "customer",
-          message_text: messageText,
-          content: messageText,
+          sender_role: "customer",
+          message: messageText,
         };
 
         const { data: fbData, error: fbError } = await supabase
-          .from("chat_messages")
+          .from("order_messages")
           .insert(fbPayload)
           .select()
           .maybeSingle();
@@ -304,10 +303,8 @@ export function ChatWidget({
           id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           order_id: effectiveOrderId,
           sender_id: effectiveSenderId,
-          user_id: validUserId || undefined,
-          sender_type: "customer",
-          message_text: messageText,
-          content: messageText,
+          sender_role: "customer",
+          message: messageText,
           is_read: false,
           created_at: new Date().toISOString(),
         };

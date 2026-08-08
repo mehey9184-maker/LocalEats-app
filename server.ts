@@ -27,6 +27,76 @@ const getGeminiClient = () => {
   });
 };
 
+// In-memory store for synced orders as resilient fallback
+const serverOrders: any[] = [];
+
+// API Endpoint for resilient Order Placement & Sync
+app.post("/api/orders", (req, res) => {
+  try {
+    const { orders } = req.body;
+    if (!orders || !Array.isArray(orders)) {
+      return res.status(400).json({ error: "Orders array is required" });
+    }
+
+    for (const order of orders) {
+      const itemPrice = Number(order.price) || 0;
+      const itemQty = Math.max(1, Number(order.quantity) || 1);
+      const itemDeliveryFee = Number(order.delivery_fee) || 0;
+      const computedTotal = Number((itemPrice * itemQty + itemDeliveryFee).toFixed(2));
+      const finalTotalPrice = order.total_price !== undefined && !isNaN(Number(order.total_price))
+        ? Number(Number(order.total_price).toFixed(2))
+        : computedTotal;
+
+      // If price was 0 or missing but total_price was provided, reconstruct price with mathematical integrity
+      const finalPrice = (itemPrice === 0 && finalTotalPrice > itemDeliveryFee)
+        ? Number(((finalTotalPrice - itemDeliveryFee) / itemQty).toFixed(2))
+        : itemPrice;
+
+      const normalizedOrder = {
+        ...order,
+        price: finalPrice,
+        quantity: itemQty,
+        delivery_fee: itemDeliveryFee,
+        total_price: Number((finalPrice * itemQty + itemDeliveryFee).toFixed(2)),
+      };
+
+      const existingIdx = serverOrders.findIndex((o) => o.id === order.id);
+      if (existingIdx >= 0) {
+        serverOrders[existingIdx] = { ...serverOrders[existingIdx], ...normalizedOrder, updated_at: new Date().toISOString() };
+      } else {
+        serverOrders.unshift({
+          ...normalizedOrder,
+          created_at: order.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Keep memory clean
+    if (serverOrders.length > 500) {
+      serverOrders.length = 500;
+    }
+
+    return res.json({ success: true, count: orders.length, orders: serverOrders.slice(0, 50) });
+  } catch (err: any) {
+    console.error("Order save error:", err);
+    return res.status(500).json({ error: err.message || "Failed to process order" });
+  }
+});
+
+// API Endpoint to fetch orders for user or shop
+app.get("/api/orders", (req, res) => {
+  const { user_id, shop_id } = req.query;
+  let filtered = [...serverOrders];
+  if (user_id) {
+    filtered = filtered.filter((o) => String(o.user_id) === String(user_id));
+  }
+  if (shop_id) {
+    filtered = filtered.filter((o) => String(o.shop_id) === String(shop_id));
+  }
+  return res.json({ orders: filtered });
+});
+
 // API Endpoint for AI Powered Shop Chat Assistant
 app.post("/api/shop-chat", async (req, res) => {
   try {

@@ -121,4 +121,9 @@ export type Shop = {
   auto_look_for_rider?: boolean;
   updated_at?: string;
   is_active?: boolean;
+  is_test?: boolean;
+  is_private?: boolean;
+  is_test_store?: boolean;
+  owner_email?: string;
+  created_by?: string;
 };

@@ -70,7 +70,7 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({
     return [
       { title: 'Network Instability Detected', desc: 'Intermittent signal drops detected on recent requests.' },
       { title: 'Queued Request Engine Active', desc: 'Failed operations are stored in IndexedDB and retrying automatically.' },
-      { title: 'Run Diagnostics', desc: 'Inspect the Developer Diagnostic Panel for exact stack traces & logs.' },
+      { title: 'Offline Mode Active', desc: 'Orders and carts will sync as soon as internet connection is restored.' },
     ];
   }, [isOnline, latestErrors]);
 
@@ -137,16 +137,6 @@ export const OfflineBanner: React.FC<OfflineBannerProps> = ({
                 <span>Guide</span>
                 {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               </button>
-
-              {onOpenDiagnostics && (
-                <button
-                  onClick={onOpenDiagnostics}
-                  className="p-1.5 bg-black/20 hover:bg-black/30 text-amber-200 rounded-xl transition-all cursor-pointer border border-white/20"
-                  title="Open Diagnostic Logs"
-                >
-                  <Terminal className="w-4 h-4" />
-                </button>
-              )}
 
               <button
                 onClick={() => setDismissed(true)}

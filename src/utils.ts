@@ -3,8 +3,8 @@
  * Strictly conforms to DRY, SOLID, and KISS design specifications.
  */
 
-import { DEFAULT_FALLBACK_SHOPS } from './App-constants';
-export { DEFAULT_FALLBACK_SHOPS };
+import { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE } from './App-constants';
+export { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE };
 
 export const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
 export const DEFAULT_SHOP_LOGO = "/logo.png";

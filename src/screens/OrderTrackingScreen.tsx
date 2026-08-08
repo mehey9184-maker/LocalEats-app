@@ -28,7 +28,9 @@ import { toast } from "sonner";
 import { Order, Shop } from "../types";
 import { supabase } from "../lib/supabase";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
+import { DualSyncEngine } from "../utils/dualSync";
 import { ChatWidget, DeliveryChatWidget } from "../components/ChatWidget";
+import { BlurUpImage } from "../components/BlurUpImage";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import { storeMapIcon, riderMapIcon } from "../components/MapComponents";
 import L from "leaflet";
@@ -350,26 +352,14 @@ export function OrderTrackingScreen({
       for (const ord of activeDeliveryOrders) {
         try {
           const { count, error } = await supabase
-            .from("chat_messages")
+            .from("order_messages")
             .select("id", { count: "exact", head: true })
             .eq("order_id", ord.id)
-            .is("read_at", null)
+            .eq("is_read", false)
             .neq("sender_id", ord.user_id);
 
           if (!error && count !== null) {
             setUnreadCounts((prev) => ({ ...prev, [ord.id]: count }));
-          } else {
-            // Fallback for is_read boolean if read_at is not populated
-            const { count: isReadCount } = await supabase
-              .from("chat_messages")
-              .select("id", { count: "exact", head: true })
-              .eq("order_id", ord.id)
-              .eq("is_read", false)
-              .neq("sender_id", ord.user_id);
-
-            if (isReadCount !== null) {
-              setUnreadCounts((prev) => ({ ...prev, [ord.id]: isReadCount }));
-            }
           }
         } catch (err) {
           console.error("Error fetching unread chat count:", err);
@@ -387,13 +377,13 @@ export function OrderTrackingScreen({
         {
           event: "INSERT",
           schema: "public",
-          table: "chat_messages",
+          table: "order_messages",
         },
         (payload) => {
           const newMsg = payload.new as any;
           if (newMsg && newMsg.order_id) {
             const match = localOrders.find((o) => o.id === newMsg.order_id);
-            if (match && newMsg.sender_id !== match.user_id && !newMsg.read_at && !newMsg.is_read) {
+            if (match && newMsg.sender_id !== match.user_id && !newMsg.is_read) {
               setUnreadCounts((prev) => ({
                 ...prev,
                 [newMsg.order_id]: (prev[newMsg.order_id] || 0) + 1,
@@ -423,7 +413,7 @@ export function OrderTrackingScreen({
   };
 
   useEffect(() => {
-    setLocalOrders(orders);
+    setLocalOrders((prev) => DualSyncEngine.reconcileEntities(prev, orders));
   }, [orders]);
 
   useEffect(() => {
@@ -811,8 +801,7 @@ export function OrderTrackingScreen({
                   <div className="flex justify-between items-start gap-3">
                     <div className="flex items-center gap-3">
                       {shop?.logo ? (
-                        <img
-                          referrerPolicy="no-referrer"
+                        <BlurUpImage
                           src={shop.logo}
                           alt={shop.name}
                           className="w-12 h-12 rounded-2xl object-cover border border-slate-100 dark:border-slate-800"
@@ -900,8 +889,7 @@ export function OrderTrackingScreen({
                 <div className="flex justify-between items-start gap-3">
                   <div className="flex items-center gap-3">
                     {shop?.logo ? (
-                      <img
-                        referrerPolicy="no-referrer"
+                      <BlurUpImage
                         src={shop.logo}
                         alt={shop.name}
                         className="w-12 h-12 rounded-2xl object-cover border border-slate-100 dark:border-slate-800"

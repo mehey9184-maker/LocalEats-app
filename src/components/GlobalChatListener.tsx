@@ -30,7 +30,7 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
         {
           event: "INSERT",
           schema: "public",
-          table: "chat_messages",
+          table: "order_messages",
           filter: filter,
         },
         (payload) => {
@@ -40,7 +40,7 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
             newMsg.sender_type === "driver" ||
             newMsg.sender_role === "rider" ||
             newMsg.sender_role === "driver";
-          const msgText = newMsg.message_text || newMsg.content || newMsg.text || "New message from courier";
+          const msgText = newMsg.message || newMsg.message_text || newMsg.content || newMsg.text || "New message from courier";
 
           if (isRider && currentScreen !== "order-tracking") {
             toast("New Courier Message", {

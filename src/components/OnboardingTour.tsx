@@ -31,28 +31,40 @@ export function OnboardingTour() {
     const handleRestart = () => {
       setCurrentStep(0);
       setIsOpen(true);
+      window.dispatchEvent(new CustomEvent('localeats_tour_started'));
+    };
+
+    const handleSkipAll = () => {
+      setIsOpen(false);
     };
 
     window.addEventListener('localeats_restart_tour', handleRestart);
+    window.addEventListener('localeats_skip_all_tours', handleSkipAll);
 
     const hasSeenTour = localStorage.getItem('localeats_tour_seen');
     if (!hasSeenTour) {
       // Small delay so it feels natural and doesn't instantly block initial screen mount
-      const timer = setTimeout(() => setIsOpen(true), 1200);
+      const timer = setTimeout(() => {
+        setIsOpen(true);
+        window.dispatchEvent(new CustomEvent('localeats_tour_started'));
+      }, 1200);
       return () => {
         clearTimeout(timer);
         window.removeEventListener('localeats_restart_tour', handleRestart);
+        window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
       };
     }
 
     return () => {
       window.removeEventListener('localeats_restart_tour', handleRestart);
+      window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
     };
   }, []);
 
   const completeTour = () => {
     localStorage.setItem('localeats_tour_seen', 'true');
     setIsOpen(false);
+    window.dispatchEvent(new CustomEvent('localeats_tour_ended'));
   };
 
   const nextStep = () => {

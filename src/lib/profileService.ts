@@ -20,7 +20,7 @@ export interface ProfileUpsertData {
 /**
  * Executes a server-side Supabase Database Function (RPC `safe_upsert_profile`) 
  * to handle phone number validation and sanitization during insertion,
- * with graceful fallback to standard table upsert.
+ * with graceful fallback to standard table upsert and local persistence.
  */
 export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
   if (!profileData.user_id) {
@@ -29,8 +29,41 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
 
   const sanitizedPhone = toDBPhone(profileData.phone);
 
+  // 1. Instantly persist to local storage for offline and fast recovery
   try {
-    // 1. Call server-side RPC database function
+    if (typeof window !== "undefined" && window.localStorage) {
+      const cached = localStorage.getItem("userProfile");
+      const existing = cached ? JSON.parse(cached) : {};
+      const updated = {
+        ...existing,
+        id: profileData.user_id,
+        user_id: profileData.user_id,
+        fullName: profileData.fullName ?? existing.fullName,
+        email: profileData.email ?? existing.email,
+        phone: sanitizedPhone ?? profileData.phone ?? existing.phone,
+        city: profileData.city ?? existing.city,
+        address: profileData.address ?? existing.address,
+        country: profileData.country ?? existing.country ?? 'South Africa',
+        role: profileData.role ?? existing.role ?? 'user',
+        photoURL: profileData.photo_url ?? existing.photoURL,
+        language: profileData.language ?? existing.language ?? 'en',
+        latitude: profileData.latitude ?? existing.latitude,
+        longitude: profileData.longitude ?? existing.longitude,
+        favorites: profileData.favorites ?? existing.favorites ?? [],
+      };
+      localStorage.setItem("userProfile", JSON.stringify(updated));
+    }
+  } catch (e) {
+    // Ignore local storage error
+  }
+
+  // If client is offline, resolve successfully with locally cached profile
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    return { data: { offline: true }, error: null };
+  }
+
+  try {
+    // 2. Call server-side RPC database function if available
     const { data: rpcData, error: rpcError } = await supabase.rpc('safe_upsert_profile', {
       p_user_id: profileData.user_id,
       p_full_name: profileData.fullName || null,
@@ -51,12 +84,21 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
       return { data: rpcData, error: null };
     }
 
-    console.warn("[Profile RPC] safe_upsert_profile RPC fallback to direct table operation:", rpcError.message);
+    // Only log diagnostic info if not a network failure or standard missing function
+    const isNetworkOrMissing = 
+      rpcError.message?.includes("Failed to fetch") || 
+      rpcError.message?.includes("function") || 
+      rpcError.message?.includes("not found");
+    if (!isNetworkOrMissing) {
+      console.info("[Profile RPC] safe_upsert_profile RPC fallback to direct table operation:", rpcError.message);
+    }
   } catch (err: any) {
-    console.warn("[Profile RPC] Exception executing RPC, falling back to direct table update:", err?.message || err);
+    if (!err?.message?.includes("Failed to fetch")) {
+      console.info("[Profile RPC] Exception executing RPC, falling back to direct table update:", err?.message || err);
+    }
   }
 
-  // 2. Direct table upsert fallback
+  // 3. Direct table upsert fallback
   const payload: Record<string, any> = {
     user_id: profileData.user_id,
     fullName: profileData.fullName,
@@ -74,7 +116,24 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
     updated_at: new Date().toISOString()
   };
 
-  return await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
+  try {
+    const res = await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
+    if (res.error) {
+      const isFetchErr = 
+        res.error.message?.includes("Failed to fetch") || 
+        res.error.message?.includes("upstream connect error") ||
+        res.error.message?.includes("NetworkError");
+      if (isFetchErr) {
+        return { data: { cached: true, offline: true }, error: null };
+      }
+    }
+    return res;
+  } catch (err: any) {
+    if (err?.message?.includes("Failed to fetch") || err?.message?.includes("NetworkError")) {
+      return { data: { cached: true, offline: true }, error: null };
+    }
+    return { data: null, error: err };
+  }
 }
 
 /**

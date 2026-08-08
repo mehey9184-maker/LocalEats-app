@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CheckoutScreen } from "./screens/CheckoutScreen";
+// removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
 import { CircuitBreaker } from "./utils/circuitBreaker";
+import { IdempotencyManager } from "./utils/idempotency";
+import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
 import { uploadClientAvatar } from "./lib/avatar";
 import {
   useState,
@@ -18,6 +20,8 @@ import {
   ChangeEvent,
   FormEvent,
   memo,
+  lazy,
+  Suspense,
 } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Toaster, toast } from "sonner";
@@ -207,10 +211,16 @@ import {
 import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
+import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
+
+const CheckoutScreen = lazy(() => import("./screens/CheckoutScreen").then(module => ({ default: module.CheckoutScreen })));
+const OrderTrackingScreen = lazy(() => import("./screens/OrderTrackingScreen").then(module => ({ default: module.OrderTrackingScreen })));
+
 import { SplashScreen } from "./screens/SplashScreen";
-import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
+
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { AuthSkeleton } from "./components/AuthSkeleton";
+import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
 import {
@@ -248,6 +258,7 @@ import {
   pruneLargeKeys,
   cleanCacheStorage,
   DEFAULT_FALLBACK_SHOPS,
+  MY_KOTA_TEST_STORE,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -316,7 +327,8 @@ const urlBase64ToUint8Array = (base64String: string) => {
 
 // Static fallback cache loaded dynamically from ./utils
 
-import { AddressSearch, LocationPickerMap } from "./components/MapComponents";
+const AddressSearch = lazy(() => import("./components/MapComponents").then(module => ({ default: module.AddressSearch })));
+const LocationPickerMap = lazy(() => import("./components/MapComponents").then(module => ({ default: module.LocationPickerMap })));
 import {
   detectTownship,
   TOWNSHIPS,
@@ -325,11 +337,14 @@ import {
 import { BlurUpImage } from "./components/BlurUpImage";
 import Cropper from "react-easy-crop";
 import { TrustBadge } from "./components/TrustBadge";
-import { AppHelp } from "./components/AppHelp";
-import { OnboardingTour } from "./components/OnboardingTour";
-import { InteractiveTour } from "./components/InteractiveTour";
-import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
-import { CookieConsentBanner } from "./components/CookieConsentBanner";
+const AppHelp = lazy(() => import("./components/AppHelp").then(m => ({ default: m.AppHelp })));
+const OnboardingTour = lazy(() => import("./components/OnboardingTour").then(m => ({ default: m.OnboardingTour })));
+const InteractiveTour = lazy(() => import("./components/InteractiveTour").then(m => ({ default: m.InteractiveTour })));
+const PopiaLegalDrawer = lazy(() => import("./components/PopiaLegalDrawer").then(m => ({ default: m.PopiaLegalDrawer })));
+const CookieConsentBanner = lazy(() => import("./components/CookieConsentBanner").then(m => ({ default: m.CookieConsentBanner })));
+const ShopChatModal = lazy(() => import("./components/ShopChatModal").then(m => ({ default: m.ShopChatModal })));
+const QuickReorderWidget = lazy(() => import("./components/QuickReorderWidget").then(m => ({ default: m.QuickReorderWidget })));
+
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
   OrderHistorySkeleton,
@@ -339,8 +354,6 @@ import {
 } from "./components/FacebookSkeleton";
 import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
-import { ShopChatModal } from "./components/ShopChatModal";
-import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { cacheBusinessResults, getCachedBusinessResults } from "./lib/offlineCache";
 
 const ShopCard = memo(
@@ -423,10 +436,10 @@ const ShopCard = memo(
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        className="flex flex-col bg-white dark:bg-slate-900 rounded-[32px] overflow-hidden transition-all cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm hover:shadow-xl hover:border-orange-300 dark:hover:border-orange-500/30 w-full h-full"
+        className="flex flex-col bg-white dark:bg-slate-900 rounded-[32px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm hover:shadow-xl hover:border-orange-300 dark:hover:border-orange-500/30 w-full h-full active:scale-[0.98] transform"
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
-        <div className="h-36 sm:h-44 w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
+        <div className="aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
               <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
@@ -437,7 +450,7 @@ const ShopCard = memo(
             <BlurUpImage
               src={heroImage}
               alt={shop.name}
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              className="w-full h-full aspect-video object-cover transition-transform duration-500 group-hover:scale-105"
               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
             />
           )}
@@ -467,7 +480,9 @@ const ShopCard = memo(
         </div>
 
         {/* Bottom Half: Merchant Info & Decision Metrics */}
-        <div className="p-4 sm:p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px]">
+        <div className="p-4 sm:p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px] relative overflow-hidden transition-all duration-300">
+          {/* Subtle shimmer effect while menu content lazy-loads */}
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-500/[0.04] to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
           <div className="flex justify-between items-start gap-2">
             <h4 className="text-base sm:text-[17px] font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
@@ -972,6 +987,38 @@ export default function App() {
 
   const transitionHistoryRef = useRef<{ screen: Screen; timestamp: number }[]>([]);
 
+  const [isTourActive, setIsTourActive] = useState<boolean>(() => {
+    try {
+      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
+        const hasSeenTour = localStorage.getItem("localeats_tour_seen");
+        const hasSeenInteractiveTour = localStorage.getItem("localeats_interactive_tour_seen");
+        return !hasSeenTour || !hasSeenInteractiveTour;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleTourStart = () => setIsTourActive(true);
+    const handleTourEnd = () => setIsTourActive(false);
+
+    window.addEventListener("localeats_tour_started", handleTourStart);
+    window.addEventListener("localeats_tour_ended", handleTourEnd);
+    window.addEventListener("localeats_restart_tour", handleTourStart);
+    window.addEventListener("localeats_start_interactive_tour", handleTourStart);
+    window.addEventListener("localeats_skip_all_tours", handleTourEnd);
+
+    return () => {
+      window.removeEventListener("localeats_tour_started", handleTourStart);
+      window.removeEventListener("localeats_tour_ended", handleTourEnd);
+      window.removeEventListener("localeats_restart_tour", handleTourStart);
+      window.removeEventListener("localeats_start_interactive_tour", handleTourStart);
+      window.removeEventListener("localeats_skip_all_tours", handleTourEnd);
+    };
+  }, []);
+
   // Pure navigation state updater
   const setCurrentScreen = useCallback((target: Screen | ((prev: Screen) => Screen)) => {
     setCurrentScreenStack((prevStack) => {
@@ -1251,31 +1298,71 @@ export default function App() {
 
   const visibleShops = useMemo(() => {
     const currentUserId = userProfile?.id || session?.user?.id;
-    const currentEmail = (userProfile?.email || session?.user?.email || "").toLowerCase();
+    const currentEmail = (userProfile?.email || session?.user?.email || "").toLowerCase().trim();
+    const isTeejeyAccount =
+      currentEmail === "teejeyunam@gmail.com" ||
+      currentEmail.includes("teejeyunam") ||
+      (currentUserId && String(currentUserId).toLowerCase().includes("teejey"));
 
-    const activeBaseShops = shops && shops.length > 0 ? shops : DEFAULT_FALLBACK_SHOPS;
+    // Base collection of shops
+    let activeBaseShops = shops && shops.length > 0 ? [...shops] : [...DEFAULT_FALLBACK_SHOPS];
+
+    // If logged in as the test account (teejeyunam@gmail.com), ensure their My-Kota store is available for testing
+    if (isTeejeyAccount) {
+      const alreadyHasMyKotaStore = activeBaseShops.some(
+        (s) =>
+          s.id === MY_KOTA_TEST_STORE.id ||
+          s.owner_id === "teejeyunam@gmail.com" ||
+          (s as any).owner_email === "teejeyunam@gmail.com" ||
+          (s.name || "").toLowerCase().includes("my-kota") ||
+          (s.name || "").toLowerCase().includes("my-keta")
+      );
+      if (!alreadyHasMyKotaStore) {
+        activeBaseShops = [MY_KOTA_TEST_STORE, ...activeBaseShops];
+      }
+    }
 
     const filtered = activeBaseShops.filter((s) => {
       const nameLower = (s.name || "").toLowerCase();
-      const isExplicitPrivateTest =
+      const descLower = (s.description || "").toLowerCase();
+      const ownerEmail = ((s as any).owner_email || (s as any).created_by || "").toLowerCase().trim();
+      const ownerIdStr = String(s.owner_id || "").toLowerCase().trim();
+
+      // Determine whether this store is the My-Kota private test store
+      const isTestOrPrivateStore =
+        s.id === MY_KOTA_TEST_STORE.id ||
+        (s as any).is_test === true ||
+        (s as any).is_test_store === true ||
+        (s as any).is_private === true ||
+        (s as any).is_owner_test === true ||
         nameLower.includes("[private]") ||
-        (s as any).is_private === true;
+        nameLower.includes("[test]") ||
+        nameLower.includes("(test)") ||
+        nameLower.includes("my-kota") ||
+        nameLower.includes("my-keta") ||
+        nameLower === "my kota" ||
+        nameLower.includes("test store") ||
+        ownerEmail === "teejeyunam@gmail.com" ||
+        ownerEmail.includes("teejey") ||
+        ownerIdStr === "teejeyunam@gmail.com" ||
+        ownerIdStr.includes("teejey");
 
-      if (!isExplicitPrivateTest) return true;
+      // Public production stores are visible to all users and guests
+      if (!isTestOrPrivateStore) {
+        return true;
+      }
 
-      const isOwner =
-        (s.owner_id && currentUserId && String(s.owner_id) === String(currentUserId)) ||
-        (currentEmail && (s as any).owner_email && (s as any).owner_email.toLowerCase() === currentEmail);
-      const isAdmin = userProfile?.role === "admin";
+      // If it is a test store (such as My-Kota), ONLY allow access to the authorized owner account
+      const isAuthorizedOwner =
+        isTeejeyAccount ||
+        (currentEmail && ownerEmail && currentEmail === ownerEmail) ||
+        (currentUserId && s.owner_id && String(s.owner_id) === String(currentUserId)) ||
+        userProfile?.role === "admin";
 
-      return isOwner || isAdmin;
+      return isAuthorizedOwner;
     });
 
-    if (filtered.length > 0) {
-      return filtered;
-    }
-
-    return activeBaseShops;
+    return filtered;
   }, [shops, userProfile, session]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -1315,8 +1402,15 @@ export default function App() {
     idempotencyKey?: string,
   ) => {
     const key = idempotencyKey || "generic_" + Math.random().toString(36).substr(2, 9);
-    if (activeTransactionsRef.current.has(key)) {
+    
+    // Check in-memory fast set and persistent IdempotencyManager
+    if (activeTransactionsRef.current.has(key) || !IdempotencyManager.acquireLock(key, 45000)) {
       console.warn(`[Idempotency Protection] Prevented duplicate execution for lock key: ${key}`);
+      const cached = IdempotencyManager.getCachedResult<T>(key);
+      if (cached !== null) {
+        if (successCallback) successCallback();
+        return cached;
+      }
       return;
     }
     
@@ -1324,6 +1418,7 @@ export default function App() {
     setProcessingState("saving");
     try {
       const result = await action();
+      IdempotencyManager.recordResult(key, result, 45000);
       setProcessingState("success");
       setTimeout(() => {
         setProcessingState("idle");
@@ -1331,10 +1426,17 @@ export default function App() {
         if (successCallback) successCallback();
       }, 1200); // Slightly faster feedback loop
       return result;
-    } catch (err) {
+    } catch (err: any) {
       setProcessingState("idle");
       activeTransactionsRef.current.delete(key);
-      throw err;
+      IdempotencyManager.releaseLock(key);
+      setModal({
+        isOpen: true,
+        title: "Action Failed",
+        message: err?.message || err?.error_description || "An unexpected error occurred. Please try again.",
+        type: "alert"
+      });
+      return null as any;
     }
   }, []);
 
@@ -1633,33 +1735,52 @@ export default function App() {
     setIsSyncing(true);
     setFetchError(null);
 
-    // Load from cache first if offline or to show immediate results
-    if (!navigator.onLine) {
-      try {
-        const idbCached = await getCachedBusinessResults("all_shops");
-        const cached = idbCached || safeLocalStorageGet("cached_shops", null);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          const hydratedCached = cached.map((s: Shop) => {
-            if (!s.menu || s.menu.length === 0) {
-              const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
-                (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
-              ) || DEFAULT_FALLBACK_SHOPS[0];
-              return {
-                ...s,
-                menu: matchedFallback.menu || []
-              };
-            }
-            return s;
-          });
-          setShops(hydratedCached);
-          setLoadingShops(false);
+    // Initial cold start cache inspection: check if shops are stored in IndexedDB or localStorage
+    let hasCachedShops = false;
+    try {
+      const idbCached = await getCachedBusinessResults("all_shops");
+      const localCached = safeLocalStorageGet("cached_shops", null);
+      const cached = idbCached || (Array.isArray(localCached) && localCached.length > 0 ? localCached : null);
+
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        hasCachedShops = true;
+        const hydratedCached = cached.map((s: Shop) => {
+          if (!s.menu || s.menu.length === 0) {
+            const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
+              (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
+            ) || DEFAULT_FALLBACK_SHOPS[0];
+            return {
+              ...s,
+              menu: matchedFallback.menu || []
+            };
+          }
+          return s;
+        });
+        setShops(hydratedCached);
+        // Hydrate from cache immediately to minimize wait time
+        setLoadingShops(false);
+
+        if (!navigator.onLine) {
           setIsSyncing(false);
           lastFetchedShopsTimeRef.current = Date.now();
           return;
         }
-      } catch (e) {
-        console.warn("Retrieving shops from IndexedDB/localStorage offline failed:", e);
       }
+    } catch (e) {
+      console.warn("Retrieving shops from IndexedDB/localStorage during cold start failed:", e);
+    }
+
+    // Explicit cold start UX: If no shops are cached in localStorage or IndexedDB, enforce explicit loading skeleton state
+    if (!hasCachedShops && shops.length === 0) {
+      setLoadingShops(true);
+    }
+
+    if (!navigator.onLine && !hasCachedShops) {
+      // Offline on cold start with no cache: fallback to default shops
+      setShops(DEFAULT_FALLBACK_SHOPS);
+      setLoadingShops(false);
+      setIsSyncing(false);
+      return;
     }
 
     try {
@@ -2037,6 +2158,12 @@ export default function App() {
       return;
     }
 
+    const syncLockKey = `offline_orders_sync_${queue.length}_${queue[0]?.id || "none"}`;
+    if (!IdempotencyManager.acquireLock(syncLockKey, 30000)) {
+      console.log("[Offline Sync] Sync already in progress under lock:", syncLockKey);
+      return;
+    }
+
     console.log(`[Offline Sync] Attempt ${retryCount + 1}: Found queued offline orders of length:`, queue.length);
     if (retryCount === 0) {
       toast.info(`Sending ${queue.length} saved offline order(s) to the kitchen... 🍟`, {
@@ -2055,42 +2182,80 @@ export default function App() {
         if (validQueue.length === 0) {
            safeLocalStorageSet("offline_orders_queue", "[]");
            setIsSyncing(false);
+           IdempotencyManager.releaseLock(syncLockKey);
            return;
         }
       }
 
-      const ordersToInsert = validQueue.map((o: any) => {
-        const { id, is_offline_queued, status, ...rest } = o;
-        const matchingShop = (shops || []).find((s) => String(s.id) === String(rest.shop_id));
-        const rawShopId = matchingShop ? matchingShop.id : (shops?.[0]?.id ?? rest.shop_id);
+      // Check which orders already exist in database to prevent double-insert
+      const pendingOrdersToInsert: any[] = [];
+      for (const o of validQueue) {
+        const matchingShop = (shops || []).find((s) => String(s.id) === String(o.shop_id));
+        const rawShopId = matchingShop ? matchingShop.id : (shops?.[0]?.id ?? o.shop_id);
         const resolvedShopId =
           typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
             ? Number(rawShopId)
             : rawShopId;
 
-        return {
-          ...rest,
+        const itemPrice = Number(o.price) || 0;
+        const itemQuantity = Math.max(1, Number(o.quantity) || 1);
+        const itemDeliveryFee = o.is_delivery ? (Number(o.delivery_fee) || 0) : 0;
+        const computedTotal = Number((itemPrice * itemQuantity + itemDeliveryFee).toFixed(2));
+        const finalTotalPrice = o.total_price !== undefined && !isNaN(Number(o.total_price))
+          ? Number(Number(o.total_price).toFixed(2))
+          : computedTotal;
+
+        // If price was 0 or missing but total_price was provided, reconstruct price with mathematical integrity
+        const finalPrice = (itemPrice === 0 && finalTotalPrice > itemDeliveryFee)
+          ? Number(((finalTotalPrice - itemDeliveryFee) / itemQuantity).toFixed(2))
+          : itemPrice;
+
+        const orderRecord = {
+          ...o,
+          id: o.id, // Preserve deterministic client order ID
           shop_id: resolvedShopId,
           status: "pending",
-          delivery_status: rest.payment_method === "cash_on_arrival" ? "finding_rider" : "none"
+          price: finalPrice,
+          quantity: itemQuantity,
+          delivery_fee: itemDeliveryFee,
+          total_price: Number((finalPrice * itemQuantity + itemDeliveryFee).toFixed(2)),
+          delivery_status: o.payment_method === "cash_on_arrival" ? "finding_rider" : "none"
         };
-      });
+        delete orderRecord.is_offline_queued;
 
-      const { data, error } = await supabase
-        .from("orders")
-        .insert(ordersToInsert)
-        .select();
-
-      if (error) {
-        throw error;
+        if (o.id) {
+          const exists = await IdempotencyManager.checkOrderExists(o.id);
+          if (!exists) {
+            pendingOrdersToInsert.push(orderRecord);
+          } else {
+            console.log(`[Offline Sync] Order ${o.id} already exists in database. Skipping duplicate insert.`);
+          }
+        } else {
+          pendingOrdersToInsert.push(orderRecord);
+        }
       }
 
-      console.log("[Offline Sync] Successfully synced offline orders:", data);
+      if (pendingOrdersToInsert.length > 0) {
+        const { data, error } = await supabase
+          .from("orders")
+          .upsert(pendingOrdersToInsert, { onConflict: "id" })
+          .select();
+
+        if (error) {
+          // If upsert failed due to missing onConflict or schema constraint, try fallback insert
+          const { error: insertErr } = await supabase
+            .from("orders")
+            .insert(pendingOrdersToInsert);
+          if (insertErr) throw insertErr;
+        }
+        console.log("[Offline Sync] Successfully synced offline orders:", data);
+      }
       
       // Clear the offline queue
       safeLocalStorageSet("offline_orders_queue", JSON.stringify([]));
       setSyncError(null);
       setIsSyncing(false);
+      IdempotencyManager.recordResult(syncLockKey, true);
 
       if (session?.user?.id) {
         const { data: freshOrders, error: fetchError } = await supabase
@@ -2106,23 +2271,23 @@ export default function App() {
 
       toast.success("All saved orders sent successfully! 🍟", {
         duration: 4000,
-        position: "top-center"
       });
-    } catch (syncErr: any) {
-      console.error("[Offline Sync] Error during synchronization:", syncErr);
-      
+    } catch (err: any) {
+      console.error("[Offline Sync] Failed to sync offline orders:", err);
+      setSyncError(err?.message || "Failed to sync offline orders");
+      setIsSyncing(false);
+      IdempotencyManager.releaseLock(syncLockKey);
+
       if (retryCount < 3) {
         console.log(`[Offline Sync] Retrying in ${Math.pow(2, retryCount) * 2} seconds...`);
         setTimeout(() => syncOfflineOrders(retryCount + 1), Math.pow(2, retryCount) * 2000);
       } else {
-        setIsSyncing(false);
-        setSyncError("Failed to sync offline orders. They are saved on your device.");
         toast.error("We couldn't send your saved offline orders right now. We'll try again when you are back online.", {
           position: "top-center"
         });
       }
     }
-  }, [session]);
+  }, [shops, session?.user?.id]);
 
   const handleManualSync = useCallback(async () => {
     setIsSyncing(true);
@@ -3048,7 +3213,7 @@ export default function App() {
       )
       .subscribe();
 
-    // Initial orders fetch
+    // Initial orders fetch with timestamp reconciliation
     const fetchOrders = async () => {
       try {
         const { data } = await supabase
@@ -3056,21 +3221,37 @@ export default function App() {
           .select("*")
           .eq("user_id", session.user.id)
           .order("created_at", { ascending: false });
-        if (data) setOrders(data);
+        if (data) {
+          setOrders((prev) => DualSyncEngine.reconcileEntities(prev, data));
+        }
       } catch (err) {
-        console.warn("Failed to fetch initial orders:", err);
+        console.warn("[DualSync] Failed to fetch orders via polling:", err);
       }
     };
     fetchOrders();
 
-    // Polling fallback to improve reliability in case WebSockets drop
-    const timer = setInterval(fetchOrders, 30000);
+    // Determine if user has active in-flight orders for adaptive polling speed
+    const hasActiveOrders = orders.some((o) =>
+      ["pending", "confirmed", "preparing", "ready"].includes(o.status) ||
+      ["finding_rider", "rider_assigned", "picked_up"].includes(o.delivery_status || "")
+    );
+    const pollInterval = hasActiveOrders ? 8000 : 25000;
+
+    // Dual sync polling loop
+    const timer = setInterval(fetchOrders, pollInterval);
+
+    // Reconcile immediately when window returns to foreground
+    const handleReconcile = () => {
+      fetchOrders();
+    };
+    window.addEventListener("localeats_force_reconcile", handleReconcile);
 
     return () => {
       supabase.removeChannel(channel);
       clearInterval(timer);
+      window.removeEventListener("localeats_force_reconcile", handleReconcile);
     };
-  }, [session?.user?.id, shops]);
+  }, [session?.user?.id, shops, orders]);
 
   useEffect(() => {
     // Initial fetch of shops & menu items
@@ -3147,7 +3328,7 @@ export default function App() {
 
   const toggleFavorite = useCallback(
     async (shopId: string) => {
-      if (!session) {
+      if (!session && !userProfile?.id) {
         showAlert(
           "Login Required",
           "Please sign in or create an account to follow stores.",
@@ -3691,7 +3872,6 @@ export default function App() {
             consecutiveFailures={heartbeatMetrics.consecutiveFailures}
             onManualSync={handleManualSync}
             isSyncing={isSyncing}
-            onOpenDiagnostics={() => setCurrentScreen("settings")}
           />
 
           {/* Order Accepted Modal */}
@@ -3908,13 +4088,17 @@ export default function App() {
                 />
               )}
               {currentScreen === "order-tracking" && (
-                <OrderTrackingScreen
-                  orders={orders}
-                  shops={visibleShops}
-                  showAlert={showAlert}
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  triggerHaptic={triggerHaptic}
-                />
+                <WidgetErrorBoundary fallbackName="Order Tracking">
+                  <Suspense fallback={<div className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading map...</div>}>
+                    <OrderTrackingScreen
+                      orders={orders}
+                      shops={visibleShops}
+                      showAlert={showAlert}
+                      onBack={() => setCurrentScreen(previousScreen || "home")}
+                      triggerHaptic={triggerHaptic}
+                    />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "review" && pendingReview && (
                 <ReviewScreen
@@ -4079,10 +4263,10 @@ export default function App() {
                     setCurrentScreen(previousScreen || "home");
                   }}
                   shop={
-                    shops && shops.length > 0
-                      ? shops.find(
+                    visibleShops && visibleShops.length > 0
+                      ? visibleShops.find(
                            (s) => String(s.id) === String(selectedStoreId),
-                        ) || shops[0]
+                        ) || visibleShops[0]
                       : DEFAULT_FALLBACK_SHOPS[0]
                   }
                   isFavorite={favorites.includes(selectedStoreId || "")}
@@ -4304,40 +4488,44 @@ export default function App() {
                 />
               )}
               {currentScreen === "checkout" && (
-                <CheckoutScreen
-                  userProfile={userProfile}
-                  session={session}
-                  shops={visibleShops}
-                  isOnline={isOnline}
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onConfirm={() => {
-                    const pointsEarned = Math.floor(cartTotal / 10);
-                    setOrderAgainEnabled(true);
-                    if (session?.user?.id) {
-                      handleUpdateProfile(
-                        { loyaltyPoints: (userProfile.loyaltyPoints || 0) + pointsEarned },
-                        false,
-                        () => setCurrentScreen("order-success")
-                      );
-                    } else {
-                      setCurrentScreen("order-success");
-                    }
-                  }}
-                  onIncompleteProfile={() => {
-                    setPreviousScreen("checkout");
-                    setCurrentScreen("complete-profile");
-                  }}
-                  cart={cart}
-                  setCart={setCart}
-                  setNotification={setNotification}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  userLocation={userLocation}
-                  runWithProcessing={runWithProcessing}
-                  setPreviousScreen={setPreviousScreen}
-                  setCurrentScreen={setCurrentScreen}
-                  triggerHaptic={triggerHaptic}
-                />
+                <WidgetErrorBoundary fallbackName="Checkout">
+                  <Suspense fallback={<div className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading...</div>}>
+                    <CheckoutScreen
+                      userProfile={userProfile}
+                      session={session}
+                      shops={visibleShops}
+                      isOnline={isOnline}
+                      onBack={() => setCurrentScreen(previousScreen || "home")}
+                      onConfirm={() => {
+                        const pointsEarned = Math.floor(cartTotal / 10);
+                        setOrderAgainEnabled(true);
+                        if (session?.user?.id) {
+                          handleUpdateProfile(
+                            { loyaltyPoints: (userProfile.loyaltyPoints || 0) + pointsEarned },
+                            false,
+                            () => setCurrentScreen("order-success")
+                          );
+                        } else {
+                          setCurrentScreen("order-success");
+                        }
+                      }}
+                      onIncompleteProfile={() => {
+                        setPreviousScreen("checkout");
+                        setCurrentScreen("complete-profile");
+                      }}
+                      cart={cart}
+                      setCart={setCart}
+                      setNotification={setNotification}
+                      showAlert={showAlert}
+                      showConfirm={showConfirm}
+                      userLocation={userLocation}
+                      runWithProcessing={runWithProcessing}
+                      setPreviousScreen={setPreviousScreen}
+                      setCurrentScreen={setCurrentScreen}
+                      triggerHaptic={triggerHaptic}
+                    />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "order-success" && (
                 <OrderSuccessScreen
@@ -4428,7 +4616,14 @@ export default function App() {
             shops={visibleShops}
           />
 
-          <AppHelp currentScreen={currentScreen} cartCount={cartCount} />
+          <Suspense fallback={null}>
+            <AppHelp 
+              currentScreen={currentScreen} 
+              cartCount={cartCount} 
+              activeOrder={orders.find(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered" && o.is_delivery)} 
+              userProfile={userProfile} 
+            />
+          </Suspense>
           
           {/* Guide Slide Container Wrapper with Dynamic Mobile Viewport Bounds */}
           {currentScreen === "home" && (
@@ -4436,8 +4631,33 @@ export default function App() {
               id="guide-slide-container-wrapper" 
               className="w-full max-w-[100vw] overflow-hidden flex-shrink-0 shrink-0 pointer-events-none relative z-[10000] outline outline-2 outline-red-500"
             >
-              <OnboardingTour />
-              <InteractiveTour />
+              {/* Skip Tour button in the top-right corner */}
+              <button
+                type="button"
+                id="btn-skip-tour"
+                onClick={() => {
+                  try {
+                    localStorage.setItem("localeats_tour_seen", "true");
+                    localStorage.setItem("localeats_interactive_tour_seen", "true");
+                    window.dispatchEvent(new CustomEvent("localeats_skip_all_tours"));
+                    window.dispatchEvent(new CustomEvent("localeats_tour_ended"));
+                    setIsTourActive(false);
+                  } catch (e) {
+                    console.warn("Skip tour error:", e);
+                  }
+                }}
+                className={`fixed top-4 right-4 z-[10005] pointer-events-auto flex items-center gap-2 px-6 py-2 bg-slate-900/90 hover:bg-slate-950 dark:bg-slate-800/95 dark:hover:bg-slate-700 text-white text-xs font-black uppercase tracking-wider rounded-full shadow-md drop-shadow-md backdrop-blur-md border border-white/20 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer select-none ${
+                  isTourActive ? "opacity-100 visible animate-pulse hover:animate-none" : "opacity-0 invisible pointer-events-none"
+                }`}
+                aria-label="Skip Tour"
+              >
+                <span>Skip Tour</span>
+                <X className="w-3.5 h-3.5 text-orange-400" />
+              </button>
+              <Suspense fallback={null}>
+                <OnboardingTour />
+                <InteractiveTour />
+              </Suspense>
             </div>
           )}
           {/* Persistent Real-time Order Tracker Banner with Smart Collapse */}
@@ -4562,8 +4782,10 @@ export default function App() {
             })()}
           </AnimatePresence>
 
-          <PopiaLegalDrawer />
-          <CookieConsentBanner />
+          <Suspense fallback={null}>
+            <PopiaLegalDrawer />
+            <CookieConsentBanner />
+          </Suspense>
         </div>
       </AnimatePresence>
     </div>
@@ -5432,28 +5654,36 @@ function CompleteProfileScreen({
                 </span>
 
                 <div className="space-y-4">
-                  <AddressSearch
-                    initialAddress={address}
-                    initialCoords={
-                      latitude && longitude
-                        ? { lat: latitude, lng: longitude }
-                        : undefined
-                    }
-                    onSelect={(data) => {
-                      setAddress(data.address);
-                      setLatitude(data.lat);
-                      setLongitude(data.lng);
-                    }}
-                  />
+                  <WidgetErrorBoundary fallbackName="Location Search">
+                    <Suspense fallback={<div className="h-12 w-full animate-pulse bg-slate-200 dark:bg-slate-800 rounded-xl"></div>}>
+                      <AddressSearch
+                        initialAddress={address}
+                        initialCoords={
+                          latitude && longitude
+                            ? { lat: latitude, lng: longitude }
+                            : undefined
+                        }
+                        onSelect={(data) => {
+                          setAddress(data.address);
+                          setLatitude(data.lat);
+                          setLongitude(data.lng);
+                        }}
+                      />
+                    </Suspense>
+                  </WidgetErrorBoundary>
 
                   {latitude && longitude && (
-                    <LocationPickerMap
-                      coords={{ lat: latitude, lng: longitude }}
-                      onCoordsChange={(c) => {
-                        setLatitude(c.lat);
-                        setLongitude(c.lng);
-                      }}
-                    />
+                    <WidgetErrorBoundary fallbackName="Location Picker">
+                      <Suspense fallback={<div className="h-48 w-full animate-pulse bg-slate-200 dark:bg-slate-800 rounded-xl mt-4"></div>}>
+                        <LocationPickerMap
+                          coords={{ lat: latitude, lng: longitude }}
+                          onCoordsChange={(c) => {
+                            setLatitude(c.lat);
+                            setLongitude(c.lng);
+                          }}
+                        />
+                      </Suspense>
+                    </WidgetErrorBoundary>
                   )}
 
                   {!latitude && (
@@ -6785,6 +7015,13 @@ function LoginSuccessScreen({
   onViewProfile: () => void;
   onBack: () => void;
 }) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onHome();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [onHome]);
+
   return (
     <div className="bg-white dark:bg-slate-950 font-display antialiased min-h-screen">
       <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
@@ -6852,13 +7089,13 @@ const HorizontalShopCard = ({
       whileHover={shop.isOpen !== false ? { y: -4, scale: 1.01 } : undefined}
       whileTap={shop.isOpen !== false ? { scale: 0.98 } : undefined}
       onClick={shop.isOpen !== false ? onClick : undefined}
-      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all group ${shop.isOpen !== false ? "cursor-pointer hover:shadow-xl" : "opacity-60 grayscale-[0.5]"}`}
+      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all active:scale-[0.98] group ${shop.isOpen !== false ? "cursor-pointer hover:shadow-xl" : "opacity-60 grayscale-[0.5]"}`}
     >
-      <div className="h-36 w-full rounded-2xl overflow-hidden relative">
+      <div className="aspect-video w-full rounded-2xl overflow-hidden relative bg-slate-100 dark:bg-slate-800">
         <BlurUpImage
           src={shop.logo || DEFAULT_SHOP_LOGO}
           alt={shop.name}
-          className="w-full h-full"
+          className="w-full h-full aspect-video object-cover"
           blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
         />
         {shop.is_special && shop.isOpen !== false && (
@@ -6997,7 +7234,7 @@ function HomeScreen({
   orders: Order[];
   showAlert: (title: string, message: string) => void;
   appVersion: string;
-  triggerHaptic: (pattern?: number | number[]) => void;
+  triggerHaptic: (pattern?: number | number[], actionType?: "button_press" | "order_update" | "cart_animation") => void;
   isOnline: boolean;
   orderAgainEnabled?: boolean;
   onEnableOrderAgain?: () => void;
@@ -7140,6 +7377,56 @@ function HomeScreen({
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isOrderStatusExpanded, setIsOrderStatusExpanded] = useState(false);
+
+  const [notificationPermissionStatus, setNotificationPermissionStatus] = useState<string>(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      return Notification.permission;
+    }
+    return "unsupported";
+  });
+
+  const [notificationBannerDismissed, setNotificationBannerDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("localeats_notify_banner_dismissed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleRequestNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
+      return;
+    }
+    triggerHaptic?.(15, "button_press");
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermissionStatus(permission);
+      if (permission === "granted") {
+        toast.success("Order Notifications Enabled! 🔔", {
+          description: "You'll now receive real-time push alerts on meal preparation, packing, and live delivery status.",
+          duration: 5000,
+        });
+        if (session?.user?.id) {
+          registerAndSyncPushToken(session.user.id).catch(console.error);
+        }
+      } else if (permission === "denied") {
+        toast.error("Notifications Blocked", {
+          description: "You can enable notifications anytime in your browser site permissions.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to request notification permission:", err);
+    }
+  };
+
+  const handleDismissNotificationBanner = () => {
+    setNotificationBannerDismissed(true);
+    try {
+      localStorage.setItem("localeats_notify_banner_dismissed", "true");
+    } catch {}
+    triggerHaptic?.(10, "button_press");
+  };
 
   const frequentlyOrderedShops = useMemo(() => {
     if (!orders || orders.length === 0) return [];
@@ -7535,13 +7822,13 @@ function HomeScreen({
         </button>
       )}
       {/* TopBar */}
-      <header ref={headerRef} className={`bg-white/90 dark:bg-slate-900/90 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-slate-200/40 dark:border-slate-800/60 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 ${isScrolled ? 'shadow-sm' : ''}`}>
-        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-2 min-h-[42px] sm:min-h-[46px] relative">
+      <header ref={headerRef} className={`bg-white/95 dark:bg-slate-900/95 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-slate-200/50 dark:border-slate-800/70 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 ${isScrolled ? 'shadow-sm' : ''}`}>
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-2 min-h-[44px] sm:min-h-[48px] relative">
           
           {/* Logo & Status Badge */}
           <div className={`flex items-center gap-2 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <LocalEatsLogo width={96} height={24} className="shrink-0 scale-95 sm:scale-100 origin-left" />
-            <div className="hidden xs:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 text-[9px] font-bold text-slate-500 dark:text-slate-400">
+            <LocalEatsLogo width={110} height={28} className="shrink-0 scale-100 origin-left" />
+            <div className="hidden xs:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 text-[10px] font-bold text-slate-500 dark:text-slate-400">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span>v{APP_VERSION.split(" ")[0]}</span>
             </div>
@@ -7556,10 +7843,10 @@ function HomeScreen({
                 setShowSuggestions(false);
                 triggerHaptic(5);
               }}
-              className="p-1.5 sm:p-2 bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
+              className="w-10 h-10 flex items-center justify-center bg-slate-100 dark:bg-slate-800 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-slate-700 dark:text-slate-300 cursor-pointer shrink-0"
               aria-label="Close search"
             >
-              <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+              <ArrowLeft className="w-5 h-5" />
             </button>
             <div className={`group relative flex-1 max-w-full flex items-center bg-white dark:bg-slate-900 shadow-xl rounded-xl border transition-all duration-300 transform group-focus-within:scale-[1.015] overflow-hidden ${
               searchQuery.trim().length > 0 
@@ -7573,7 +7860,7 @@ function HomeScreen({
               }`} />
               <input
                 id="header-search-input"
-                className="w-full bg-transparent border-none outline-none py-2 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-300 transform focus:scale-[1.01] focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 focus:shadow-[0_0_8px_rgba(249,115,22,0.4)] rounded-lg"
+                className="w-full bg-transparent border-none outline-none py-2.5 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-300 transform focus:scale-[1.01] focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 focus:shadow-[0_0_8px_rgba(249,115,22,0.4)] rounded-lg"
                 placeholder="Search local kitchens..."
                 value={searchQuery}
                 onBlur={() => {
@@ -7606,10 +7893,10 @@ function HomeScreen({
                       setShowSuggestions(true);
                       document.getElementById("header-search-input")?.focus();
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors"
                     aria-label="Clear search text"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-4 h-4" />
                   </motion.button>
                 )}
               </AnimatePresence>
@@ -7620,9 +7907,9 @@ function HomeScreen({
             </div>
           </div>
 
-          {/* Right Action Icons Grouped in a sleek pill container */}
+          {/* Right Action Icons Grouped in a sleek ergonomic pill container */}
           <div className={`flex items-center gap-1 shrink-0 transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <div className="flex items-center gap-0.5 bg-slate-100/80 dark:bg-slate-800/80 p-1 rounded-full border border-slate-200/50 dark:border-slate-700/50 backdrop-blur-sm">
+            <div className="flex items-center gap-1 bg-slate-100/90 dark:bg-slate-800/90 p-1 rounded-full border border-slate-200/60 dark:border-slate-700/60 backdrop-blur-sm shadow-2xs">
               <button
                 onClick={() => {
                   setIsHeaderSearching(true);
@@ -7630,82 +7917,90 @@ function HomeScreen({
                   triggerHaptic(10);
                   setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
                 }}
-                className="p-1.5 rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
                 aria-label="Search stores"
               >
-                <Search className="w-4 h-4" />
+                <Search className="w-4.5 h-4.5" />
               </button>
               <button
                 onClick={onNotifications}
-                className="relative p-1.5 rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="relative w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                aria-label="Notifications"
               >
-                <Bell className="w-4 h-4" />
+                <Bell className="w-4.5 h-4.5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-orange-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
                     {unreadCount > 9 ? "9+" : unreadCount}
                   </span>
                 )}
               </button>
-              <div className="relative w-full max-w-[100vw] overflow-x-hidden">
+              <div className="relative">
                 <button
-                  onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                  aria-label="Settings"
-                  className={`p-1.5 rounded-full transition-all cursor-pointer ${isSettingsOpen ? "bg-white dark:bg-slate-700 shadow-sm" : "hover:bg-white dark:hover:bg-slate-700"}`}
+                  id="settings-menu-toggle-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (triggerHaptic) triggerHaptic(5);
+                    setIsSettingsOpen((prev) => !prev);
+                  }}
+                  aria-label="Settings and account menu"
+                  aria-haspopup="true"
+                  aria-expanded={isSettingsOpen}
+                  className={`w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all cursor-pointer ${
+                    isSettingsOpen
+                      ? "bg-white dark:bg-slate-700 shadow-sm ring-2 ring-orange-500/40 text-orange-600 dark:text-orange-400"
+                      : "hover:bg-white dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+                  }`}
                 >
-                  <svg
-                    className="h-4 w-4 text-slate-700 dark:text-slate-300"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                    ></path>
-                  </svg>
+                  <MoreVertical className="w-4.5 h-4.5" />
                 </button>
               {isSettingsOpen && (
                 <>
                   <div
-                    className="fixed inset-0 z-[50]"
-                    onClick={() => setIsSettingsOpen(false)}
-                  ></div>
-                  <div className="absolute top-12 right-0 w-48 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[60] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    className="fixed inset-0 z-[100]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSettingsOpen(false);
+                    }}
+                  />
+                  <div className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setIsSettingsOpen(false);
+                        if (triggerHaptic) triggerHaptic(5);
                         onSettings();
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer text-left"
                     >
-                      <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <Settings className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600 shrink-0" />
                       <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
                         Settings
                       </span>
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setIsSettingsOpen(false);
+                        if (triggerHaptic) triggerHaptic(5);
                         onProfile();
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer text-left"
                     >
-                      <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <User className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600 shrink-0" />
                       <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
                         Profile
                       </span>
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setIsSettingsOpen(false);
+                        if (triggerHaptic) triggerHaptic(5);
                         onOrderHistory();
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors group cursor-pointer text-left"
                     >
-                      <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600" />
+                      <History className="w-5 h-5 text-gray-500 dark:text-slate-400 group-hover:text-orange-600 shrink-0" />
                       <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">
                         {t("order_history")}
                       </span>
@@ -7720,14 +8015,14 @@ function HomeScreen({
 
         {/* Dynamic Compact Promo Banner (Disappears when used/dismissed) */}
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
-          <div className="bg-gradient-to-r from-orange-600 to-amber-500 text-white text-[10px] py-2 px-4 flex items-center justify-between gap-2 border-t border-white/10 shadow-inner">
+          <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white text-[11px] sm:text-xs py-2 px-3 sm:px-4 flex items-center justify-between gap-2 border-t border-white/15 shadow-inner">
             <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
-              <Tag className="w-3.5 h-3.5 shrink-0 text-orange-200 animate-pulse" />
+              <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
               <span className="truncate font-semibold tracking-tight">
-                ❄️ <strong>Winter Special:</strong> Save 10% on Kotas with code <span className="font-mono bg-white/20 px-1.5 py-0.5 rounded text-white select-all">LOCALEATS10</span>
+                ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-1.5 py-0.5 rounded text-white select-all font-bold">LOCALEATS10</span>
               </span>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 onClick={() => {
                   navigator.clipboard.writeText("LOCALEATS10");
@@ -7736,7 +8031,7 @@ function HomeScreen({
                   });
                   triggerHaptic(15);
                 }}
-                className="bg-white text-orange-600 hover:bg-orange-50 font-black text-[9px] uppercase tracking-wider px-2 py-1 rounded-md transition-all active:scale-95 cursor-pointer"
+                className="bg-white text-orange-600 hover:bg-orange-50 font-black text-[10px] uppercase tracking-wider px-2.5 py-1 min-h-[30px] rounded-lg transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center"
               >
                 Copy
               </button>
@@ -7747,9 +8042,10 @@ function HomeScreen({
                     localStorage.setItem("localeats_winter_banner_dismissed", "true");
                   } catch {}
                 }}
-                className="p-1 hover:bg-white/10 rounded-full transition-colors text-white/80 hover:text-white"
+                className="w-7 h-7 flex items-center justify-center hover:bg-white/15 rounded-full transition-colors text-white/90 hover:text-white cursor-pointer"
+                aria-label="Dismiss banner"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
@@ -8126,6 +8422,61 @@ function HomeScreen({
           </div>
         </div>
 
+        {/* Real-time Order Notification Permission Request Flow */}
+        {notificationPermissionStatus !== "granted" && notificationPermissionStatus !== "unsupported" && !notificationBannerDismissed && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+            className="mb-6 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 dark:from-orange-950/40 dark:via-amber-950/30 dark:to-orange-950/40 p-4 rounded-2xl border border-orange-200/90 dark:border-orange-800/60 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative overflow-hidden"
+          >
+            <div className="flex items-start gap-3.5 z-10">
+              <div className="size-10 rounded-xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-orange-500/20 animate-pulse">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    Stay Updated on Your Orders
+                  </h4>
+                  {activeOrders.length > 0 ? (
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-orange-500 text-white px-2 py-0.5 rounded-full animate-bounce">
+                      {activeOrders.length} Active Order{activeOrders.length > 1 ? "s" : ""}
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-bold uppercase tracking-wider bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-md">
+                      Live Push Alerts
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
+                  {activeOrders.length > 0
+                    ? "You have orders in progress! Enable notifications to receive instant updates when food is cooking, packed, and out for delivery."
+                    : "Receive real-time push alerts when your kitchen starts cooking, when food is packed, and when your driver is approaching."}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-center shrink-0 z-10">
+              <button
+                type="button"
+                onClick={handleDismissNotificationBanner}
+                className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer transition-colors"
+              >
+                Maybe Later
+              </button>
+              <button
+                type="button"
+                onClick={handleRequestNotifications}
+                className="px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-md shadow-orange-600/20 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>Enable Alerts</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* Order Again Carousel */}
         {orderAgainEnabled && mostFrequentItems.length > 0 && (
           <section className="mb-5">
@@ -8296,7 +8647,7 @@ function HomeScreen({
       </main>
 
       {/* Sleek Glassmorphic Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/50 via-transparent to-transparent dark:from-slate-950/40 pointer-events-none flex flex-col items-center justify-end">
+      <div className="fixed bottom-0 left-0 right-0 z-50 px-3 sm:px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/70 via-transparent to-transparent dark:from-slate-950/70 pointer-events-none flex flex-col items-center justify-end">
         {/* Subtle Background Syncing Indicator */}
         <AnimatePresence>
           {isSyncing && (
@@ -8312,17 +8663,17 @@ function HomeScreen({
             </motion.div>
           )}
         </AnimatePresence>
-        <nav className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] border border-slate-100 dark:border-slate-800/80 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
+        <nav className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-[24px] sm:rounded-[28px] border border-slate-200/60 dark:border-slate-800/80 px-2 py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
           {/* Home Button */}
           <button
             onClick={() => {
               triggerHaptic();
               setCurrentScreen("home");
             }}
-            className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
+            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
               currentScreen === "home"
-                ? "text-orange-600 dark:text-orange-500 scale-105"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
+                ? "text-orange-600 dark:text-orange-500"
+                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
             }`}
           >
             <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
@@ -8330,7 +8681,7 @@ function HomeScreen({
             }`}>
               <Home className="w-5 h-5" />
             </div>
-            <span className="text-[9px] font-black uppercase tracking-widest mt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
               {t("home")}
             </span>
           </button>
@@ -8342,10 +8693,10 @@ function HomeScreen({
               triggerHaptic();
               onDiscover();
             }}
-            className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
+            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
               currentScreen === "discover"
-                ? "text-orange-600 dark:text-orange-500 scale-105"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
+                ? "text-orange-600 dark:text-orange-500"
+                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
             }`}
           >
             <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
@@ -8353,7 +8704,7 @@ function HomeScreen({
             }`}>
               <Store className="w-5 h-5" />
             </div>
-            <span className="text-[9px] font-black uppercase tracking-widest mt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
               {t("discover")}
             </span>
           </button>
@@ -8364,10 +8715,10 @@ function HomeScreen({
               triggerHaptic();
               onExplore();
             }}
-            className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
+            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
               currentScreen === "explore"
-                ? "text-orange-600 dark:text-orange-500 scale-105"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
+                ? "text-orange-600 dark:text-orange-500"
+                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
             }`}
           >
             <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
@@ -8375,7 +8726,7 @@ function HomeScreen({
             }`}>
               <MapIcon className="w-5 h-5" />
             </div>
-            <span className="text-[9px] font-black uppercase tracking-widest mt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
               {t("map")}
             </span>
           </button>
@@ -8390,10 +8741,10 @@ function HomeScreen({
                 onOrderHistory();
               }
             }}
-            className={`flex flex-col items-center justify-center flex-1 py-1.5 transition-all active:scale-95 cursor-pointer group ${
+            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
               currentScreen === "order-tracking" || currentScreen === "order-history"
-                ? "text-orange-600 dark:text-orange-500 scale-105"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
+                ? "text-orange-600 dark:text-orange-500"
+                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
             }`}
           >
             <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 relative ${
@@ -8404,7 +8755,7 @@ function HomeScreen({
                 <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
               )}
             </div>
-            <span className="text-[9px] font-black uppercase tracking-widest mt-1">
+            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
               {t("orders")}
             </span>
           </button>
@@ -9164,7 +9515,7 @@ function DiscoverScreen({
                   className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
                 >
                   <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
-                    <img src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
+                    <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
                     <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
                       {feed.badge}
                     </div>
@@ -9501,13 +9852,13 @@ function DiscoverScreen({
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full"
+                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
                 >
-                  <div className="h-52 relative overflow-hidden">
+                  <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
                       src={shop.logo || DEFAULT_SHOP_LOGO}
                       alt={shop.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                      className="w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700"
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                     />
 
@@ -9560,7 +9911,9 @@ function DiscoverScreen({
                     </div>
                   </div>
 
-                  <div className="p-6 flex flex-col flex-grow justify-between">
+                  <div className="p-6 flex flex-col flex-grow justify-between relative overflow-hidden transition-all duration-300">
+                    {/* Subtle shimmer effect while menu content lazy-loads */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-500/[0.04] to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
                     <div>
                       <div className="flex justify-between items-start mb-3 gap-3">
                         <div>
@@ -10651,19 +11004,23 @@ function ProfileScreen({
                 </span>
               )}
             </div>
-            <AddressSearch
-              initialAddress={address}
-              initialCoords={
-                latitude && longitude
-                  ? { lat: latitude, lng: longitude }
-                  : undefined
-              }
-              onSelect={(data) => {
-                setAddress(data.address);
-                setLatitude(data.lat);
-                setLongitude(data.lng);
-              }}
-            />
+            <WidgetErrorBoundary fallbackName="Address Search">
+              <Suspense fallback={<div className="h-12 w-full animate-pulse bg-slate-200 dark:bg-slate-800 rounded-xl"></div>}>
+                <AddressSearch
+                  initialAddress={address}
+                  initialCoords={
+                    latitude && longitude
+                      ? { lat: latitude, lng: longitude }
+                      : undefined
+                  }
+                  onSelect={(data) => {
+                    setAddress(data.address);
+                    setLatitude(data.lat);
+                    setLongitude(data.lng);
+                  }}
+                />
+              </Suspense>
+            </WidgetErrorBoundary>
             <p className="text-[11px] text-slate-400 ml-1">
               Pin accuracy ensures exact doorstep delivery to your house or workplace.
             </p>
@@ -12220,7 +12577,7 @@ function StoreInfoScreen({
                 </div>
               </div>
 
-              {!session && (
+              {(!session && !userProfile?.id && !localStorage.getItem("localeats_session") && !localStorage.getItem("remember_me_secure_token")) && (
                 <div className="mb-8 p-5 bg-orange-50 dark:bg-orange-950/20 rounded-3xl border border-orange-100 dark:border-orange-900/30 flex items-center justify-between shadow-sm">
                   <div className="flex items-center gap-4">
                     <div className="size-12 bg-white dark:bg-slate-900 rounded-2xl flex items-center justify-center text-orange-600 shadow-sm">
@@ -12822,12 +13179,14 @@ function StoreInfoScreen({
       )}
 
       {/* In-App Direct Shop Chat Modal */}
-      <ShopChatModal
-        isOpen={isShopChatOpen}
-        onClose={() => setIsShopChatOpen(false)}
-        shop={shop}
-        userProfile={userProfile}
-      />
+      <Suspense fallback={null}>
+        <ShopChatModal
+          isOpen={isShopChatOpen}
+          onClose={() => setIsShopChatOpen(false)}
+          shop={shop}
+          userProfile={userProfile}
+        />
+      </Suspense>
     </div>
   );
 }
@@ -13361,14 +13720,15 @@ function ExploreScreen({
         <div className="flex-grow overflow-y-auto px-4 pb-28 pt-28 space-y-4">
           <div className="max-w-lg mx-auto flex flex-col gap-4">
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
-            <QuickReorderWidget
-              orders={orders || []}
-              shops={shops}
-              favorites={favorites}
-              onQuickReorder={(item) => {
-                const shop = shops.find((s) => s.id === item.shop_id);
-                if (item.product_name && item.price && addToCart) {
-                  addToCart({
+            <Suspense fallback={null}>
+              <QuickReorderWidget
+                orders={orders || []}
+                shops={shops}
+                favorites={favorites}
+                onQuickReorder={(item) => {
+                  const shop = shops.find((s) => s.id === item.shop_id);
+                  if (item.product_name && item.price && addToCart) {
+                    addToCart({
                     id: item.product_name.toLowerCase().replace(/\s+/g, '-'),
                     name: item.product_name,
                     price: item.price,
@@ -13390,6 +13750,7 @@ function ExploreScreen({
                 setSelectedCategory("Favorites");
               }}
             />
+            </Suspense>
 
             <div className="flex justify-between items-center px-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
@@ -14961,11 +15322,12 @@ function SettingsScreen({
         product_variant: "Extra Cheese, Extra Chips, Avocado",
         quantity: 1,
         price: 85.00,
+        delivery_fee: 15.00,
+        total_price: 100.00,
         notes: "MOCK TESTING ORDER generated to verify order handling.",
         delivery_instructions: "Ring bell at the main gate.",
         status: "pending",
         is_delivery: true,
-        delivery_fee: 15.00,
         delivery_status: "finding_rider",
         payment_method: "cash",
         latitude: userProfile.latitude || -26.2041,
@@ -15633,16 +15995,33 @@ function SettingsScreen({
                 )}
               </AnimatePresence>
             </div>
+          </div>
+        </section>
 
-            {/* Haptic Feedback toggle */}
-            <div className="flex items-center justify-between p-4">
+        {/* Dedicated Haptic Feedback & Vibrations Section */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-primary" />
+              <h3 className="text-xs font-bold uppercase tracking-widest text-primary">
+                Haptic Feedback & Vibrations
+              </h3>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary uppercase">
+              {hapticEnabled ? "Tactile On" : "Disabled"}
+            </span>
+          </div>
+
+          <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
+            {/* Master Haptic Feedback Toggle */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800/40">
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
-                  <Smartphone className="w-5 h-5" />
+                <div className="w-9 h-9 rounded-lg bg-orange-50 dark:bg-orange-950/40 flex items-center justify-center text-orange-600 dark:text-orange-400">
+                  <Smartphone className="w-5 h-5 animate-pulse" />
                 </div>
                 <div>
-                  <span className="font-medium text-sm">Vibration Feedback</span>
-                  <p className="text-[10px] text-slate-500">Phone vibrates on interaction</p>
+                  <span className="font-semibold text-sm text-slate-900 dark:text-white">Master Haptic Engine</span>
+                  <p className="text-[10px] text-slate-500">Enable tactile vibration responses across the app</p>
                 </div>
               </div>
               <button
@@ -15651,9 +16030,10 @@ function SettingsScreen({
                   onToggleHaptic();
                   if (!hapticEnabled && navigator.vibrate) {
                     navigator.vibrate([30, 30, 30]);
+                    toast.success("Haptics Enabled", { description: "Tactile vibrations active" });
                   }
                 }}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticEnabled ? "bg-primary animate-pulse" : "bg-slate-200 dark:bg-slate-700"}`}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
               >
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hapticEnabled ? "translate-x-6" : "translate-x-1"}`}
@@ -15661,25 +16041,45 @@ function SettingsScreen({
               </button>
             </div>
 
-            {/* Granular Haptic Feedback Toggles */}
+            {/* Granular Individual Haptic Feedback Toggles */}
             <AnimatePresence>
               {hapticEnabled && (
                 <motion.div
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className="bg-slate-50/50 dark:bg-slate-900/30 border-t border-slate-100 dark:border-slate-800/80 overflow-hidden text-xs"
+                  className="bg-slate-50/50 dark:bg-slate-900/30 overflow-hidden text-xs divide-y divide-slate-100 dark:divide-slate-800/40"
                 >
-                  {/* Button Press Haptic */}
-                  <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
-                    <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Taps</span>
-                      <span className="text-[9px] text-slate-400">Vibrate when tapping buttons</span>
+                  {/* 1. Button Press Haptic Toggle */}
+                  <div className="flex items-center justify-between p-4">
+                    <div className="flex flex-col text-left pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Button Press & Taps</span>
+                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          Light Tap
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 mt-0.5">
+                        Tactile click when pressing buttons, tabs, and filters
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.vibrate) navigator.vibrate(12);
+                          toast.info("Button Tap Haptic Tested (12ms)");
+                        }}
+                        className="text-[9px] font-extrabold text-primary hover:underline mt-1.5 self-start flex items-center gap-1 cursor-pointer"
+                      >
+                        ⚡ Test Button Tap
+                      </button>
                     </div>
                     <button
                       type="button"
-                      onClick={onToggleHapticButtonPress}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticButtonPress ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                      onClick={() => {
+                        onToggleHapticButtonPress();
+                        if (!hapticButtonPress && navigator.vibrate) navigator.vibrate(15);
+                      }}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticButtonPress ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
                     >
                       <span
                         className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticButtonPress ? "translate-x-5" : "translate-x-1"}`}
@@ -15687,16 +16087,36 @@ function SettingsScreen({
                     </button>
                   </div>
 
-                  {/* Order Update Haptic */}
-                  <div className="flex items-center justify-between py-3 px-6 border-b border-slate-100 dark:border-slate-800/40">
-                    <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Status Change</span>
-                      <span className="text-[9px] text-slate-400">Vibrate when order status advances</span>
+                  {/* 2. Order Update Haptic Toggle */}
+                  <div className="flex items-center justify-between p-4">
+                    <div className="flex flex-col text-left pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Order Status Updates</span>
+                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+                          Double Pulse
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 mt-0.5">
+                        Alert pulses when order status changes to cooking, ready, or delivered
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+                          toast.info("Order Update Haptic Tested (60ms-40ms-60ms)");
+                        }}
+                        className="text-[9px] font-extrabold text-orange-600 dark:text-orange-400 hover:underline mt-1.5 self-start flex items-center gap-1 cursor-pointer"
+                      >
+                        🔔 Test Order Pulse
+                      </button>
                     </div>
                     <button
                       type="button"
-                      onClick={onToggleHapticOrderUpdate}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticOrderUpdate ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                      onClick={() => {
+                        onToggleHapticOrderUpdate();
+                        if (!hapticOrderUpdate && navigator.vibrate) navigator.vibrate([50, 30, 50]);
+                      }}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticOrderUpdate ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
                     >
                       <span
                         className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticOrderUpdate ? "translate-x-5" : "translate-x-1"}`}
@@ -15704,16 +16124,36 @@ function SettingsScreen({
                     </button>
                   </div>
 
-                  {/* Cart Animation Haptic */}
-                  <div className="flex items-center justify-between py-3 px-6">
-                    <div className="flex flex-col text-left">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">Vibrate on Add to Cart</span>
-                      <span className="text-[9px] text-slate-400">Vibrate when modifying cart items</span>
+                  {/* 3. Cart Animation Haptic Toggle */}
+                  <div className="flex items-center justify-between p-4">
+                    <div className="flex flex-col text-left pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Cart & Item Actions</span>
+                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
+                          Bounce Rhythm
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 mt-0.5">
+                        Tactile rhythm when adding items to cart, altering quantities, or repeating orders
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.vibrate) navigator.vibrate([35, 20, 35]);
+                          toast.info("Cart Action Haptic Tested (35ms-20ms-35ms)");
+                        }}
+                        className="text-[9px] font-extrabold text-emerald-600 dark:text-emerald-400 hover:underline mt-1.5 self-start flex items-center gap-1 cursor-pointer"
+                      >
+                        🛍️ Test Cart Vibration
+                      </button>
                     </div>
                     <button
                       type="button"
-                      onClick={onToggleHapticCartAnimation}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticCartAnimation ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
+                      onClick={() => {
+                        onToggleHapticCartAnimation();
+                        if (!hapticCartAnimation && navigator.vibrate) navigator.vibrate([30, 20, 30]);
+                      }}
+                      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${hapticCartAnimation ? "bg-primary" : "bg-slate-200 dark:bg-slate-700"}`}
                     >
                       <span
                         className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${hapticCartAnimation ? "translate-x-5" : "translate-x-1"}`}
@@ -20734,6 +21174,7 @@ function AdminOrdersScreen({
   ) => Promise<void>;
   isOnline: boolean;
 }) {
+  const [activeAdminTab, setActiveAdminTab] = useState<"orders" | "error-logs">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -20926,54 +21367,92 @@ function AdminOrdersScreen({
   return (
     <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden shadow-2xl">
-        <header className="flex items-center p-4 bg-white dark:bg-slate-950 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
-          <button
-            onClick={onBack}
-            className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <h1 className="text-lg font-bold leading-tight tracking-tight flex-1 text-center mr-10">
-            Admin Dashboard
-          </h1>
+        <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-950 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="text-slate-900 dark:text-slate-100 flex size-10 shrink-0 items-center justify-center hover:bg-primary/10 rounded-full transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div>
+              <h1 className="text-lg font-bold leading-tight tracking-tight">
+                Admin Dashboard
+              </h1>
+              <p className="text-xs text-slate-400">
+                {activeAdminTab === "orders" ? "Live customer orders & operations" : "Maintenance & crash inspection"}
+              </p>
+            </div>
+          </div>
+
+          {/* Tab Pill Switcher */}
+          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setActiveAdminTab("orders")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeAdminTab === "orders"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+              }`}
+            >
+              Orders ({orders.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveAdminTab("error-logs")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeAdminTab === "error-logs"
+                  ? "bg-rose-600 text-white shadow-sm shadow-rose-600/20"
+                  : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+              }`}
+            >
+              <span>Error Diagnostics</span>
+            </button>
+          </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* Search Bar */}
-          <div className="relative group">
-            <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
-            <input
-              type="text"
-              placeholder="Search customer or product..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-14 pl-12 pr-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm transition-all"
-            />
-          </div>
+        {activeAdminTab === "error-logs" ? (
+          <main className="flex-1 overflow-y-auto p-4">
+            <AdminErrorLogsSection embedded={false} onBack={() => setActiveAdminTab("orders")} />
+          </main>
+        ) : (
+          <main className="flex-1 overflow-y-auto p-4 space-y-6">
+            {/* Search Bar */}
+            <div className="relative group">
+              <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
+              <input
+                type="text"
+                placeholder="Search customer or product..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-14 pl-12 pr-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm transition-all"
+              />
+            </div>
 
-          {/* Status Filter */}
-          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
-            {[
-              "all",
-              "pending",
-              "confirmed",
-              "ready",
-              "completed",
-              "cancelled",
-            ].map((status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest whitespace-nowrap transition-all cursor-pointer border ${
-                  statusFilter === status
-                    ? "bg-primary text-white border-primary shadow-lg shadow-primary/20 scale-105"
-                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-primary/30"
-                }`}
-              >
-                {status}
-              </button>
-            ))}
-          </div>
+            {/* Status Filter */}
+            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
+              {[
+                "all",
+                "pending",
+                "confirmed",
+                "ready",
+                "completed",
+                "cancelled",
+              ].map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest whitespace-nowrap transition-all cursor-pointer border ${
+                    statusFilter === status
+                      ? "bg-primary text-white border-primary shadow-lg shadow-primary/20 scale-105"
+                      : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-100 dark:border-slate-800 hover:border-primary/30"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
 
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
@@ -21329,6 +21808,7 @@ function AdminOrdersScreen({
             })
           )}
         </main>
+      )}
 
         {/* Cancellation Confirmation Modal */}
         {orderToCancel && (
@@ -21522,7 +22002,7 @@ function OrderHistoryScreen({
   }, [orders, shops]);
 
   const fetchOrders = useCallback(async () => {
-    if (!session) return;
+    if (!session && !userProfile?.id) return;
     if (orders.length === 0) setLoading(true);
     try {
       if (!isOnline) {
@@ -22233,21 +22713,32 @@ function OrderHistoryScreen({
 
   useEffect(() => {
     const fetchOrders = async () => {
-      if (!session?.user?.id) {
+      const userId = session?.user?.id || userProfile?.id;
+      if (!userId) {
         setLoading(false);
         return;
       }
       try {
+        if (!navigator.onLine) {
+          const cached = safeLocalStorageGet("cached_orders", []);
+          setOrders(cached);
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from("orders")
           .select("*")
-          .eq("user_id", session.user.id)
+          .eq("user_id", userId)
           .order("created_at", { ascending: false });
 
         if (error) throw error;
         setOrders(data || []);
       } catch (error: any) {
         console.error("Error fetching orders:", error);
+        // Fallback to cache
+        const cached = safeLocalStorageGet("cached_orders", []);
+        if (cached && cached.length > 0) setOrders(cached);
       } finally {
         setLoading(false);
       }
@@ -22258,15 +22749,16 @@ function OrderHistoryScreen({
     // Polling fallback to ensure reliability if WebSockets fail
     const timer = setInterval(fetchOrders, 30000);
 
+    const userId = session?.user?.id || userProfile?.id;
     const channel = supabase
-      .channel(`order_history:${session?.user?.id}`)
+      .channel(`order_history:${userId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "orders",
-          filter: `user_id=eq.${session?.user?.id}`,
+          filter: `user_id=eq.${userId}`,
         },
         (payload) => {
           if (payload.eventType === "INSERT") {
@@ -22756,11 +23248,10 @@ function OrderHistoryScreen({
                     {/* Header bar */}
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex items-center gap-2 max-w-[65%]">
-                        <img
+                        <BlurUpImage
                           src={shop?.logo || DEFAULT_SHOP_LOGO}
                           alt={shop?.name || "Kitchen"}
                           className="size-7 rounded-lg object-cover border border-slate-100 dark:border-slate-800"
-                          referrerPolicy="no-referrer"
                         />
                         <div className="min-w-0">
                           <h4 className="text-slate-900 dark:text-white font-extrabold text-xs truncate leading-tight">
@@ -23027,11 +23518,11 @@ function OrderHistoryScreen({
                         </button>
                       )}
 
-                      {/* ALWAYS show the Repeat Order button on EVERY card */}
+                      {/* Reorder Button on Completed Orders */}
                       <button
                         type="button"
                         onClick={() => handleReorderGroup(group)}
-                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-sm active:scale-95 border-0 ${
+                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 border-0 ${
                           addedToCartOrderId === group.id
                             ? "bg-emerald-500 text-white shadow-emerald-500/20"
                             : "bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-600 text-white hover:from-orange-600 hover:to-amber-600 shadow-orange-500/20"
@@ -23040,12 +23531,12 @@ function OrderHistoryScreen({
                         {addedToCartOrderId === group.id ? (
                           <>
                             <CheckCircle2 className="w-3.5 h-3.5 animate-bounce" />
-                            Added!
+                            Cart Populated!
                           </>
                         ) : (
                           <>
-                            <ShoppingBag className="w-3.5 h-3.5" />
-                            Repeat Order
+                            <RotateCw className="w-3.5 h-3.5" />
+                            Reorder
                           </>
                         )}
                       </button>
