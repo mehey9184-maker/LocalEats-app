@@ -2242,19 +2242,49 @@ export default function App() {
       }
 
       if (pendingOrdersToInsert.length > 0) {
-        const { data, error } = await supabase
-          .from("orders")
-          .upsert(pendingOrdersToInsert, { onConflict: "id" })
-          .select();
-
-        if (error) {
-          // If upsert failed due to missing onConflict or schema constraint, try fallback insert
-          const { error: insertErr } = await supabase
+        let syncSuccess = false;
+        try {
+          const { data, error } = await supabase
             .from("orders")
-            .insert(pendingOrdersToInsert);
-          if (insertErr) throw insertErr;
+            .upsert(pendingOrdersToInsert, { onConflict: "id" })
+            .select();
+
+          if (!error) {
+            syncSuccess = true;
+            console.log("[Offline Sync] Successfully synced offline orders via Supabase:", data);
+          } else {
+            console.info("[Offline Sync] Supabase upsert notice, trying insert fallback:", error.message);
+            const { error: insertErr } = await supabase
+              .from("orders")
+              .insert(pendingOrdersToInsert);
+            if (!insertErr) {
+              syncSuccess = true;
+            }
+          }
+        } catch (supabaseErr: any) {
+          console.info("[Offline Sync] Direct Supabase connection unavailable, trying /api/orders fallback:", supabaseErr?.message || supabaseErr);
         }
-        console.log("[Offline Sync] Successfully synced offline orders:", data);
+
+        // Fallback to server API if direct Supabase connection was unavailable
+        if (!syncSuccess) {
+          try {
+            const apiRes = await fetch("/api/orders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orders: pendingOrdersToInsert }),
+            });
+            if (apiRes.ok) {
+              syncSuccess = true;
+              console.log("[Offline Sync] Successfully synced offline orders via /api/orders");
+            }
+          } catch (apiErr: any) {
+            console.info("[Offline Sync] Server API fallback also pending connection:", apiErr?.message || apiErr);
+          }
+        }
+
+        if (!syncSuccess) {
+          throw new Error("Offline order synchronization will resume once network connection is stable.");
+        }
       }
       
       // Clear the offline queue
@@ -2264,33 +2294,39 @@ export default function App() {
       IdempotencyManager.recordResult(syncLockKey, true);
 
       if (session?.user?.id) {
-        const { data: freshOrders, error: fetchError } = await supabase
-          .from("orders")
-          .select("*")
-          .eq("user_id", session.user.id)
-          .order("created_at", { ascending: false });
-        if (!fetchError && freshOrders) {
-          safeLocalStorageSet("cached_orders", JSON.stringify(freshOrders));
-          window.dispatchEvent(new Event("local-orders-synced"));
-        }
+        try {
+          const { data: freshOrders, error: fetchError } = await supabase
+            .from("orders")
+            .select("*")
+            .eq("user_id", session.user.id)
+            .order("created_at", { ascending: false });
+          if (!fetchError && freshOrders) {
+            safeLocalStorageSet("cached_orders", JSON.stringify(freshOrders));
+            window.dispatchEvent(new Event("local-orders-synced"));
+          }
+        } catch (_) {}
       }
 
       toast.success("All saved orders sent successfully! 🍟", {
         duration: 4000,
       });
     } catch (err: any) {
-      console.error("[Offline Sync] Failed to sync offline orders:", err);
+      const isNetworkErr =
+        err?.message?.includes("Failed to fetch") ||
+        err?.message?.includes("network") ||
+        err?.message?.includes("connection");
+      if (!isNetworkErr) {
+        console.warn("[Offline Sync] Notice syncing offline orders:", err?.message || err);
+      } else {
+        console.info("[Offline Sync] Network currently unavailable. Preserved queued orders for next sync attempt.");
+      }
       setSyncError(err?.message || "Failed to sync offline orders");
       setIsSyncing(false);
       IdempotencyManager.releaseLock(syncLockKey);
 
-      if (retryCount < 3) {
-        console.log(`[Offline Sync] Retrying in ${Math.pow(2, retryCount) * 2} seconds...`);
+      if (retryCount < 3 && navigator.onLine) {
+        console.info(`[Offline Sync] Retrying in ${Math.pow(2, retryCount) * 2} seconds...`);
         setTimeout(() => syncOfflineOrders(retryCount + 1), Math.pow(2, retryCount) * 2000);
-      } else {
-        toast.error("We couldn't send your saved offline orders right now. We'll try again when you are back online.", {
-          position: "top-center"
-        });
       }
     }
   }, [shops, session?.user?.id]);

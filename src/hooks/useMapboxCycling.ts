@@ -52,8 +52,8 @@ export async function fetchMapboxCyclingRoute(
           etaMinutes: Math.round(route.duration / 60)
         };
       }
-    } catch (e) {
-      console.error("Failed to fetch Mapbox cycling route, falling back to simulated high-accuracy routing:", e);
+    } catch (e: any) {
+      console.info("Mapbox cycling route notice, falling back to high-accuracy simulated routing:", e?.message || e);
     }
   }
 
@@ -185,7 +185,7 @@ export function useMapboxCyclingTracker(
         }
       }
     } catch (err: any) {
-      console.error("Error updating Mapbox cycling route:", err);
+      console.warn("Notice updating Mapbox cycling route:", err?.message || err);
       setError(err.message || "Failed to sync cycling route");
     }
   }, [destination, riderId, mapboxAccessToken]);
@@ -219,7 +219,7 @@ export function useMapboxCyclingTracker(
         processLocationChange(newCoords);
       },
       (err) => {
-        console.error("Geolocation tracker failed:", err);
+        console.warn("Geolocation tracker notice:", err?.message || err);
         setError(err.message || "GPS connection error");
         setIsTracking(false);
       },

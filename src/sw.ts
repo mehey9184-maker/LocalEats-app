@@ -268,7 +268,7 @@ sw.addEventListener("fetch", (event: any) => {
           });
           return response;
         }).catch((err) => {
-          console.error("Static asset fetch failed", err);
+          console.info("[SW] Static asset network fetch note, falling back:", err?.message || err);
           return new Response("", { status: 408, statusText: "Offline" });
         });
       })

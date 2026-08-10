@@ -534,8 +534,8 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
             setQuery(geoData.display_name);
             onSelect({ address: geoData.display_name, lat, lng });
           }
-        } catch (err) {
-          console.error("Reverse geocode failed, using direct coordinates:", err);
+        } catch (err: any) {
+          console.info("Reverse geocode notice, using direct coordinates:", err?.message || err);
         }
         
         toast.success("Google Maps coordinates detected!", {
@@ -556,8 +556,8 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
       const data = await response.json();
       setResults(data);
       setShowResults(true);
-    } catch (error) {
-      console.error('Nominatim error:', error);
+    } catch (error: any) {
+      console.info('Nominatim search notice:', error?.message || error);
     } finally {
       setLoading(false);
     }
@@ -584,8 +584,8 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
           setIsConfirmed(true);
           setShowResults(false);
           onSelect({ address, lat: latitude, lng: longitude });
-        } catch (error) {
-          console.error('Reverse geocoding error:', error);
+        } catch (error: any) {
+          console.info('Reverse geocoding notice:', error?.message || error);
           setMarkerPos({ lat: latitude, lng: longitude });
           const gpsAddr = `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
           setQuery(gpsAddr);
@@ -596,7 +596,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         }
       },
       (error) => {
-        console.error('Geolocation error:', error);
+        console.info('Geolocation notice:', error?.message || error);
         toast.error('Could not auto-retrieve your current location. Please type and search your address manually!', {
           duration: 5000,
           description: "Location services may be disabled or blocked by your browser container."
@@ -943,7 +943,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
       })
       .catch((err) => {
         if (err.name !== 'AbortError') {
-          console.error("Reverse geocoding failed", err);
+          console.info("Reverse geocoding notice, using coordinates fallback:", err?.message || err);
           setResolvedAddress(`${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}`);
         }
       })

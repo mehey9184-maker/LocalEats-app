@@ -57,11 +57,11 @@ class IdempotencyManagerClass {
     const memoryLock = this.inMemoryLocks.get(key);
     if (memoryLock && memoryLock.expiresAt > now) {
       if (memoryLock.status === "pending") {
-        console.warn(`[Idempotency] Blocked duplicate in-flight execution for key: ${key}`);
+        console.info(`[Idempotency] Duplicate in-flight execution prevented for key: ${key}`);
         return false;
       }
       if (memoryLock.status === "completed") {
-        console.warn(`[Idempotency] Transaction already completed for key: ${key}`);
+        console.info(`[Idempotency] Transaction already completed for key: ${key}`);
         return false;
       }
     }
@@ -73,7 +73,7 @@ class IdempotencyManagerClass {
         if (storedJson) {
           const storedLock: IdempotencyLock = JSON.parse(storedJson);
           if (storedLock.expiresAt > now) {
-            console.warn(`[Idempotency] Blocked duplicate execution from persistent storage: ${key}`);
+            console.info(`[Idempotency] Duplicate execution prevented from persistent storage: ${key}`);
             this.inMemoryLocks.set(key, storedLock);
             return false;
           }

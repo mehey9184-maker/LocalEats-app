@@ -50,7 +50,7 @@ export function useEphemeralSession() {
         .maybeSingle();
 
       if (guestFetchError) {
-        console.error("[useEphemeralSession] Failed to fetch guest cart:", guestFetchError);
+        console.info("[useEphemeralSession] Note fetching guest cart:", guestFetchError.message);
         return { success: false, error: guestFetchError.message };
       }
 
@@ -75,7 +75,7 @@ export function useEphemeralSession() {
         .maybeSingle();
 
       if (userFetchError && userFetchError.code !== "PGRST116") { // PGRST116 is code for 0 rows returned
-        console.error("[useEphemeralSession] Failed to fetch user cart:", userFetchError);
+        console.info("[useEphemeralSession] Note fetching user cart:", userFetchError.message);
         return { success: false, error: userFetchError.message };
       }
 
@@ -117,7 +117,7 @@ export function useEphemeralSession() {
         }, { onConflict: "user_id" });
 
       if (upsertError) {
-        console.error("[useEphemeralSession] Failed to upsert merged cart:", upsertError);
+        console.info("[useEphemeralSession] Note upserting merged cart:", upsertError.message);
         return { success: false, error: upsertError.message };
       }
 
