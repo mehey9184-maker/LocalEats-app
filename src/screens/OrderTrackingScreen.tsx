@@ -567,19 +567,37 @@ export function OrderTrackingScreen({
         return;
       }
 
-      const { data, error } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
 
-      if (error) throw error;
-      if (data) {
-        setLocalOrders(data);
+      let fetchedData: any[] | null = null;
+      try {
+        const { data, error } = await supabase
+          .from("orders")
+          .select(safeColumns)
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
+
+        if (!error && data) {
+          fetchedData = data;
+        }
+      } catch (_) {}
+
+      if (!fetchedData) {
+        try {
+          const res = await fetch(`/api/orders?user_id=${userId}`);
+          if (res.ok) {
+            const json = await res.json();
+            if (Array.isArray(json.orders)) fetchedData = json.orders;
+          }
+        } catch (_) {}
+      }
+
+      if (fetchedData && fetchedData.length > 0) {
+        setLocalOrders(fetchedData as any);
         triggerHaptic?.([50, 30, 50]);
       }
     } catch (err: any) {
-      console.error("Error refreshing orders manually:", err);
+      console.warn("Notice refreshing orders manually:", err);
     } finally {
       setTimeout(() => {
         setIsRefreshing(false);

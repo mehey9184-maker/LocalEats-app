@@ -36,16 +36,51 @@ export function useDualSyncOrders(
   const fetchOrders = useCallback(async (): Promise<Order[]> => {
     if (!userId && !shopId) return [];
 
-    let query = supabase.from("orders").select("*");
-    if (userId) {
-      query = query.eq("user_id", userId);
-    } else if (shopId) {
-      query = query.eq("shop_id", shopId);
+    const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+
+    try {
+      let query = supabase.from("orders").select(safeColumns);
+      if (userId) {
+        query = query.eq("user_id", userId);
+      } else if (shopId) {
+        query = query.eq("shop_id", shopId);
+      }
+
+      const { data, error: fetchErr } = await query.order("created_at", { ascending: false });
+      if (!fetchErr && data) {
+        return (data as unknown as Order[]) || [];
+      }
+      if (fetchErr) {
+        console.info("[DualSync] Supabase query notice, falling back to server sync:", fetchErr.message || fetchErr);
+      }
+    } catch (supabaseError) {
+      console.info("[DualSync] Supabase notice, falling back to server sync:", supabaseError);
     }
 
-    const { data, error: fetchErr } = await query.order("created_at", { ascending: false });
-    if (fetchErr) throw fetchErr;
-    return (data as Order[]) || [];
+    // Tier 2 Fallback: Server API endpoint
+    try {
+      const url = userId ? `/api/orders?user_id=${userId}` : `/api/orders?shop_id=${shopId}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.orders)) {
+          return json.orders as Order[];
+        }
+      }
+    } catch (apiError) {
+      console.warn("[DualSync] Server API fallback notice:", apiError);
+    }
+
+    // Tier 3 Fallback: Local storage cache
+    try {
+      const cached = localStorage.getItem("cached_orders");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (_) {}
+
+    return [];
   }, [userId, shopId]);
 
   const refresh = useCallback(async () => {

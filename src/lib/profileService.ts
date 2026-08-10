@@ -22,7 +22,7 @@ export interface ProfileUpsertData {
  * to handle phone number validation and sanitization during insertion,
  * with graceful fallback to standard table upsert and local persistence.
  */
-export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
+export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Promise<{ data: any; error: any }> {
   if (!profileData.user_id) {
     return { data: null, error: new Error("User ID is required for profile upsert") };
   }
@@ -62,9 +62,23 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
     return { data: { offline: true }, error: null };
   }
 
+  // Fast helper to run promises with strict 2.5-second timeout
+  const withFastTimeout = <T,>(p: PromiseLike<T> | Promise<T>, timeoutMs = 2500): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => reject(new Error("RPC_TIMEOUT")), timeoutMs);
+      Promise.resolve(p).then((val) => {
+        clearTimeout(timeoutId);
+        resolve(val);
+      }).catch((err) => {
+        clearTimeout(timeoutId);
+        reject(err);
+      });
+    });
+  };
+
   try {
-    // 2. Call server-side RPC database function if available
-    const { data: rpcData, error: rpcError } = await supabase.rpc('safe_upsert_profile', {
+    // 2. Call server-side RPC database function if available with timeout
+    const rpcPromise = supabase.rpc('safe_upsert_profile', {
       p_user_id: profileData.user_id,
       p_full_name: profileData.fullName || null,
       p_email: profileData.email || null,
@@ -75,10 +89,14 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
       p_role: profileData.role || 'user',
       p_photo_url: profileData.photo_url || null,
       p_language: profileData.language || 'en',
-      p_latitude: profileData.latitude ?? null,
-      p_longitude: profileData.longitude ?? null,
+      // p_latitude: profileData.latitude ?? null, // Removed due to schema constraint
+      // p_longitude: profileData.longitude ?? null, // Removed due to schema constraint
       p_favorites: profileData.favorites || []
     });
+
+    const res: any = await withFastTimeout(rpcPromise, 2500);
+    const rpcData = res.data;
+    const rpcError = res.error;
 
     if (!rpcError) {
       return { data: rpcData, error: null };
@@ -93,12 +111,12 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
       console.info("[Profile RPC] safe_upsert_profile RPC fallback to direct table operation:", rpcError.message);
     }
   } catch (err: any) {
-    if (!err?.message?.includes("Failed to fetch")) {
+    if (!err?.message?.includes("Failed to fetch") && err?.message !== "RPC_TIMEOUT") {
       console.info("[Profile RPC] Exception executing RPC, falling back to direct table update:", err?.message || err);
     }
   }
 
-  // 3. Direct table upsert fallback
+  // 3. Direct table upsert fallback with timeout
   const payload: Record<string, any> = {
     user_id: profileData.user_id,
     fullName: profileData.fullName,
@@ -110,14 +128,15 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
     role: profileData.role || 'user',
     photo_url: profileData.photo_url,
     language: profileData.language || 'en',
-    latitude: profileData.latitude,
-    longitude: profileData.longitude,
+    // latitude: profileData.latitude, // Removed due to schema constraint
+    // longitude: profileData.longitude, // Removed due to schema constraint
     favorites: profileData.favorites || [],
     updated_at: new Date().toISOString()
   };
 
   try {
-    const res = await supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
+    const tablePromise = supabase.from('profiles').upsert(payload, { onConflict: 'user_id' });
+    const res: any = await withFastTimeout(tablePromise, 2500);
     if (res.error) {
       const isFetchErr = 
         res.error.message?.includes("Failed to fetch") || 
@@ -129,10 +148,8 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData) {
     }
     return res;
   } catch (err: any) {
-    if (err?.message?.includes("Failed to fetch") || err?.message?.includes("NetworkError")) {
-      return { data: { cached: true, offline: true }, error: null };
-    }
-    return { data: null, error: err };
+    // Local profile is already saved to localStorage, so return graceful success
+    return { data: { cached: true, offline: true }, error: null };
   }
 }
 

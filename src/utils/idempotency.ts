@@ -205,11 +205,26 @@ class IdempotencyManagerClass {
    */
   public async checkOrderExists(orderId: string): Promise<boolean> {
     try {
-      const { data, error } = await supabase
-        .from("orders")
-        .select("id")
-        .eq("id", orderId)
-        .maybeSingle();
+      const dbPromise = (async () => {
+        try {
+          return await supabase
+            .from("orders")
+            .select("id")
+            .eq("id", orderId)
+            .maybeSingle();
+        } catch (err: any) {
+          return { data: null, error: err };
+        }
+      })();
+
+      let timeoutId: any;
+      const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) => {
+        timeoutId = setTimeout(() => resolve({ data: null, error: new Error("TIMEOUT") }), 3000);
+      });
+
+      const res = await Promise.race([dbPromise, timeoutPromise]);
+      clearTimeout(timeoutId);
+      const { data, error } = res;
 
       if (!error && data && data.id === orderId) {
         return true;

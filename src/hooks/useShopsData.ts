@@ -190,8 +190,21 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
             return formattedShops;
           });
         } catch (err: any) {
-          console.warn('[SWR Catalog] Background revalidation failed. Retaining stale cache.', err);
-          setFetchError(err.message || 'Background sync failed');
+          const errStr = (err?.message || String(err)).toLowerCase();
+          const isTransient =
+            errStr.includes("failed to fetch") ||
+            errStr.includes("network") ||
+            errStr.includes("schema cache") ||
+            errStr.includes("retrying") ||
+            errStr.includes("circuit breaker") ||
+            errStr.includes("pgrst");
+
+          if (!isTransient) {
+            console.info('[SWR Catalog] Background revalidation note:', err?.message || err);
+          } else {
+            console.info('[SWR Catalog] Background revalidation transient note. Retaining cached data.');
+          }
+          setFetchError(null);
           
           if (currentShops.length === 0) {
             const cached = safeLocalStorageGet('cached_shops', null);

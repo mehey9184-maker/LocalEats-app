@@ -44,12 +44,13 @@ export class CircuitBreaker {
         errStr.includes("timeout") ||
         errStr.includes("schema cache") ||
         errStr.includes("circuit breaker") ||
+        errStr.includes("retrying") ||
         errStr.includes("pgrst");
       
       if (isTransient) {
-        console.warn(`[CircuitBreaker] Transient notice in ${operationName}. Failures: ${this.failures}`);
+        console.info(`[CircuitBreaker] Transient notice in ${operationName}. Failures: ${this.failures}`);
       } else {
-        console.warn(`[CircuitBreaker] Issue in ${operationName}. Failures: ${this.failures}`, error);
+        console.info(`[CircuitBreaker] Operation note in ${operationName}. Failures: ${this.failures}`, error);
       }
       if (fallback) return fallback();
       throw error;

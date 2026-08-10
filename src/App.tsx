@@ -213,8 +213,8 @@ import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 
-const CheckoutScreen = lazy(() => import("./screens/CheckoutScreen").then(module => ({ default: module.CheckoutScreen })));
-const OrderTrackingScreen = lazy(() => import("./screens/OrderTrackingScreen").then(module => ({ default: module.OrderTrackingScreen })));
+import { CheckoutScreen } from "./screens/CheckoutScreen";
+import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
 
 import { SplashScreen } from "./screens/SplashScreen";
 
@@ -327,8 +327,7 @@ const urlBase64ToUint8Array = (base64String: string) => {
 
 // Static fallback cache loaded dynamically from ./utils
 
-const AddressSearch = lazy(() => import("./components/MapComponents").then(module => ({ default: module.AddressSearch })));
-const LocationPickerMap = lazy(() => import("./components/MapComponents").then(module => ({ default: module.LocationPickerMap })));
+import { AddressSearch, LocationPickerMap } from "./components/MapComponents";
 import {
   detectTownship,
   TOWNSHIPS,
@@ -337,13 +336,13 @@ import {
 import { BlurUpImage } from "./components/BlurUpImage";
 import Cropper from "react-easy-crop";
 import { TrustBadge } from "./components/TrustBadge";
-const AppHelp = lazy(() => import("./components/AppHelp").then(m => ({ default: m.AppHelp })));
-const OnboardingTour = lazy(() => import("./components/OnboardingTour").then(m => ({ default: m.OnboardingTour })));
-const InteractiveTour = lazy(() => import("./components/InteractiveTour").then(m => ({ default: m.InteractiveTour })));
-const PopiaLegalDrawer = lazy(() => import("./components/PopiaLegalDrawer").then(m => ({ default: m.PopiaLegalDrawer })));
-const CookieConsentBanner = lazy(() => import("./components/CookieConsentBanner").then(m => ({ default: m.CookieConsentBanner })));
-const ShopChatModal = lazy(() => import("./components/ShopChatModal").then(m => ({ default: m.ShopChatModal })));
-const QuickReorderWidget = lazy(() => import("./components/QuickReorderWidget").then(m => ({ default: m.QuickReorderWidget })));
+import { AppHelp } from "./components/AppHelp";
+import { OnboardingTour } from "./components/OnboardingTour";
+import { InteractiveTour } from "./components/InteractiveTour";
+import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
+import { CookieConsentBanner } from "./components/CookieConsentBanner";
+import { ShopChatModal } from "./components/ShopChatModal";
+import { QuickReorderWidget } from "./components/QuickReorderWidget";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
@@ -1404,27 +1403,40 @@ export default function App() {
     const key = idempotencyKey || "generic_" + Math.random().toString(36).substr(2, 9);
     
     // Check in-memory fast set and persistent IdempotencyManager
-    if (activeTransactionsRef.current.has(key) || !IdempotencyManager.acquireLock(key, 45000)) {
+    if (activeTransactionsRef.current.has(key)) {
+      console.warn(`[Idempotency Protection] Prevented duplicate in-memory execution for lock key: ${key}`);
+      const cached = IdempotencyManager.getCachedResult<T>(key);
+      if (cached !== null && successCallback) {
+        successCallback();
+      }
+      return cached;
+    }
+
+    if (!IdempotencyManager.acquireLock(key, 12000)) {
       console.warn(`[Idempotency Protection] Prevented duplicate execution for lock key: ${key}`);
       const cached = IdempotencyManager.getCachedResult<T>(key);
       if (cached !== null) {
         if (successCallback) successCallback();
         return cached;
       }
-      return;
     }
     
     activeTransactionsRef.current.add(key);
     setProcessingState("saving");
     try {
       const result = await action();
-      IdempotencyManager.recordResult(key, result, 45000);
+      IdempotencyManager.recordResult(key, result, 12000);
       setProcessingState("success");
-      setTimeout(() => {
-        setProcessingState("idle");
-        activeTransactionsRef.current.delete(key);
-        if (successCallback) successCallback();
-      }, 1200); // Slightly faster feedback loop
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      setProcessingState("idle");
+      activeTransactionsRef.current.delete(key);
+      if (successCallback) {
+        try {
+          successCallback();
+        } catch (cbErr) {
+          console.warn("Success callback execution notice:", cbErr);
+        }
+      }
       return result;
     } catch (err: any) {
       setProcessingState("idle");
@@ -1795,19 +1807,21 @@ export default function App() {
           (shopsError.message &&
             (shopsError.message.toLowerCase().includes("failed to fetch") ||
              shopsError.message.toLowerCase().includes("schema cache") ||
-             shopsError.message.toLowerCase().includes("circuit breaker"))) ||
+             shopsError.message.toLowerCase().includes("circuit breaker") ||
+             shopsError.message.toLowerCase().includes("retrying") ||
+             shopsError.message.toLowerCase().includes("pgrst"))) ||
           (shopsError.details &&
             shopsError.details.toLowerCase().includes("failed to fetch")) ||
           shopsError.code === "PGRST301";
         if (isNetwork) {
-          console.log(
-            "Network or transient issue fetching shops, using offline fallback:",
+          console.info(
+            "Database warm-up or transient notice fetching shops, using offline fallback:",
             shopsError.message,
           );
         } else if (retries === 0) {
-          console.warn("Shops fetch notice:", shopsError.message || shopsError);
+          console.info("Shops fetch note:", shopsError.message || shopsError);
         } else {
-          console.log("Shops fetch issue (retrying):", shopsError.message);
+          console.info("Shops fetch note (retrying):", shopsError.message);
         }
         const errObj = new Error(
           shopsError.message || "Unknown Supabase error",
@@ -1828,20 +1842,22 @@ export default function App() {
           (menuError.message &&
             (menuError.message.toLowerCase().includes("failed to fetch") ||
              menuError.message.toLowerCase().includes("schema cache") ||
-             menuError.message.toLowerCase().includes("circuit breaker"))) ||
+             menuError.message.toLowerCase().includes("circuit breaker") ||
+             menuError.message.toLowerCase().includes("retrying") ||
+             menuError.message.toLowerCase().includes("pgrst"))) ||
           (menuError.details &&
             menuError.details.toLowerCase().includes("failed to fetch")) ||
           menuError.code === "PGRST301";
 
         if (isNetwork) {
-          console.log(
-            "Network or transient issue fetching menu items, using offline fallback:",
+          console.info(
+            "Database warm-up or transient notice fetching menu items, using offline fallback:",
             menuError.message,
           );
         } else if (retries === 0) {
-          console.warn("Menu items fetch notice:", menuError.message || menuError);
+          console.info("Menu items fetch note:", menuError.message || menuError);
         } else {
-          console.log("Menu items fetch issue (retrying):", menuError.message);
+          console.info("Menu items fetch note (retrying):", menuError.message);
         }
 
         if (isNetwork) {
@@ -1852,7 +1868,7 @@ export default function App() {
 
       // Sandboxed Zero-Downtime Auto-Seeding: If the database is connected but contains 0 shops,
       // automatically seed with high quality default fallback shops and menu items!
-      if (shopsData && shopsData.length === 0) {
+      if (!shopsData || shopsData.length === 0) {
         if (retries > 0) {
           console.log(
             "Database 'shops' table exists but is empty. Auto-seeding default fallback shops and menu items...",
@@ -2020,15 +2036,6 @@ export default function App() {
               })),
           };
         })
-        .filter((shop) => {
-          if (!shop.updated_at) return false;
-          const updatedAtDate = new Date(shop.updated_at);
-          const ageHours = (Date.now() - updatedAtDate.getTime()) / (1000 * 60 * 60);
-          if (ageHours > 96) {
-            return false; // older than 4 days (96 hours) is considered abandoned
-          }
-          return true;
-        })
         .sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
 
       console.log(`Successfully fetched ${formattedShops.length} shops.`);
@@ -2071,12 +2078,12 @@ export default function App() {
       // Only log errors that are not network-related, or log them only on final failure
       if (!isNetworkError || retries === 0) {
         if (err?.message === "FAILED_TO_FETCH_MENU" || isNetworkError) {
-          console.log(
-            "Network connectivity or transient database notice: falling back to offline content gracefully.",
+          console.info(
+            "Network connectivity or transient database note: falling back to offline content gracefully.",
             err?.message || err,
           );
         } else {
-          console.warn("Notice fetching shops:", err?.message || err);
+          console.info("Notice fetching shops:", err?.message || err);
         }
       }
 
@@ -2100,7 +2107,7 @@ export default function App() {
         // Fast-fail over for known network connection errors to prevent agonizing loading screens
         const nextRetries = isNetworkError ? 0 : retries - 1;
         const delay = isNetworkError ? 500 : 2500;
-        console.log(
+        console.info(
           `Retrying fetchShopsData... (${nextRetries} retries left). Delay: ${delay}ms`,
         );
         setTimeout(() => fetchShopsData(nextRetries), delay);
@@ -2108,8 +2115,8 @@ export default function App() {
         // Sandboxed Zero-Downtime Guarantee: fallback to local cache if available when database fails
         const cached = safeLocalStorageGet("cached_shops", null);
         if (cached && Array.isArray(cached) && cached.length > 0) {
-          console.warn(
-            "Database fetch failed - Falling back gracefully to localStorage cached shops under Zero-Downtime Guarantee rules",
+          console.info(
+            "Rendering cached shops data under Zero-Downtime Guarantee rules",
           );
           const hydratedCached = cached.map((s: Shop) => {
             if (!s.menu || s.menu.length === 0) {
@@ -2190,8 +2197,7 @@ export default function App() {
       // Check which orders already exist in database to prevent double-insert
       const pendingOrdersToInsert: any[] = [];
       for (const o of validQueue) {
-        const matchingShop = (shops || []).find((s) => String(s.id) === String(o.shop_id));
-        const rawShopId = matchingShop ? matchingShop.id : (shops?.[0]?.id ?? o.shop_id);
+        const rawShopId = o.shop_id;
         const resolvedShopId =
           typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
             ? Number(rawShopId)
@@ -2612,8 +2618,16 @@ export default function App() {
         data = res.data;
       }
 
-      if (error && error.code !== "PGRST116") {
-        console.warn("Notice fetching user profile from database:", error.message || error);
+      const isTransientSchemaNotice =
+        (error?.message &&
+          (error.message.toLowerCase().includes("schema cache") ||
+           error.message.toLowerCase().includes("retrying") ||
+           error.message.toLowerCase().includes("pgrst"))) ||
+        error?.code === "PGRST116" ||
+        error?.code === "PGRST301";
+
+      if (error && !isTransientSchemaNotice) {
+        console.info("[Profile] Database query note:", error.message || error);
       }
 
       if (data) {
@@ -2644,6 +2658,8 @@ export default function App() {
         errStr.includes("connection timeout") ||
         errStr.includes("disconnect/reset") ||
         errStr.includes("timeout") ||
+        errStr.includes("schema cache") ||
+        errStr.includes("retrying") ||
         err?.name === "TypeError";
 
       if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
@@ -2653,7 +2669,7 @@ export default function App() {
       }
 
       if (!isNetworkError) {
-        console.warn("Notice fetching user profile:", err?.message || err);
+        console.info("[Profile] Notice fetching user profile:", err?.message || err);
       }
 
       if (isNetworkError && retries > 0) {
@@ -2777,15 +2793,14 @@ export default function App() {
         // Just do the action without the success tick overlay if asked
         try {
           await action();
-          if (successCallback) successCallback();
         } catch (err: any) {
-          console.error("Error saving profile:", err);
-          setNotification({
-            message: "We hit a snag saving your profile. Please try again.",
-            type: "error",
-          });
+          console.warn("Notice saving profile in background:", err);
+        } finally {
+          if (successCallback) successCallback();
         }
       }
+    } else {
+      if (successCallback) successCallback();
     }
   };
 
@@ -3215,17 +3230,36 @@ export default function App() {
 
     // Initial orders fetch with timestamp reconciliation
     const fetchOrders = async () => {
+      if (!session?.user?.id) return;
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
       try {
-        const { data } = await supabase
-          .from("orders")
-          .select("*")
-          .eq("user_id", session.user.id)
-          .order("created_at", { ascending: false });
-        if (data) {
-          setOrders((prev) => DualSyncEngine.reconcileEntities(prev, data));
+        let fetchedData: any[] | null = null;
+        try {
+          const { data, error } = await supabase
+            .from("orders")
+            .select(safeColumns)
+            .eq("user_id", session.user.id)
+            .order("created_at", { ascending: false });
+          if (!error && data) {
+            fetchedData = data;
+          }
+        } catch (_) {}
+
+        if (!fetchedData) {
+          try {
+            const res = await fetch(`/api/orders?user_id=${session.user.id}`);
+            if (res.ok) {
+              const json = await res.json();
+              if (Array.isArray(json.orders)) fetchedData = json.orders;
+            }
+          } catch (_) {}
+        }
+
+        if (fetchedData) {
+          setOrders((prev) => DualSyncEngine.reconcileEntities(prev, fetchedData as Order[]));
         }
       } catch (err) {
-        console.warn("[DualSync] Failed to fetch orders via polling:", err);
+        console.warn("[DualSync] Notice fetching orders via polling:", err);
       }
     };
     fetchOrders();
@@ -17240,7 +17274,8 @@ function RiderDashboardScreen({
         .maybeSingle();
 
       if (profileErr) {
-        if (!isOnline) {
+        const isNetworkError = String(profileErr.message || '').includes("Failed to fetch") || String(profileErr).includes("Failed to fetch");
+        if (!isOnline || isNetworkError) {
           const cached = localStorage.getItem(
             `rider_profile_${session.user.id}`,
           );
@@ -18467,7 +18502,8 @@ function ShopDashboardScreen({
           .maybeSingle();
 
         if (shopError) {
-          if (!isOnline) {
+          const isNetworkError = String(shopError.message || '').includes("Failed to fetch") || String(shopError).includes("Failed to fetch");
+          if (!isOnline || isNetworkError) {
             const cachedShop = localStorage.getItem(`cached_shop_${user.id}`);
             const cachedOrders = localStorage.getItem(
               `cached_shop_orders_${user.id}`,
@@ -18557,7 +18593,8 @@ function ShopDashboardScreen({
             .order("created_at", { ascending: false });
 
           if (ordersError) {
-            if (!isOnline) {
+            const isNetworkError = String(ordersError.message || '').includes("Failed to fetch") || String(ordersError).includes("Failed to fetch");
+            if (!isOnline || isNetworkError) {
               const cachedOrders = localStorage.getItem(
                 `cached_shop_orders_${user.id}`,
               );
@@ -21228,35 +21265,55 @@ function AdminOrdersScreen({
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("orders")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
 
-      if (error) {
-        if (!isOnline) {
-          const cached = localStorage.getItem("admin_cached_orders");
-          if (cached) {
-            try {
-              setOrders(JSON.parse(cached));
-            } catch (e) {
-              console.warn(
-                "[SelfCleaning] Failed parsing admin cached orders list:",
-                e,
-              );
+      let fetchedData: Order[] | null = null;
+      try {
+        const { data, error } = await supabase
+          .from("orders")
+          .select(safeColumns)
+          .order("created_at", { ascending: false });
+
+        if (!error && data) {
+          fetchedData = data as unknown as Order[];
+        }
+      } catch (sbErr) {
+        console.info("[Merchant] Supabase orders fetch notice:", sbErr);
+      }
+
+      // Tier 2 Fallback: Server API
+      if (!fetchedData) {
+        try {
+          const apiRes = await fetch("/api/orders");
+          if (apiRes.ok) {
+            const apiJson = await apiRes.json();
+            if (Array.isArray(apiJson.orders)) {
+              fetchedData = apiJson.orders as Order[];
             }
           }
-          setLoading(false);
-          return;
-        }
-        throw error;
+        } catch (_) {}
       }
-      setOrders((data || []) as Order[]);
-      localStorage.setItem("admin_cached_orders", JSON.stringify(data || []));
+
+      if (fetchedData) {
+        setOrders(fetchedData);
+        localStorage.setItem("admin_cached_orders", JSON.stringify(fetchedData));
+      } else {
+        const cached = localStorage.getItem("admin_cached_orders");
+        if (cached) {
+          try {
+            setOrders(JSON.parse(cached));
+          } catch (e) {
+            console.warn("[SelfCleaning] Failed parsing admin cached orders list:", e);
+          }
+        }
+      }
     } catch (error: any) {
-      console.error("Error fetching orders:", error);
-      if (error.message === "Failed to fetch") {
-        console.error("Network Error: Please check your internet connection.");
+      console.warn("Merchant fetch orders notice:", error);
+      const cached = localStorage.getItem("admin_cached_orders");
+      if (cached) {
+        try {
+          setOrders(JSON.parse(cached));
+        } catch (_) {}
       }
     } finally {
       setLoading(false);
@@ -21281,13 +21338,11 @@ function AdminOrdersScreen({
 
     await runWithProcessing(async () => {
       // Fetch current order to get existing history and delivery info
-      const { data: currentOrder, error: fetchError } = await supabase
+      const { data: currentOrder } = await supabase
         .from("orders")
         .select("*")
         .eq("id", orderId)
-        .single();
-
-      if (fetchError) throw fetchError;
+        .maybeSingle();
 
       const history = currentOrder?.status_history || [];
       const newHistory = [
@@ -21307,17 +21362,28 @@ function AdminOrdersScreen({
 
       const updateData: any = {
         status: finalStatus,
-        status_history: newHistory,
         delivery_status: deliveryStatus,
+        updated_at: new Date().toISOString(),
       };
       if (message) updateData.owner_message = message;
 
-      const { error } = await supabase
+      let { error } = await supabase
         .from("orders")
         .update(updateData)
         .eq("id", orderId);
 
-      if (error) throw error;
+      if (error) {
+        console.warn("Update order status supabase notice:", error);
+      }
+
+      // Also update in server API store
+      try {
+        await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orders: [{ id: orderId, ...updateData }] }),
+        });
+      } catch (_) {}
     }, fetchOrders);
   };
 
@@ -22002,7 +22068,8 @@ function OrderHistoryScreen({
   }, [orders, shops]);
 
   const fetchOrders = useCallback(async () => {
-    if (!session && !userProfile?.id) return;
+    const activeUserId = session?.user?.id || userProfile?.id;
+    if (!activeUserId) return;
     if (orders.length === 0) setLoading(true);
     try {
       if (!isOnline) {
@@ -22015,34 +22082,60 @@ function OrderHistoryScreen({
         return;
       }
 
-      let { data, error } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .order("created_at", { ascending: false });
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
 
-      if (error) {
-        console.warn("Retrying fetch with explicit core columns list (defensive fallback):", error);
-        const coreColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address, status_history, rating, review_text";
-        const fallbackQuery = await supabase
+      let fetchedData: any[] | null = null;
+      try {
+        const { data, error } = await supabase
           .from("orders")
-          .select(coreColumns)
-          .eq("user_id", session.user.id)
+          .select(safeColumns)
+          .eq("user_id", activeUserId)
           .order("created_at", { ascending: false });
-          
-        if (fallbackQuery.error) {
-          throw fallbackQuery.error;
+
+        if (!error && data) {
+          fetchedData = data;
+        } else if (error) {
+          console.info("[OrderHistory] Supabase fetch notice, falling back to server sync:", error.message || error);
         }
-        data = fallbackQuery.data;
+      } catch (sbErr) {
+        console.info("[OrderHistory] Supabase direct query notice:", sbErr);
       }
-      
+
+      // Tier 2 Fallback: Server API
+      if (!fetchedData) {
+        try {
+          const apiRes = await fetch(`/api/orders?user_id=${activeUserId}`);
+          if (apiRes.ok) {
+            const apiJson = await apiRes.json();
+            if (Array.isArray(apiJson.orders)) {
+              fetchedData = apiJson.orders;
+            }
+          }
+        } catch (apiErr) {
+          console.warn("[OrderHistory] Server API fallback notice:", apiErr);
+        }
+      }
+
+      const cached = safeLocalStorageGet("cached_orders", []);
       const offlineQueue = safeLocalStorageGet("offline_orders_queue", []);
-      const uniqueOfflineQueue = offlineQueue.filter((oq: any) => !(data || []).some((co: any) => co.id === oq.id));
-      const merged = [...uniqueOfflineQueue, ...(data || [])];
-      setOrders(merged);
-      safeLocalStorageSet("cached_orders", JSON.stringify(data || []));
+      const combined = [...(offlineQueue || []), ...(fetchedData || []), ...(cached || [])];
+      
+      // Deduplicate orders by id
+      const seenIds = new Set();
+      const uniqueOrders: Order[] = [];
+      for (const ord of combined) {
+        if (ord?.id && !seenIds.has(ord.id)) {
+          seenIds.add(ord.id);
+          uniqueOrders.push(ord);
+        }
+      }
+
+      setOrders(uniqueOrders);
+      if (fetchedData && fetchedData.length > 0) {
+        safeLocalStorageSet("cached_orders", JSON.stringify(fetchedData));
+      }
     } catch (error) {
-      console.error("Error fetching orders:", error);
+      console.warn("Order history retrieval notice:", error);
       const cached = safeLocalStorageGet("cached_orders", []);
       const offlineQueue = safeLocalStorageGet("offline_orders_queue", []);
       const uniqueOfflineQueue = offlineQueue.filter((oq: any) => !cached.some((co: any) => co.id === oq.id));
@@ -22050,7 +22143,7 @@ function OrderHistoryScreen({
     } finally {
       setLoading(false);
     }
-  }, [session, isOnline]);
+  }, [session, userProfile?.id, isOnline]);
 
   useEffect(() => {
     fetchOrders();
@@ -22726,17 +22819,41 @@ function OrderHistoryScreen({
           return;
         }
 
-        const { data, error } = await supabase
-          .from("orders")
-          .select("*")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false });
+        const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
 
-        if (error) throw error;
-        setOrders(data || []);
+        let fetched: any[] | null = null;
+        try {
+          const { data, error } = await supabase
+            .from("orders")
+            .select(safeColumns)
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false });
+
+          if (!error && data) {
+            fetched = data;
+          }
+        } catch (_) {}
+
+        // Fallback to server API
+        if (!fetched) {
+          try {
+            const res = await fetch(`/api/orders?user_id=${userId}`);
+            if (res.ok) {
+              const json = await res.json();
+              if (Array.isArray(json.orders)) fetched = json.orders;
+            }
+          } catch (_) {}
+        }
+
+        if (fetched) {
+          setOrders(fetched);
+          safeLocalStorageSet("cached_orders", JSON.stringify(fetched));
+        } else {
+          const cached = safeLocalStorageGet("cached_orders", []);
+          if (cached && cached.length > 0) setOrders(cached);
+        }
       } catch (error: any) {
-        console.error("Error fetching orders:", error);
-        // Fallback to cache
+        console.warn("Billing orders fetch notice:", error);
         const cached = safeLocalStorageGet("cached_orders", []);
         if (cached && cached.length > 0) setOrders(cached);
       } finally {

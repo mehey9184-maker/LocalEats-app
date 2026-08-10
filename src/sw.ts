@@ -267,6 +267,9 @@ sw.addEventListener("fetch", (event: any) => {
             cache.put(request, responseToCache);
           });
           return response;
+        }).catch((err) => {
+          console.error("Static asset fetch failed", err);
+          return new Response("", { status: 408, statusText: "Offline" });
         });
       })
     );
