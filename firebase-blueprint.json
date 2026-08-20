@@ -1,0 +1,157 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Registered user profile with role, contact info, and preferences",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "full_name": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["customer", "merchant", "rider", "admin"] },
+        "address": { "type": "string" },
+        "avatar_url": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "role"]
+    },
+    "Shop": {
+      "title": "Shop",
+      "description": "Local food establishment / Kota joint",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "owner_id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "address": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "rating": { "type": "number" },
+        "image": { "type": "string" },
+        "category": { "type": "string" },
+        "phone": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "open_time": { "type": "string" },
+        "close_time": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "MenuItem": {
+      "title": "Menu Item",
+      "description": "Item offered by a shop",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "shop_id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "image": { "type": "string" },
+        "category": { "type": "string" },
+        "is_available": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "shop_id", "name", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer food order with tracking and delivery info",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "shop_id": { "type": "string" },
+        "rider_id": { "type": "string" },
+        "status": { "type": "string" },
+        "total": { "type": "number" },
+        "items": { "type": "array" },
+        "delivery_address": { "type": "string" },
+        "delivery_latitude": { "type": "number" },
+        "delivery_longitude": { "type": "number" },
+        "customer_name": { "type": "string" },
+        "customer_phone": { "type": "string" },
+        "payment_method": { "type": "string" },
+        "pin": { "type": "string" },
+        "notes": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "shop_id", "status"]
+    },
+    "RiderLocation": {
+      "title": "Rider Location",
+      "description": "Real-time coordinate updates from delivery riders",
+      "type": "object",
+      "properties": {
+        "rider_id": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "heading": { "type": "number" },
+        "speed": { "type": "number" },
+        "order_id": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["rider_id", "latitude", "longitude"]
+    },
+    "Message": {
+      "title": "Chat Message",
+      "description": "Order-specific chat message between customer, shop, and rider",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "order_id": { "type": "string" },
+        "sender_id": { "type": "string" },
+        "sender_role": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["order_id", "sender_id", "message"]
+    },
+    "UserPushToken": {
+      "title": "Push Token",
+      "description": "FCM device push notification tokens",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "token": { "type": "string" },
+        "last_updated": { "type": "string" }
+      },
+      "required": ["user_id", "token"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document indexed by UID"
+    },
+    "/shops/{shopId}": {
+      "schema": "Shop",
+      "description": "Shop and restaurant listings"
+    },
+    "/menu_items/{itemId}": {
+      "schema": "MenuItem",
+      "description": "Menu items belonging to shops"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer food delivery orders"
+    },
+    "/rider_locations/{riderId}": {
+      "schema": "RiderLocation",
+      "description": "Real-time rider locations"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Real-time chat messages"
+    },
+    "/user_push_tokens/{tokenId}": {
+      "schema": "UserPushToken",
+      "description": "Device FCM registration tokens"
+    }
+  }
+}

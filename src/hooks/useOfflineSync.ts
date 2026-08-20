@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "../lib/supabase";
+import { FirestoreService } from "../lib/firebase";
 import localforage from "localforage";
 import { CartItem } from "../types";
 
@@ -19,6 +20,99 @@ const cartQueueStore = localforage.createInstance({
   storeName: "offline_cart_queue",
   driver: localforage.INDEXEDDB
 });
+
+// Standalone processor for pending cancellations queue that can be triggered manually from any component or notification dialog
+export async function processPendingCancellationsQueue(): Promise<{ total: number; successCount: number; remainingCount: number }> {
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    toast.error("Device is currently offline. Cancellation remains safely queued for auto-sync.");
+    return { total: 0, successCount: 0, remainingCount: 0 };
+  }
+  if (typeof window === "undefined") return { total: 0, successCount: 0, remainingCount: 0 };
+
+  try {
+    const raw = localStorage.getItem("pending_cancellation");
+    if (!raw) {
+      toast.info("No pending cancellations found in queue.");
+      return { total: 0, successCount: 0, remainingCount: 0 };
+    }
+    let list: any[] = [];
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      list = [];
+    }
+    if (!Array.isArray(list) || list.length === 0) {
+      toast.info("No pending cancellations found in queue.");
+      return { total: 0, successCount: 0, remainingCount: 0 };
+    }
+
+    const total = list.length;
+    const remaining: any[] = [];
+    let successCount = 0;
+
+    for (const item of list) {
+      if (!item?.orderId) continue;
+      try {
+        const updatePayload: any = {
+          status: "cancelled",
+          cancellation_reason: item.cancelReason || "Cancelled by customer",
+          updated_at: new Date().toISOString(),
+        };
+
+        let synced = false;
+
+        // 1. Firestore sync
+        try {
+          await FirestoreService.saveOrder({ id: item.orderId, ...updatePayload });
+          synced = true;
+        } catch (fsErr) {
+          console.warn("[processPendingCancellationsQueue] Firestore sync error:", fsErr);
+        }
+
+        // 2. API sync
+        try {
+          const res = await fetch(`/api/orders/${item.orderId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updatePayload),
+          });
+          if (res.ok) synced = true;
+        } catch (apiErr) {
+          console.warn("[processPendingCancellationsQueue] API sync error:", apiErr);
+        }
+
+        // 3. Supabase sync
+        try {
+          await supabase
+            .from("orders")
+            .update(updatePayload)
+            .eq("id", item.orderId);
+          synced = true;
+        } catch (_) {}
+
+        if (synced) {
+          successCount++;
+        } else {
+          remaining.push(item);
+        }
+      } catch {
+        remaining.push(item);
+      }
+    }
+
+    localStorage.setItem("pending_cancellation", JSON.stringify(remaining));
+    window.dispatchEvent(new CustomEvent("local-orders-synced"));
+    if (successCount > 0) {
+      toast.success(`Successfully synced ${successCount} of ${total} pending cancellation${total > 1 ? "s" : ""}!`);
+    } else if (remaining.length > 0) {
+      toast.error(`Could not sync ${remaining.length} pending cancellation(s). Request remains queued.`);
+    }
+    return { total, successCount, remainingCount: remaining.length };
+  } catch (e) {
+    console.warn("[processPendingCancellationsQueue] Error syncing queue:", e);
+    return { total: 0, successCount: 0, remainingCount: 0 };
+  }
+}
 
 /**
  * Custom React Hook: useOfflineSync
@@ -192,12 +286,91 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
     }
   }, [cart, isOffline]);
 
+  // Synchronize pending order cancellations stored in 'pending_cancellation' bucket
+  const syncPendingCancellations = useCallback(async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem("pending_cancellation");
+      if (!raw) return;
+      let list: any[] = [];
+      try {
+        list = JSON.parse(raw);
+      } catch {
+        list = [];
+      }
+      if (!Array.isArray(list) || list.length === 0) return;
+
+      const remaining: any[] = [];
+      let successCount = 0;
+
+      for (const item of list) {
+        if (!item?.orderId) continue;
+        try {
+          const updatePayload: any = {
+            status: "cancelled",
+            cancellation_reason: item.cancelReason || "Cancelled by customer",
+            updated_at: new Date().toISOString(),
+          };
+
+          let synced = false;
+
+          // 1. Firestore sync
+          try {
+            await FirestoreService.saveOrder({ id: item.orderId, ...updatePayload });
+            synced = true;
+          } catch (fsErr) {
+            console.warn("[useOfflineSync] Firestore cancellation sync error:", fsErr);
+          }
+
+          // 2. API sync
+          try {
+            const res = await fetch(`/api/orders/${item.orderId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(updatePayload),
+            });
+            if (res.ok) synced = true;
+          } catch (apiErr) {
+            console.warn("[useOfflineSync] API cancellation sync error:", apiErr);
+          }
+
+          // 3. Supabase sync
+          try {
+            await supabase
+              .from("orders")
+              .update(updatePayload)
+              .eq("id", item.orderId);
+            synced = true;
+          } catch (_) {}
+
+          if (synced) {
+            successCount++;
+          } else {
+            remaining.push(item);
+          }
+        } catch {
+          remaining.push(item);
+        }
+      }
+
+      localStorage.setItem("pending_cancellation", JSON.stringify(remaining));
+      if (successCount > 0) {
+        toast.success(`Synchronized ${successCount} offline order cancellation${successCount > 1 ? "s" : ""}! 🔄`);
+      }
+    } catch (e) {
+      console.warn("[useOfflineSync] Error syncing pending cancellations:", e);
+    }
+  }, []);
+
   // Sync on mount or when coming online
   useEffect(() => {
     if (!isOffline) {
       syncPendingCart();
+      syncPendingCancellations();
     }
-  }, [isOffline, syncPendingCart]);
+  }, [isOffline, syncPendingCart, syncPendingCancellations]);
 
   // Subscribe to the Service Worker's Sync Broadcast Channel
   useEffect(() => {
@@ -266,6 +439,7 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
     syncFailedMessage,
     clearNotification,
     syncPendingCart,
+    syncPendingCancellations,
     syncAttemptCount,
     isRetryingSync,
   };

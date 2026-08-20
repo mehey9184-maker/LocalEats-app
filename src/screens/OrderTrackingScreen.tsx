@@ -23,48 +23,207 @@ import {
   ShieldCheck,
   Sparkles,
   MessageCircle,
+  AlertTriangle,
+  CloudOff,
+  Bike,
+  Package,
+  PackageCheck,
+  Navigation,
+  ChefHat,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Order, Shop } from "../types";
-import { supabase } from "../lib/supabase";
+import { supabase, getFreshChannel } from "../lib/supabase";
+import { FirestoreService } from "../lib/firebase";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
 import { DualSyncEngine } from "../utils/dualSync";
 import { ChatWidget, DeliveryChatWidget } from "../components/ChatWidget";
 import { BlurUpImage } from "../components/BlurUpImage";
+import { SecureDeliveryHandshakeCard } from "../components/SecureDeliveryHandshake";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import { storeMapIcon, riderMapIcon } from "../components/MapComponents";
+import { storeMapIcon, riderMapIcon, userMapIcon } from "../components/MapComponents";
 import L from "leaflet";
 
-const customerDestIcon = L.divIcon({
-  html: `<div class="relative w-10 h-10 drop-shadow-lg flex flex-col items-center justify-center">
-    <div class="bg-amber-500 p-2 rounded-full border-2 border-white text-white flex items-center justify-center relative z-10 animate-bounce">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/>
-        <circle cx="12" cy="10" r="3"/>
-      </svg>
-    </div>
-  </div>`,
-  className: '',
-  iconSize: [40, 40],
-  iconAnchor: [20, 40],
-  popupAnchor: [0, -40]
-});
+export const isLiveDeliveryActive = (ord: any) => {
+  if (!ord) return false;
+  const dStatus = (ord.delivery_status || "").toLowerCase();
+  return (
+    dStatus === "picked_up" ||
+    dStatus === "out_for_delivery" ||
+    dStatus === "delivering" ||
+    dStatus === "in_transit"
+  );
+};
 
 export const isRiderAttachedAndDispatched = (ord: any) => {
   if (!ord || !ord.rider_id) return false;
-  const dStatus = (ord.delivery_status || "").toLowerCase();
-  const oStatus = (ord.status || "").toLowerCase();
-  const validDispatchedStatuses = [
-    "dispatched",
-    "accepted",
-    "rider_assigned",
-    "picked_up",
-    "out_for_delivery",
-    "delivering",
-    "in_transit"
-  ];
-  return validDispatchedStatuses.includes(dStatus) || validDispatchedStatuses.includes(oStatus);
+  // Per Smart Dispatch rules: rider GPS and rider details are activated during the Live Delivery Phase (when picked_up)
+  return isLiveDeliveryActive(ord);
 };
+
+interface SmartDispatchTrackingBannerProps {
+  order: Order;
+  shop: Shop | null;
+}
+
+export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTrackingBannerProps) {
+  const status = (order.status || "").toLowerCase();
+  const deliveryStatus = (order.delivery_status || "").toLowerCase();
+
+  // 1. Live Delivery Phase: When delivery_status === 'picked_up'
+  if (
+    deliveryStatus === "picked_up" ||
+    deliveryStatus === "out_for_delivery" ||
+    deliveryStatus === "delivering" ||
+    deliveryStatus === "in_transit"
+  ) {
+    return (
+      <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/40 rounded-3xl space-y-3 shadow-lg animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+              <Navigation className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-emerald-500/30">
+                Live Delivery Phase
+              </span>
+              <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
+                Your food is on the way!
+              </h4>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+          The courier has collected your food from {shop?.name || "the restaurant"} and activated live GPS tracking. Please have your 4-digit delivery PIN ready for handover.
+        </p>
+      </div>
+    );
+  }
+
+  // 2. Ready Phase: If status === 'ready'
+  if (status === "ready") {
+    return (
+      <div className="p-5 bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-transparent dark:from-amber-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-amber-500/40 rounded-3xl space-y-3 shadow-md animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
+              <PackageCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-amber-500/20 text-amber-800 dark:text-amber-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-amber-500/30">
+                Ready Phase
+              </span>
+              <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
+                Your food is packed and waiting for the rider to grab it.
+              </h4>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+          The kitchen has completed preparation and packed your meal in warmth-retaining packaging at {shop?.name || "the shop"}. Waiting for courier to grab it.
+        </p>
+      </div>
+    );
+  }
+
+  // 3. Rider Approach Phase: If status === 'preparing' AND delivery_status === 'accepted' (or rider_assigned)
+  if (
+    (status === "preparing" || status === "confirmed") &&
+    (deliveryStatus === "accepted" || deliveryStatus === "rider_assigned" || deliveryStatus === "approaching_restaurant")
+  ) {
+    return (
+      <div className="p-5 bg-gradient-to-br from-blue-500/15 via-indigo-500/10 to-transparent dark:from-blue-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-blue-500/40 rounded-3xl space-y-3 shadow-md animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-600/20">
+              <Bike className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-blue-500/20 text-blue-800 dark:text-blue-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-blue-500/30">
+                Rider Approach Phase
+              </span>
+              <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
+                A rider is on the way to the restaurant to collect your order.
+              </h4>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+          A courier is navigating to {shop?.name || "the restaurant"} so they arrive right as the kitchen finishes cooking your meal.
+        </p>
+      </div>
+    );
+  }
+
+  // 4. Cooking Phase: If status === 'preparing'
+  if (status === "preparing" || status === "confirmed") {
+    return (
+      <div className="p-5 bg-gradient-to-br from-orange-500/15 via-amber-500/10 to-transparent dark:from-orange-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-orange-500/40 rounded-3xl space-y-3 shadow-md animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shadow-orange-500/20">
+              <ChefHat className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-orange-500/20 text-orange-800 dark:text-orange-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-orange-500/30">
+                Cooking Phase
+              </span>
+              <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
+                The kitchen is cooking your food.
+              </h4>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+          {shop?.name || "The kitchen"} has accepted your order and chefs are actively crafting your meal fresh.
+        </p>
+      </div>
+    );
+  }
+
+  // 5. Completed / Delivered Phase
+  if (status === "completed" || status === "delivered") {
+    return (
+      <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/30 rounded-3xl space-y-2 shadow-md">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full inline-block mb-1">
+              Delivered Safely
+            </span>
+            <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
+              Order Completed! Enjoy your meal.
+            </h4>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 6. Default Pending Phase
+  return (
+    <div className="p-5 bg-amber-500/10 border-2 border-amber-500/20 rounded-3xl flex gap-4 items-start animate-pulse">
+      <div className="w-10 h-10 rounded-2xl bg-amber-500/20 flex items-center justify-center text-amber-600 shrink-0">
+        <Clock size={20} />
+      </div>
+      <div className="space-y-1">
+        <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-amber-500/20 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-md inline-block">
+          Order Transmitted
+        </span>
+        <h4 className="font-bold text-sm text-amber-800 dark:text-amber-400">
+          Order Confirmed by Kitchen
+        </h4>
+        <p className="text-xs text-amber-700/80 dark:text-amber-500/80 leading-relaxed font-medium">
+          Your order has been received by {shop?.name || "the shop"}. Preparation will begin momentarily.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 interface RealTimeCountdownProps {
   createdAt: string;
@@ -188,7 +347,7 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
         <span className="font-mono text-base font-black text-orange-600 dark:text-orange-400 tracking-tight leading-none">
           {formattedTime}
         </span>
-        <span className="text-[8px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 mt-1.5 leading-none animate-pulse">
+        <span className="text-[10px] whitespace-nowrap font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 mt-1.5 leading-none animate-pulse">
           Remaining
         </span>
       </div>
@@ -245,7 +404,7 @@ export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string
           <span className="size-1.5 rounded-full bg-orange-600 animate-pulse" />
           Kitchen Timeline Status
         </h4>
-        <span className="text-[8px] font-black uppercase tracking-wider text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-2 py-0.5 rounded leading-none animate-pulse">
+        <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider text-orange-600 bg-orange-50 dark:bg-orange-500/10 px-2 py-0.5 rounded leading-none animate-pulse">
           Live Tracker
         </span>
       </div>
@@ -323,6 +482,13 @@ export function OrderTrackingScreen({
     isOpen: boolean;
     orderId: string | null;
   }>({ isOpen: false, orderId: null });
+  const [cancellationErrorModal, setCancellationErrorModal] = useState<{
+    isOpen: boolean;
+    orderId: string | null;
+    cancelReason: string;
+    errorMessage: string;
+    isNetworkIssue?: boolean;
+  } | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -330,6 +496,68 @@ export function OrderTrackingScreen({
   const [offlineOrders, setOfflineOrders] = useState<any[]>(() => {
     return safeLocalStorageGet("offline_orders_queue", []);
   });
+
+  // Background processor for pending cancellations queued while offline
+  const processPendingCancellations = async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    try {
+      const stored = safeLocalStorageGet("pending_cancellation", []);
+      if (!Array.isArray(stored) || stored.length === 0) return;
+
+      const remaining: any[] = [];
+      let successCount = 0;
+
+      for (const item of stored) {
+        if (!item?.orderId) continue;
+        try {
+          const updatePayload: any = {
+            status: "cancelled",
+            cancellation_reason: item.cancelReason || "Cancelled by customer",
+            updated_at: new Date().toISOString(),
+          };
+
+          FirestoreService.saveOrder({ id: item.orderId, ...updatePayload }).catch(() => {});
+
+          let { error } = await supabase
+            .from("orders")
+            .update(updatePayload)
+            .eq("id", item.orderId);
+
+          if (error && error.message?.includes("cancellation_reason")) {
+            delete updatePayload.cancellation_reason;
+            const retry = await supabase
+              .from("orders")
+              .update(updatePayload)
+              .eq("id", item.orderId);
+            error = retry.error;
+          }
+
+          if (error) {
+            remaining.push(item);
+          } else {
+            successCount++;
+          }
+        } catch {
+          remaining.push(item);
+        }
+      }
+
+      safeLocalStorageSet("pending_cancellation", remaining);
+      if (successCount > 0) {
+        toast.success(`Synced ${successCount} queued order cancellation${successCount > 1 ? "s" : ""}!`);
+      }
+    } catch (e) {
+      console.warn("Failed syncing pending cancellations:", e);
+    }
+  };
+
+  useEffect(() => {
+    processPendingCancellations();
+    window.addEventListener("online", processPendingCancellations);
+    return () => {
+      window.removeEventListener("online", processPendingCancellations);
+    };
+  }, []);
   const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
     return safeLocalStorageGet("localeats_order_notifications", true);
@@ -369,15 +597,23 @@ export function OrderTrackingScreen({
 
     fetchUnreadCounts();
 
-    // Subscribe to new chat messages to update unread badge in real-time
-    const channel = supabase
-      .channel("order_tracking_chat_unread_badge")
+    // Subscribe to new chat messages for active orders only to update unread badge in real-time
+    const validOrderIds = localOrders.map((o) => o.id).filter(Boolean);
+    if (validOrderIds.length === 0) return;
+
+    const orderFilter =
+      validOrderIds.length === 1
+        ? `order_id=eq.${validOrderIds[0]}`
+        : `order_id=in.(${validOrderIds.map((id) => `"${id}"`).join(",")})`;
+
+    const channel = getFreshChannel("order_tracking_chat_unread_badge")
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "order_messages",
+          filter: orderFilter,
         },
         (payload) => {
           const newMsg = payload.new as any;
@@ -446,6 +682,56 @@ export function OrderTrackingScreen({
     }
   };
 
+  // Scoped Firestore real-time listeners for active orders and riders
+  useEffect(() => {
+    const unsubs: (() => void)[] = [];
+    const activeOrders = localOrders.filter(
+      (o) => o.status !== "completed" && o.status !== "cancelled"
+    );
+
+    activeOrders.forEach((order) => {
+      // 1. Scoped Firestore order listener
+      const unsubOrder = FirestoreService.listenToOrder(order.id, (updated) => {
+        if (updated) {
+          setLocalOrders((prev) =>
+            prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o))
+          );
+        }
+      });
+      unsubs.push(unsubOrder);
+
+      // 2. Scoped Firestore rider GPS location listener when live delivery is active
+      if (order.rider_id && isLiveDeliveryActive(order)) {
+        const unsubRider = FirestoreService.listenToRiderLocation(order.rider_id, (loc) => {
+          if (loc && (loc.latitude || loc.lat)) {
+            const lat = Number(loc.latitude || loc.lat);
+            const lng = Number(loc.longitude || loc.lng);
+            setRiders((prev) => ({
+              ...prev,
+              [order.rider_id!]: {
+                ...(prev[order.rider_id!] || {}),
+                latitude: lat,
+                longitude: lng,
+                heading: loc.heading,
+                speed: loc.speed,
+                is_online: true,
+              },
+            }));
+          }
+        });
+        unsubs.push(unsubRider);
+      }
+    });
+
+    return () => {
+      unsubs.forEach((unsub) => {
+        try {
+          if (typeof unsub === "function") unsub();
+        } catch (_) {}
+      });
+    };
+  }, [localOrders.map((o) => `${o.id}_${o.status}_${o.delivery_status}_${o.rider_id}`).join(",")]);
+
   // Fetch rider profiles for active delivery orders
   useEffect(() => {
     const fetchRiderProfiles = async () => {
@@ -457,7 +743,7 @@ export function OrderTrackingScreen({
       try {
         const { data, error } = await supabase
           .from("rider_profiles")
-          .select("*")
+          .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online")
           .in("id", riderIds);
         if (data) {
           const profilesRecord: Record<string, any> = {};
@@ -510,46 +796,110 @@ export function OrderTrackingScreen({
     setPullDistance(0);
   };
 
-  const prevStatusesRef = useRef<Record<string, string>>({});
+  const prevOrderStatesRef = useRef<Record<string, { status?: string; delivery_status?: string }>>({});
 
   useEffect(() => {
     if (!notificationsEnabled) {
       localOrders.forEach((order) => {
-        prevStatusesRef.current[order.id] = order.status;
+        prevOrderStatesRef.current[order.id] = {
+          status: order.status,
+          delivery_status: order.delivery_status,
+        };
       });
       return;
     }
 
     localOrders.forEach((order) => {
-      const prevStatus = prevStatusesRef.current[order.id];
-      if (prevStatus && prevStatus !== order.status) {
-        if (order.status.toLowerCase() === "ready" || order.status.toLowerCase() === "completed") {
+      const prevState = prevOrderStatesRef.current[order.id];
+      const prevDStatus = (prevState?.delivery_status || "").toLowerCase();
+      const currentDStatus = (order.delivery_status || "").toLowerCase();
+      const prevStatus = (prevState?.status || "").toLowerCase();
+      const currentStatus = (order.status || "").toLowerCase();
+
+      if (prevState) {
+        // 1. Live Delivery Phase Trigger: When delivery_status becomes 'picked_up'
+        if (
+          (currentDStatus === "picked_up" || currentDStatus === "out_for_delivery") &&
+          prevDStatus !== "picked_up" &&
+          prevDStatus !== "out_for_delivery"
+        ) {
           if (triggerHaptic) {
-            triggerHaptic([500, 100, 500, 100, 800]);
+            triggerHaptic([500, 150, 500, 150, 800]);
           } else if ("vibrate" in navigator) {
-            navigator.vibrate([500, 100, 500, 100, 800]);
+            navigator.vibrate([500, 150, 500, 150, 800]);
           }
-          
-          if (order.status.toLowerCase() === "ready") {
-            toast.success(`Your order #${order.id.slice(0, 5)} is ready!`, {
-              description: "Please collect it or await your courier.",
-            });
-          } else if (order.status.toLowerCase() === "completed") {
-            toast.success(`Your order #${order.id.slice(0, 5)} has been picked up!`, {
-              description: "Enjoy your meal!",
-            });
+
+          // Browser Push Notification
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            try {
+              new Notification("LocalEats - Food on the way! 🚴", {
+                body: "Your food is on the way! Have your 4-digit PIN ready for the rider.",
+                icon: "/favicon.ico",
+              });
+            } catch (_) {}
           }
+
+          // In-App Toast Notification
+          toast.success("Your food is on the way!", {
+            description: `Courier has collected your order and is heading towards your delivery address.`,
+            duration: 6000,
+          });
+        }
+
+        // 2. Ready Phase Trigger
+        if (currentStatus === "ready" && prevStatus !== "ready" && currentDStatus !== "picked_up") {
+          if (triggerHaptic) {
+            triggerHaptic([300, 100, 300]);
+          }
+          toast.info("Your food is packed and waiting for the rider to grab it.", {
+            description: `Meal is ready and packaged at the restaurant.`,
+          });
+        }
+
+        // 3. Rider Approach Phase Trigger
+        if (
+          currentStatus === "preparing" &&
+          (currentDStatus === "accepted" || currentDStatus === "rider_assigned") &&
+          prevDStatus !== "accepted" &&
+          prevDStatus !== "rider_assigned"
+        ) {
+          toast.info("A rider is on the way to the restaurant to collect your order.", {
+            description: "Courier assigned and en route to kitchen.",
+          });
+        }
+
+        // 4. Completed Phase Trigger
+        if (
+          (currentStatus === "completed" || currentStatus === "delivered") &&
+          prevStatus !== "completed" &&
+          prevStatus !== "delivered"
+        ) {
+          if (triggerHaptic) {
+            triggerHaptic([500, 100, 500]);
+          }
+          toast.success(`Order #${order.id.slice(0, 5)} delivered!`, {
+            description: "Enjoy your meal!",
+          });
         }
       }
-      prevStatusesRef.current[order.id] = order.status;
+
+      prevOrderStatesRef.current[order.id] = {
+        status: order.status,
+        delivery_status: order.delivery_status,
+      };
     });
   }, [localOrders, triggerHaptic, notificationsEnabled]);
 
-  const handleToggleNotifications = () => {
+  const handleToggleNotifications = async () => {
     const newState = !notificationsEnabled;
     setNotificationsEnabled(newState);
     safeLocalStorageSet("localeats_order_notifications", String(newState));
     if (newState) {
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+        try {
+          await Notification.requestPermission();
+        } catch (_) {}
+      }
       toast.info("Order notifications enabled");
     }
   };
@@ -567,7 +917,7 @@ export function OrderTrackingScreen({
         return;
       }
 
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, delivery_pin, order_type";
 
       let fetchedData: any[] | null = null;
       try {
@@ -605,50 +955,208 @@ export function OrderTrackingScreen({
     }
   };
 
-  const handleCancelOrder = async () => {
-    const orderId = cancellationModal.orderId;
-    if (!orderId) return;
+  const handleMarkReceived = async (orderId: string, shopId: string, productName: string) => {
+    if ("vibrate" in navigator) {
+      navigator.vibrate([20, 30, 20]);
+    }
+    triggerHaptic?.([20, 30, 20]);
+    
+    try {
+      // Sync to Firestore
+      FirestoreService.saveOrder({ id: orderId, status: "completed" }).catch(() => {});
 
+      await supabase
+        .from("orders")
+        .update({ status: "completed" })
+        .eq("id", orderId);
+        
+      setLocalOrders((prev) => 
+        prev.map((o) => o.id === orderId ? { ...o, status: "completed" } : o)
+      );
+
+      // Trigger rating/review component by setting local storage which App.tsx picks up,
+      // or we can let App.tsx's Real-time subscription handle it naturally!
+      // But we can safely write to pending_review local storage so it opens automatically.
+      const reviewPayload = {
+        orderId,
+        shopId,
+        productName,
+        snoozeCount: 0,
+        nextReminder: 0,
+      };
+      localStorage.setItem("pending_review", JSON.stringify(reviewPayload));
+      // App.tsx's interval will pick it up or we can dispatch a custom event
+      window.dispatchEvent(new Event("storage"));
+      
+      showAlert("Order Received", "Thank you! Enjoy your food.");
+    } catch (e) {
+      console.error("Error marking received:", e);
+    }
+  };
+
+  const executeCancellation = async (orderId: string, reason: string) => {
     setIsCancelling(true);
     triggerHaptic?.(15);
+
+    // 1. Network connectivity check: If offline, queue in pending_cancellation local storage bucket
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (isOffline) {
+      try {
+        const currentQueue = safeLocalStorageGet("pending_cancellation", []);
+        const updatedQueue = currentQueue.filter((item: any) => item?.orderId !== orderId);
+        updatedQueue.push({
+          orderId,
+          cancelReason: reason || "Cancelled by customer",
+          timestamp: Date.now(),
+        });
+        safeLocalStorageSet("pending_cancellation", updatedQueue);
+
+        // Update local state
+        setLocalOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId
+              ? { ...o, status: "cancelled", cancellation_reason: reason }
+              : o
+          )
+        );
+
+        // Update cached_orders
+        const cached = safeLocalStorageGet("cached_orders", []);
+        if (Array.isArray(cached) && cached.length > 0) {
+          safeLocalStorageSet(
+            "cached_orders",
+            cached.map((o: any) =>
+              o.id === orderId
+                ? { ...o, status: "cancelled", cancellation_reason: reason }
+                : o
+            )
+          );
+        }
+
+        toast.info("Offline: Order cancellation queued and will sync automatically when back online.");
+        setCancellationModal({ isOpen: false, orderId: null });
+        setCancellationErrorModal(null);
+        setCancelReason("");
+      } catch (err: any) {
+        console.error("Offline queueing failed:", err);
+      } finally {
+        setIsCancelling(false);
+      }
+      return;
+    }
+
+    // 2. Online cancellation attempt
     try {
       const updatePayload: any = {
         status: "cancelled",
-        cancellation_reason: cancelReason,
+        cancellation_reason: reason || "Cancelled by customer",
+        updated_at: new Date().toISOString(),
       };
 
-      let { error } = await supabase
-        .from("orders")
-        .update(updatePayload)
-        .eq("id", orderId);
+      let syncedSuccessfully = false;
 
-      if (error && error.message?.includes("cancellation_reason")) {
-        delete updatePayload.cancellation_reason;
-        const retry = await supabase
+      // Primary sync: Firestore Database
+      try {
+        await FirestoreService.saveOrder({ id: orderId, ...updatePayload });
+        syncedSuccessfully = true;
+      } catch (firestoreErr) {
+        console.warn("Firestore cancellation update:", firestoreErr);
+      }
+
+      // Secondary sync: Express API backend
+      try {
+        const res = await fetch(`/api/orders/${orderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatePayload),
+        });
+        if (res.ok) {
+          syncedSuccessfully = true;
+        }
+      } catch (apiErr) {
+        console.warn("API cancellation update:", apiErr);
+      }
+
+      // Tertiary sync: Supabase
+      try {
+        const { error } = await supabase
           .from("orders")
           .update(updatePayload)
           .eq("id", orderId);
-        error = retry.error;
+
+        if (!error) {
+          syncedSuccessfully = true;
+        }
+      } catch (supaErr) {
+        console.warn("Supabase cancellation update:", supaErr);
       }
 
-      if (error) throw error;
+      // If network was completely unavailable and nothing synced
+      if (!syncedSuccessfully && typeof navigator !== "undefined" && !navigator.onLine) {
+        throw new Error("Network connection issue prevented cancellation. Please check your signal and retry, or queue it for automatic background sync.");
+      }
 
       toast.success("Order cancelled successfully");
       setLocalOrders((prev) =>
         prev.map((o) =>
           o.id === orderId
-            ? { ...o, status: "cancelled", cancellation_reason: cancelReason }
+            ? { ...o, status: "cancelled", cancellation_reason: reason }
             : o
         )
       );
+
+      // Clean up cached orders
+      const cached = safeLocalStorageGet("cached_orders", []);
+      if (Array.isArray(cached) && cached.length > 0) {
+        safeLocalStorageSet(
+          "cached_orders",
+          cached.map((o: any) =>
+            o.id === orderId
+              ? { ...o, status: "cancelled", cancellation_reason: reason }
+              : o
+          )
+        );
+      }
+
+      // Remove from pending_cancellation if present
+      const currentPending = safeLocalStorageGet("pending_cancellation", []);
+      if (Array.isArray(currentPending)) {
+        safeLocalStorageSet(
+          "pending_cancellation",
+          currentPending.filter((item: any) => item?.orderId !== orderId)
+        );
+      }
+
       setCancellationModal({ isOpen: false, orderId: null });
+      setCancellationErrorModal(null);
       setCancelReason("");
     } catch (err: any) {
       console.error("Error cancelling order:", err);
-      showAlert("Cancellation Failed", err.message || "An error occurred");
+      const isNetworkIssue =
+        !navigator.onLine ||
+        err?.message?.includes("Failed to fetch") ||
+        err?.message?.includes("NetworkError") ||
+        err?.message?.includes("network") ||
+        err?.message?.includes("timeout");
+
+      setCancellationErrorModal({
+        isOpen: true,
+        orderId,
+        cancelReason: reason || "Cancelled by customer",
+        isNetworkIssue: Boolean(isNetworkIssue),
+        errorMessage: isNetworkIssue
+          ? "Network connection issue prevented cancellation. Please check your signal and retry, or queue it for automatic background sync."
+          : (err.message || "Failed to cancel order."),
+      });
     } finally {
       setIsCancelling(false);
     }
+  };
+
+  const handleCancelOrder = async () => {
+    const orderId = cancellationModal.orderId;
+    if (!orderId) return;
+    await executeCancellation(orderId, cancelReason);
   };
 
   const combinedOrders = useMemo(() => {
@@ -684,7 +1192,7 @@ export function OrderTrackingScreen({
   }, [combinedOrders]);
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl">
       <header className="sticky top-0 z-50 glass-effect border-b border-primary/10 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
         <div className="px-4 py-4 flex items-center justify-between gap-2">
           <button
@@ -750,7 +1258,7 @@ export function OrderTrackingScreen({
       >
         {isRefreshing && (
           <div className="absolute inset-0 bg-slate-900/30 dark:bg-slate-950/40 backdrop-blur-[2px] flex items-center justify-center z-50 animate-in fade-in duration-200 pointer-events-auto">
-            <div className="bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 p-5 rounded-3xl shadow-2xl flex flex-col items-center space-y-3 max-w-[240px] text-center">
+            <div className="bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-850 p-5 rounded-3xl shadow-xl flex flex-col items-center space-y-3 max-w-[240px] text-center">
               <div className="relative flex items-center justify-center">
                 <div className="w-10 h-10 rounded-full border-3 border-orange-500/10 border-t-orange-600 dark:border-orange-400/10 dark:border-t-orange-400 animate-spin" />
                 <RefreshCw className="w-4 h-4 text-orange-600 dark:text-orange-400 absolute animate-pulse" />
@@ -842,7 +1350,7 @@ export function OrderTrackingScreen({
                       <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
                         {formatRand(order.price + (order.delivery_fee || 0))}
                       </p>
-                      <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
+                      <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[10px] whitespace-nowrap font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
                         {order.is_delivery ? "Delivery" : "Collection"}
                       </span>
                     </div>
@@ -855,7 +1363,7 @@ export function OrderTrackingScreen({
                         <p className="text-xs font-black text-slate-800 dark:text-slate-200">
                           Waiting for kitchen connection
                         </p>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
+                        <p className="text-[10px] whitespace-nowrap text-slate-400 font-bold uppercase tracking-widest mt-0.5">
                           Order is stored securely in offline outbox
                         </p>
                       </div>
@@ -882,21 +1390,36 @@ export function OrderTrackingScreen({
               );
             }
 
-            // Define delivery milestones/steps
+            // Define delivery milestones/steps for Smart Dispatch 3-stage flow
             const steps = [
-              { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received & awaiting acceptance" },
-              { s: "preparing", label: "Preparing", icon: <Utensils className="w-4 h-4" />, desc: "Chef is crafting your meal in kitchen" },
-              { s: "ready", label: "Out for Delivery", icon: <Truck className="w-4 h-4" />, desc: "Courier en route with live map pointer" },
-              { s: "delivered", label: "Delivered", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Arrived safely at your destination" },
+              { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received by kitchen" },
+              { s: "cooking", label: "Cooking", icon: <ChefHat className="w-4 h-4" />, desc: "The kitchen is cooking your food" },
+              { s: "ready", label: "Packed & Ready", icon: <PackageCheck className="w-4 h-4" />, desc: "Waiting for rider pickup" },
+              { s: "live_delivery", label: "On the Way", icon: <Truck className="w-4 h-4" />, desc: "Live GPS courier delivery" },
+              { s: "delivered", label: "Delivered", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Delivered safely" },
             ];
 
             // Numerical tracking index
             let currentStepIndex = 0;
-            if (order.status.toLowerCase() === "pending") currentStepIndex = 0;
-            else if (order.status.toLowerCase() === "confirmed") currentStepIndex = 1;
-            else if (order.status.toLowerCase() === "preparing") currentStepIndex = 1;
-            else if (order.status.toLowerCase() === "ready") currentStepIndex = 2;
-            else if (order.status.toLowerCase() === "completed" || order.status.toLowerCase() === "delivered") currentStepIndex = 3;
+            const dStatus = (order.delivery_status || "").toLowerCase();
+            const oStatus = (order.status || "").toLowerCase();
+
+            if (oStatus === "completed" || oStatus === "delivered") {
+              currentStepIndex = 4;
+            } else if (
+              dStatus === "picked_up" ||
+              dStatus === "out_for_delivery" ||
+              dStatus === "delivering" ||
+              dStatus === "in_transit"
+            ) {
+              currentStepIndex = 3;
+            } else if (oStatus === "ready") {
+              currentStepIndex = 2;
+            } else if (oStatus === "preparing" || oStatus === "confirmed") {
+              currentStepIndex = 1;
+            } else {
+              currentStepIndex = 0;
+            }
 
             return (
               <div
@@ -930,14 +1453,17 @@ export function OrderTrackingScreen({
                     <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
                       {formatRand(order.price + (order.delivery_fee || 0))}
                     </p>
-                    <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
+                    <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[10px] whitespace-nowrap font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
                       {order.is_delivery ? "🚚 Delivery" : "🛍️ Collection"}
                     </span>
                   </div>
                 </div>
 
-                {/* Direct Driver Chat Banner for Delivery Orders */}
-                {order.is_delivery && isRiderAttachedAndDispatched(order) && (
+                {/* Smart Dispatch & 3-Stage Tracking State Banner */}
+                <SmartDispatchTrackingBanner order={order} shop={shop} />
+
+                {/* Direct Driver Chat Banner for Delivery Orders: Only active in Live Delivery Phase */}
+                {order.is_delivery && isLiveDeliveryActive(order) && (
                   <div className="flex items-center justify-between bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:via-amber-500/15 dark:to-orange-500/10 p-3 rounded-2xl border border-orange-500/30 dark:border-orange-500/40 shadow-sm">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-orange-600 text-white flex items-center justify-center font-black text-sm shadow-md shrink-0">
@@ -947,7 +1473,7 @@ export function OrderTrackingScreen({
                         <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate">
                           {riders[order.rider_id]?.full_name || "Assigned Driver"}
                         </p>
-                        <p className="text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
+                        <p className="text-[10px] whitespace-nowrap font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
                           Driver Chat Channel Connected
                         </p>
                       </div>
@@ -964,7 +1490,7 @@ export function OrderTrackingScreen({
                       <MessageCircle className="w-4 h-4" />
                       <span>Chat with Driver</span>
                       {(unreadCounts[order.id] || 0) > 0 && (
-                        <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] font-black min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
+                        <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] whitespace-nowrap font-black min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-900 animate-bounce">
                           {unreadCounts[order.id]}
                         </span>
                       )}
@@ -972,20 +1498,39 @@ export function OrderTrackingScreen({
                   </div>
                 )}
 
-                {/* 1. Pending / Preparing state notice */}
-                {order.status === "pending" && order.delivery_status === "finding_rider" && (
-                  <div className="p-5 bg-amber-500/10 border-2 border-amber-500/20 rounded-2xl flex gap-4 items-start animate-pulse">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-600 shrink-0">
-                      <Clock size={20} />
-                    </div>
-                    <div className="space-y-1">
-                      <h4 className="font-bold text-sm text-amber-800 dark:text-amber-400">
-                        Order Confirmed & Preparing
-                      </h4>
-                      <p className="text-xs text-amber-700/80 dark:text-amber-500/80 leading-relaxed font-medium">
-                        Your order has been received by {shop?.name || "the shop"}. Preparation is in progress, and driver details will appear once your courier is dispatched.
-                      </p>
-                    </div>
+                {/* Secure Handshake Delivery PIN & QR Code Display */}
+                {Boolean(order.is_delivery || order.order_type === "delivery") && (
+                  <div className="space-y-2">
+                    {isLiveDeliveryActive(order) && (
+                      <div className="flex items-center gap-2 p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-xs font-bold text-emerald-800 dark:text-emerald-300 animate-pulse">
+                        <KeyRound className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>
+                          <strong>Delivery Handover:</strong> Provide your 4-digit PIN or show the QR code below to your rider upon arrival to complete delivery.
+                        </span>
+                      </div>
+                    )}
+                    <SecureDeliveryHandshakeCard
+                      pin={
+                        order.delivery_pin ||
+                        (order.id
+                          ? String(
+                              Math.abs(
+                                order.id
+                                  .split("")
+                                  .reduce(
+                                    (acc: number, c: string) =>
+                                      acc + c.charCodeAt(0),
+                                    0,
+                                  ) * 31,
+                              ) %
+                                9000 +
+                                1000,
+                            )
+                          : "4928")
+                      }
+                      orderId={order.id}
+                      triggerHaptic={triggerHaptic}
+                    />
                   </div>
                 )}
 
@@ -1024,8 +1569,8 @@ export function OrderTrackingScreen({
                   </div>
                 )}
 
-                {/* Delivery/Rider Contact Widget & Live Telemetry Map (Strict Fleet Isolation: Only when rider_id attached and order dispatched) */}
-                {order.is_delivery && isRiderAttachedAndDispatched(order) && (
+                {/* Delivery/Rider Contact Widget & Live Telemetry Map (Strict Smart Dispatch: Only when delivery_status === 'picked_up' / Live Delivery Phase) */}
+                {order.is_delivery && isLiveDeliveryActive(order) && (
                   (() => {
                     const assignedRider = riders[order.rider_id];
                     const riderName = assignedRider?.full_name || "Assigned Courier";
@@ -1052,16 +1597,16 @@ export function OrderTrackingScreen({
                           <div className="flex justify-between items-center text-[10px] uppercase font-black tracking-widest text-orange-400 border-b border-slate-800 pb-2">
                             <span className="flex items-center gap-1.5">
                               <MapPin className="w-3.5 h-3.5 text-orange-500" />
-                              Numeric Route Matrix (lat, lng)
+                              Numeric Route Matrix (latitude, longitude)
                             </span>
-                            <span className="bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded text-[9px] font-mono">
+                            <span className="bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded text-[10px] whitespace-nowrap font-mono">
                               Live Telemetry
                             </span>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1">
                             <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60 space-y-0.5">
-                              <span className="text-[9px] text-slate-400 font-sans font-bold uppercase tracking-wider block">
+                              <span className="text-[10px] whitespace-nowrap text-slate-400 font-sans font-bold uppercase tracking-wider block">
                                 1. Shop Origin
                               </span>
                               <span className="font-mono text-emerald-400 font-bold text-[11px] block">
@@ -1070,7 +1615,7 @@ export function OrderTrackingScreen({
                             </div>
 
                             <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60 space-y-0.5">
-                              <span className="text-[9px] text-slate-400 font-sans font-bold uppercase tracking-wider block">
+                              <span className="text-[10px] whitespace-nowrap text-slate-400 font-sans font-bold uppercase tracking-wider block">
                                 2. Courier Live Pointer
                               </span>
                               <span className="font-mono text-indigo-400 font-bold text-[11px] block">
@@ -1079,7 +1624,7 @@ export function OrderTrackingScreen({
                             </div>
 
                             <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60 space-y-0.5">
-                              <span className="text-[9px] text-slate-400 font-sans font-bold uppercase tracking-wider block">
+                              <span className="text-[10px] whitespace-nowrap text-slate-400 font-sans font-bold uppercase tracking-wider block">
                                 3. Destination Spot
                               </span>
                               <span className="font-mono text-amber-400 font-bold text-[11px] block">
@@ -1122,10 +1667,10 @@ export function OrderTrackingScreen({
                                 </div>
                               </Popup>
                             </Marker>
-                            <Marker position={[destLat, destLng]} icon={customerDestIcon}>
+                            <Marker position={[destLat, destLng]} icon={userMapIcon}>
                               <Popup>
-                                <div className="text-xs font-bold font-sans text-amber-600">
-                                  📍 Customer Destination Spot
+                                <div className="text-xs font-bold font-sans text-blue-600">
+                                  📍 Your Delivery Location
                                 </div>
                               </Popup>
                             </Marker>
@@ -1142,12 +1687,12 @@ export function OrderTrackingScreen({
                                 <p className="text-xs font-black text-slate-800 dark:text-slate-200">
                                   {riderName}
                                 </p>
-                                <p className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-widest mt-0.5">
+                                <p className="text-[10px] whitespace-nowrap text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-widest mt-0.5">
                                   Courier Dispatched & En Route
                                 </p>
                               </div>
                             </div>
-                            <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-400 text-[8px] font-black px-2 py-0.5 rounded uppercase leading-none">
+                            <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-400 text-[10px] whitespace-nowrap font-black px-2 py-0.5 rounded uppercase leading-none">
                               Dispatched
                             </span>
                           </div>
@@ -1364,6 +1909,17 @@ export function OrderTrackingScreen({
                     Cancel Order
                   </button>
                 )}
+
+                {/* Mark as Received Action */}
+                {["ready", "picked_up", "delivered"].includes((order.status || "").toLowerCase()) && (
+                  <button
+                    onClick={() => handleMarkReceived(order.id, order.shop_id, order.product_name)}
+                    className="w-full mt-2 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    Mark as Received
+                  </button>
+                )}
               </div>
             );
           })
@@ -1385,7 +1941,7 @@ export function OrderTrackingScreen({
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-[32px] p-6 relative z-10 shadow-2xl border border-slate-100 dark:border-slate-800"
+              className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-[32px] p-6 relative z-10 shadow-xl border border-slate-100 dark:border-slate-800"
             >
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-2xl flex items-center justify-center text-red-600 mb-4 mx-auto">
                 <AlertCircle className="w-6 h-6" />
@@ -1438,6 +1994,116 @@ export function OrderTrackingScreen({
                   className="w-full py-3 bg-white dark:bg-slate-900 text-slate-500 font-bold text-[10px] uppercase tracking-widest active:scale-95 transition-all"
                 >
                   Go Back
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Cancellation Error Dialog with Explicit Retry Button */}
+      <AnimatePresence>
+        {cancellationErrorModal?.isOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !isCancelling && setCancellationErrorModal(null)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-[32px] p-6 relative z-10 shadow-xl border border-red-100 dark:border-red-900/40"
+            >
+              <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-2xl flex items-center justify-center text-red-600 mb-4 mx-auto">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white text-center mb-1">
+                Cancellation Failed
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center mb-6 leading-relaxed">
+                {cancellationErrorModal.errorMessage}
+              </p>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={isCancelling}
+                  onClick={async () => {
+                    if (typeof navigator !== "undefined" && !navigator.onLine) {
+                      toast.error("Device is still offline. Please reconnect before syncing.");
+                      return;
+                    }
+                    setIsCancelling(true);
+                    await processPendingCancellations();
+                    setIsCancelling(false);
+                    setCancellationErrorModal(null);
+                    setCancellationModal({ isOpen: false, orderId: null });
+                  }}
+                  className="w-full py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isCancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Sync Now
+                </button>
+
+                <button
+                  disabled={isCancelling}
+                  onClick={() => {
+                    const targetId = cancellationErrorModal.orderId;
+                    const reason = cancellationErrorModal.cancelReason;
+                    if (targetId) {
+                      executeCancellation(targetId, reason);
+                    }
+                  }}
+                  className="w-full py-3 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isCancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Retry Cancellation
+                </button>
+
+                <button
+                  disabled={isCancelling}
+                  onClick={() => {
+                    const targetId = cancellationErrorModal.orderId;
+                    const reason = cancellationErrorModal.cancelReason;
+                    if (targetId) {
+                      const currentQueue = safeLocalStorageGet("pending_cancellation", []);
+                      const updatedQueue = currentQueue.filter((item: any) => item?.orderId !== targetId);
+                      updatedQueue.push({
+                        orderId: targetId,
+                        cancelReason: reason || "Cancelled by customer",
+                        timestamp: Date.now(),
+                      });
+                      safeLocalStorageSet("pending_cancellation", updatedQueue);
+
+                      setLocalOrders((prev) =>
+                        prev.map((o) =>
+                          o.id === targetId
+                            ? { ...o, status: "cancelled", cancellation_reason: reason }
+                            : o
+                        )
+                      );
+
+                      toast.info("Queued in pending_cancellation for background sync.");
+                      setCancellationErrorModal(null);
+                      setCancellationModal({ isOpen: false, orderId: null });
+                      setCancelReason("");
+                    }
+                  }}
+                  className="w-full py-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[10px] uppercase tracking-widest rounded-2xl active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <CloudOff className="w-3.5 h-3.5" />
+                  <span>Queue for Auto-Sync</span>
+                </button>
+
+                <button
+                  disabled={isCancelling}
+                  onClick={() => setCancellationErrorModal(null)}
+                  className="w-full py-2.5 bg-transparent text-slate-400 dark:text-slate-500 font-bold text-[10px] uppercase tracking-widest active:scale-95 transition-all cursor-pointer"
+                >
+                  Dismiss
                 </button>
               </div>
             </motion.div>

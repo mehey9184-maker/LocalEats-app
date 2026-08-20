@@ -48,9 +48,12 @@ export const handleSupabaseError = (
       'We are currently updating our store lists to bring you the latest menus. Please try again in a few seconds.'
     );
   } else if (errorMessage.includes('failed to fetch') || errorMessage.includes('network error')) {
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     showAlert(
-      'Connection Issue',
-      'We are having trouble connecting to the server. Please check your internet connection and try again.'
+      isOffline ? 'Offline' : 'Server Unreachable',
+      isOffline
+        ? 'You are currently offline. Please check your network connection and try again.'
+        : 'Unable to connect to the server. The backend service may be temporarily busy or unreachable. Please try again shortly.'
     );
   } else if (errorCode === '23505') {
     showAlert(

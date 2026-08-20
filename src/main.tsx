@@ -33,7 +33,7 @@ export interface GlobalErrorLog {
 
 const MAX_ERROR_LOGS = 50;
 
-const isIgnorableErrorLog = (msg?: string) => {
+export const isIgnorableErrorLog = (msg?: string) => {
   if (!msg) return true;
   const trimmed = msg.trim();
   if (
@@ -41,11 +41,22 @@ const isIgnorableErrorLog = (msg?: string) => {
     trimmed === '{}' ||
     trimmed === 'undefined' ||
     trimmed === 'null' ||
+    trimmed === '[object Object]' ||
     trimmed === 'Unhandled Promise Rejection, Reason:' ||
-    trimmed.toLowerCase().startsWith('unhandled promise rejection')
+    trimmed.startsWith('Unhandled Promise Rejection, Reason:') ||
+    trimmed.toLowerCase().startsWith('unhandled promise rejection') ||
+    trimmed.toLowerCase().includes('failed to request notification permission') ||
+    trimmed.toLowerCase().includes('[push] subscription failed') ||
+    trimmed.toLowerCase().includes('push service not available') ||
+    trimmed.toLowerCase().includes('permission denied') ||
+    trimmed.toLowerCase().includes('push_subscriptions')
   ) return true;
   const lower = trimmed.toLowerCase();
   return (
+    lower.includes('lock broken by another request') ||
+    lower.includes('lock broken') ||
+    lower.includes('lock acquired') ||
+    lower.includes('navigator.locks') ||
     lower.includes('failed to fetch') ||
     lower.includes('fetch failed') ||
     lower.includes('load failed') ||
@@ -57,9 +68,12 @@ const isIgnorableErrorLog = (msg?: string) => {
     lower.includes('websocket') ||
     lower.includes('aborted') ||
     lower.includes('abort error') ||
+    lower.includes('aborterror') ||
     lower.includes('circuit breaker') ||
     lower.includes('schema cache') ||
-    lower.includes('error fetching shops')
+    lower.includes('error fetching shops') ||
+    lower.includes('jwt expired') ||
+    lower.includes('invalid jwt')
   );
 };
 
@@ -126,18 +140,10 @@ if (typeof window !== "undefined") {
 
   const originalConsoleError = console.error;
   console.error = (...args: any[]) => {
-    const msg = args.map(a => typeof a === "object" ? (a?.message || JSON.stringify(a)) : String(a)).join(" ");
-    const lower = msg.toLowerCase();
-    if (
-      lower.includes('failed to connect to websocket') ||
-      lower.includes('failed to fetch') ||
-      lower.includes('load failed') ||
-      lower.includes('networkerror') ||
-      lower.includes('login error') ||
-      lower.includes('incompatible react versions')
-    ) {
-      originalConsoleError(...args);
-      return; // Ignore Vite HMR, auth/login user notifications, and expected offline fetch network noise
+    const msg = args.map(a => typeof a === "object" ? (a?.message || (a ? JSON.stringify(a) : "")) : String(a)).join(" ");
+    if (isIgnorableErrorLog(msg)) {
+      console.debug("[Ignored log]", ...args);
+      return; // Ignore Vite HMR, auth locks, notification prompts, empty objects, and expected offline fetch network noise
     }
     pushGlobalErrorLog("console_error", msg);
     originalConsoleError(...args);
@@ -153,37 +159,19 @@ if (typeof window !== "undefined") {
     }
     const rawReason = event?.reason;
     const reasonStr = (rawReason && (rawReason instanceof Error ? rawReason.message : (typeof rawReason === 'object' ? (rawReason.message || JSON.stringify(rawReason)) : String(rawReason)))) || '';
-    const lowerReason = reasonStr.toLowerCase();
-
     const stack = rawReason && rawReason instanceof Error ? rawReason.stack : undefined;
-    const isTimeoutOrNetwork =
-      !reasonStr ||
-      reasonStr === '{}' ||
-      reasonStr === 'undefined' ||
-      isIgnorableErrorLog(reasonStr) ||
-      lowerReason.includes('upstream connect error') ||
-      lowerReason.includes('connection timeout') ||
-      lowerReason.includes('disconnect/reset') ||
-      lowerReason.includes('timeout') ||
-      lowerReason.includes('failed to fetch') ||
-      lowerReason.includes('load failed') ||
-      lowerReason.includes('network error') ||
-      lowerReason.includes('networkerror') ||
-      lowerReason.includes('fetch failed') ||
-      lowerReason.includes('aborted') ||
-      lowerReason.includes('abort error');
 
-    if (!isTimeoutOrNetwork && reasonStr && reasonStr !== '{}' && !lowerReason.includes('login error')) {
-      pushGlobalErrorLog(
-        "unhandledrejection",
-        reasonStr,
-        stack
-      );
+    if (!reasonStr || reasonStr === "{}" || isIgnorableErrorLog(reasonStr)) {
+      return true;
     }
 
-    if (reasonStr && !isTimeoutOrNetwork) {
-      console.warn('[UnhandledRejection prevented]', reasonStr);
-    }
+    pushGlobalErrorLog(
+      "unhandledrejection",
+      reasonStr,
+      stack
+    );
+
+    console.debug('[UnhandledRejection prevented]', reasonStr);
     return true;
   };
 
@@ -194,17 +182,9 @@ if (typeof window !== "undefined") {
   window.addEventListener('error', (event) => {
     const errorStr = event.error && event.error instanceof Error ? event.error.message : String(event.message || 'Uncaught Script Error');
     const stack = event.error && event.error instanceof Error ? event.error.stack : undefined;
-    const lowerError = errorStr.toLowerCase();
 
-    if (
-      lowerError.includes('websocket closed') ||
-      lowerError.includes('failed to connect to websocket') ||
-      lowerError.includes('failed to fetch') ||
-      lowerError.includes('load failed') ||
-      lowerError.includes('network error') ||
-      lowerError.includes('networkerror')
-    ) {
-      event.preventDefault(); // Silently handle Vite HMR and network connection drops
+    if (isIgnorableErrorLog(errorStr)) {
+      event.preventDefault(); // Silently handle Vite HMR, locks, and network connection drops
       event.stopImmediatePropagation();
       return;
     }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Send, MessageCircle, X, Loader2, Bike, CheckCheck, User } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { supabase, getFreshChannel } from "../lib/supabase";
+import { FirestoreService } from "../lib/firebase";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -107,7 +108,7 @@ export function ChatWidget({
       try {
         const { data, error } = await supabase
           .from("order_messages")
-          .select("*")
+          .select("id, order_id, sender_id, user_id, sender_type, sender_role, sender_name, message, message_text, content, text, is_read, read_at, created_at")
           .eq("order_id", orderId)
           .order("created_at", { ascending: true });
 
@@ -149,8 +150,7 @@ export function ChatWidget({
     window.addEventListener("focus", handleReconnect);
 
     // Subscribe to BOTH Postgres DB changes and WebSockets Broadcast channels ('chat_widget:123' & 'chat_widget_123')
-    const primaryChannel = supabase
-      .channel(`chat_widget:${orderId}`)
+    const primaryChannel = getFreshChannel(`chat_widget:${orderId}`)
       .on(
         "postgres_changes",
         {
@@ -256,6 +256,11 @@ export function ChatWidget({
     let lastError: any = null;
 
     try {
+      // Sync to Firestore Realtime Messages
+      FirestoreService.sendMessage(effectiveOrderId, effectiveSenderId, "customer", messageText).catch((fsErr) => {
+        console.info("[Chat Firestore] Background sync note:", fsErr);
+      });
+
       const payload: any = {
         order_id: effectiveOrderId,
         sender_id: effectiveSenderId,

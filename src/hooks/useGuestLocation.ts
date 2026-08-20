@@ -70,14 +70,14 @@ export function useGuestLocation(): GuestLocationState {
       const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout safety
 
       try {
-        // Querying a lightweight public geolocator
+        // Querying a lightweight public geolocator with safe catch handler
         const response = await fetch("https://ip-api.com/json/?fields=status,lat,lon,countryCode", {
           signal: controller.signal
-        });
+        }).catch(() => null);
         clearTimeout(timeoutId);
 
-        if (response.ok) {
-          const data = await response.json();
+        if (response && response.ok) {
+          const data = await response.json().catch(() => null);
           if (data && data.status === "success" && typeof data.lat === "number" && typeof data.lon === "number") {
             const ipCoords: Coordinates = { lat: data.lat, lng: data.lon };
             

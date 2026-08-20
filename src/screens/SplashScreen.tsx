@@ -17,13 +17,6 @@ export function SplashScreen({
   userProfile: any;
 }) {
   useEffect(() => {
-    // Professional welcome chime on launch
-    const jingle = new Audio(
-      "https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3",
-    );
-    jingle.volume = 0.3;
-    jingle.play().catch((e) => console.log("Autoplay prevented:", e));
-
     // Auto-transition logic for persistent sessions
     const timeout = setTimeout(() => {
       if (session) {

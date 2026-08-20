@@ -4,11 +4,13 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export interface MapLegendProps {
   userLocation?: { lat: number; lng: number } | null;
-  activeFilter?: 'all' | 'customer' | 'shop' | 'closed_shop';
-  onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'closed_shop') => void;
+  activeFilter?: 'all' | 'customer' | 'shop' | 'closed_shop' | 'rider';
+  onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'closed_shop' | 'rider') => void;
   shopCount?: number;
+  riderCount?: number;
   onFocusCustomer?: () => void;
   onFocusShop?: () => void;
+  onFocusRider?: () => void;
   className?: string;
 }
 
@@ -17,8 +19,10 @@ export const MapLegend: React.FC<MapLegendProps> = ({
   activeFilter = 'all',
   onSelectFilter,
   shopCount,
+  riderCount,
   onFocusCustomer,
   onFocusShop,
+  onFocusRider,
   className = '',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -78,6 +82,24 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       ),
       action: onFocusShop,
     },
+    {
+      id: 'rider' as const,
+      title: 'Live Courier / Driver',
+      badge: riderCount !== undefined ? `${riderCount} Active` : 'Indigo Pin',
+      desc: 'Indigo Pins — Live township delivery couriers',
+      color: 'bg-indigo-600',
+      borderColor: 'border-indigo-500',
+      lightBg: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300',
+      icon: (
+        <div className="relative flex items-center justify-center">
+          <div className="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-md border-2 border-white">
+            <Bike className="w-3.5 h-3.5" />
+          </div>
+          <span className="absolute -bottom-0.5 w-1.5 h-1.5 bg-indigo-600 rounded-full"></span>
+        </div>
+      ),
+      action: onFocusRider,
+    },
   ];
 
   return (
@@ -97,7 +119,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
             Map Legend
             <Sparkles className="w-2.5 h-2.5 text-amber-500" />
           </span>
-          <span className="text-[8px] font-bold text-slate-400 dark:text-slate-500 leading-none mt-0.5">
+          <span className="text-[10px] whitespace-nowrap font-bold text-slate-400 dark:text-slate-500 leading-none mt-0.5">
             {isOpen ? 'Tap to hide' : 'Customer & Shop pins'}
           </span>
         </div>
@@ -164,7 +186,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
                           <span className="text-xs font-black text-slate-850 dark:text-slate-100 truncate">
                             {item.title}
                           </span>
-                          <span className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded-md ${item.lightBg}`}>
+                          <span className={`text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-md ${item.lightBg}`}>
                             {item.badge}
                           </span>
                         </div>
@@ -188,7 +210,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
             </div>
 
             <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800/60 text-center">
-              <p className="text-[8px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+              <p className="text-[10px] whitespace-nowrap font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                 💡 Click any pin type to focus or highlight on map
               </p>
             </div>

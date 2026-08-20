@@ -33,7 +33,7 @@ export const createShopMapIcon = (isOpen: boolean = true) => {
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
           </svg>
-          <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full shadow-md flex items-center justify-center text-[8px] font-black text-white">✓</span>
+          <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full shadow-md flex items-center justify-center text-[10px] whitespace-nowrap font-black text-white">✓</span>
         </div>
         <div class="w-1.5 h-1.5 bg-amber-600 rounded-full mt-1"></div>
       </div>`,
@@ -49,7 +49,7 @@ export const createShopMapIcon = (isOpen: boolean = true) => {
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
         </svg>
-        <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-slate-500 border-2 border-white rounded-full shadow flex items-center justify-center text-[8px] font-black text-white">✕</span>
+        <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-slate-500 border-2 border-white rounded-full shadow flex items-center justify-center text-[10px] whitespace-nowrap font-black text-white">✕</span>
       </div>
       <div class="w-1.5 h-1.5 bg-slate-600 rounded-full mt-1"></div>
     </div>`,
@@ -62,20 +62,38 @@ export const createShopMapIcon = (isOpen: boolean = true) => {
 
 export const storeMapIcon = createShopMapIcon(true);
 
-export const riderMapIcon = L.divIcon({
-  html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
-    <div class="bg-indigo-600 p-2 rounded-full border-4 border-white shadow-lg text-white flex items-center justify-center relative z-10 animate-pulse">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/>
-      </svg>
-    </div>
-    <div class="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-1"></div>
-  </div>`,
-  className: '',
-  iconSize: [48, 48],
-  iconAnchor: [24, 48],
-  popupAnchor: [0, -48]
-});
+export const createRiderMapIcon = (vehicleType?: string) => {
+  const vType = (vehicleType || '').toLowerCase();
+  let iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/>
+  </svg>`;
+
+  if (vType === 'car') {
+    iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.5 2.8C1.4 11.2 1 12 1 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>
+    </svg>`;
+  } else if (vType === 'motorbike' || vType === 'motorcycle') {
+    iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="5" cy="16" r="3"/><circle cx="19" cy="16" r="3"/><path d="M12 17h4l2-5h-3l-2 3H8l-2-4H3"/><path d="M13 6l2 3h3"/>
+    </svg>`;
+  }
+
+  return L.divIcon({
+    html: `<div class="relative w-12 h-12 drop-shadow-xl flex flex-col items-center justify-center">
+      <span class="absolute inset-0 rounded-full bg-indigo-500/25 animate-ping"></span>
+      <div class="bg-indigo-600 p-2 rounded-full border-3 border-white shadow-lg text-white flex items-center justify-center relative z-10 ring-4 ring-indigo-400/50">
+        ${iconSvg}
+      </div>
+      <div class="w-1.5 h-1.5 bg-indigo-600 rounded-full mt-1 border border-white"></div>
+    </div>`,
+    className: '',
+    iconSize: [48, 48],
+    iconAnchor: [24, 48],
+    popupAnchor: [0, -48]
+  });
+};
+
+export const riderMapIcon = createRiderMapIcon();
 
 const mapStyleUrls = {
   street: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -102,42 +120,47 @@ function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
   return null;
 }
 
-function MapFocusTracker({
+export function MapFocusTracker({
   coords,
+  userLocation,
+  center,
   onRecenter,
 }: {
-  coords: { lat: number; lng: number } | null;
+  coords?: { lat: number; lng: number } | null;
+  userLocation?: { lat: number; lng: number } | null;
+  center?: [number, number];
   onRecenter?: () => void;
 }) {
+  const activeCoords = coords || userLocation || (center ? { lat: center[0], lng: center[1] } : null);
   const map = useMap();
   const [hasPanned, setHasPanned] = useState(false);
   const prevCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
   // Automatically focus the map view on user's current location immediately upon successful geolocation
   useEffect(() => {
-    if (coords && coords.lat !== undefined && coords.lng !== undefined) {
+    if (activeCoords && activeCoords.lat !== undefined && activeCoords.lng !== undefined) {
       const prev = prevCoordsRef.current;
-      const isNew = !prev || Math.abs(prev.lat - coords.lat) > 0.0001 || Math.abs(prev.lng - coords.lng) > 0.0001;
+      const isNew = !prev || Math.abs(prev.lat - activeCoords.lat) > 0.0001 || Math.abs(prev.lng - activeCoords.lng) > 0.0001;
       if (isNew) {
-        map.flyTo({ lat: coords.lat, lng: coords.lng }, Math.max(15, map.getZoom()), {
+        map.flyTo({ lat: activeCoords.lat, lng: activeCoords.lng }, Math.max(15, map.getZoom()), {
           animate: true,
           duration: 1.0,
         });
-        prevCoordsRef.current = coords;
+        prevCoordsRef.current = activeCoords;
         setHasPanned(false);
       }
     }
-  }, [coords?.lat, coords?.lng, map]);
+  }, [activeCoords?.lat, activeCoords?.lng, map]);
 
   useMapEvents({
     dragstart: () => {
       setHasPanned(true);
     },
     zoomend: () => {
-      if (coords) {
-        const center = map.getCenter();
+      if (activeCoords) {
+        const currentCenter = map.getCenter();
         const dist = Math.sqrt(
-          Math.pow(center.lat - coords.lat, 2) + Math.pow(center.lng - coords.lng, 2)
+          Math.pow(currentCenter.lat - activeCoords.lat, 2) + Math.pow(currentCenter.lng - activeCoords.lng, 2)
         );
         if (dist > 0.0015) {
           setHasPanned(true);
@@ -147,8 +170,8 @@ function MapFocusTracker({
   });
 
   const handleReturnToLocation = () => {
-    if (coords) {
-      map.flyTo({ lat: coords.lat, lng: coords.lng }, 16, {
+    if (activeCoords) {
+      map.flyTo({ lat: activeCoords.lat, lng: activeCoords.lng }, 16, {
         animate: true,
         duration: 0.8,
       });
@@ -157,7 +180,7 @@ function MapFocusTracker({
     }
   };
 
-  if (!coords || !hasPanned) return null;
+  if (!activeCoords || !hasPanned) return null;
 
   return (
     <div className="absolute top-14 left-3 z-[1000] animate-in fade-in slide-in-from-top-2 duration-200">
@@ -173,6 +196,8 @@ function MapFocusTracker({
   );
 }
 
+export const ExploreMapUserTracker = MapFocusTracker;
+
 export function InvalidateMapSize({ trigger }: { trigger?: any }) {
   const map = useMap();
   useEffect(() => {
@@ -184,11 +209,11 @@ export function InvalidateMapSize({ trigger }: { trigger?: any }) {
   return null;
 }
 
-// Memoized Customer Location Pin
+// Memoized Customer Location Pin (Guaranteed top z-index to prevent being obscured by shops)
 export const MemoizedCustomerMarker = React.memo(
   function MemoizedCustomerMarker({ lat, lng }: { lat: number; lng: number }) {
     return (
-      <Marker position={[lat, lng]} icon={userMapIcon}>
+      <Marker position={[lat, lng]} icon={userMapIcon} zIndexOffset={2000}>
         <Popup>
           <motion.div
             initial={{ opacity: 0, scale: 0.9, y: 4 }}
@@ -225,17 +250,19 @@ export const MemoizedRiderMarker = React.memo(
       phone?: string;
       current_order_id?: string;
     };
-    distVal: number;
+    distVal?: number;
   }) {
     const vehicleIcon =
       rider.vehicle_type === "car"
         ? "🚗"
-        : rider.vehicle_type === "motorbike"
+        : rider.vehicle_type === "motorbike" || rider.vehicle_type === "motorcycle"
           ? "🏍️"
           : "🛵";
 
+    const customRiderIcon = useMemo(() => createRiderMapIcon(rider.vehicle_type), [rider.vehicle_type]);
+
     return (
-      <Marker position={[rider.latitude, rider.longitude]} icon={riderMapIcon}>
+      <Marker position={[rider.latitude, rider.longitude]} icon={customRiderIcon}>
         <Popup>
           <motion.div
             initial={{ opacity: 0, scale: 0.9, y: 4 }}
@@ -248,9 +275,11 @@ export const MemoizedRiderMarker = React.memo(
               <p className="font-extrabold text-xs text-indigo-700 dark:text-indigo-300">
                 {rider.full_name || `Courier #${rider.id.slice(0, 4)}`} {vehicleIcon}
               </p>
-              <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
-                {distVal.toFixed(1)} km away
-              </span>
+              {distVal !== undefined && (
+                <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                  {distVal.toFixed(1)} km away
+                </span>
+              )}
             </div>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mb-2">
               {rider.current_order_id
@@ -528,11 +557,13 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         
         // Reverse geocode to get a pretty address name
         try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-          const geoData = await res.json();
-          if (geoData && geoData.display_name) {
-            setQuery(geoData.display_name);
-            onSelect({ address: geoData.display_name, lat, lng });
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`).catch(() => null);
+          if (res && res.ok) {
+            const geoData = await res.json().catch(() => null);
+            if (geoData && geoData.display_name) {
+              setQuery(geoData.display_name);
+              onSelect({ address: geoData.display_name, lat, lng });
+            }
           }
         } catch (err: any) {
           console.info("Reverse geocode notice, using direct coordinates:", err?.message || err);
@@ -552,10 +583,12 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
 
     setLoading(true);
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' South Africa')}&limit=5`);
-      const data = await response.json();
-      setResults(data);
-      setShowResults(true);
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val + ' South Africa')}&limit=5`).catch(() => null);
+      if (response && response.ok) {
+        const data = await response.json().catch(() => []);
+        setResults(Array.isArray(data) ? data : []);
+        setShowResults(true);
+      }
     } catch (error: any) {
       console.info('Nominatim search notice:', error?.message || error);
     } finally {
@@ -576,14 +609,18 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
         const { latitude, longitude, accuracy } = position.coords;
         setGpsAccuracy(accuracy);
         try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
-          const data = await response.json();
-          const address = data.display_name;
-          setQuery(address);
-          setMarkerPos({ lat: latitude, lng: longitude });
-          setIsConfirmed(true);
-          setShowResults(false);
-          onSelect({ address, lat: latitude, lng: longitude });
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`).catch(() => null);
+          if (response && response.ok) {
+            const data = await response.json().catch(() => null);
+            const address = data?.display_name || `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+            setQuery(address);
+            setMarkerPos({ lat: latitude, lng: longitude });
+            setIsConfirmed(true);
+            setShowResults(false);
+            onSelect({ address, lat: latitude, lng: longitude });
+          } else {
+            throw new Error("Location service unavailable");
+          }
         } catch (error: any) {
           console.info('Reverse geocoding notice:', error?.message || error);
           setMarkerPos({ lat: latitude, lng: longitude });
@@ -632,9 +669,9 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
           setIsManuallyDragged(true);
           
           fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${newPos.lat}&lon=${newPos.lng}`)
-            .then(res => res.json())
+            .then(res => res ? res.json() : null)
             .then(data => {
-              const address = data.display_name || `GPS: ${newPos.lat.toFixed(6)}, ${newPos.lng.toFixed(6)}`;
+              const address = data?.display_name || `GPS: ${newPos.lat.toFixed(6)}, ${newPos.lng.toFixed(6)}`;
               setQuery(address);
               onSelect({ address, lat: newPos.lat, lng: newPos.lng });
             })
@@ -825,7 +862,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
                 </span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[8px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none mb-0.5">Map Accuracy</p>
+                <p className="text-[10px] whitespace-nowrap font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none mb-0.5">Map Accuracy</p>
                 <p className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate leading-tight uppercase tracking-tight">{accuracyDetails.src}</p>
               </div>
             </div>
@@ -1192,7 +1229,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                 />
               </svg>
-              <span className="absolute text-[8px] font-black leading-none text-slate-800 dark:text-slate-100">
+              <span className="absolute text-[10px] whitespace-nowrap font-black leading-none text-slate-800 dark:text-slate-100">
                 {accuracyDetails.pct}%
               </span>
             </div>
@@ -1206,7 +1243,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
           </div>
           
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 max-w-[85%] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-white text-[9px] text-center z-[1000] pointer-events-none font-bold uppercase tracking-wider shadow-md whitespace-nowrap">
-            📍 Drag the red pin to select your exact door location
+            📍 Drag the blue pin to select your exact door location
           </div>
 
           {/* Real-time Floating Overlay Controls inside the Map container wrapper */}

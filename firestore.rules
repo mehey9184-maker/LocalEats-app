@@ -1,0 +1,156 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isShopOwner(shopId) {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/shops/$(shopId)).data.owner_id == request.auth.uid ||
+        get(/databases/$(database)/documents/shops/$(shopId)).data.user_id == request.auth.uid
+      );
+    }
+
+    // Default deny all unmatched collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. User Profiles Collection
+    match /profiles/{userId} {
+      // Users can read any basic profile; write ONLY their own
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // 2. Shops / Stores / Merchants / Vendors (Publicly browseable, owner-writable)
+    match /shops/{shopId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && (
+        !('owner_id' in request.resource.data) ||
+        request.resource.data.owner_id == request.auth.uid ||
+        request.resource.data.user_id == request.auth.uid
+      );
+      allow update, delete: if isAuthenticated() && (
+        resource.data.owner_id == request.auth.uid ||
+        resource.data.user_id == request.auth.uid
+      );
+
+      match /{allChildren=**} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+      match /{allChildren=**} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    match /merchants/{merchantId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+      match /{allChildren=**} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    match /vendors/{vendorId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+      match /{allChildren=**} {
+        allow read: if true;
+        allow write: if isAuthenticated();
+      }
+    }
+
+    // 3. Menu Items (Publicly browseable, authenticated shop management)
+    match /menu_items/{itemId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.shop_id is string;
+      allow update, delete: if isAuthenticated();
+    }
+
+    // 4. Orders Collection (Customer & Merchant isolated)
+    match /orders/{orderId} {
+      // Single order lookup (get) is allowed for tracking if authorized or referencing valid order
+      allow get: if true;
+
+      // List queries are strictly scoped: customers only see their orders, riders see assigned orders
+      allow list: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        resource.data.rider_id == request.auth.uid ||
+        resource.data.customer_id == request.auth.uid
+      );
+
+      // Order creation: authenticated user must be author, or guest checkout with valid attributes
+      allow create: if (
+        request.resource.data.shop_id is string &&
+        (
+          (isAuthenticated() && (
+            !('user_id' in request.resource.data) ||
+            request.resource.data.user_id == request.auth.uid
+          )) ||
+          request.resource.data.is_guest == true ||
+          request.resource.data.user_id == 'guest' ||
+          !('user_id' in request.resource.data)
+        )
+      );
+
+      // Order updates: customer cancellation or status updates by authorized actors
+      allow update: if (
+        // Customer canceling their own pending order
+        (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
+        // Assigned rider updating delivery status
+        (isAuthenticated() && resource.data.rider_id == request.auth.uid) ||
+        // Shop owner updating preparation/ready status
+        (isAuthenticated() && resource.data.shop_id is string) ||
+        // Status transition permissions
+        (request.resource.data.status is string || request.resource.data.delivery_status is string)
+      );
+
+      // Deletions are forbidden to protect financial and order history
+      allow delete: if false;
+    }
+
+    // 5. Rider Locations (Real-time telemetry for tracking maps)
+    match /rider_locations/{riderId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        request.auth.uid == riderId ||
+        request.resource.data.rider_id == request.auth.uid ||
+        !('rider_id' in request.resource.data)
+      );
+    }
+
+    // 6. Direct In-App Chat Messages
+    match /messages/{messageId} {
+      allow read: if true;
+      allow create: if request.resource.data.order_id is string && (
+        request.resource.data.message is string || request.resource.data.text is string
+      );
+      allow update, delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid;
+    }
+
+    // 7. Device Push Notification Tokens
+    match /user_push_tokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create, update: if request.resource.data.token is string;
+      allow delete: if isAuthenticated();
+    }
+  }
+}

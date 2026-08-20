@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { supabase } from "../lib/supabase";
+import { supabase, getFreshChannel } from "../lib/supabase";
 import { Order } from "../types";
 import { toast } from "sonner";
 import { MessageCircle } from "lucide-react";
@@ -23,8 +23,7 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
     const orderIds = validOrders.map(o => `"${o.id}"`).join(",");
     const filter = `order_id=in.(${orderIds})`;
 
-    const channel = supabase
-      .channel('global_chat_notifications')
+    const channel = getFreshChannel('global_chat_notifications')
       .on(
         "postgres_changes",
         {

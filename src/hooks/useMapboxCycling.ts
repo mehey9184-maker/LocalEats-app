@@ -30,27 +30,26 @@ export async function fetchMapboxCyclingRoute(
   if (token && token.trim().length > 10) {
     try {
       const url = `https://api.mapbox.com/directions/v5/mapbox/cycling/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?geometries=geojson&overview=full&steps=true&access_token=${token}`;
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Mapbox API response error: ${response.status} ${response.statusText}`);
-      }
-      const data = await response.json();
-      if (data && data.routes && data.routes.length > 0) {
-        const route = data.routes[0];
-        const coordinates: [number, number][] = route.geometry.coordinates.map((coord: [number, number]) => [
-          coord[1], // latitude
-          coord[0]  // longitude
-        ]);
-        
-        const steps: string[] = route.legs?.[0]?.steps?.map((step: any) => step.maneuver?.instruction || "") || [];
+      const response = await fetch(url).catch(() => null);
+      if (response && response.ok) {
+        const data = await response.json().catch(() => null);
+        if (data && data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const coordinates: [number, number][] = route.geometry.coordinates.map((coord: [number, number]) => [
+            coord[1], // latitude
+            coord[0]  // longitude
+          ]);
+          
+          const steps: string[] = route.legs?.[0]?.steps?.map((step: any) => step.maneuver?.instruction || "") || [];
 
-        return {
-          distance: route.distance, // meters
-          duration: route.duration, // seconds
-          geometry: coordinates,
-          steps,
-          etaMinutes: Math.round(route.duration / 60)
-        };
+          return {
+            distance: route.distance, // meters
+            duration: route.duration, // seconds
+            geometry: coordinates,
+            steps,
+            etaMinutes: Math.round(route.duration / 60)
+          };
+        }
       }
     } catch (e: any) {
       console.info("Mapbox cycling route notice, falling back to high-accuracy simulated routing:", e?.message || e);

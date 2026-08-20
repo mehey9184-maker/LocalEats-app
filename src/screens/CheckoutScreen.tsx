@@ -5,8 +5,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { upsertProfileWithRPC } from "../lib/profileService";
-import { Shop, CartItem, Screen } from "../types";
-import { UserProfile } from "../App";
+import { Shop, CartItem, Screen, UserProfile } from "../types";
 import { IdempotencyManager } from "../utils/idempotency";
 import { calculateDistance, formatSAPhone, validateSAPhone, toDBPhone, safeLocalStorageSet, safeLocalStorageGet, getShopStatus, DEFAULT_MENU_IMAGE } from "../utils";
 import { Session } from "@supabase/supabase-js";
@@ -14,7 +13,7 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
-import { registerAndSyncPushToken } from "../lib/firebase";
+import { registerAndSyncPushToken, FirestoreService } from "../lib/firebase";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
@@ -149,6 +148,7 @@ export function CheckoutScreen({
 
   const [cardHolder, setCardHolder] = useState(userProfile?.fullName || "");
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isCartSummaryExpanded, setIsCartSummaryExpanded] = useState(false);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -157,22 +157,31 @@ export function CheckoutScreen({
   const paymentMethodSectionRef = useRef<HTMLDivElement>(null);
 
   const handleNextToStep2 = () => {
+    setFormErrors({});
     if (!customerName.trim()) {
-      toast.error("Please enter the recipient name");
+      setFormErrors({ name: "Please enter the recipient name" });
       nameInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       nameInputRef.current?.focus();
       return;
     }
-    if (!customerPhone.trim()) {
-      toast.error("Please enter a valid mobile number");
+    if (!customerPhone.trim() || customerPhone.replace(/\D/g, "").length < 9) {
+      setFormErrors({ phone: "Valid mobile number required" });
       phoneInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       phoneInputRef.current?.focus();
       return;
     }
-    if (deliveryType === "delivery" && !deliveryAddressText.trim()) {
+    if (deliveryType === "delivery" && (!deliveryAddressText.trim() || deliveryAddressText.trim().length < 5)) {
+      setFormErrors({ address: "Please provide a complete delivery address" });
       setShowAddressModal(true);
-      toast.error("Please select your delivery spot location");
       addressSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (deliveryType === "delivery" && isOnline && (!isLocationConfirmed || !deliveryCoordinates)) {
+      setFormErrors({ location: 'Please confirm location on the map.' });
+      return;
+    }
+    if (deliveryType === "delivery" && isOnline && isLocationConfirmed && !hasVisuallyConfirmedAddress) {
+      setFormErrors({ visualConfirm: 'Please check the box confirming your address.' });
       return;
     }
     setCurrentStep(2);
@@ -181,8 +190,9 @@ export function CheckoutScreen({
   };
 
   const handleNextToStep3 = () => {
+    setFormErrors({});
     if (!paymentMethod) {
-      toast.error("Please select a settlement payment method");
+      setFormErrors({ payment: "Please select a settlement payment method" });
       paymentMethodSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
@@ -629,7 +639,7 @@ export function CheckoutScreen({
       try {
         const { data, error } = await supabase
           .from("promo_codes")
-          .select("*")
+          .select("id, code, discount_type, discount_value, min_order_amount, max_discount_amount, is_active")
           .eq("code", code)
           .single();
 
@@ -1191,7 +1201,7 @@ export function CheckoutScreen({
           is_delivery: deliveryType === "delivery",
           order_type: deliveryType,
           delivery_fee: totalLineDeliveryFee,
-          delivery_status: isCOAOrder ? "finding_rider" : "none",
+          delivery_status: (isCOAOrder || paymentMethod === "cash") ? "none" : (deliveryType === "delivery" ? "finding_rider" : "none"),
           latitude: currentLat,
           longitude: currentLng,
         };
@@ -1328,6 +1338,11 @@ export function CheckoutScreen({
           });
         };
 
+        // Secure Handshake: Automatically generate a random 4-digit numeric string (e.g., '4928') if delivery. Do NOT generate if collection.
+        const secureDeliveryPin = deliveryType === "delivery"
+          ? Math.floor(1000 + Math.random() * 9000).toString()
+          : undefined;
+
         const orderData = cart.map((item, index) => {
           const customizationsString =
             item.selectedCustomizations
@@ -1385,8 +1400,9 @@ export function CheckoutScreen({
             payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
             is_delivery: deliveryType === "delivery",
             order_type: deliveryType,
+            delivery_pin: deliveryType === "delivery" ? secureDeliveryPin : null,
             delivery_fee: totalLineDeliveryFee,
-            delivery_status: (paymentMethod === "cash" || isCOAOrder) ? "finding_rider" : "none",
+            delivery_status: (paymentMethod === "cash" || isCOAOrder) ? "none" : (deliveryType === "delivery" ? "finding_rider" : "none"),
             latitude: currentLat,
             longitude: currentLng,
           };
@@ -1417,6 +1433,7 @@ export function CheckoutScreen({
 
           const payload: Record<string, any> = {
             id: d.id,
+            created_at: new Date().toISOString(),
             user_id: d.user_id || null,
             shop_id: d.shop_id,
             customer_name: d.customer_name || "Valued Customer",
@@ -1442,10 +1459,15 @@ export function CheckoutScreen({
             status: d.status || "pending",
             payment_method: d.payment_method || "cash",
             is_delivery: Boolean(d.is_delivery),
+            lat: d.latitude || null,
+            lng: d.longitude || null,
           };
 
           if (d.order_type) {
             payload.order_type = d.order_type;
+          }
+          if (d.delivery_pin) {
+            payload.delivery_pin = d.delivery_pin;
           }
           if (d.delivery_status) {
             payload.delivery_status = d.delivery_status;
@@ -1526,6 +1548,11 @@ export function CheckoutScreen({
                 status: d.status,
                 payment_method: d.payment_method,
                 is_delivery: d.is_delivery,
+                order_type: d.order_type || (d.is_delivery ? "delivery" : "collection"),
+                delivery_pin: d.delivery_pin || null,
+                lat: d.lat,
+                lng: d.lng,
+                city: d.city,
               }));
 
               try {
@@ -1579,9 +1606,18 @@ export function CheckoutScreen({
               throw new Error(`API returned ${response.status}`);
             }
           } catch (apiErr) {
-            console.error("[Checkout] /api/orders fallback failed:", apiErr);
+            console.info("[Checkout] /api/orders fallback notice:", apiErr);
             throw new Error("Order submission failed: both primary database and fallback API were unreachable or rejected the order.");
           }
+        }
+
+        // Direct Firestore Real-time Persistence for live client and driver tracking
+        try {
+          await Promise.allSettled(
+            cleanOrderData.map((ord) => FirestoreService.saveOrder(ord))
+          );
+        } catch (fsErr) {
+          console.info("[Checkout] Firestore sync notice:", fsErr);
         }
 
         // Cache order in local storage for instant sync across all tracking and order history screens
@@ -1616,8 +1652,10 @@ export function CheckoutScreen({
         // Pop COA confirmation on success
         if (isCashTrustActive && paymentMethod === "cash") {
           showAlert(
-            "Order Broadcasted!",
-            "Your order is broadcasted! An on-demand rider is being dispatched to retrieve and deliver your fresh order.",
+            "Order Confirmed!",
+            deliveryType === "delivery" 
+              ? "Your Cash on Delivery order is confirmed! The restaurant will deliver directly. Please have cash ready upon arrival."
+              : "Your Cash on Pickup order is confirmed! Please pay at the counter when you arrive.",
           );
         }
 
@@ -1655,7 +1693,7 @@ export function CheckoutScreen({
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
         {/* Unified Card Container */}
-        <div className="bg-white dark:bg-slate-900 shadow-2xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
         {/* Header Block */}
         <div className="flex items-center bg-white dark:bg-slate-900 px-4 py-4 sticky top-0 z-40 border-b border-slate-100 dark:border-slate-800 backdrop-blur-md">
           <button
@@ -1939,6 +1977,21 @@ export function CheckoutScreen({
                   </div>
                 )}
                 <div className="divide-y divide-slate-100 dark:divide-slate-800/40 max-h-[350px] overflow-y-auto pr-1 space-y-3">
+                  {cart.length === 0 && (
+                    <div className="py-12 flex flex-col items-center justify-center text-center">
+                      <div className="w-20 h-20 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center mb-4 text-orange-500">
+                        <ShoppingBag className="w-10 h-10 opacity-80" />
+                      </div>
+                      <h4 className="text-lg font-black text-slate-900 dark:text-white mb-2">Your cart is feeling light</h4>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 max-w-[200px] mb-6">Let's find some delicious local food to fill it up!</p>
+                      <button 
+                        onClick={onBack}
+                        className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-6 rounded-xl transition-all active:scale-95 shadow-md shadow-orange-600/20"
+                      >
+                        Browse Shops
+                      </button>
+                    </div>
+                  )}
                   {cart.map((item, idx) => {
                     const customizationsTotal = (item.selectedCustomizations || []).reduce(
                       (acc, c) => acc + Number(c.price),
@@ -1982,7 +2035,7 @@ export function CheckoutScreen({
                                     <p className="text-primary font-black text-xs leading-none">
                                       R {finalItemTotal.toFixed(2)}
                                     </p>
-                                    <p className="text-[8px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
+                                    <p className="text-[10px] whitespace-nowrap text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
                                       15% Bulk Discount Applied! (Was R {itemTotal.toFixed(2)})
                                     </p>
                                   </>
@@ -2096,7 +2149,7 @@ export function CheckoutScreen({
                 }`}
               >
                 <div className="absolute top-2 right-2">
-                  <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                  <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
                     100% Free
                   </span>
                 </div>
@@ -2108,7 +2161,7 @@ export function CheckoutScreen({
                   <p className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
                     R0.00 Delivery Fee
                   </p>
-                  <p className="text-[8px] text-slate-400 font-medium mt-0.5">
+                  <p className="text-[10px] whitespace-nowrap text-slate-400 font-medium mt-0.5">
                     Save R{ZONE_A_FEE.toFixed(2)} delivery
                   </p>
                 </div>
@@ -2130,14 +2183,14 @@ export function CheckoutScreen({
                 }`}
               >
                 <div className="absolute top-2 right-2">
-                  <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-600 dark:text-orange-400">
+                  <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-full bg-orange-500/20 text-orange-600 dark:text-orange-400">
                     ~{deliveryFeePercent}% of meal
                   </span>
                 </div>
                 <div className="relative">
                   <Navigation className="w-5 h-5 shrink-0 rotate-45" />
                   {distance !== null && distance > ZONE_B_LIMIT && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[8px] font-black px-1 rounded-full animate-bounce">
+                    <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] whitespace-nowrap font-black px-1 rounded-full animate-bounce">
                       !
                     </span>
                   )}
@@ -2151,7 +2204,7 @@ export function CheckoutScreen({
                       ? `Zone B: +R10.00`
                       : `Zone A: +R5.00`}
                   </p>
-                  <p className="text-[8px] text-slate-400 font-medium mt-0.5">
+                  <p className="text-[10px] whitespace-nowrap text-slate-400 font-medium mt-0.5">
                     vs R35 standard car courier
                   </p>
                 </div>
@@ -2169,14 +2222,14 @@ export function CheckoutScreen({
                 {isLocationConfirmed ? (
                   <div className="flex items-center gap-1 bg-green-50 dark:bg-green-500/10 px-2 py-0.5 rounded-full border border-green-100 dark:border-green-500/20">
                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-                    <span className="text-[8px] font-black text-green-600 uppercase tracking-wider">
+                    <span className="text-[10px] whitespace-nowrap font-black text-green-600 uppercase tracking-wider">
                       Location Confirmed
                     </span>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1 bg-amber-50 dark:bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-500/20">
                     <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></div>
-                    <span className="text-[8px] font-black text-amber-600 uppercase tracking-wider">
+                    <span className="text-[10px] whitespace-nowrap font-black text-amber-600 uppercase tracking-wider">
                       Requires Setup
                     </span>
                   </div>
@@ -2288,12 +2341,12 @@ export function CheckoutScreen({
                           <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                           <span className="text-[11px] font-black">Express</span>
                         </div>
-                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                        <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
                           {expressFeePercent}% of meal
                         </span>
                       </div>
                       <p className="text-[9px] text-slate-500 mt-1 font-medium">
-                        +R10 <span className="line-through opacity-60 text-[8px]">R30</span> • ~15-20m
+                        +R10 <span className="line-through opacity-60 text-[10px] whitespace-nowrap">R30</span> • ~15-20m
                       </p>
                     </button>
 
@@ -2439,7 +2492,7 @@ export function CheckoutScreen({
                   </div>
                   {distance !== null && (
                     <span
-                      className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                      className={`px-2 py-0.5 rounded text-[10px] whitespace-nowrap font-black uppercase tracking-wider ${
                         distance > ZONE_B_LIMIT
                           ? "bg-red-100 text-red-700"
                           : distance > ZONE_A_LIMIT
@@ -2562,7 +2615,7 @@ export function CheckoutScreen({
                       </Popup>
                     </Marker>
                   </MapContainer>
-                  <div className="absolute bottom-2 left-2 bg-slate-950/75 backdrop-blur-sm text-white text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded">
+                  <div className="absolute bottom-2 left-2 bg-slate-950/75 backdrop-blur-sm text-white text-[10px] whitespace-nowrap font-black uppercase tracking-widest px-2 py-1 rounded">
                     📍 {primaryShop.name} Position
                   </div>
                 </div>
@@ -2609,10 +2662,11 @@ export function CheckoutScreen({
                   ref={nameInputRef}
                   type="text"
                   value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
+                  onChange={(e) => { setCustomerName(e.target.value); setFormErrors(prev => ({...prev, name: undefined})); }}
                   placeholder="e.g. Thabo Mokoena"
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-xs font-bold focus:ring-1 focus:ring-orange-500 outline-none transition-all dark:text-white"
+                  className={`w-full bg-slate-50 dark:bg-slate-950 border ${formErrors.name ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-800 focus:ring-orange-500'} rounded-2xl px-3.5 py-3 text-xs font-bold focus:ring-1 outline-none transition-all dark:text-white`}
                 />
+                {formErrors.name && <p className="text-red-500 text-[10px] whitespace-nowrap mt-1">{formErrors.name}</p>}
               </div>
 
               <div className="space-y-1">
@@ -2623,10 +2677,11 @@ export function CheckoutScreen({
                   ref={phoneInputRef}
                   type="tel"
                   value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  onChange={(e) => { setCustomerPhone(formatSAPhone(e.target.value)); setFormErrors(prev => ({...prev, phone: undefined})); }}
                   placeholder="e.g. 072 123 4567"
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-xs font-bold focus:ring-1 focus:ring-orange-500 outline-none transition-all dark:text-white"
+                  className={`w-full bg-slate-50 dark:bg-slate-950 border ${formErrors.phone ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-800 focus:ring-orange-500'} rounded-2xl px-3.5 py-3 text-xs font-bold focus:ring-1 outline-none transition-all dark:text-white`}
                 />
+                {formErrors.phone && <p className="text-red-500 text-[10px] whitespace-nowrap mt-1">{formErrors.phone}</p>}
               </div>
             </div>
 
@@ -2741,7 +2796,7 @@ export function CheckoutScreen({
                               0.85
                             ).toFixed(2)}
                           </p>
-                          <p className="text-[8px] text-emerald-650 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
+                          <p className="text-[10px] whitespace-nowrap text-emerald-650 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
                             15% Bulk Discount Applied! (Was R{" "}
                             {(
                               (item.price +
@@ -3034,7 +3089,7 @@ export function CheckoutScreen({
                             : "Cash on Delivery (COD)"}
                       </p>
                       {isCashTrustActive && userOrderCount === 0 && (
-                        <span className="bg-emerald-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse shrink-0">
+                        <span className="bg-emerald-600 text-white text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-wider animate-pulse shrink-0">
                           Recommended
                         </span>
                       )}
@@ -3222,7 +3277,7 @@ export function CheckoutScreen({
                           <div className="flex justify-between"><div className="border border-black flex-1"></div><div className="border border-black flex-1"></div></div>
                         </div>
                       </div>
-                      <p className="text-[8px] text-slate-300 uppercase tracking-widest font-black leading-none mt-1">Smart Chip</p>
+                      <p className="text-[10px] whitespace-nowrap text-slate-300 uppercase tracking-widest font-black leading-none mt-1">Smart Chip</p>
                     </div>
                     {/* Visual Brand Name */}
                     <div className="text-right">
@@ -3594,7 +3649,7 @@ export function CheckoutScreen({
                     <span>Promo Applied: "{appliedPromo.code}"</span>
                   </span>
                   <span className="font-mono text-xs flex items-center gap-1.5 font-black">
-                    <span className="text-[8px] bg-emerald-500 text-slate-950 font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full select-none">
+                    <span className="text-[10px] whitespace-nowrap bg-emerald-500 text-slate-950 font-black uppercase tracking-wider px-2 py-1 rounded-full select-none">
                       Coupon Saved
                     </span>
                     <span>- R {discountAmount.toFixed(2)}</span>
@@ -3751,7 +3806,7 @@ export function CheckoutScreen({
         <div className="fixed bottom-0 left-0 right-0 z-[80] md:hidden bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-3.5 py-2 shadow-2xl animate-in slide-in-from-bottom duration-200">
           <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <div className="flex flex-col min-w-0">
-              <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">
+              <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-widest text-slate-400">
                 Total (Step {currentStep}/3)
               </span>
               <span className="text-base font-black font-mono text-orange-400 leading-none mt-0.5">

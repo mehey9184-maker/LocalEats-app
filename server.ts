@@ -27,8 +27,45 @@ const getGeminiClient = () => {
   });
 };
 
+// API routes go here FIRST
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
 // In-memory store for synced orders as resilient fallback
 const serverOrders: any[] = [];
+const serverProfiles: Record<string, any> = {};
+
+// API Endpoint for resilient Profile Sync
+app.post("/api/profiles", (req, res) => {
+  try {
+    const profile = req.body;
+    if (!profile || (!profile.user_id && !profile.id)) {
+      return res.status(400).json({ error: "user_id or id is required" });
+    }
+    const userId = profile.user_id || profile.id;
+    serverProfiles[userId] = {
+      ...serverProfiles[userId],
+      ...profile,
+      user_id: userId,
+      id: userId,
+      updated_at: new Date().toISOString(),
+    };
+    return res.json({ success: true, profile: serverProfiles[userId] });
+  } catch (err: any) {
+    console.error("Profile save error:", err);
+    return res.status(500).json({ error: err.message || "Failed to save profile" });
+  }
+});
+
+app.get("/api/profiles/:id", (req, res) => {
+  const { id } = req.params;
+  const profile = serverProfiles[id];
+  if (!profile) {
+    return res.status(404).json({ error: "Profile not found" });
+  }
+  return res.json({ profile });
+});
 
 // API Endpoint for resilient Order Placement & Sync
 app.post("/api/orders", (req, res) => {
@@ -81,6 +118,33 @@ app.post("/api/orders", (req, res) => {
   } catch (err: any) {
     console.error("Order save error:", err);
     return res.status(500).json({ error: err.message || "Failed to process order" });
+  }
+});
+
+// API Endpoint to patch/update order status (e.g. cancellation)
+app.patch("/api/orders/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const existingIdx = serverOrders.findIndex((o) => o.id === id);
+    if (existingIdx >= 0) {
+      serverOrders[existingIdx] = {
+        ...serverOrders[existingIdx],
+        ...updates,
+        updated_at: new Date().toISOString(),
+      };
+      return res.json({ success: true, order: serverOrders[existingIdx] });
+    }
+    const newOrder = {
+      id,
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    serverOrders.unshift(newOrder);
+    return res.json({ success: true, order: newOrder });
+  } catch (err: any) {
+    console.error("Order update error:", err);
+    return res.status(500).json({ error: err.message || "Failed to update order" });
   }
 });
 

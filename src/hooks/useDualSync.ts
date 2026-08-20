@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
+import { FirestoreService } from "../lib/firebase";
 import { DualSyncEngine, dualSyncEngine, SyncSource } from "../utils/dualSync";
 import { Order } from "../types";
 
@@ -36,7 +37,24 @@ export function useDualSyncOrders(
   const fetchOrders = useCallback(async (): Promise<Order[]> => {
     if (!userId && !shopId) return [];
 
-    const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+    const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng";
+
+    // Primary Cloud Tier: Firestore Realtime Database
+    try {
+      if (userId) {
+        const firestoreOrders = await FirestoreService.getOrdersByUser(userId);
+        if (firestoreOrders && firestoreOrders.length > 0) {
+          return firestoreOrders as Order[];
+        }
+      } else if (shopId) {
+        const firestoreOrders = await FirestoreService.getOrdersByShop(shopId);
+        if (firestoreOrders && firestoreOrders.length > 0) {
+          return firestoreOrders as Order[];
+        }
+      }
+    } catch (fsErr) {
+      console.info("[DualSync] Firestore fetch note:", fsErr);
+    }
 
     try {
       let query = supabase.from("orders").select(safeColumns);
@@ -60,10 +78,10 @@ export function useDualSyncOrders(
     // Tier 2 Fallback: Server API endpoint
     try {
       const url = userId ? `/api/orders?user_id=${userId}` : `/api/orders?shop_id=${shopId}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const json = await res.json();
-        if (Array.isArray(json.orders)) {
+      const res = await fetch(url).catch(() => null);
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && Array.isArray(json.orders)) {
           return json.orders as Order[];
         }
       }

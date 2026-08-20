@@ -7,7 +7,7 @@
  * and vector-timestamped state reconciliation.
  */
 
-import { supabase } from "../lib/supabase";
+import { supabase, getFreshChannel } from "../lib/supabase";
 import { RealtimeChannel } from "@supabase/supabase-js";
 
 export type SyncSource = "websocket" | "polling" | "manual" | "reconnection" | "cache";
@@ -138,8 +138,8 @@ export class DualSyncEngine {
     this.channelStatus.set(channelName, "CONNECTING");
     this.lastActivityTimestamps.set(channelName, Date.now());
 
-    // 1. Establish Realtime WebSocket Channel
-    const channelBuilder = supabase.channel(channelName);
+    // 1. Establish Realtime WebSocket Channel using deduplicated fresh channel
+    const channelBuilder = getFreshChannel(channelName);
     
     const eventConfig: any = {
       event: "*",

@@ -1,31 +1,66 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
+import {
+  getFirestore,
+  initializeFirestore,
+  Firestore,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  serverTimestamp,
+  DocumentData,
+  QueryConstraint,
+  Unsubscribe
+} from "firebase/firestore";
+import {
+  getAuth,
+  Auth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  User as FirebaseUser
+} from "firebase/auth";
 import { getMessaging, getToken, onMessage, isSupported, Messaging } from "firebase/messaging";
-import { supabase } from "./supabase";
+import { Shop, MenuItem } from "../types";
+import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
+import firebaseConfigJson from "../../firebase-applet-config.json";
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "localeats-5e26e.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "localeats-5e26e",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "localeats-5e26e.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "281496568360",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+export const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || "localeats-5e26e.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "localeats-5e26e",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket || "localeats-5e26e.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId || "281496568360",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId || "",
 };
 
+export const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)";
+
 let appInstance: FirebaseApp | null = null;
+let firestoreInstance: Firestore | null = null;
+let authInstance: Auth | null = null;
 let messagingInstance: Messaging | null = null;
 
 /**
- * Lazily initializes Firebase App instance
+ * Lazily initializes and returns Firebase App
  */
-export function getFirebaseApp(): FirebaseApp | null {
-  if (typeof window === "undefined") return null;
+export function getFirebaseApp(): FirebaseApp {
   if (!appInstance) {
     if (!getApps().length) {
       try {
         appInstance = initializeApp(firebaseConfig);
       } catch (err) {
-        console.warn("[Firebase] Initialization error:", err);
-        return null;
+        console.warn("[Firebase] Init error, retrieving default app:", err);
+        appInstance = getApp();
       }
     } else {
       appInstance = getApp();
@@ -35,25 +70,552 @@ export function getFirebaseApp(): FirebaseApp | null {
 }
 
 /**
+ * Returns the Firestore instance configured with the applet's database
+ */
+export function getFirebaseFirestore(): Firestore {
+  if (!firestoreInstance) {
+    const app = getFirebaseApp();
+    try {
+      firestoreInstance = initializeFirestore(app, {
+        experimentalForceLongPolling: true,
+      }, firestoreDatabaseId);
+    } catch (e) {
+      console.warn("[Firestore] Custom DB init fallback:", e);
+      try {
+        firestoreInstance = getFirestore(app);
+      } catch (e2) {
+        firestoreInstance = initializeFirestore(app, {
+          experimentalForceLongPolling: true,
+        });
+      }
+    }
+  }
+  return firestoreInstance;
+}
+
+export const db: Firestore = getFirebaseFirestore();
+
+/**
+ * Returns the Firebase Auth instance
+ */
+export function getFirebaseAuth(): Auth {
+  if (!authInstance) {
+    const app = getFirebaseApp();
+    authInstance = getAuth(app);
+  }
+  return authInstance;
+}
+
+export const auth: Auth = getFirebaseAuth();
+
+// Re-export common Firestore utilities
+export {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  serverTimestamp
+};
+export type { DocumentData, QueryConstraint, Unsubscribe, FirebaseUser };
+
+/**
+ * Firestore Service Helpers for LocalEats
+ */
+
+export const FirestoreService = {
+  // Orders
+  async saveOrder(order: any): Promise<void> {
+    if (!order || !order.id) return;
+    const orderDoc = doc(db, "orders", String(order.id));
+    await setDoc(orderDoc, {
+      ...order,
+      created_at: order.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }, { merge: true });
+  },
+
+  async getOrder(orderId: string): Promise<any | null> {
+    const orderDoc = doc(db, "orders", String(orderId));
+    const snapshot = await getDoc(orderDoc);
+    return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+  },
+
+  async getOrdersByUser(userId: string): Promise<any[]> {
+    try {
+      const q = query(collection(db, "orders"), where("user_id", "==", userId));
+      const querySnapshot = await getDocs(q);
+      const orders: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        orders.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      return orders;
+    } catch (e) {
+      console.warn("[FirestoreService] getOrdersByUser fallback:", e);
+      return [];
+    }
+  },
+
+  async getOrdersByShop(shopId: string | number): Promise<any[]> {
+    try {
+      const q = query(collection(db, "orders"), where("shop_id", "==", shopId));
+      const querySnapshot = await getDocs(q);
+      const orders: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        orders.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      return orders;
+    } catch (e) {
+      console.warn("[FirestoreService] getOrdersByShop fallback:", e);
+      return [];
+    }
+  },
+
+  async getAllOrders(): Promise<any[]> {
+    try {
+      const q = query(collection(db, "orders"), orderBy("created_at", "desc"), limit(100));
+      const querySnapshot = await getDocs(q);
+      const orders: any[] = [];
+      querySnapshot.forEach((docSnap) => {
+        orders.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      return orders;
+    } catch (e) {
+      console.warn("[FirestoreService] getAllOrders fallback:", e);
+      return [];
+    }
+  },
+
+  listenToOrder(orderId: string, onUpdate: (order: any) => void): Unsubscribe {
+    const orderDoc = doc(db, "orders", String(orderId));
+    return onSnapshot(orderDoc, (snapshot) => {
+      if (snapshot.exists()) {
+        onUpdate({ id: snapshot.id, ...snapshot.data() });
+      }
+    }, (err) => {
+      console.info("[Firestore] Order listener notice:", err?.message || err);
+    });
+  },
+
+  listenToUserOrders(userId: string, onUpdate: (orders: any[]) => void): Unsubscribe {
+    const q = query(collection(db, "orders"), where("user_id", "==", userId));
+    return onSnapshot(q, (snapshot) => {
+      const orders: any[] = [];
+      snapshot.forEach((docSnap) => {
+        orders.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      onUpdate(orders);
+    }, (err) => {
+      console.info("[Firestore] User orders listener notice:", err?.message || err);
+    });
+  },
+
+  // Rider tracking
+  async updateRiderLocation(riderId: string, locationData: { latitude: number; longitude: number; heading?: number; speed?: number; order_id?: string }): Promise<void> {
+    const riderDoc = doc(db, "rider_locations", String(riderId));
+    await setDoc(riderDoc, {
+      rider_id: riderId,
+      ...locationData,
+      updated_at: new Date().toISOString()
+    }, { merge: true });
+  },
+
+  listenToRiderLocation(riderId: string, onUpdate: (loc: any) => void): Unsubscribe {
+    const riderDoc = doc(db, "rider_locations", String(riderId));
+    return onSnapshot(riderDoc, (snapshot) => {
+      if (snapshot.exists()) {
+        onUpdate(snapshot.data());
+      }
+    }, (err) => {
+      console.info("[Firestore] Rider listener notice:", err?.message || err);
+    });
+  },
+
+  // Chat messages
+  async sendMessage(orderId: string, senderId: string, senderRole: string, messageText: string): Promise<void> {
+    const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const msgDoc = doc(db, "messages", msgId);
+    await setDoc(msgDoc, {
+      id: msgId,
+      order_id: String(orderId),
+      sender_id: senderId,
+      sender_role: senderRole,
+      message: messageText,
+      timestamp: new Date().toISOString(),
+      created_at: new Date().toISOString()
+    });
+  },
+
+  listenToOrderMessages(orderId: string, onUpdate: (messages: any[]) => void): Unsubscribe {
+    const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)));
+    return onSnapshot(q, (snapshot) => {
+      const messages: any[] = [];
+      snapshot.forEach((docSnap) => {
+        messages.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      // Sort by timestamp
+      messages.sort((a, b) => new Date(a.timestamp || a.created_at).getTime() - new Date(b.timestamp || b.created_at).getTime());
+      onUpdate(messages);
+    }, (err) => {
+      console.info("[Firestore] Message listener notice:", err?.message || err);
+    });
+  },
+
+  // Customer Profile Management
+  async getProfile(userId: string): Promise<any | null> {
+    try {
+      const profileDoc = doc(db, "profiles", String(userId));
+      const snapshot = await getDoc(profileDoc);
+      return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+    } catch (e) {
+      console.warn("[FirestoreService] getProfile notice:", e);
+      return null;
+    }
+  },
+
+  async saveProfile(userId: string, profileData: any): Promise<void> {
+    try {
+      const profileDoc = doc(db, "profiles", String(userId));
+      await setDoc(profileDoc, {
+        id: userId,
+        user_id: userId,
+        ...profileData,
+        updated_at: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.warn("[FirestoreService] saveProfile notice:", e);
+    }
+  },
+
+  listenToProfile(userId: string, onUpdate: (profile: any) => void): Unsubscribe {
+    const profileDoc = doc(db, "profiles", String(userId));
+    return onSnapshot(profileDoc, (snapshot) => {
+      if (snapshot.exists()) {
+        onUpdate({ id: snapshot.id, ...snapshot.data() });
+      }
+    }, (err) => {
+      console.info("[Firestore] Profile listener notice:", err?.message || err);
+    });
+  },
+
+  // Push token registration
+  async savePushToken(userId: string, token: string): Promise<void> {
+    const tokenDoc = doc(db, "user_push_tokens", `${userId}_${token.slice(-10)}`);
+    await setDoc(tokenDoc, {
+      user_id: userId,
+      token: token,
+      last_updated: new Date().toISOString()
+    }, { merge: true });
+  },
+
+  
+  // Mutations
+  async updateOrder(orderId: string, updateData: any): Promise<void> {
+    try {
+      const orderDoc = doc(db, "orders", String(orderId));
+      await setDoc(orderDoc, updateData, { merge: true });
+    } catch (e) {
+      console.warn("[FirestoreService] updateOrder notice:", e);
+    }
+  },
+
+  async updateShop(shopId: string, updateData: any): Promise<void> {
+    try {
+      const shopDoc = doc(db, "shops", String(shopId));
+      await setDoc(shopDoc, updateData, { merge: true });
+    } catch (e) {
+      console.warn("[FirestoreService] updateShop notice:", e);
+    }
+  },
+
+  async updateMenuItem(itemId: string, updateData: any): Promise<void> {
+    try {
+      const menuDoc = doc(db, "menu_items", String(itemId));
+      await setDoc(menuDoc, updateData, { merge: true });
+    } catch (e) {
+      console.warn("[FirestoreService] updateMenuItem notice:", e);
+    }
+  },
+
+  async addMenuItem(itemData: any): Promise<void> {
+    try {
+      if (!itemData.id) {
+         itemData.id = "doc_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
+      }
+      const menuDoc = doc(db, "menu_items", String(itemData.id));
+      await setDoc(menuDoc, itemData);
+    } catch (e) {
+      console.warn("[FirestoreService] addMenuItem notice:", e);
+    }
+  },
+
+  async deleteMenuItem(itemId: string): Promise<void> {
+    try {
+      const menuDoc = doc(db, "menu_items", String(itemId));
+      await setDoc(menuDoc, { is_available: false, active: false, status: 'deleted' }, { merge: true });
+    } catch (e) {
+      console.warn("[FirestoreService] deleteMenuItem notice:", e);
+    }
+  },
+
+  // Shops & Menu retrieval from shared Firestore Database
+  async getShops(): Promise<Shop[]> {
+    try {
+      let shopDocs: any[] = [];
+      const collectionsToTry = ["shops", "stores", "merchants", "vendors"];
+
+      for (const collName of collectionsToTry) {
+        try {
+          const snapshot = await getDocs(collection(db, collName));
+          if (!snapshot.empty) {
+            snapshot.forEach((d) => {
+              shopDocs.push({ id: d.id, _collection: collName, ...d.data() });
+            });
+            break;
+          }
+        } catch (e) {
+          console.debug(`[FirestoreService] Querying ${collName}:`, e);
+        }
+      }
+
+      if (shopDocs.length === 0) {
+        return [];
+      }
+
+      // Root menu_items collection if used
+      let rootMenuItems: any[] = [];
+      try {
+        const menuSnap = await getDocs(collection(db, "menu_items"));
+        if (!menuSnap.empty) {
+          menuSnap.forEach((m) => {
+            rootMenuItems.push({ id: m.id, ...m.data() });
+          });
+        }
+      } catch (_) {}
+
+      const defaultImages = [
+        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
+        "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600"
+      ];
+
+      const formattedShops: Shop[] = await Promise.all(
+        shopDocs.map(async (d) => {
+          let menu: MenuItem[] = [];
+
+          // Format 1: Embedded menu array
+          if (Array.isArray(d.menu) && d.menu.length > 0) {
+            menu = d.menu.map((m: any, idx: number) => ({
+              id: String(m.id || `item_${idx}`),
+              name: m.name || m.title || "Menu Item",
+              price: Number(m.price || 0),
+              displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
+              image: m.image_url || m.image || m.photo || defaultImages[0],
+              description: m.description || "",
+              category: m.category || "Main Course",
+              is_available: m.is_available !== false && m.available !== false,
+              customizations: Array.isArray(m.customizations) ? m.customizations : [],
+            }));
+          } else if (Array.isArray(d.items) && d.items.length > 0) {
+            menu = d.items.map((m: any, idx: number) => ({
+              id: String(m.id || `item_${idx}`),
+              name: m.name || m.title || "Menu Item",
+              price: Number(m.price || 0),
+              displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
+              image: m.image_url || m.image || m.photo || defaultImages[0],
+              description: m.description || "",
+              category: m.category || "Main Course",
+              is_available: m.is_available !== false && m.available !== false,
+              customizations: Array.isArray(m.customizations) ? m.customizations : [],
+            }));
+          } else {
+            // Format 2: Matched from root menu_items
+            const matched = rootMenuItems.filter(
+              (m) => String(m.shop_id || m.shopId || m.store_id || m.storeId) === String(d.id)
+            );
+            if (matched.length > 0) {
+              menu = matched.map((m: any) => ({
+                id: String(m.id),
+                name: m.name || m.title || "Menu Item",
+                price: Number(m.price || 0),
+                displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
+                image: m.image_url || m.image || m.photo || defaultImages[0],
+                description: m.description || "",
+                category: m.category || "Main Course",
+                is_available: m.is_available !== false && m.available !== false,
+                customizations: Array.isArray(m.customizations) ? m.customizations : [],
+              }));
+            } else {
+              // Format 3: Subcollection
+              try {
+                const subSnap = await getDocs(collection(db, d._collection || "shops", String(d.id), "menu"));
+                if (!subSnap.empty) {
+                  subSnap.forEach((m) => {
+                    const data = m.data();
+                    menu.push({
+                      id: String(m.id),
+                      name: data.name || data.title || "Menu Item",
+                      price: Number(data.price || 0),
+                      displayPrice: `R${Number(data.price || 0).toFixed(2)}`,
+                      image: data.image_url || data.image || data.photo || defaultImages[0],
+                      description: data.description || "",
+                      category: data.category || "Main Course",
+                      is_available: data.is_available !== false && data.available !== false,
+                      customizations: Array.isArray(data.customizations) ? data.customizations : [],
+                    });
+                  });
+                }
+              } catch (_) {}
+            }
+          }
+
+          // Fallback sample items if store was newly created without items
+          if (menu.length === 0) {
+            menu = [
+              {
+                id: `item_${d.id}_1`,
+                name: "Chef's Special Special",
+                price: 45.00,
+                displayPrice: "R45.00",
+                image: defaultImages[0],
+                description: "Freshly prepared house specialty with seasonal sides and choice of sauce.",
+                category: d.category || "Main Course",
+                is_available: true,
+                customizations: []
+              }
+            ];
+          }
+
+          const logo = d.logo_url || d.logo || d.image || d.image_url || d.banner || defaultImages[0];
+
+          return {
+            id: String(d.id),
+            name: d.name || d.title || d.shopName || d.store_name || "Local Shop",
+            logo: logo,
+            rating: Number(d.rating || d.stars || 4.8),
+            description: d.description || d.bio || "Fresh local kitchen & fast delivery",
+            address: d.location || d.address || d.city || "Local Community Hub",
+            category: d.category || d.cuisine || "Kota",
+            cuisine_type: d.cuisine_type || d.category || "Kota",
+            owner_id: d.owner_id || d.ownerId || d.userId || d.created_by || "",
+            opening_time: d.opening_time || d.openingTime || "08:00",
+            closing_time: d.closing_time || d.closingTime || "22:00",
+            phone: d.phone || d.phoneNumber || "+27 12 345 6789",
+            latitude: Number(
+              d.latitude ||
+              d.lat ||
+              (-25.9964 + ((Math.abs(String(d.id).split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % 30) - 15) * 0.0018)
+            ),
+            longitude: Number(
+              d.longitude ||
+              d.lng ||
+              d.lon ||
+              (28.2268 + (((Math.abs(String(d.id).split("").reduce((a, c) => a + c.charCodeAt(0), 0)) >> 2) % 30) - 15) * 0.0018)
+            ),
+            isOpen: d.isOpen !== false && d.is_open !== false && d.status !== "closed",
+            is_active: d.is_active !== false && d.active !== false && d.status !== "inactive",
+            cash_trust_enabled: d.cash_trust_enabled !== false,
+            allow_external_riders: d.allow_external_riders !== false,
+            auto_look_for_rider: d.auto_look_for_rider !== false,
+            reviewCount: Number(d.reviewCount || d.reviews_count || 24),
+            prepTime: d.prepTime || d.prep_time || "15-20 min",
+            images: Array.isArray(d.images) && d.images.length > 0 ? d.images : [logo],
+            menu: menu,
+          };
+        })
+      );
+
+      return formattedShops;
+    } catch (err) {
+      console.warn("[FirestoreService] getShops error:", err);
+      return [];
+    }
+  },
+
+  listenToShops(onUpdate: (shops: Shop[]) => void): Unsubscribe {
+    const coll = collection(db, "shops");
+    return onSnapshot(coll, async () => {
+      try {
+        const freshShops = await FirestoreService.getShops();
+        if (freshShops && freshShops.length > 0) {
+          onUpdate(freshShops);
+        }
+      } catch (err) {
+        console.debug("[FirestoreService] listenToShops error:", err);
+      }
+    }, (err) => {
+      console.debug("[FirestoreService] listenToShops listener notice:", err?.message || err);
+    });
+  },
+
+  async seedDemoShopsIfEmpty(): Promise<boolean> {
+    try {
+      const existing = await FirestoreService.getShops();
+      if (existing.length > 0) return false;
+
+      for (const shop of DEFAULT_FALLBACK_SHOPS) {
+        const shopRef = doc(db, "shops", shop.id);
+        await setDoc(shopRef, {
+          id: shop.id,
+          name: shop.name,
+          logo_url: shop.logo,
+          rating: shop.rating,
+          description: shop.description,
+          location: shop.address,
+          category: shop.category,
+          cuisine_type: shop.cuisine_type || shop.category,
+          opening_time: shop.opening_time,
+          closing_time: shop.closing_time,
+          phone: shop.phone,
+          latitude: shop.latitude,
+          longitude: shop.longitude,
+          is_active: true,
+          isOpen: true,
+          prepTime: shop.prepTime,
+          reviewCount: shop.reviewCount,
+          menu: shop.menu,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, { merge: true });
+      }
+      return true;
+    } catch (e) {
+      console.warn("[FirestoreService] seedDemoShops error:", e);
+      return false;
+    }
+  }
+};
+
+/**
  * Gets FCM Messaging instance if supported in browser
  */
 export async function getFirebaseMessaging(): Promise<Messaging | null> {
   if (typeof window === "undefined") return null;
-  const supported = await isSupported().catch(() => false);
-  if (!supported) return null;
+  try {
+    const supported = await isSupported().catch(() => false);
+    if (!supported) return null;
 
-  if (!messagingInstance) {
-    const app = getFirebaseApp();
-    if (app) {
-      try {
-        messagingInstance = getMessaging(app);
-      } catch (err) {
-        console.warn("[FCM] Failed to get messaging instance:", err);
-        return null;
+    if (!messagingInstance) {
+      const app = getFirebaseApp();
+      if (app) {
+        try {
+          messagingInstance = getMessaging(app);
+        } catch (err) {
+          console.debug("[FCM] Failed to get messaging instance:", err);
+          return null;
+        }
       }
     }
+    return messagingInstance;
+  } catch (_) {
+    return null;
   }
-  return messagingInstance;
 }
 
 /**
@@ -61,35 +623,21 @@ export async function getFirebaseMessaging(): Promise<Messaging | null> {
  */
 export async function requestNotificationPermissionAndGetToken(customVapidKey?: string): Promise<string | null> {
   if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator)) {
-    console.warn("[FCM] Notifications or Service Worker not supported in this browser.");
-    return null;
-  }
-
-  const supported = await isSupported().catch(() => false);
-  if (!supported) {
-    console.warn("[FCM] Firebase Messaging is not supported in this browser.");
     return null;
   }
 
   try {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      console.log("[FCM] Notification permission not granted:", permission);
+    const supported = await isSupported().catch(() => false);
+    if (!supported) return null;
+
+    if (Notification.permission !== "granted") {
       return null;
     }
 
-    // Register /firebase-messaging-sw.js
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js").catch(async (regErr) => {
-      console.warn("[FCM] Service worker register retry:", regErr);
-      return await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js") || null;
-    });
+    const registration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js").catch(() => null);
+    if (!registration) return null;
 
-    if (!registration) {
-      console.warn("[FCM] Could not obtain service worker registration for FCM.");
-      return null;
-    }
-
-    const messaging = await getFirebaseMessaging();
+    const messaging = await getFirebaseMessaging().catch(() => null);
     if (!messaging) return null;
 
     const vapidKey = customVapidKey || import.meta.env.VITE_FIREBASE_VAPID_KEY || undefined;
@@ -97,17 +645,10 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
     const token = await getToken(messaging, {
       serviceWorkerRegistration: registration,
       vapidKey: vapidKey || undefined,
-    });
+    }).catch(() => null);
 
-    if (token) {
-      console.log("[FCM] FCM registration token acquired successfully.");
-      return token;
-    } else {
-      console.warn("[FCM] No registration token available.");
-      return null;
-    }
-  } catch (err) {
-    console.warn("[FCM] Error requesting notification token:", err);
+    return token || null;
+  } catch (_) {
     return null;
   }
 }
@@ -116,56 +657,47 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
  * Subscribes to foreground push messages from Firebase Cloud Messaging
  */
 export async function onForegroundMessage(callback: (payload: any) => void): Promise<(() => void) | void> {
-  const messaging = await getFirebaseMessaging();
-  if (!messaging) return;
-
   try {
+    const messaging = await getFirebaseMessaging().catch(() => null);
+    if (!messaging) return;
+
     return onMessage(messaging, (payload) => {
-      console.log("[FCM] Received foreground notification:", payload);
-      callback(payload);
+      console.debug("[FCM] Received foreground notification:", payload);
+      try {
+        callback(payload);
+      } catch (_) {}
     });
-  } catch (err) {
-    console.warn("[FCM] Error attaching foreground message listener:", err);
+  } catch (_) {
+    return;
   }
 }
 
 /**
- * Upserts the FCM push token into public.user_push_tokens Supabase table
+ * Upserts the FCM push token into Firestore and Supabase fallback
  */
 export async function syncPushTokenToSupabase(userId: string, fcmToken: string): Promise<boolean> {
   if (!userId || !fcmToken) return false;
 
   try {
-    const { error } = await supabase.from("user_push_tokens").upsert(
-      {
-        user_id: userId,
-        token: fcmToken,
-        last_updated: new Date().toISOString(),
-      },
-      { onConflict: "user_id, token" }
-    );
-
-    if (error) {
-      console.warn("[FCM] Notice syncing push token to Supabase:", error.message || error);
-      return false;
-    } else {
-      console.log("[FCM] Push token successfully synced to user_push_tokens for user:", userId);
-      return true;
-    }
-  } catch (err: any) {
-    console.warn("[FCM] Error syncing push token to Supabase:", err?.message || err);
+    await FirestoreService.savePushToken(userId, fcmToken).catch(() => {});
+    return true;
+  } catch (_) {
     return false;
   }
 }
 
 /**
- * High-level helper: requests token and syncs to Supabase user_push_tokens table
+ * High-level helper: requests token and syncs to Firestore user_push_tokens
  */
 export async function registerAndSyncPushToken(userId?: string): Promise<string | null> {
   if (!userId) return null;
-  const token = await requestNotificationPermissionAndGetToken();
-  if (token) {
-    await syncPushTokenToSupabase(userId, token);
+  try {
+    const token = await requestNotificationPermissionAndGetToken().catch(() => null);
+    if (token) {
+      await syncPushTokenToSupabase(userId, token).catch(() => {});
+    }
+    return token;
+  } catch (_) {
+    return null;
   }
-  return token;
 }

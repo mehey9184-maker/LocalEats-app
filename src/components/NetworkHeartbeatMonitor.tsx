@@ -171,7 +171,7 @@ export const NetworkHeartbeatMonitor: React.FC<NetworkHeartbeatMonitorProps> = (
                 <span className={`font-bold ${h.success ? (h.latencyMs > 800 ? 'text-amber-400' : 'text-emerald-400') : 'text-red-400'}`}>
                   {h.success ? `${h.latencyMs}ms` : h.error || 'Timeout'}
                 </span>
-                <span className="text-slate-600 uppercase text-[8px]">{h.status}</span>
+                <span className="text-slate-600 uppercase text-[10px] whitespace-nowrap">{h.status}</span>
               </div>
             ))}
           </div>

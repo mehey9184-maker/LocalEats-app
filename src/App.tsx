@@ -101,6 +101,7 @@ import {
   ArrowRight,
   ArrowLeft,
   Trash2,
+  Truck,
   RefreshCw,
   Settings,
   History,
@@ -208,13 +209,14 @@ import {
   Minimize2,
   FolderOpen,
 } from "lucide-react";
-import { supabase, supabaseUrl, APP_URL } from "./lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey, APP_URL, getFreshChannel, getResilientSession, saveCustomSupabaseConfig, resetToDefaultSupabaseConfig, isCustomSupabaseConfigured } from "./lib/supabase";
 import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 
 import { CheckoutScreen } from "./screens/CheckoutScreen";
 import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
+import { RiderHandshakeInstructionPrompt } from "./components/SecureDeliveryHandshake";
 
 import { SplashScreen } from "./screens/SplashScreen";
 
@@ -223,6 +225,7 @@ import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
+export type { UserProfile } from "./types";
 import {
   Screen,
   AppNotification,
@@ -233,11 +236,11 @@ import {
   CartItem,
   Review,
   Shop,
+  UserProfile,
 } from "./types";
-import { useOfflineSync } from "./hooks/useOfflineSync";
+import { useOfflineSync, processPendingCancellationsQueue } from "./hooks/useOfflineSync";
 import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
 import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
-import { OfflineBanner } from "./components/OfflineBanner";
 import { processNetworkQueue } from "./lib/networkQueue";
 import {
   hashString,
@@ -260,70 +263,10 @@ import {
   DEFAULT_FALLBACK_SHOPS,
   MY_KOTA_TEST_STORE,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken } from "./lib/firebase";
+import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
-const LOCAL_PROMO_DB: Record<
-  string,
-  {
-    code: string;
-    type: "percent" | "fixed" | "delivery_free";
-    value: number;
-    expiry_date: string;
-    is_active: boolean;
-  }
-> = {
-  LOCALEATS10: {
-    code: "LOCALEATS10",
-    type: "percent",
-    value: 10,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  },
-  FIRSTTREAT: {
-    code: "FIRSTTREAT",
-    type: "fixed",
-    value: 15,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  },
-  BICYCLE5: {
-    code: "BICYCLE5",
-    type: "delivery_free",
-    value: 5,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  },
-  EXPIRED20: {
-    code: "EXPIRED20",
-    type: "percent",
-    value: 20,
-    expiry_date: "2025-01-01T00:00:00Z",
-    is_active: true,
-  },
-  EXPIREDHALF: {
-    code: "EXPIREDHALF",
-    type: "percent",
-    value: 50,
-    expiry_date: "2026-05-01T00:00:00Z",
-    is_active: true,
-  },
-};
-
-const urlBase64ToUint8Array = (base64String: string) => {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding)
-    .replace(/\-/g, "+")
-    .replace(/_/g, "/");
-
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-};
+import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 // Static fallback cache loaded dynamically from ./utils
 
@@ -355,537 +298,10 @@ import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
 import { cacheBusinessResults, getCachedBusinessResults } from "./lib/offlineCache";
 
-const ShopCard = memo(
-  ({
-    shop,
-    isFollowed,
-    onStoreInfo,
-    triggerHaptic,
-    dataSaverEnabled,
-  }: {
-    shop: Shop;
-    isFollowed: boolean;
-    onStoreInfo: (id: string) => void;
-    triggerHaptic: (pattern?: number | number[]) => void;
-    dataSaverEnabled?: boolean;
-  }) => {
-    const status = getShopStatus(shop);
-
-    // Dynamic price tier based on menu items average
-    const getPriceTier = (s: Shop) => {
-      if (!s.menu || s.menu.length === 0) return "R";
-      const avg = s.menu.reduce((acc, item) => acc + (item.price || 0), 0) / s.menu.length;
-      if (avg < 45) return "R";
-      if (avg < 80) return "RR";
-      return "RRR";
-    };
-
-    // Stable distance calculation or fallback
-    const getShopDistance = (s: Shop) => {
-      if (s.distance !== undefined && s.distance !== null) {
-        return `${s.distance.toFixed(1)} km`;
-      }
-      const num = s.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const km = 0.2 + (num % 18) * 0.1;
-      return `${km.toFixed(1)} km`;
-    };
-
-    // Appetizing food cover photo based on category or menu items
-    const getShopHeroImage = (s: Shop) => {
-      if (s.images && s.images.length > 0 && !s.images[0].includes("unsplash.com/photo-1546069901-ba9599a7e63c")) {
-        return s.images[0];
-      }
-      if (s.menu && s.menu.length > 0 && s.menu[0].image) {
-        return s.menu[0].image;
-      }
-      const cat = (s.category || "").toLowerCase();
-      if (cat.includes("kota") || cat.includes("spatlo")) {
-        return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600";
-      }
-      if (cat.includes("braai") || cat.includes("shisa") || cat.includes("meat")) {
-        return "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600";
-      }
-      return "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600";
-    };
-
-    const heroImage = getShopHeroImage(shop);
-    const priceTier = getPriceTier(shop);
-    const distanceStr = getShopDistance(shop);
-
-    return (
-      <motion.div
-        layout
-        layoutId={`shop-card-${shop.id}`}
-        variants={{
-          hidden: { opacity: 0, y: 15, scale: 0.98 },
-          show: {
-            opacity: 1,
-            y: 0,
-            scale: 1,
-            transition: {
-              type: "spring",
-              damping: 25,
-              stiffness: 300,
-            },
-          },
-        }}
-        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-        whileTap={{ scale: 0.98 }}
-        onClick={() => {
-          triggerHaptic();
-          onStoreInfo(shop.id);
-        }}
-        className="flex flex-col bg-white dark:bg-slate-900 rounded-[32px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-100 dark:border-slate-800/50 shadow-sm hover:shadow-xl hover:border-orange-300 dark:hover:border-orange-500/30 w-full h-full active:scale-[0.98] transform"
-      >
-        {/* Top Half: Appetite-Appealing Hero Image */}
-        <div className="aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
-          {dataSaverEnabled ? (
-            <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
-              <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
-                [ Image Hidden - Data Saver ]
-              </span>
-            </div>
-          ) : (
-            <BlurUpImage
-              src={heroImage}
-              alt={shop.name}
-              className="w-full h-full aspect-video object-cover transition-transform duration-500 group-hover:scale-105"
-              blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
-            />
-          )}
-
-          {/* Absolute Overlays */}
-          {shop.is_special && (
-            <span className="absolute top-3 left-3 bg-gradient-to-r from-orange-600 to-amber-500 text-white text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-md z-10">
-              🔥 Best Kota
-            </span>
-          )}
-
-          {/* Status Badge */}
-          <span className={`absolute top-3 right-3 text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-md z-10 border ${
-            status.isOpen 
-              ? "bg-emerald-500 text-white border-emerald-400" 
-              : "bg-slate-800/80 text-slate-200 border-slate-700/60 backdrop-blur-sm"
-          }`}>
-            {status.isOpen ? "Open" : "Closed"}
-          </span>
-
-          {/* Heart indicator for Followed */}
-          {isFollowed && (
-            <div className="absolute top-12 right-3 z-10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-1.5 rounded-full shadow-sm border border-slate-100 dark:border-slate-800">
-              <Heart className="w-3.5 h-3.5 text-orange-500 fill-current" />
-            </div>
-          )}
-        </div>
-
-        {/* Bottom Half: Merchant Info & Decision Metrics */}
-        <div className="p-4 sm:p-5 flex flex-col flex-grow flex-1 gap-2.5 min-h-[125px] relative overflow-hidden transition-all duration-300">
-          {/* Subtle shimmer effect while menu content lazy-loads */}
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-500/[0.04] to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
-          <div className="flex justify-between items-start gap-2">
-            <h4 className="text-base sm:text-[17px] font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
-              {shop.name}
-              <div className="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Verified active merchant">
-                <ShieldCheck className="w-4 h-4" />
-              </div>
-            </h4>
-          </div>
-
-          {/* Decision-Making Data Points Row */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-bold">
-            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
-              <Star className="w-3 h-3 fill-current" />
-              <span>{shop.rating}</span>
-              <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
-            </div>
-
-            <span className="text-slate-300 dark:text-slate-700">•</span>
-
-            <span className="text-[11px] uppercase tracking-wider">
-              {shop.category}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 mt-auto overflow-hidden flex-wrap">
-            {isShopAway(shop) && (
-              <span className="text-[9px] font-black bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 uppercase tracking-widest whitespace-nowrap px-1.5 py-0.5 rounded animate-pulse border border-rose-200 dark:border-rose-900/30 mt-2">
-                ⚠️ Away
-              </span>
-            )}
-            {!status.isOpen && (
-              <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest whitespace-nowrap bg-slate-100/50 dark:bg-slate-800/50 px-1.5 py-0.5 rounded mt-2">
-                Opens {status.nextOpeningTime || "Soon"}
-              </span>
-            )}
-          </div>
-        </div>
-      </motion.div>
-    );
-  },
-);
-
-const MenuItemSkeleton = memo(() => (
-  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-4 animate-pulse shadow-sm">
-    <div className="size-20 rounded-xl bg-slate-200 dark:bg-slate-800 shrink-0 relative overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
-    </div>
-    <div className="flex-1 flex flex-col justify-between py-1 space-y-2">
-      <div className="space-y-2">
-        <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-3/4 relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
-        </div>
-        <div className="h-3 bg-slate-100 dark:bg-slate-800/60 rounded-md w-full relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
-        </div>
-      </div>
-      <div className="flex items-center justify-between pt-2">
-        <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-md w-16 relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
-        </div>
-        <div className="h-8 bg-slate-200 dark:bg-slate-800 rounded-xl w-20 relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
-        </div>
-      </div>
-    </div>
-  </div>
-));
-
-const MenuItemCard = memo(
-  ({
-    item,
-    shop,
-    addToCart,
-    showAlert,
-    setCurrentScreen,
-    onSelect,
-  }: {
-    item: MenuItem;
-    shop: Shop;
-    addToCart?: (
-      item: MenuItem,
-      shopId: string,
-      quantity?: number,
-      specialInstructions?: string,
-      selectedCustomizations?: { name: string; price: number }[],
-    ) => void;
-    showAlert: (title: string, message: string) => void;
-    setCurrentScreen?: (screen: any) => void;
-    onSelect?: (item: MenuItem) => void;
-  }) => {
-    return (
-      <motion.div
-        variants={{
-          hidden: { opacity: 0, y: 10, scale: 0.98 },
-          show: { opacity: 1, y: 0, scale: 1 },
-        }}
-        whileHover={{ scale: 1.01 }}
-        whileTap={{ scale: 0.98 }}
-        className="bg-white dark:bg-slate-900/50 p-3 rounded-2xl border border-slate-50 dark:border-slate-800 flex gap-4 group hover:border-orange-600/20 transition-all cursor-pointer shadow-sm"
-        onClick={() => {
-          const status = getShopStatus(shop);
-          if (!status.isOpen) {
-            showAlert(
-              "Closed",
-              `This store is currently closed. ${status.message}`,
-            );
-            return;
-          }
-          if (isShopAway(shop)) {
-            showAlert(
-              "Ordering Disabled",
-              "This shop hasn't updated its live heartbeat in over 4 days. To protect your funds, ordering is temporarily disabled until the merchant logs back in."
-            );
-            return;
-          }
-          if (item.is_available === false) {
-            showAlert("Out of Stock", "This item is currently unavailable.");
-            return;
-          }
-          if (onSelect) {
-            onSelect(item);
-          } else if (addToCart && setCurrentScreen) {
-            addToCart(item, shop.id, 1);
-            setCurrentScreen("checkout");
-          }
-        }}
-      >
-        <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-sm">
-          <BlurUpImage
-            src={item.image || DEFAULT_MENU_IMAGE}
-            alt={item.name}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-            blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
-          />
-        </div>
-        <div className="flex-1 flex flex-col justify-between py-0.5">
-          <div className="flex justify-between items-start">
-            <div className="flex-1">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <h4 className="font-bold text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-600 transition-colors">
-                  {item.name}
-                </h4>
-                {item.customizations && item.customizations.length > 0 && (
-                  <div
-                    className="flex items-center gap-1 px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/30 rounded text-[8px] font-black text-orange-600 uppercase tracking-tighter"
-                    title="Customizable"
-                  >
-                    <Sparkles className="w-2.5 h-2.5" />
-                    <span>Customizable</span>
-                  </div>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">
-                {item.description || "Freshly prepared local favourite"}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-auto">
-            <p className="font-black text-orange-600 text-sm">
-              {item.displayPrice}
-            </p>
-            <div
-              className={`px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all text-[10px] font-black uppercase tracking-widest ${!getShopStatus(shop).isOpen || item.is_available === false || isShopAway(shop) ? "bg-slate-300 text-slate-500 cursor-not-allowed shadow-none" : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700"}`}
-            >
-              <span>
-                {!getShopStatus(shop).isOpen
-                  ? "Closed"
-                  : isShopAway(shop)
-                    ? "Disabled"
-                    : item.is_available === false
-                      ? "Sold Out"
-                      : "Buy"}
-              </span>
-              {getShopStatus(shop).isOpen && item.is_available !== false && !isShopAway(shop) && (
-                <Plus className="w-3 h-3" />
-              )}
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    );
-  },
-);
-
-export type UserProfile = {
-  id?: string;
-  fullName: string;
-  email: string;
-  phone: string;
-  city: string;
-  address: string;
-  country: string;
-  role: "user" | "admin" | "shop_owner" | "rider";
-  photoURL?: string;
-  latitude?: number;
-  longitude?: number;
-  language?: string;
-  loyaltyPoints?: number;
-};
-
-// Phone formatting and validation methods outsourced to ./utils
-
-const getAvatarUrl = (name?: string) => {
-  const seed = name ? encodeURIComponent(name) : "User";
-  return `https://ui-avatars.com/api/?name=${seed}&background=f97316&color=fff&size=256&format=svg`;
-};
-
-const getCroppedImg = async (imageSrc: string, pixelCrop: any): Promise<File> => {
-  const image = new Image();
-  image.src = imageSrc;
-  await new Promise((resolve) => (image.onload = resolve));
-  const canvas = document.createElement("canvas");
-  canvas.width = pixelCrop.width;
-  canvas.height = pixelCrop.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("No 2d context");
-  ctx.drawImage(
-    image,
-    pixelCrop.x,
-    pixelCrop.y,
-    pixelCrop.width,
-    pixelCrop.height,
-    0,
-    0,
-    pixelCrop.width,
-    pixelCrop.height
-  );
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) return reject(new Error("Canvas is empty"));
-      resolve(new File([blob], "cropped.jpg", { type: "image/jpeg" }));
-    }, "image/jpeg", 0.9);
-  });
-};
-
-async function searchAddress(query: string) {
-  if (!query || query.length < 3) return [];
-  try {
-    const response = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=za&limit=5`,
-    );
-    const data = await response.json();
-    return data.map((item: any) => ({
-      display_name: item.display_name,
-      lat: parseFloat(item.lat),
-      lon: parseFloat(item.lon),
-    }));
-  } catch (error) {
-    console.error("Address search error:", error);
-    return [];
-  }
-}
-
-const compressImage = (
-  file: File,
-  maxWidth = 800,
-  maxHeight = 800,
-  quality = 0.75,
-): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxWidth) {
-            height *= maxWidth / width;
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width *= maxHeight / height;
-            height = maxHeight;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => {
-            if (blob) resolve(blob);
-            else reject(new Error("Image compression failed"));
-          },
-          "image/jpeg",
-          quality,
-        );
-      };
-      img.onerror = reject;
-    };
-    reader.onerror = reject;
-  });
-};
-
-const uploadAvatar = async (file: File, userId?: string) => {
-  if (file.type && !file.type.startsWith("image/")) {
-    throw new Error("INVALID_FILE_TYPE");
-  }
-
-  try {
-    return await uploadClientAvatar(userId || "", file);
-  } catch (error: any) {
-    console.error("Compression or Upload failed:", error);
-    if (error.message === "NETWORK_TIMEOUT" || error.message === "FILE_SIZE_EXCEEDED" || error.message === "INVALID_FILE_TYPE" || error.message === "BUCKET_NOT_FOUND") {
-      throw error;
-    }
-    if (error.message && (error.message.includes("fetch") || error.message.includes("Network"))) {
-      throw new Error("NETWORK_ERROR");
-    }
-    throw error;
-  }
-};
-
-type ModalState = {
-  isOpen: boolean;
-  title: string;
-  message: string;
-  type: "alert" | "confirm" | "prompt" | "password-prompt";
-  onConfirm?: (value?: string) => void;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  defaultValue?: string;
-};
-
-const ModalContent = ({
-  modal,
-  onClose,
-}: {
-  modal: ModalState;
-  onClose: () => void;
-}) => {
-  const [value, setValue] = useState(modal.defaultValue || "");
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0, y: 20 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.9, opacity: 0, y: 20 }}
-        className="w-full max-w-xs bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-2xl border border-slate-100 dark:border-slate-800 text-center relative overflow-hidden"
-      >
-        <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2 leading-tight">
-          {modal.title}
-        </h2>
-        <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">
-          {modal.message}
-        </p>
-
-        {(modal.type === "prompt" || modal.type === "password-prompt") && (
-          <div className="mb-6">
-            <input
-              type={modal.type === "password-prompt" ? "password" : "text"}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              autoFocus
-              className="w-full p-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl text-sm focus:ring-2 focus:ring-orange-500 outline-none"
-            />
-          </div>
-        )}
-
-        <div className="flex flex-col gap-3">
-          <button
-            onClick={() => {
-              if (modal.onConfirm) {
-                modal.onConfirm(
-                  modal.type === "prompt" || modal.type === "password-prompt"
-                    ? value
-                    : undefined
-                );
-              }
-              onClose();
-            }}
-            className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-2xl shadow-lg shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer"
-          >
-            {modal.confirmLabel || (modal.type === "alert" ? "OK" : "Confirm")}
-          </button>
-
-          {(modal.type === "confirm" ||
-            modal.type === "prompt" ||
-            modal.type === "password-prompt") && (
-            <button
-              onClick={onClose}
-              className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-2xl transition-all active:scale-95 cursor-pointer"
-            >
-              {modal.cancelLabel || "Cancel"}
-            </button>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-};
+import { ShopCard, MenuItemSkeleton, MenuItemCard } from "./components/ShopCard";
+import { getAvatarUrl, getCroppedImg, searchAddress, compressImage, uploadAvatar } from "./utils/imageUtils";
+import { autoAssignClosestRiderService } from "./services/riderAssignment";
+import { ModalAction, ModalState, ModalContent } from "./components/ActionModal";
 
 type NotificationState = {
   message: string;
@@ -963,16 +379,17 @@ export default function App() {
   const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(() => {
     try {
       if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-        const cachedProfile = safeLocalStorageGet("userProfile", null);
         const hasSupabaseToken = Object.keys(localStorage).some(
           (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
                    key === "supabase.auth.token"
         );
         const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
         const hasSessionToken = !!localStorage.getItem("localeats_session") || !!sessionStorage.getItem("localeats_session");
-        const hasUserProfile = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
-        if (hasSupabaseToken || hasRememberToken || hasSessionToken || hasUserProfile) {
-          console.info("[Auth Init] Active session token or saved login found. Skipping splash directly to Home screen.");
+        
+        // Only initialize straight to home if genuine auth tokens or verified session tokens exist.
+        // We avoid jumping to home solely on raw unverified userProfile cache, preventing stale profile loops after database wipes.
+        if (hasSupabaseToken || (hasRememberToken && hasSessionToken)) {
+          console.info("[Auth Init] Active auth session token found. Initializing on Home screen while verifying session.");
           return ["home"];
         }
       }
@@ -1268,7 +685,7 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
-  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
+
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -1327,38 +744,8 @@ export default function App() {
       const ownerEmail = ((s as any).owner_email || (s as any).created_by || "").toLowerCase().trim();
       const ownerIdStr = String(s.owner_id || "").toLowerCase().trim();
 
-      // Determine whether this store is the My-Kota private test store
-      const isTestOrPrivateStore =
-        s.id === MY_KOTA_TEST_STORE.id ||
-        (s as any).is_test === true ||
-        (s as any).is_test_store === true ||
-        (s as any).is_private === true ||
-        (s as any).is_owner_test === true ||
-        nameLower.includes("[private]") ||
-        nameLower.includes("[test]") ||
-        nameLower.includes("(test)") ||
-        nameLower.includes("my-kota") ||
-        nameLower.includes("my-keta") ||
-        nameLower === "my kota" ||
-        nameLower.includes("test store") ||
-        ownerEmail === "teejeyunam@gmail.com" ||
-        ownerEmail.includes("teejey") ||
-        ownerIdStr === "teejeyunam@gmail.com" ||
-        ownerIdStr.includes("teejey");
-
-      // Public production stores are visible to all users and guests
-      if (!isTestOrPrivateStore) {
-        return true;
-      }
-
-      // If it is a test store (such as My-Kota), ONLY allow access to the authorized owner account
-      const isAuthorizedOwner =
-        isTeejeyAccount ||
-        (currentEmail && ownerEmail && currentEmail === ownerEmail) ||
-        (currentUserId && s.owner_id && String(s.owner_id) === String(currentUserId)) ||
-        userProfile?.role === "admin";
-
-      return isAuthorizedOwner;
+      // Allow all shops to be visible, regardless of name or ownership
+      return true;
     });
 
     return filtered;
@@ -1442,15 +829,106 @@ export default function App() {
       setProcessingState("idle");
       activeTransactionsRef.current.delete(key);
       IdempotencyManager.releaseLock(key);
+      console.error("runWithProcessing caught error:", err);
+      let rawMsg = err?.message || err?.error_description || "";
+      if (typeof rawMsg === "object") {
+        try {
+          rawMsg = JSON.stringify(rawMsg);
+        } catch(e) {
+          rawMsg = String(rawMsg);
+        }
+      }
+      if (rawMsg === "{}" || !rawMsg) {
+        if (err?.code) rawMsg = "Error code: " + err.code;
+        else if (err?.msg) rawMsg = err.msg;
+        else rawMsg = "An unexpected error occurred.";
+      }
+      const rawLower = String(rawMsg).toLowerCase();
+      const isFetchErr = 
+        rawLower.includes("failed to fetch") || 
+        rawLower.includes("network error") || 
+        rawLower.includes("upstream connect error") ||
+        rawLower.includes("rpc_timeout") ||
+        rawLower.includes("timeout") ||
+        rawLower.includes("econnrefused");
+      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+      const isAuthErr = 
+        rawLower.includes("jwt") || 
+        rawLower.includes("invalid_grant") || 
+        rawLower.includes("not logged in") || 
+        rawLower.includes("session expired") ||
+        rawLower.includes("unauthorized");
+      const isPermissionErr = 
+        rawLower.includes("permission denied") || 
+        rawLower.includes("forbidden") || 
+        rawLower.includes("row-level security") ||
+        rawLower.includes("policy");
+
+      let errorCause = "Operation interrupted";
+      let dialogTitle = "Action Interrupted";
+      let dialogMessage = "We encountered an issue while trying to complete this request. You can retry or head back home.";
+      let iconType: "wifi-off" | "server-off" | "lock" | "alert" = "alert";
+
+      if (isOffline) {
+        errorCause = "Network connection lost";
+        dialogTitle = "Connection Lost";
+        dialogMessage = "Your device appears to be offline. Please check your signal or Wi-Fi connection and tap Retry.";
+        iconType = "wifi-off";
+      } else if (isFetchErr) {
+        errorCause = "Database connection unavailable";
+        dialogTitle = "Server Connection Issue";
+        dialogMessage = "Unable to connect to the database server. The service may be momentarily busy or reconnecting. Tap Retry to try again.";
+        iconType = "server-off";
+      } else if (isAuthErr) {
+        errorCause = "Authentication session expired";
+        dialogTitle = "Authentication Required";
+        dialogMessage = "Your session credentials have expired or are invalid. Please log in again to continue.";
+        iconType = "lock";
+      } else if (isPermissionErr) {
+        errorCause = "Insufficient user permissions";
+        dialogTitle = "Access Restricted";
+        dialogMessage = "You do not have permission to execute this operation. Please verify your account privileges.";
+        iconType = "lock";
+      } else if (rawMsg && rawMsg.length > 0) {
+        errorCause = rawMsg.length <= 45 ? rawMsg : "Request validation error";
+        dialogTitle = "Request Notice";
+        dialogMessage = rawMsg;
+        iconType = "alert";
+      }
+
       setModal({
         isOpen: true,
-        title: "Action Failed",
-        message: err?.message || err?.error_description || "An unexpected error occurred. Please try again.",
-        type: "alert"
+        title: dialogTitle,
+        message: dialogMessage,
+        type: "action-dialog",
+        errorCause,
+        iconType,
+        actions: [
+          {
+            label: "Retry Action",
+            variant: "primary",
+            onClick: () => {
+              // Re-run the action
+              runWithProcessing(action, successCallback, loadingLabel, idempotencyKey);
+            },
+          },
+          {
+            label: "Go Home",
+            variant: "outline",
+            onClick: () => {
+              setCurrentScreen("home");
+            },
+          },
+          {
+            label: "Dismiss",
+            variant: "ghost",
+            onClick: () => {},
+          },
+        ],
       });
       return null as any;
     }
-  }, []);
+  }, [setCurrentScreen]);
 
   const showAlert = (title: string, message: string) => {
     setModal({ isOpen: true, title, message, type: "alert" });
@@ -1534,6 +1012,10 @@ export default function App() {
     return safeLocalStorageGet("app_notifications", []);
   });
   const [orders, setOrders] = useState<Order[]>([]);
+  const ordersRef = useRef<Order[]>(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
 
   // Audio state for notifications
   const notificationAudio = useRef<HTMLAudioElement | null>(null);
@@ -1549,13 +1031,18 @@ export default function App() {
     audioHelper.play("alert");
   }, []);
 
-  // Initialize audio on first click to satisfy browser autoplay policies
+  // Initialize audio on first click quietly to satisfy browser autoplay policies
   useEffect(() => {
     const handleFirstInteraction = () => {
-      // Touch/click resumes the AudioContext elegantly
-      const ctx = window.AudioContext || (window as any).webkitAudioContext;
-      if (ctx) {
-        audioHelper.play("alert");
+      // Touch/click resumes the AudioContext quietly without playing audio
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        try {
+          const tempCtx = new AudioCtxClass();
+          if (tempCtx.state === "suspended") {
+            tempCtx.resume();
+          }
+        } catch { /* ignore */ }
       }
       window.removeEventListener("click", handleFirstInteraction);
     };
@@ -1797,10 +1284,30 @@ export default function App() {
 
     try {
       await CircuitBreaker.execute("fetchShopsAndMenu", async () => {
-      // Fetch all shops
+      // 1. Fetch live shops from shared Firestore database (merchant app instance)
+      let firestoreShops: Shop[] = [];
+      try {
+        firestoreShops = await FirestoreService.getShops();
+      } catch (fErr) {
+        console.debug("[App:Firestore] Shop fetch notice:", fErr);
+      }
+
+      if (firestoreShops && firestoreShops.length > 0) {
+        console.log(`[App:Firestore] Successfully fetched ${firestoreShops.length} live shops from Firestore.`);
+        setShops(firestoreShops);
+        safeLocalStorageSet("cached_shops", JSON.stringify(firestoreShops));
+        await cacheBusinessResults("all_shops", firestoreShops).catch(() => {});
+        setLoadingShops(false);
+        setIsSyncing(false);
+        lastFetchedShopsTimeRef.current = Date.now();
+        return;
+      }
+
+      // 2. Fetch all shops from Supabase
       const { data: shopsData, error: shopsError } = await supabase
         .from("shops")
-        .select("*");
+        .select("id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude:lat, longitude:lng, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id, updated_at")
+        .limit(50);
 
       if (shopsError) {
         const isNetwork =
@@ -1835,7 +1342,8 @@ export default function App() {
 
       const { data: menuData, error: menuError } = await supabase
         .from("menu_items")
-        .select("*");
+        .select("id, shop_id, name, price, description, image_url, category, is_available, customizations")
+        .limit(100);
 
       if (menuError) {
         const isNetwork =
@@ -1894,7 +1402,7 @@ export default function App() {
                     cash_trust_enabled: fallbackShop.cash_trust_enabled,
                     owner_id: "system",
                   })
-                  .select();
+                  .select("id");
 
               if (insertShopErr) {
                 console.warn(
@@ -1958,10 +1466,10 @@ export default function App() {
 
       const formattedShops: Shop[] = (shopsData || [])
         .map((s) => {
-          // Generate deterministic mock coordinates if missing for default area
+          // Generate deterministic mock coordinates if missing for default area so shops are distributed across the area and never collide with user's spot
           const shopHash = hashString(String(s.id));
-          const deterministicLat = -25.9964 + (shopHash % 100) * 0.0002 - 0.01;
-          const deterministicLng = 28.2268 + (shopHash % 100) * 0.0003 - 0.015;
+          const deterministicLat = -25.9964 + ((shopHash % 30) - 15) * 0.0018;
+          const deterministicLng = 28.2268 + (((shopHash >> 2) % 30) - 15) * 0.0018;
 
           const now = new Date();
           const currentHour = now.getHours();
@@ -2011,8 +1519,8 @@ export default function App() {
             opening_time: s.opening_time,
             closing_time: s.closing_time,
             phone: s.phone || "+27 12 345 6789",
-            latitude: s.latitude || DEFAULT_COORDS.lat,
-            longitude: s.longitude || DEFAULT_COORDS.lng,
+            latitude: s.latitude !== undefined && s.latitude !== null && s.latitude !== 0 ? s.latitude : deterministicLat,
+            longitude: s.longitude !== undefined && s.longitude !== null && s.longitude !== 0 ? s.longitude : deterministicLng,
             updated_at: parsedUpdatedAt,
             is_active: isActive,
             images: (s as any).images || [
@@ -2090,8 +1598,10 @@ export default function App() {
       let errorMessage = err.message || "Failed to connect to the server";
 
       if (isNetworkError || err.message === "FAILED_TO_FETCH_MENU") {
-        errorMessage =
-          "Check Your Connection: We're having trouble reaching the store. Please ensure your internet is working or check your ad-blocker.";
+        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+        errorMessage = isOffline
+          ? "Offline Mode: Showing cached stores and menus."
+          : "Server Notice: We're having trouble reaching the store backend. Using offline cached data while reconnecting.";
       } else if (err.status === 401 || err.status === 403) {
         errorMessage =
           "Please Sign In: We need you to log in again to keep your information secure.";
@@ -2216,8 +1726,9 @@ export default function App() {
           ? Number(((finalTotalPrice - itemDeliveryFee) / itemQuantity).toFixed(2))
           : itemPrice;
 
+        const { latitude, longitude, is_offline_queued, ...restO } = o;
         const orderRecord = {
-          ...o,
+          ...restO,
           id: o.id, // Preserve deterministic client order ID
           shop_id: resolvedShopId,
           status: "pending",
@@ -2225,9 +1736,10 @@ export default function App() {
           quantity: itemQuantity,
           delivery_fee: itemDeliveryFee,
           total_price: Number((finalPrice * itemQuantity + itemDeliveryFee).toFixed(2)),
-          delivery_status: o.payment_method === "cash_on_arrival" ? "finding_rider" : "none"
+          delivery_status: (o.payment_method === "cash_on_arrival" || o.payment_method === "cash") ? "none" : (o.is_delivery ? "finding_rider" : "none"),
+          lat: latitude || o.lat,
+          lng: longitude || o.lng,
         };
-        delete orderRecord.is_offline_queued;
 
         if (o.id) {
           const exists = await IdempotencyManager.checkOrderExists(o.id);
@@ -2247,7 +1759,7 @@ export default function App() {
           const { data, error } = await supabase
             .from("orders")
             .upsert(pendingOrdersToInsert, { onConflict: "id" })
-            .select();
+            .select("id");
 
           if (!error) {
             syncSuccess = true;
@@ -2297,9 +1809,10 @@ export default function App() {
         try {
           const { data: freshOrders, error: fetchError } = await supabase
             .from("orders")
-            .select("*")
+            .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng")
             .eq("user_id", session.user.id)
-            .order("created_at", { ascending: false });
+            .order("created_at", { ascending: false })
+            .limit(50);
           if (!fetchError && freshOrders) {
             safeLocalStorageSet("cached_orders", JSON.stringify(freshOrders));
             window.dispatchEvent(new Event("local-orders-synced"));
@@ -2513,39 +2026,29 @@ export default function App() {
         }
 
         // 4. Create push manager subscription with VAPID key
-        const publicVapidKey =
-          "BD1XkIROdUwh10mz-IoWXYIy3awy5SN37JRExUeG0eIkgcyvSt7HzrXmRhERIDigFylQOP9GgglaWmVStB2Cx1c";
-        const subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
-        });
+        try {
+          const publicVapidKey =
+            "BD1XkIROdUwh10mz-IoWXYIy3awy5SN37JRExUeG0eIkgcyvSt7HzrXmRhERIDigFylQOP9GgglaWmVStB2Cx1c";
+          const subscription = await registration.pushManager?.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
+          }).catch(() => null);
 
-        console.log("[Push] Registration details obtained:", subscription);
+          if (subscription) {
+            console.debug("[Push] Registration details obtained:", subscription);
 
-        // 5. Securely upsert push subscription details to Supabase backend
-        const { error } = await supabase.from("push_subscriptions").upsert({
-          user_id: targetUserId,
-          subscription: subscription.toJSON(),
-          updated_at: new Date().toISOString(),
-        });
-
-        if (error) {
-          console.error("[Push] Supabase upsert subscription error:", error);
-          throw error;
-        }
-
-        setNotification({
-          message: "Push notifications registered successfully!",
-          type: "success",
-        });
-        setTimeout(() => setNotification(null), 3000);
+            // 5. Securely upsert push subscription details to Supabase backend
+            try {
+              await supabase.from("push_subscriptions").upsert({
+                user_id: targetUserId,
+                subscription: subscription.toJSON(),
+                updated_at: new Date().toISOString(),
+              });
+            } catch (_) {}
+          }
+        } catch (_) {}
       } catch (err: any) {
-        console.error("[Push] Subscription failed:", err);
-        setNotification({
-          message: `Notification setup: ${err.message || String(err)}`,
-          type: "error",
-        });
-        setTimeout(() => setNotification(null), 4000);
+        console.debug("[Push] Notice:", err?.message || err);
       }
     },
     [session, setNotification],
@@ -2553,20 +2056,20 @@ export default function App() {
 
   const requestNotificationPermission = useCallback(async () => {
     if (!("Notification" in window)) {
-      console.log("This browser does not support desktop notifications");
       return;
     }
-    if (Notification.permission !== "denied") {
-      const permission = await Notification.requestPermission();
-      if (permission === "granted") {
-        console.log("Notification permission granted.");
-        if (session?.user?.id) {
-          // Sync with push notifications in background
-          subscribeToPushNotifications(session.user.id);
-          registerAndSyncPushToken(session.user.id);
+    try {
+      if (Notification.permission !== "denied") {
+        const permission = await Notification.requestPermission();
+        if (permission === "granted") {
+          if (session?.user?.id) {
+            // Sync with push notifications in background
+            subscribeToPushNotifications(session.user.id).catch(() => {});
+            registerAndSyncPushToken(session.user.id).catch(() => {});
+          }
         }
       }
-    }
+    } catch (_) {}
   }, [session, subscribeToPushNotifications]);
 
   // Listen for FCM foreground web push messages and display sonner toast notifications
@@ -2590,68 +2093,44 @@ export default function App() {
     };
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
-  useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
-      registerAndSyncPushToken(activeUserId).catch((err) => {
-        console.warn("[FCM] Auto push token registration notice:", err);
-      });
-    }
-  }, [session?.user?.id, userProfile?.id]);
-
-  // Account switch detection: Clear old user profile if it doesn't match the new active session
-  useEffect(() => {
-    if (session?.user?.id && userProfile?.id && session.user.id !== userProfile.id) {
-      console.info("[Auth] Account switch detected. Clearing old user profile.");
-      setUserProfile({
-        fullName: "",
-        email: "",
-        phone: "",
-        city: SUPPORTED_CITIES[0] || "Johannesburg",
-        address: "",
-        country: "South Africa",
-        role: "user"
-      });
-      setCart([]);
-      setFavorites([]);
-      localStorage.removeItem("userProfile");
-      localStorage.removeItem("cart");
-      localStorage.removeItem("favorites");
-      localStorage.removeItem("offline_orders_queue");
-    }
-  }, [session?.user?.id, userProfile?.id]);
-
-  useEffect(() => {
-    localStorage.setItem("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
-
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
       let data: any = null;
       let error: any = null;
 
-      // Primary attempt by user_id
-      const res = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (res.error) {
-        // Secondary attempt by id
-        const altRes = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", userId)
-          .maybeSingle();
-        if (!altRes.error) {
-          data = altRes.data;
-        } else {
-          error = res.error;
+      // 1. Direct Firestore profile retrieval for real-time customer identity
+      try {
+        const firestoreProfile = await FirestoreService.getProfile(userId);
+        if (firestoreProfile) {
+          data = firestoreProfile;
         }
-      } else {
-        data = res.data;
+      } catch (fsErr) {
+        console.debug("[Profile] Firestore getProfile notice:", fsErr);
+      }
+
+      // 2. Primary attempt by user_id if not loaded from Firestore
+      if (!data) {
+        const res = await supabase
+          .from("profiles")
+          .select("id, user_id, email, full_name, fullName, phone, avatar_url, photo_url, default_address, addresses, city, address, country, role, favorites, updated_at")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (res.error) {
+          // Secondary attempt by id
+          const altRes = await supabase
+            .from("profiles")
+            .select("id, user_id, email, full_name, fullName, phone, avatar_url, photo_url, default_address, addresses, city, address, country, role, favorites, updated_at")
+            .eq("id", userId)
+            .maybeSingle();
+          if (!altRes.error) {
+            data = altRes.data;
+          } else {
+            error = res.error;
+          }
+        } else {
+          data = res.data;
+        }
       }
 
       const isTransientSchemaNotice =
@@ -2667,21 +2146,71 @@ export default function App() {
       }
 
       if (data) {
-        setUserProfile({
+        setUserProfile((prev) => ({
+          ...prev,
           id: data.user_id || data.id || userId,
-          fullName: data.fullName || data.full_name || data.name || "",
-          email: data.email || "",
-          phone: data.phone || "",
-          city: data.city || "",
-          address: data.address || "",
-          country: data.country || "South Africa",
-          role: data.role || "user",
-          photoURL: data.photo_url || data.photoURL || "",
-          latitude: data.current_latitude || data.latitude,
-          longitude: data.current_longitude || data.longitude,
-        });
-        if (data.favorites) {
+          fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
+          email: data.email || prev.email || "",
+          phone: data.phone || prev.phone || "",
+          city: data.city || prev.city || "Johannesburg",
+          address: data.address || data.default_address || prev.address || "",
+          country: data.country || prev.country || "South Africa",
+          role: data.role || prev.role || "customer",
+          photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
+          latitude: data.current_latitude || data.latitude || prev.latitude,
+          longitude: data.current_longitude || data.longitude || prev.longitude,
+        }));
+        if (data.favorites && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
+        }
+      } else if (!error || error.code === "PGRST116" || !data) {
+        // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
+        // sync from current session metadata and auto-upsert to prevent empty state.
+        try {
+          const { data: authUserData } = await supabase.auth.getUser();
+          const authUser = authUserData?.user;
+          if (authUser && authUser.id === userId) {
+            const userMeta = authUser.user_metadata || {};
+            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
+            const fallbackPhone = userMeta.phone || "";
+            const fallbackRole = userMeta.role || "customer";
+
+            setUserProfile((prev) => ({
+              ...prev,
+              id: userId,
+              email: authUser.email || prev.email || "",
+              fullName: fallbackName || prev.fullName || "",
+              phone: fallbackPhone || prev.phone || "",
+              role: fallbackRole,
+            }));
+
+            // Non-blocking upsert to ensure row exists in profiles table
+            Promise.resolve(
+              supabase.from("profiles").upsert(
+                {
+                  user_id: userId,
+                  id: userId,
+                  email: authUser.email,
+                  full_name: fallbackName,
+                  "fullName": fallbackName,
+                  phone: fallbackPhone,
+                  role: fallbackRole,
+                  city: "Johannesburg",
+                  country: "South Africa",
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: "user_id" }
+              )
+            ).then(({ error: upsertErr }) => {
+              if (upsertErr) {
+                console.info("[Profile Auto-Upsert Notice]", upsertErr.message);
+              }
+            }).catch((e) => {
+              console.info("[Profile Auto-Upsert Notice]", e?.message || e);
+            });
+          }
+        } catch (authFetchErr) {
+          console.warn("[Profile Sync from Auth Notice]", authFetchErr);
         }
       }
     } catch (err: any) {
@@ -2714,8 +2243,136 @@ export default function App() {
     }
   }, []);
 
+  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  useEffect(() => {
+    const activeUserId = session?.user?.id || userProfile?.id;
+    if (activeUserId) {
+      registerAndSyncPushToken(activeUserId).catch((err) => {
+        console.warn("[FCM] Auto push token registration notice:", err);
+      });
+    }
+  }, [session?.user?.id, userProfile?.id]);
+
+  // Account switch detection: Clear old user profile and sync immediately with new active session
+  useEffect(() => {
+    if (session?.user?.id && userProfile?.id && session.user.id !== userProfile.id) {
+      console.info("[Auth] Account switch detected. Clearing old user data and syncing new user profile.");
+      const uMeta = session.user.user_metadata || {};
+      const newFullName = uMeta.full_name || uMeta.fullName || uMeta.name || session.user.email?.split("@")[0] || "";
+      const freshProfile: UserProfile = {
+        id: session.user.id,
+        email: session.user.email || "",
+        fullName: newFullName,
+        phone: uMeta.phone || "",
+        city: SUPPORTED_CITIES[0] || "Johannesburg",
+        address: "",
+        country: "South Africa",
+        role: uMeta.role || "customer"
+      };
+      setUserProfile(freshProfile);
+      setCart([]);
+      setFavorites([]);
+      localStorage.setItem("userProfile", JSON.stringify(freshProfile));
+      localStorage.removeItem("cart");
+      localStorage.removeItem("favorites");
+      localStorage.removeItem("offline_orders_queue");
+      fetchUserProfile(session.user.id);
+    }
+  }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
+
+  useEffect(() => {
+    localStorage.setItem("app_notifications", JSON.stringify(notifications));
+  }, [notifications]);
+
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
+      // 1. Network connectivity check
+      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+
+      if (isOffline) {
+        // Store cancellation request locally in pending_cancellation queue
+        try {
+          const raw = localStorage.getItem("pending_cancellation");
+          let list: any[] = [];
+          try {
+            list = raw ? JSON.parse(raw) : [];
+          } catch {
+            list = [];
+          }
+          const filtered = list.filter((item: any) => item?.orderId !== orderId);
+          filtered.push({
+            orderId,
+            cancelReason: reason || "Cancelled by customer",
+            timestamp: Date.now(),
+          });
+          localStorage.setItem("pending_cancellation", JSON.stringify(filtered));
+        } catch (e) {
+          console.warn("Failed to write to pending_cancellation queue:", e);
+        }
+
+        // Optimistically mark local orders state as cancelled
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId ? { ...o, status: "cancelled" } : o,
+          ),
+        );
+
+        setModal({
+          isOpen: true,
+          title: "Connection Lost - Cancellation Queued",
+          message: "You appear to be offline. Your cancellation request has been safely saved locally to the queue and will automatically sync once your connection is restored.",
+          type: "action-dialog",
+          errorCause: "Network offline (pending cancellation stored)",
+          iconType: "wifi-off",
+          actions: [
+            {
+              label: "Sync Now",
+              variant: "primary",
+              onClick: async () => {
+                // Trigger queue processor immediately
+                if (typeof navigator !== "undefined" && !navigator.onLine) {
+                  setNotification({
+                    message: "Device is still offline. Request remains queued and will sync once reconnected.",
+                    type: "info",
+                  });
+                  return;
+                }
+                const res = await processPendingCancellationsQueue();
+                if (res.successCount > 0) {
+                  setNotification({
+                    message: `Successfully synchronized ${res.successCount} cancellation request(s) with the cloud!`,
+                    type: "success",
+                  });
+                }
+              },
+            },
+            {
+              label: "Retry Cancellation",
+              variant: "outline",
+              onClick: () => {
+                // Attempt manual retry if reconnected
+                if (typeof navigator !== "undefined" && navigator.onLine) {
+                  cancelOrder(orderId, reason);
+                } else {
+                  setNotification({
+                    message: "Device is still offline. Request remains queued and will sync once reconnected.",
+                    type: "info",
+                  });
+                }
+              },
+            },
+            {
+              label: "Go Home",
+              variant: "ghost",
+              onClick: () => {
+                setCurrentScreen("home");
+              },
+            },
+          ],
+        });
+        return;
+      }
+
       await runWithProcessing(async () => {
         const updatePayload: any = {
           status: "cancelled",
@@ -2723,6 +2380,7 @@ export default function App() {
           updated_at: new Date().toISOString(),
         };
 
+        await FirestoreService.updateOrder(orderId, updatePayload);
         let { error } = await supabase
           .from("orders")
           .update(updatePayload)
@@ -2739,6 +2397,16 @@ export default function App() {
 
         if (error) throw error;
 
+        // Clean up from pending_cancellation if it was queued
+        try {
+          const raw = localStorage.getItem("pending_cancellation");
+          if (raw) {
+            const list = JSON.parse(raw);
+            const remaining = list.filter((i: any) => i?.orderId !== orderId);
+            localStorage.setItem("pending_cancellation", JSON.stringify(remaining));
+          }
+        } catch (_) {}
+
         setOrders((prev) =>
           prev.map((o) =>
             o.id === orderId ? { ...o, status: "cancelled" } : o,
@@ -2750,7 +2418,7 @@ export default function App() {
         });
       });
     },
-    [runWithProcessing, setNotification],
+    [runWithProcessing, setNotification, setCurrentScreen],
   );
 
   const changeToDelivery = useCallback(
@@ -2763,7 +2431,8 @@ export default function App() {
           updated_at: new Date().toISOString(),
         };
 
-        const { error } = await supabase
+        await FirestoreService.updateOrder(orderId, updatePayload);
+      const { error } = await supabase
           .from("orders")
           .update(updatePayload)
           .eq("id", orderId);
@@ -2847,20 +2516,73 @@ export default function App() {
     }, 1500);
 
     const hasToken = Object.keys(localStorage).some(
-      (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
+      (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
+               key === "supabase.auth.token"
     );
     const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
     const cachedProfile = safeLocalStorageGet("userProfile", null);
     const hasCachedUser = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
 
-    if (hasToken || hasRememberToken || hasCachedUser) {
+    if (hasToken || hasRememberToken) {
       setIsRestoringSession(true);
-      supabase.auth.getSession().then(async ({ data: { session } }) => {
+      getResilientSession(3000).then(async ({ data: { session } }) => {
         if (session) {
+          // Verify session validity with Supabase auth service to catch wiped DB or revoked tokens
+          try {
+            const { data: userData, error: userError } = await supabase.auth.getUser();
+            if (userError || !userData?.user) {
+              const errMsg = (userError?.message || "").toLowerCase();
+              if (errMsg.includes("invalid") || errMsg.includes("not found") || errMsg.includes("sub claim") || errMsg.includes("jwt") || errMsg.includes("user_not_found")) {
+                console.warn("[Auth] Stale or invalid session detected after database reset. Purging obsolete session.");
+                // Clear stale tokens and stale profile
+                Object.keys(localStorage).forEach((k) => {
+                  if ((k.startsWith("sb-") && k.includes("auth-token")) || k === "supabase.auth.token" || k === "localeats_session") {
+                    localStorage.removeItem(k);
+                  }
+                });
+                localStorage.removeItem("remember_me_secure_token");
+                localStorage.removeItem("userProfile");
+                setSession(null);
+                setUserProfile({
+                  fullName: "",
+                  email: "",
+                  phone: "",
+                  city: SUPPORTED_CITIES[0] || "Johannesburg",
+                  address: "",
+                  country: "South Africa",
+                  role: "user",
+                });
+                setIsRestoringSession(false);
+                setCurrentScreen("login");
+                setNotification({
+                  message: "Your previous session has expired. Please sign in.",
+                  type: "info",
+                });
+                return;
+              }
+            }
+          } catch (validateErr) {
+            console.info("[Auth] Session validation note:", validateErr);
+          }
+
           setSession(session);
           if (!localStorage.getItem("remember_me_secure_token")) {
             localStorage.setItem("remember_me_secure_token", session.access_token || "true");
           }
+
+          // Seed user profile state immediately from session metadata
+          if (session.user) {
+            const uMeta = session.user.user_metadata || {};
+            setUserProfile((prev) => ({
+              ...prev,
+              id: session.user.id,
+              email: session.user.email || prev.email || "",
+              fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
+              phone: uMeta.phone || prev.phone || "",
+              role: uMeta.role || prev.role || "customer",
+            }));
+          }
+
           fetchUserProfile(session.user.id);
           setCurrentScreen((prev) => {
             const preLoginScreens: Screen[] = [
@@ -2875,9 +2597,46 @@ export default function App() {
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
           requestNotificationPermission();
-        } else if (hasCachedUser) {
-          // Keep user logged in with cached local profile in offline mode
-          console.info("[Auth] Retaining local cached user profile session");
+        } else {
+          // No active auth session found
+          if (typeof navigator !== "undefined" && !navigator.onLine && hasCachedUser) {
+            // Truly offline - allow offline browsing with cached user
+            console.info("[Auth] Device offline: retaining cached profile for offline browsing.");
+            setCurrentScreen((prev) => {
+              const preLoginScreens: Screen[] = [
+                "splash",
+                "signup",
+                "login",
+                "verify",
+                "setup-pin",
+                "setup-password",
+                "success"
+              ];
+              return preLoginScreens.includes(prev) ? "home" : prev;
+            });
+          } else {
+            // Online and no valid session - clear obsolete cached user profile to prevent ghost-data loops
+            console.info("[Auth] No active session online. Resetting unauthenticated state.");
+            localStorage.removeItem("remember_me_secure_token");
+            localStorage.removeItem("localeats_session");
+            if (cachedProfile?.id && !hasToken) {
+              localStorage.removeItem("userProfile");
+              setUserProfile({
+                fullName: "",
+                email: "",
+                phone: "",
+                city: SUPPORTED_CITIES[0] || "Johannesburg",
+                address: "",
+                country: "South Africa",
+                role: "user",
+              });
+            }
+          }
+        }
+        setIsRestoringSession(false);
+      }).catch((err) => {
+        console.info("[Auth] Session recovery error/offline, fallback to cached state:", err?.message || String(err));
+        if (typeof navigator !== "undefined" && !navigator.onLine && hasCachedUser) {
           setCurrentScreen((prev) => {
             const preLoginScreens: Screen[] = [
               "splash",
@@ -2891,9 +2650,6 @@ export default function App() {
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
         }
-        setIsRestoringSession(false);
-      }).catch((err) => {
-        console.info("[Auth] Session check offline/failed, retaining local profile:", err?.message || String(err));
         setIsRestoringSession(false);
       });
     } else {
@@ -2983,9 +2739,9 @@ export default function App() {
     const checkVersion = async () => {
       try {
         // Try version.json first
-        const vResponse = await fetch("/version.json?t=" + Date.now());
-        if (vResponse.ok) {
-          const vData = await vResponse.json();
+        const vResponse = await fetch("/version.json?t=" + Date.now()).catch(() => null);
+        if (vResponse && vResponse.ok) {
+          const vData = await vResponse.json().catch(() => null);
           if (vData && vData.version) {
             setAppVersion(vData.version);
             if (vData.version !== APP_VERSION.split(" ")[0]) {
@@ -2996,9 +2752,9 @@ export default function App() {
         }
 
         // Fallback to metadata.json as backup version source
-        const mResponse = await fetch("/metadata.json");
-        if (mResponse.ok) {
-          const mData = await mResponse.json();
+        const mResponse = await fetch("/metadata.json").catch(() => null);
+        if (mResponse && mResponse.ok) {
+          const mData = await mResponse.json().catch(() => null);
           if (mData && mData.version) {
             setAppVersion(mData.version);
             const lastKnownVersion = safeLocalStorageGet(
@@ -3025,8 +2781,7 @@ export default function App() {
     if (!session?.user?.id) return;
 
     // Listen for status changes on the user's orders
-    const channel = supabase
-      .channel(`user_notifications:${session.user.id}`)
+    const channel = getFreshChannel(`user_notifications:${session.user.id}`)
       .on(
         "postgres_changes",
         {
@@ -3042,21 +2797,23 @@ export default function App() {
           }
 
           if (payload.eventType === "UPDATE") {
+            const existingOrder = ordersRef.current.find((o) => o.id === payload.new.id);
+
             setOrders((prev) =>
               prev.map((o) =>
                 o.id === payload.new.id ? (payload.new as Order) : o,
               ),
             );
 
-            const oldStatus = payload.old?.status;
+            const oldStatus = existingOrder?.status || payload.old?.status;
             const newStatus = payload.new?.status;
-            const oldDeliveryStatus = payload.old?.delivery_status;
+            const oldDeliveryStatus = existingOrder?.delivery_status || payload.old?.delivery_status;
             const newDeliveryStatus = payload.new?.delivery_status;
-            const oldOrderType = payload.old?.order_type;
+            const oldOrderType = (existingOrder as any)?.order_type || payload.old?.order_type;
             const newOrderType = payload.new?.order_type;
 
-            // 1. Core Order Status Updates
-            if (oldStatus !== newStatus) {
+            // 1. Core Order Status Updates (only if previous status was known and actually changed)
+            if (oldStatus && newStatus && oldStatus !== newStatus) {
               const shop = shops.find((s) => s.id === payload.new.shop_id);
               const title = `Store Update`;
               let message = `Your order from ${shop?.name || "the shop"} is now ${newStatus}.`;
@@ -3105,6 +2862,19 @@ export default function App() {
                 if (navigator.vibrate) {
                   navigator.vibrate([100, 50, 100, 50, 200]);
                 }
+              }
+
+              // Trigger review when completed
+              if (newStatus === "completed") {
+                const reviewPayload = {
+                  orderId: payload.new.id,
+                  shopId: payload.new.shop_id,
+                  productName: payload.new.product_name,
+                  snoozeCount: 0,
+                  nextReminder: 0,
+                };
+                setPendingReview(reviewPayload);
+                safeLocalStorageSet("pending_review", JSON.stringify(reviewPayload));
               }
 
               // Trigger browser notification if permission granted
@@ -3170,8 +2940,8 @@ export default function App() {
               }
             }
 
-            // 2. Rider Delivery Status Updates
-            if (oldDeliveryStatus !== newDeliveryStatus && newDeliveryStatus) {
+            // 2. Rider Delivery Status Updates (only if previous status was known and changed)
+            if (oldDeliveryStatus && newDeliveryStatus && oldDeliveryStatus !== newDeliveryStatus) {
               const shop = shops.find((s) => s.id === payload.new.shop_id);
               let deliveryMessage = ``;
 
@@ -3217,7 +2987,7 @@ export default function App() {
             }
 
             // 3. Fallback to Collection
-            if (oldOrderType === "delivery" && newOrderType === "collection") {
+            if (oldOrderType && newOrderType && oldOrderType === "delivery" && newOrderType === "collection" && oldOrderType !== newOrderType) {
               const shop = shops.find((s) => s.id === payload.new.shop_id);
               const fallbackMsg = `🚨 The shop ${shop?.name || ""} had to switch your order to COLLECTION as no riders are currently available. Please self-pickup!`;
               toast.error(fallbackMsg, {
@@ -3267,26 +3037,41 @@ export default function App() {
     // Initial orders fetch with timestamp reconciliation
     const fetchOrders = async () => {
       if (!session?.user?.id) return;
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng";
       try {
         let fetchedData: any[] | null = null;
+        
+        // 1. Fetch from Shared Firestore Database (Merchant App)
         try {
-          const { data, error } = await supabase
-            .from("orders")
-            .select(safeColumns)
-            .eq("user_id", session.user.id)
-            .order("created_at", { ascending: false });
-          if (!error && data) {
-            fetchedData = data;
+          const fsOrders = await FirestoreService.getOrdersByUser(session.user.id);
+          if (fsOrders && fsOrders.length > 0) {
+            fetchedData = fsOrders;
           }
-        } catch (_) {}
+        } catch (fErr) {
+          console.debug("[DualSync] Firestore orders fetch notice:", fErr);
+        }
+
+        // 2. Fetch from Supabase as fallback
+        if (!fetchedData || fetchedData.length === 0) {
+          try {
+            const { data, error } = await supabase
+              .from("orders")
+              .select(safeColumns)
+              .eq("user_id", session.user.id)
+              .order("created_at", { ascending: false })
+              .limit(50);
+            if (!error && data) {
+              fetchedData = data;
+            }
+          } catch (_) {}
+        }
 
         if (!fetchedData) {
           try {
-            const res = await fetch(`/api/orders?user_id=${session.user.id}`);
-            if (res.ok) {
-              const json = await res.json();
-              if (Array.isArray(json.orders)) fetchedData = json.orders;
+            const res = await fetch(`/api/orders?user_id=${session.user.id}`).catch(() => null);
+            if (res && res.ok) {
+              const json = await res.json().catch(() => null);
+              if (json && Array.isArray(json.orders)) fetchedData = json.orders;
             }
           } catch (_) {}
         }
@@ -3328,8 +3113,7 @@ export default function App() {
     fetchShopsData();
 
     // Subscribe to changes in shops and menu_items
-    const shopsChannel = supabase
-      .channel("public:shops")
+    const shopsChannel = getFreshChannel("public:shops")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "shops" },
@@ -3337,8 +3121,7 @@ export default function App() {
       )
       .subscribe();
 
-    const menuChannel = supabase
-      .channel("public:menu_items")
+    const menuChannel = getFreshChannel("public:menu_items")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "menu_items" },
@@ -3530,6 +3313,7 @@ export default function App() {
           "Start New Cart?",
           `You already have items from ${existingShopName} in your cart. Would you like to clear your current cart and start a new one from this shop?`,
           () => {
+            if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             triggerHaptic([100, 50, 100]); // Stronger pulse for clear
             setCart([buildCartItemNode(quantity)]);
             setNotification({
@@ -3542,6 +3326,7 @@ export default function App() {
         return;
       }
 
+      if ("vibrate" in navigator) navigator.vibrate([50, 30, 50]);
       triggerHaptic([50, 30, 50]); // Premium double-pulse haptic
       setCart((prev) => {
         // Find matching item with same ID, instructions, and customizations
@@ -3719,7 +3504,7 @@ export default function App() {
       <div className="relative min-h-screen">
         <AuthSkeleton />
         <div id="auth-loading-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-xs">
-          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 max-w-xs text-center">
+          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 p-6 rounded-2xl shadow-xl flex flex-col items-center gap-4 max-w-xs text-center">
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <div className="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin"></div>
               <div className="absolute inset-0 flex items-center justify-center">
@@ -3801,7 +3586,7 @@ export default function App() {
                     <motion.div
                       initial={{ scale: 0.5, rotate: -45 }}
                       animate={{ scale: 1, rotate: 0 }}
-                      className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-2xl shadow-green-500/40 border-4 border-white dark:border-slate-800"
+                      className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center shadow-xl shadow-green-500/40 border-4 border-white dark:border-slate-800"
                     >
                       <Check className="w-14 h-14 text-white" strokeWidth={5} />
                     </motion.div>
@@ -3864,7 +3649,7 @@ export default function App() {
                         whileDrag: { scale: 0.98, opacity: 0.85 },
                       }
                     : {})}
-                  className={`${notification.persistent ? "w-full max-w-xs" : "max-w-md mx-auto relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-2xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
+                  className={`${notification.persistent ? "w-full max-w-xs" : "max-w-md mx-auto relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
                 >
                   {!notification.persistent && (
                     <div className="flex justify-center -mt-3.5 -mb-1 shrink-0">
@@ -3936,14 +3721,6 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Persistent Offline Mode Banner */}
-          <OfflineBanner
-            isOnline={isOnline}
-            consecutiveFailures={heartbeatMetrics.consecutiveFailures}
-            onManualSync={handleManualSync}
-            isSyncing={isSyncing}
-          />
-
           {/* Order Accepted Modal */}
           <AnimatePresence>
             {orderAcceptedModal.isOpen && (
@@ -3957,7 +3734,7 @@ export default function App() {
                   initial={{ scale: 0.9, opacity: 0, y: 20 }}
                   animate={{ scale: 1, opacity: 1, y: 0 }}
                   exit={{ scale: 0.9, opacity: 0, y: 20 }}
-                  className="w-full max-w-xs bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-2xl border border-slate-100 dark:border-slate-800 text-center relative overflow-hidden"
+                  className="w-full max-w-xs bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-xl border border-slate-100 dark:border-slate-800 text-center relative overflow-hidden"
                 >
                   {/* Decorative elements */}
                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-teal-500"></div>
@@ -4031,6 +3808,7 @@ export default function App() {
                     setCurrentScreen("login-success");
                   }}
                   onSignUp={() => setCurrentScreen("signup")}
+                  onGuestBrowse={() => setCurrentScreen("home")}
                   setNotification={setNotification}
                   biometricsEnabled={biometricsEnabled}
                   onToggleBiometrics={(val) => {
@@ -4040,6 +3818,8 @@ export default function App() {
                     } catch {}
                   }}
                   triggerHaptic={triggerHaptic}
+                  setUserProfile={setUserProfile}
+                  fetchUserProfile={fetchUserProfile}
                 />
               )}
               {/* Verify screen skipped for now */}
@@ -4171,7 +3951,7 @@ export default function App() {
                 </WidgetErrorBoundary>
               )}
               {currentScreen === "review" && pendingReview && (
-                <ReviewScreen
+                <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
                     if (pendingReview.snoozeCount < 2) {
@@ -4627,27 +4407,27 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
 
-          {/* Global Floating Checkout Button */}
+          {/* Global Floating Checkout Button (Peek-a-Boo Sticky Cart) */}
           <AnimatePresence>
             {cartCount > 0 &&
               currentScreen !== "checkout" &&
               currentScreen !== "order-success" && (
                 <motion.button
-                  initial={{ scale: 0, y: 20, opacity: 0 }}
+                  initial={{ y: 100, opacity: 0 }}
                   animate={isCartBouncing ? {
-                    scale: [1, 1.15, 0.92, 1.05, 1],
-                    y: [0, -14, 4, -2, 0],
-                    opacity: 1
+                    y: [0, -10, 4, -2, 0],
+                    opacity: 1,
+                    scale: [1, 1.02, 0.98, 1]
                   } : {
-                    scale: 1,
                     y: 0,
-                    opacity: 1
+                    opacity: 1,
+                    scale: 1
                   }}
                   transition={{
-                    duration: 0.6,
-                    ease: "easeInOut"
+                    duration: 0.5,
+                    ease: "easeOut"
                   }}
-                  exit={{ scale: 0, y: 20, opacity: 0 }}
+                  exit={{ y: 100, opacity: 0 }}
                   onClick={() => {
                     if (!session) {
                       showAlert(
@@ -4661,20 +4441,26 @@ export default function App() {
                     setPreviousScreen(currentScreen);
                     setCurrentScreen("checkout");
                   }}
-                  className={`fixed bottom-20 right-4 z-50 bg-slate-900/90 dark:bg-orange-600/90 backdrop-blur-md text-white py-2 px-3.5 rounded-full shadow-lg border border-white/10 flex items-center gap-2.5 active:scale-95 transition-all cursor-pointer group ${
-                    isScrollCollapsed ? "scale-90 opacity-80" : "scale-100 opacity-100"
-                  }`}
+                  className={`fixed bottom-20 left-4 right-4 z-[9999] bg-slate-900 dark:bg-orange-600 text-white p-4 rounded-2xl shadow-xl flex items-center justify-between active:scale-[0.98] transition-transform cursor-pointer group`}
                 >
-                  <div className="relative flex items-center gap-1.5">
-                    <ShoppingBag className="w-4 h-4 text-orange-400 dark:text-white" />
-                    <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full shadow-sm">
-                      {cartCount}
-                    </span>
+                  <div className="flex items-center gap-3">
+                    <div className="relative bg-white/20 dark:bg-white/20 p-2 rounded-xl">
+                      <ShoppingBag className="w-5 h-5 text-white" />
+                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full shadow-md border-2 border-slate-900 dark:border-orange-600">
+                        {cartCount}
+                      </span>
+                    </div>
+                    <div className="text-left flex flex-col">
+                      <span className="text-xs font-bold text-white/80">View Cart</span>
+                      <span className="font-black text-sm tracking-tight">
+                        <AnimatedPrice value={cartTotal} />
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-left font-black text-xs font-mono tracking-tight">
-                    <AnimatedPrice value={cartTotal} />
+                  <div className="flex items-center gap-2 bg-white/10 px-3 py-2 rounded-xl">
+                    <span className="text-xs font-bold uppercase tracking-wider">Checkout</span>
+                    <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                   </div>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:translate-x-0.5 transition-transform" />
                 </motion.button>
               )}
           </AnimatePresence>
@@ -4785,7 +4571,7 @@ export default function App() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 30, scale: 0.95 }}
                   transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                  className="fixed bottom-20 left-3 right-3 md:left-auto md:right-4 md:w-80 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-2 rounded-2xl shadow-2xl border border-slate-800/80 flex flex-col gap-1.5 overflow-hidden"
+                  className="fixed bottom-20 left-3 right-3 md:left-auto md:right-4 md:w-80 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-2 rounded-2xl shadow-xl border border-slate-800/80 flex flex-col gap-1.5 overflow-hidden"
                 >
                   <div className="flex items-center justify-between gap-2 min-w-0">
                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -4799,7 +4585,7 @@ export default function App() {
                             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500"></span>
                           </span>
                           <h4 className="text-xs font-bold text-white truncate">{activeOrderShop?.name || "Kitchen"}</h4>
-                          <span className="text-[9px] font-mono text-orange-400 font-bold opacity-90 shrink-0 bg-orange-500/10 px-1.5 py-0.2 rounded border border-orange-500/20">
+                          <span className="text-[9px] font-mono text-orange-400 font-bold opacity-90 shrink-0 bg-orange-500/10 px-2 py-1 rounded border border-orange-500/20">
                             #{activeOrder.id.slice(0, 4)}
                           </span>
                         </div>
@@ -4894,7 +4680,7 @@ function SignUpScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
         <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
           <div className="flex items-center justify-center">
@@ -4932,12 +4718,16 @@ function SignUpScreen({
                 <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
+                    ref={fullNameRef}
                     value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
+                    onChange={(e) => { setFullName(e.target.value); setFormErrors(prev => ({...prev, fullName: undefined})); }}
+                    className={`form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 border ${formErrors.fullName ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-800 focus:ring-primary/20'} bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all`}
                     placeholder="Enter your full name"
                     type="text"
                   />
+                </div>
+                {formErrors.fullName && <p className="text-red-500 text-[10px] mt-1">{formErrors.fullName}</p>}
+                <div>
                 </div>
               </label>
               <label className="flex flex-col w-full">
@@ -4947,13 +4737,15 @@ function SignUpScreen({
                 <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                   <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
+                    ref={emailRef}
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
+                    onChange={(e) => { setEmail(e.target.value); setFormErrors(prev => ({...prev, email: undefined})); }}
+                    className={`form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 border ${formErrors.email ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-800 focus:ring-primary/20'} bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all`}
                     placeholder="Enter your email"
                     type="email"
                   />
                 </div>
+                {formErrors.email && <p className="text-red-500 text-[10px] mt-1">{formErrors.email}</p>}
               </label>
               <label className="flex flex-col w-full">
                 <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
@@ -5093,7 +4885,7 @@ function VerifyScreen({
   };
 
   return (
-    <div className="font-display bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+    <div className="font-sans bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
         <header className="flex items-center p-4">
           <button
@@ -5270,7 +5062,7 @@ function SetupPasswordScreen({
   };
 
   return (
-    <div className="font-display bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+    <div className="font-sans bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
       <div className="max-w-md mx-auto w-full flex flex-col min-h-screen">
         <header className="flex items-center p-4 bg-white dark:bg-slate-950 border-b border-primary/10">
           <button
@@ -5363,7 +5155,7 @@ function SuccessScreen({
   onExplore: () => void;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 antialiased">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 antialiased">
       <div className="relative flex h-screen w-full flex-col overflow-x-hidden">
         {/* Top Navigation */}
         <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-950">
@@ -5656,13 +5448,15 @@ function CompleteProfileScreen({
               <div className="relative group">
                 <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" />
                 <input
+                  ref={fullNameRef}
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-primary/20 focus:border-primary border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all outline-none"
+                  onChange={(e) => { setFullName(e.target.value); setFormErrors(prev => ({...prev, fullName: undefined})); }}
+                  className={`w-full rounded-2xl text-slate-900 dark:text-slate-100 focus:ring-2 outline-none border-2 ${formErrors.fullName ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 dark:border-slate-800 focus:ring-primary/20 focus:border-primary'} bg-white dark:bg-slate-900 h-14 pl-12 pr-4 text-base font-medium transition-all`}
                   placeholder="e.g. John Doe"
                   type="text"
                 />
               </div>
+              {formErrors.fullName && <p className="text-red-500 text-[10px] mt-1">{formErrors.fullName}</p>}
             </label>
 
             <label className="block">
@@ -5946,17 +5740,23 @@ function ResetPasswordScreen({
 function LoginScreen({
   onLogin,
   onSignUp,
+  onGuestBrowse,
   setNotification,
   biometricsEnabled,
   onToggleBiometrics,
   triggerHaptic,
+  setUserProfile,
+  fetchUserProfile,
 }: {
   onLogin: () => void;
   onSignUp: () => void;
+  onGuestBrowse?: () => void;
   setNotification: (n: NotificationState) => void;
   biometricsEnabled: boolean;
   onToggleBiometrics: (val: boolean) => void;
   triggerHaptic?: any;
+  setUserProfile?: React.Dispatch<React.SetStateAction<UserProfile>>;
+  fetchUserProfile?: (userId: string) => Promise<void>;
 }) {
   const [identifier, setIdentifier] = useState(() => {
     try {
@@ -5979,38 +5779,22 @@ function LoginScreen({
   const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [recoveryEmail, setRecoveryEmail] = useState("");
   const [loadingRecovery, setLoadingRecovery] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotError, setForgotError] = useState<{
+    title: string;
+    message: string;
+    suggestion: string;
+  } | null>(null);
 
-  // New states for developer panel and biometric authentication
-  const [logoClicks, setLogoClicks] = useState(0);
-  const [lastClickTime, setLastClickTime] = useState(0);
-  const [showPasscodeModal, setShowPasscodeModal] = useState(false);
-  const [enteredPasscode, setEnteredPasscode] = useState("");
-  const [devUnlockedUntil, setDevUnlockedUntil] = useState<number | null>(() => {
-    try {
-      const until = localStorage.getItem("dev_unlocked_until");
-      if (until) {
-        const parsed = parseInt(until, 10);
-        if (parsed > Date.now()) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return null;
-  });
-  const [showDevPanel, setShowDevPanel] = useState(() => {
-    try {
-      const until = localStorage.getItem("dev_unlocked_until");
-      if (until) {
-        const parsed = parseInt(until, 10);
-        if (parsed > Date.now()) {
-          return true;
-        }
-      }
-    } catch {}
-    return false;
-  });
+  // User-friendly inline authentication error assistance
+  const [authError, setAuthError] = useState<{
+    type: "server_unreachable" | "offline" | "invalid_credentials" | "user_not_found" | "rate_limited" | "email_unconfirmed" | "generic";
+    title: string;
+    message: string;
+    suggestion: string;
+  } | null>(null);
+
   const [isScanningBiometrics, setIsScanningBiometrics] = useState(false);
-  const [tokenMeta, setTokenMeta] = useState<any>(null);
   const [hasRememberedToken, setHasRememberedToken] = useState(() => {
     try {
       return !!localStorage.getItem("remember_me_secure_token");
@@ -6018,227 +5802,6 @@ function LoginScreen({
       return false;
     }
   });
-
-  // Track logo clicks to toggle hidden Developer Session Panel
-  const handleLogoClick = () => {
-    const now = Date.now();
-    if (now - lastClickTime > 1000) {
-      setLogoClicks(1);
-    } else {
-      const nextClicks = logoClicks + 1;
-      setLogoClicks(nextClicks);
-      if (nextClicks >= 5) {
-        setLogoClicks(0);
-        setShowPasscodeModal(true);
-        setEnteredPasscode("");
-      }
-    }
-    setLastClickTime(now);
-  };
-
-  const [secondsLeft, setSecondsLeft] = useState<number>(0);
-
-  // Monitor dev session expiry and tick timer
-  useEffect(() => {
-    if (!devUnlockedUntil) {
-      setSecondsLeft(0);
-      return;
-    }
-    
-    const updateTime = () => {
-      const left = Math.max(0, Math.floor((devUnlockedUntil - Date.now()) / 1000));
-      setSecondsLeft(left);
-      if (left <= 0) {
-        setShowDevPanel(false);
-        setDevUnlockedUntil(null);
-        try {
-          localStorage.removeItem("dev_unlocked_until");
-        } catch {}
-        setNotification({
-          message: "Developer session has expired (30-minute limit reached).",
-          type: "info",
-        });
-      }
-    };
-
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
-
-    return () => clearInterval(interval);
-  }, [devUnlockedUntil]);
-
-  const formatTimeRemaining = (totalSecs: number) => {
-    const mins = Math.floor(totalSecs / 60);
-    const secs = totalSecs % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const handlePasscodePress = (num: string) => {
-    triggerHaptic?.(10);
-    if (enteredPasscode.length < 4) {
-      const nextPasscode = enteredPasscode + num;
-      setEnteredPasscode(nextPasscode);
-      
-      // Auto submit when 4 digits are entered
-      if (nextPasscode === "2002") {
-        const expirationTime = Date.now() + 30 * 60 * 1000; // 30 minutes
-        setDevUnlockedUntil(expirationTime);
-        setShowDevPanel(true);
-        try {
-          localStorage.setItem("dev_unlocked_until", String(expirationTime));
-        } catch {}
-        setNotification({
-          message: "Developer Access Unlocked for 30 minutes! 🛠️",
-          type: "success",
-        });
-        setShowPasscodeModal(false);
-        setEnteredPasscode("");
-      } else if (nextPasscode.length === 4) {
-        triggerHaptic?.(50);
-        setNotification({
-          message: "Incorrect passcode. Please try again.",
-          type: "error",
-        });
-        setTimeout(() => {
-          setEnteredPasscode("");
-        }, 1500);
-      }
-    }
-  };
-
-  const handlePasscodeBackspace = () => {
-    triggerHaptic?.(10);
-    setEnteredPasscode(prev => prev.slice(0, -1));
-  };
-
-  // Poll and gather metadata for local storage keys and active Supabase session
-  useEffect(() => {
-    const fetchSessionMeta = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        let sbKeys: any[] = [];
-        let totalSize = 0;
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && (key.startsWith("sb-") || key.includes("remember_me") || key.includes("remembered_"))) {
-            const val = localStorage.getItem(key) || "";
-            totalSize += val.length;
-            sbKeys.push({
-              key,
-              size: val.length,
-              value: val.substring(0, 30) + (val.length > 30 ? "..." : ""),
-            });
-          }
-        }
-
-        if (session) {
-          const expiresAt = session.expires_at ? new Date(session.expires_at * 1000) : null;
-          const isExpired = expiresAt ? expiresAt.getTime() < Date.now() : false;
-          const timeLeftSec = expiresAt ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000)) : 0;
-          
-          setTokenMeta({
-            status: "Authenticated",
-            email: session.user.email,
-            id: session.user.id,
-            expiresAt: expiresAt?.toISOString(),
-            isExpired,
-            timeLeft: `${Math.floor(timeLeftSec / 60)}m ${timeLeftSec % 60}s`,
-            tokenSize: session.access_token?.length || 0,
-            aud: session.user.aud,
-            keysFound: sbKeys,
-            totalStorageBytes: totalSize,
-          });
-        } else {
-          setTokenMeta({
-            status: "No active session in Supabase client context",
-            keysFound: sbKeys,
-            totalStorageBytes: totalSize,
-          });
-        }
-      } catch (err: any) {
-        setTokenMeta({
-          status: "Error fetching session metadata",
-          error: err.message,
-        });
-      }
-    };
-    
-    fetchSessionMeta();
-    const interval = setInterval(fetchSessionMeta, 3000);
-    return () => clearInterval(interval);
-  }, [showDevPanel]);
-
-  // Troubleshooting Tool: Reset all remembered and cached login state
-  const clearAllSavedTokens = async () => {
-    try {
-      localStorage.removeItem("remember_me_secure_token");
-      localStorage.removeItem("remembered_identifier");
-      
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith("sb-") || key.endsWith("-auth-token"))) {
-          localStorage.removeItem(key);
-        }
-      }
-      
-      await supabase.auth.signOut().catch(() => {});
-      setHasRememberedToken(false);
-      setIdentifier("");
-      setPassword("");
-      setRememberMe(false);
-      
-      setNotification({
-        message: "Successfully cleared all cached credentials & Supabase tokens.",
-        type: "success",
-      });
-    } catch (e: any) {
-      setNotification({
-        message: `Failed to clear tokens: ${e.message}`,
-        type: "error",
-      });
-    }
-  };
-
-  // Troubleshooting Tool: Simulate token expiry by modifying expiration timestamp or credentials
-  const simulateTokenExpiry = () => {
-    try {
-      let found = false;
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
-          const val = localStorage.getItem(key);
-          if (val) {
-            try {
-              const parsed = JSON.parse(val);
-              if (parsed.expires_at) {
-                parsed.expires_at = Math.floor(Date.now() / 1000) - 10;
-              }
-              localStorage.setItem(key, JSON.stringify(parsed));
-              found = true;
-            } catch {}
-          }
-        }
-      }
-      if (found) {
-        setNotification({
-          message: "Simulated token expiration. Access token expiry timestamp set to past.",
-          type: "success",
-        });
-      } else {
-        localStorage.setItem("remember_me_secure_token", "EXPIRED_MOCK_TOKEN");
-        setNotification({
-          message: "No active Supabase token found. Invalidation applied to Remember Me token instead.",
-          type: "info",
-        });
-      }
-    } catch (err: any) {
-      setNotification({
-        message: `Failed to invalidate tokens: ${err.message}`,
-        type: "error",
-      });
-    }
-  };
 
   // Implement Biometric login utilizing Web Authentication API with animated visual scanner fallback
   const handleBiometricAuth = async () => {
@@ -6328,9 +5891,11 @@ function LoginScreen({
             onLogin();
           }, 1500);
         } else {
-          setNotification({
-            message: "No remembered session found. Please log in with password once first.",
-            type: "error",
+          setAuthError({
+            type: "generic",
+            title: "First-Time Sign-In Required",
+            message: "To activate Fingerprint or Face ID, please log in with your email and password once first with 'Remember Me' checked.",
+            suggestion: "Enter your password below to enable one-tap biometric access for future visits.",
           });
           const pwdInput = document.getElementById("login-password-input");
           if (pwdInput) {
@@ -6343,9 +5908,11 @@ function LoginScreen({
     } catch (err: any) {
       setIsScanningBiometrics(false);
       setLoading(false);
-      setNotification({
-        message: err.message || "Biometric authentication failed. Please enter your password.",
-        type: "error",
+      setAuthError({
+        type: "generic",
+        title: "Biometric Sign-In Notice",
+        message: err.message || "Biometric sensor verification could not be completed.",
+        suggestion: "Please enter your password manually below to sign in.",
       });
       // Gracefully focus password input on failure
       setTimeout(() => {
@@ -6419,26 +5986,78 @@ function LoginScreen({
 
   const handleLogin = async () => {
     if (!identifier || !password) {
-      setNotification({
-        message: `Please enter both email and password`,
-        type: "error",
+      setAuthError({
+        type: "generic",
+        title: "Missing Information",
+        message: "Please enter both your email address and password to continue.",
+        suggestion: "Check that both fields are filled in before tapping Login.",
       });
       return;
     }
     setLoading(true);
+    setAuthError(null);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: identifier,
+      const { data: authData, error } = await supabase.auth.signInWithPassword({
+        email: identifier.trim(),
         password,
       });
       if (error) throw error;
+
+      // Ensure user profile in public.profiles table exists seamlessly (handles cases where DB was reset or trigger delayed)
+      if (authData?.user) {
+        const userMeta = authData.user.user_metadata || {};
+        const freshFullName = userMeta.full_name || userMeta.fullName || userMeta.name || identifier.trim().split("@")[0];
+        const freshProfile: UserProfile = {
+          id: authData.user.id,
+          email: authData.user.email || identifier.trim(),
+          fullName: freshFullName,
+          phone: userMeta.phone || "",
+          city: "Johannesburg",
+          address: "",
+          country: "South Africa",
+          role: userMeta.role || "customer",
+        };
+
+        // Immediately update localStorage and wipe any outdated cached data from prior database wipes
+        localStorage.setItem("userProfile", JSON.stringify(freshProfile));
+        localStorage.setItem("localeats_session", authData.user.id);
+        localStorage.removeItem("offline_orders_queue");
+
+        if (setUserProfile) {
+          setUserProfile(freshProfile);
+        }
+
+        try {
+          await supabase.from("profiles").upsert(
+            {
+              user_id: authData.user.id,
+              id: authData.user.id,
+              email: authData.user.email || identifier.trim(),
+              full_name: freshFullName,
+              "fullName": freshFullName,
+              phone: userMeta.phone || "",
+              role: userMeta.role || "customer",
+              city: "Johannesburg",
+              country: "South Africa",
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" }
+          );
+        } catch (profileErr) {
+          console.warn("[Profile Auto-Provision Notice]", profileErr);
+        }
+
+        if (fetchUserProfile) {
+          fetchUserProfile(authData.user.id);
+        }
+      }
 
       try {
         localStorage.setItem("remember_me_secure_token", generateSecureToken());
         setHasRememberedToken(true);
         if (rememberMe) {
-          localStorage.setItem("remembered_identifier", identifier);
-          await registerBiometrics(identifier);
+          localStorage.setItem("remembered_identifier", identifier.trim());
+          await registerBiometrics(identifier.trim());
         } else {
           localStorage.removeItem("remembered_identifier");
         }
@@ -6449,19 +6068,83 @@ function LoginScreen({
       setIsSuccess(true);
       setTimeout(() => {
         onLogin();
-      }, 1500);
+      }, 1200);
     } catch (error: any) {
-      let msg = error?.message || error?.error_description || "";
-      if (msg === "Failed to fetch" || msg?.toLowerCase().includes("network")) {
-        msg =
-          "It looks like you're offline. Please check your internet connection and try again.";
-      } else if (msg?.toLowerCase().includes("invalid login credentials")) {
-        msg = "The email or password you entered isn't quite right. Please double-check them.";
+      const rawMsg = error?.message || error?.error_description || String(error || "");
+      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+      const isNetworkErr =
+        rawMsg === "Failed to fetch" ||
+        rawMsg.toLowerCase().includes("failed to fetch") ||
+        rawMsg.toLowerCase().includes("network") ||
+        rawMsg.toLowerCase().includes("connection") ||
+        rawMsg.toLowerCase().includes("timeout") ||
+        rawMsg.toLowerCase().includes("upstream connect");
+      const isInvalidCreds =
+        rawMsg.toLowerCase().includes("invalid login credentials") ||
+        rawMsg.toLowerCase().includes("invalid_grant") ||
+        rawMsg.toLowerCase().includes("wrong password");
+      const isUserNotFound =
+        rawMsg.toLowerCase().includes("user not found") ||
+        rawMsg.toLowerCase().includes("no user");
+      const isEmailNotConfirmed =
+        rawMsg.toLowerCase().includes("email not confirmed") ||
+        rawMsg.toLowerCase().includes("email confirmation");
+      const isRateLimited =
+        rawMsg.toLowerCase().includes("too many requests") ||
+        rawMsg.toLowerCase().includes("rate limit") ||
+        error?.status === 429;
+
+      if (isOffline) {
+        setAuthError({
+          type: "offline",
+          title: "You're Offline",
+          message: "No internet connection detected on your device. Please check your network connection.",
+          suggestion: "Check your Wi-Fi or mobile data, or browse our menu as a guest.",
+        });
+      } else if (isNetworkErr) {
+        setAuthError({
+          type: "server_unreachable",
+          title: "Unable to Connect",
+          message: "We're having trouble connecting to the server. Please check your internet connection.",
+          suggestion: "Tap Retry Connection below, or browse our menu as a guest.",
+        });
+      } else if (isInvalidCreds) {
+        setAuthError({
+          type: "invalid_credentials",
+          title: "Sign-In Details Don't Match",
+          message: "The email address or password you entered doesn't match our records. Please double-check for typos and try again.",
+          suggestion: "Please double-check your typing, or tap 'Reset Password' below to easily regain access.",
+        });
+      } else if (isUserNotFound) {
+        setAuthError({
+          type: "user_not_found",
+          title: "Account Not Found",
+          message: "We couldn't find an account matching this email address.",
+          suggestion: "Please double-check your spelling, or tap Create Free Account to sign up.",
+        });
+      } else if (isEmailNotConfirmed) {
+        setAuthError({
+          type: "email_unconfirmed",
+          title: "Email Verification Required",
+          message: "Please confirm your email address before signing in.",
+          suggestion: "Check your email inbox (and spam folder) for your confirmation link.",
+        });
+      } else if (isRateLimited) {
+        setAuthError({
+          type: "rate_limited",
+          title: "Too Many Login Attempts",
+          message: "For your security, sign-in attempts are temporarily paused.",
+          suggestion: "Please wait about a minute before trying again.",
+        });
       } else {
-        msg = "We ran into an issue logging you in. Please check your email and password and try again.";
+        setAuthError({
+          type: "generic",
+          title: "Unable to Sign In",
+          message: "We were unable to sign you in. Please check your details and try again.",
+          suggestion: "Make sure your email and password are correct, or tap Reset Password.",
+        });
       }
       console.warn("[Auth Login Notice]", error);
-      setNotification({ message: msg, type: "error" });
     } finally {
       setLoading(false);
     }
@@ -6469,27 +6152,36 @@ function LoginScreen({
 
   const handleForgotPassword = async () => {
     if (!recoveryEmail) {
-      setNotification({
-        message: "Please enter your email address first.",
-        type: "error",
+      setForgotError({
+        title: "Email Required",
+        message: "Please enter your registered email address.",
+        suggestion: "Type the email associated with your LocalEats account in the field above.",
       });
       return;
     }
     setLoadingRecovery(true);
+    setForgotError(null);
+    setForgotSuccess(false);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
+      const { error } = await supabase.auth.resetPasswordForEmail(recoveryEmail.trim(), {
         redirectTo: APP_URL,
       });
       if (error) throw error;
+      setForgotSuccess(true);
       setNotification({
         message: "We've sent a password recovery email. Please check your inbox.",
         type: "success",
       });
-      setIsForgotPassword(false);
     } catch (error: any) {
-      setNotification({
-        message: error.message || "Failed to send recovery email. Please try again.",
-        type: "error",
+      const rawMsg = error?.message || "";
+      const isFetchErr = rawMsg === "Failed to fetch" || rawMsg.toLowerCase().includes("network") || rawMsg.toLowerCase().includes("fetch");
+      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+      setForgotError({
+        title: isOffline ? "You're Offline" : isFetchErr ? "Connection Issue" : "Unable to Send Reset Link",
+        message: isFetchErr
+          ? (isOffline ? "No internet connection detected on your device." : "We're having trouble connecting to the service. Please try again in a moment.")
+          : "We couldn't process the password reset for this email. Please check that it was typed correctly and try again.",
+        suggestion: isFetchErr ? "Please check your internet connection and tap 'Send Reset Link' again." : "Make sure you entered the email address registered with your account.",
       });
     } finally {
       setLoadingRecovery(false);
@@ -6573,37 +6265,86 @@ function LoginScreen({
             </div>
 
             <div className="w-full flex flex-col gap-5">
-              <label className="flex flex-col w-full">
-                <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
-                  Email Address
-                </p>
-                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-                  <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={recoveryEmail}
-                    onChange={(e) => setRecoveryEmail(e.target.value)}
-                    className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
-                    placeholder="Enter your registered email"
-                    type="email"
-                  />
+              {forgotSuccess ? (
+                <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-slate-900 dark:text-slate-100 flex flex-col items-center text-center gap-3">
+                  <div className="p-3 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                    Reset Link Dispatched!
+                  </h3>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-xs">
+                    We sent a secure password reset link to <strong className="text-primary font-bold">{recoveryEmail}</strong>. Please check your inbox (and spam folder) and follow the instructions.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setIsForgotPassword(false);
+                      setForgotSuccess(false);
+                    }}
+                    className="mt-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Return to Login
+                  </button>
                 </div>
-              </label>
-
-              <div className="py-4">
-                <button
-                  id="send-recovery-btn"
-                  onClick={handleForgotPassword}
-                  disabled={loadingRecovery}
-                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>{loadingRecovery ? "Sending reset link..." : "Send Reset Link"}</span>
-                  {loadingRecovery ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <Send className="w-5 h-5" />
+              ) : (
+                <>
+                  {forgotError && (
+                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-slate-900 dark:text-slate-100">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                          <AlertCircle className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                            {forgotError.title}
+                          </h3>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                            {forgotError.message}
+                          </p>
+                          <div className="mt-2 p-2 bg-white/70 dark:bg-slate-900 rounded-lg text-xs text-slate-600 dark:text-slate-300">
+                            💡 {forgotError.suggestion}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                </button>
-              </div>
+
+                  <label className="flex flex-col w-full">
+                    <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
+                      Email Address
+                    </p>
+                    <div className="relative w-full max-w-[100vw] overflow-x-hidden">
+                      <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={recoveryEmail}
+                        onChange={(e) => {
+                          setRecoveryEmail(e.target.value);
+                          if (forgotError) setForgotError(null);
+                        }}
+                        className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
+                        placeholder="Enter your registered email"
+                        type="email"
+                      />
+                    </div>
+                  </label>
+
+                  <div className="py-2">
+                    <button
+                      id="send-recovery-btn"
+                      onClick={handleForgotPassword}
+                      disabled={loadingRecovery}
+                      className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>{loadingRecovery ? "Sending reset link..." : "Send Reset Link"}</span>
+                      {loadingRecovery ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -6616,7 +6357,7 @@ function LoginScreen({
       {/* Full-Screen Biometric Scanning Overlay */}
       {isScanningBiometrics && (
         <div id="biometric-overlay" className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-md">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/50 p-8 rounded-[32px] shadow-2xl flex flex-col items-center gap-6 max-w-sm text-center relative overflow-hidden">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/50 p-8 rounded-[32px] shadow-xl flex flex-col items-center gap-6 max-w-sm text-center relative overflow-hidden">
             {/* Scanning Glow Ring */}
             <div className="relative w-28 h-28 flex items-center justify-center">
               <div className="absolute inset-0 rounded-full border-4 border-dashed border-primary/30 border-t-primary animate-spin" style={{ animationDuration: "3s" }} />
@@ -6640,8 +6381,8 @@ function LoginScreen({
               }}
             />
 
-            <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-200/30 dark:border-slate-700/30">
-              WEB_AUTHN_API_ACTIVE
+            <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-200/30 dark:border-slate-700/30">
+              Biometric Sensor Active
             </div>
           </div>
         </div>
@@ -6649,7 +6390,7 @@ function LoginScreen({
 
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
         <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
-          {/* Brand & Glowing Header Section with Tap-5-times hidden hook */}
+          {/* Brand & Header Section */}
           <div className="flex flex-col items-center justify-center gap-5 mt-4 text-center">
             <div className="relative flex items-center justify-center">
               <motion.div
@@ -6662,11 +6403,7 @@ function LoginScreen({
               </div>
             </div>
             
-            <div 
-              onClick={handleLogoClick}
-              className="space-y-1 cursor-pointer select-none active:scale-95 transition-transform"
-              title="Click 5 times for developer diagnostics"
-            >
+            <div className="space-y-1">
               <LocalEatsLogo width={180} height={46} />
               <h1 className="text-slate-900 dark:text-slate-100 tracking-tight text-3xl font-extrabold leading-tight">
                 Welcome Back
@@ -6695,126 +6432,265 @@ function LoginScreen({
               </button>
             </div>
 
-            {/* Form Fields */}
-            <div className="flex flex-col gap-5">
-              <label className="flex flex-col w-full">
-                <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
-                  Email
-                </p>
-                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-                  <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
-                    placeholder="Enter your email"
-                    type="email"
-                  />
-                </div>
-              </label>
-              <label className="flex flex-col w-full">
-                <div className="flex justify-between items-center pb-2">
-                  <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal">
-                    Password
-                  </p>
-                </div>
-                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-                  <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    id="login-password-input"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-12 text-base font-normal leading-normal transition-all"
-                    placeholder="••••••••"
-                    type={showPassword ? "text" : "password"}
-                  />
-                  <button
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors cursor-pointer"
-                  >
-                    {showPassword ? (
-                      <EyeOff className="w-5 h-5" />
-                    ) : (
-                      <Eye className="w-5 h-5" />
-                    )}
-                  </button>
-                </div>
-              </label>
-              <div className="flex flex-col gap-2.5 px-1">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer group">
+            {/* Inline Human-Friendly Authentication Error Alert */}
+            <AnimatePresence>
+              {authError && (
+                <motion.div
+                  id="auth-inline-error-card"
+                  initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                  className={`p-4 rounded-2xl border mb-5 text-slate-900 dark:text-slate-100 shadow-sm ${
+                    authError.type === "server_unreachable" || authError.type === "offline"
+                      ? "bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/20"
+                      : authError.type === "invalid_credentials" || authError.type === "user_not_found"
+                      ? "bg-rose-500/10 border-rose-500/30 dark:bg-rose-950/20"
+                      : "bg-orange-500/10 border-orange-500/30 dark:bg-orange-950/20"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
                     <div
-                      className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${rememberMe ? "bg-primary border-primary" : "border-slate-300 dark:border-slate-700"}`}
+                      className={`p-2.5 rounded-xl shrink-0 ${
+                        authError.type === "server_unreachable" || authError.type === "offline"
+                          ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
+                          : authError.type === "invalid_credentials" || authError.type === "user_not_found"
+                          ? "bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                          : "bg-orange-500/20 text-orange-600 dark:text-orange-400"
+                      }`}
                     >
-                      {rememberMe && <Check className="w-3 h-3 text-white" />}
-                      <input
-                        type="checkbox"
-                        className="hidden"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
-                      />
+                      {authError.type === "server_unreachable" ? (
+                        <WifiOff className="w-5 h-5" />
+                      ) : authError.type === "offline" ? (
+                        <WifiOff className="w-5 h-5" />
+                      ) : authError.type === "invalid_credentials" ? (
+                        <Lock className="w-5 h-5" />
+                      ) : authError.type === "user_not_found" ? (
+                        <UserMinus className="w-5 h-5" />
+                      ) : (
+                        <AlertCircle className="w-5 h-5" />
+                      )}
                     </div>
-                    <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
-                      Remember Me
-                    </span>
-                  </label>
-                  <button
-                    onClick={() => setIsForgotPassword(true)}
-                    className="text-xs text-primary font-semibold hover:underline cursor-pointer"
-                  >
-                    Forgot Password?
-                  </button>
-                </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white leading-tight">
+                          {authError.title}
+                        </h4>
+                        <button
+                          onClick={() => setAuthError(null)}
+                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 -mr-1 -mt-1 rounded-lg transition-colors cursor-pointer"
+                          aria-label="Dismiss error notice"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
 
-                <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/60 pt-2.5">
-                  <label className="flex items-center gap-2 cursor-pointer group">
-                    <div
-                      className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${biometricsEnabled ? "bg-primary border-primary" : "border-slate-300 dark:border-slate-700"}`}
-                    >
-                      {biometricsEnabled && <Check className="w-3 h-3 text-white" />}
-                      <input
-                        type="checkbox"
-                        className="hidden"
-                        checked={biometricsEnabled}
-                        onChange={(e) => onToggleBiometrics(e.target.checked)}
-                      />
+                      <p className="text-xs text-slate-700 dark:text-slate-300 mt-1 leading-relaxed">
+                        {authError.message}
+                      </p>
+
+                      <div className="mt-2.5 p-2.5 bg-white/80 dark:bg-slate-900/90 rounded-xl border border-slate-200/50 dark:border-slate-800/50 flex flex-col gap-2">
+                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug">
+                          <span className="font-semibold text-slate-900 dark:text-white">💡 What you can do:</span>{" "}
+                          {authError.suggestion}
+                        </p>
+
+                        {/* Direct contextual action buttons */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          {(authError.type === "server_unreachable" || authError.type === "offline") && (
+                            <button
+                              type="button"
+                              onClick={handleLogin}
+                              disabled={loading}
+                              className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-primary/20"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                              <span>Retry Connection</span>
+                            </button>
+                          )}
+
+                          {(authError.type === "invalid_credentials" || authError.type === "generic") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRecoveryEmail(identifier);
+                                setIsForgotPassword(true);
+                              }}
+                              className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>Reset Password</span>
+                            </button>
+                          )}
+
+                          {authError.type === "user_not_found" && (
+                            <button
+                              type="button"
+                              onClick={onSignUp}
+                              className="px-3 py-1.5 bg-primary hover:bg-primary/90 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              <span>Create Free Account</span>
+                            </button>
+                          )}
+
+                          {onGuestBrowse && (
+                            <button
+                              type="button"
+                              onClick={onGuestBrowse}
+                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Utensils className="w-3.5 h-3.5 text-primary" />
+                              <span>Browse as Guest</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
-                      Use Biometric Login (Fingerprint / Face ID)
-                    </span>
-                  </label>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Login Form with Keyboard Enter Key Support */}
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }} className="flex flex-col">
+              <div className="flex flex-col gap-5">
+                <label className="flex flex-col w-full">
+                  <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal pb-2">
+                    Email
+                  </p>
+                  <div className="relative w-full max-w-[100vw] overflow-x-hidden">
+                    <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="login-email-input"
+                      value={identifier}
+                      onChange={(e) => {
+                        setIdentifier(e.target.value);
+                        if (authError) setAuthError(null);
+                      }}
+                      className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-4 text-base font-normal leading-normal transition-all"
+                      placeholder="Enter your email"
+                      type="email"
+                      required
+                      autoComplete="username"
+                    />
+                  </div>
+                </label>
+                <label className="flex flex-col w-full">
+                  <div className="flex justify-between items-center pb-2">
+                    <p className="text-slate-700 dark:text-slate-300 text-sm font-semibold leading-normal">
+                      Password
+                    </p>
+                  </div>
+                  <div className="relative w-full max-w-[100vw] overflow-x-hidden">
+                    <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="login-password-input"
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        if (authError) setAuthError(null);
+                      }}
+                      className="form-input flex w-full rounded-xl text-slate-900 dark:text-slate-100 focus:outline-0 focus:ring-2 focus:ring-primary/20 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 h-14 placeholder:text-slate-400 pl-12 pr-12 text-base font-normal leading-normal transition-all"
+                      placeholder="••••••••"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-primary transition-colors cursor-pointer"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-5 h-5" />
+                      ) : (
+                        <Eye className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
+                </label>
+                <div className="flex flex-col gap-2.5 px-1">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <div
+                        className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${rememberMe ? "bg-primary border-primary" : "border-slate-300 dark:border-slate-700"}`}
+                      >
+                        {rememberMe && <Check className="w-3 h-3 text-white" />}
+                        <input
+                          type="checkbox"
+                          className="hidden"
+                          checked={rememberMe}
+                          onChange={(e) => setRememberMe(e.target.checked)}
+                        />
+                      </div>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
+                        Remember Me
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsForgotPassword(true)}
+                      className="text-xs text-primary font-semibold hover:underline cursor-pointer"
+                    >
+                      Forgot Password?
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/60 pt-2.5">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <div
+                        className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${biometricsEnabled ? "bg-primary border-primary" : "border-slate-300 dark:border-slate-700"}`}
+                      >
+                        {biometricsEnabled && <Check className="w-3 h-3 text-white" />}
+                        <input
+                          type="checkbox"
+                          className="hidden"
+                          checked={biometricsEnabled}
+                          onChange={(e) => onToggleBiometrics(e.target.checked)}
+                        />
+                      </div>
+                      <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
+                        Use Biometric Login (Fingerprint / Face ID)
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </div>
-            </div>
-            {/* Login Button & Biometric Login Options */}
-            <div className="px-6 py-6 flex flex-col gap-3">
-              <button
-                onClick={handleLogin}
-                disabled={loading}
-                className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <span>{loading ? "Logging in..." : "Login"}</span>
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <LogIn className="w-5 h-5" />
-                )}
-              </button>
 
-              {hasRememberedToken && biometricsEnabled && (
+              {/* Login Button & Biometric Login Options */}
+              <div className="py-6 flex flex-col gap-3">
                 <button
-                  id="biometric-login-btn"
-                  onClick={handleBiometricAuth}
+                  type="submit"
+                  id="login-submit-btn"
                   disabled={loading}
-                  className="w-full bg-slate-50 dark:bg-slate-900/40 border border-dashed border-primary/40 hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10 text-primary font-bold h-14 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                  className="w-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-bold h-14 rounded-xl shadow-lg shadow-primary/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Fingerprint className="w-5 h-5 animate-pulse" />
-                  <span>Use Fingerprint / Face ID</span>
+                  <span>{loading ? "Logging in..." : "Login"}</span>
+                  {loading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <LogIn className="w-5 h-5" />
+                  )}
                 </button>
-              )}
-            </div>
+
+                {hasRememberedToken && biometricsEnabled && (
+                  <button
+                    type="button"
+                    id="biometric-login-btn"
+                    onClick={handleBiometricAuth}
+                    disabled={loading}
+                    className="w-full bg-slate-50 dark:bg-slate-900/40 border border-dashed border-primary/40 hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10 text-primary font-bold h-14 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <Fingerprint className="w-5 h-5 animate-pulse" />
+                    <span>Use Fingerprint / Face ID</span>
+                  </button>
+                )}
+              </div>
+            </form>
+
             {/* Social Login Section */}
-            <div className="px-6 pb-6 space-y-3">
+            <div className="pb-6 space-y-3">
               <div className="relative flex py-3 items-center">
                 <div className="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
                 <span className="flex-shrink mx-4 text-slate-400 text-xs font-semibold uppercase tracking-widest text-center">
@@ -6826,6 +6702,7 @@ function LoginScreen({
               <div className="flex flex-col gap-3">
                 <button
                   id="google-oauth-btn"
+                  type="button"
                   onClick={async () => {
                     try {
                       const { error } = await supabase.auth.signInWithOAuth({
@@ -6836,9 +6713,13 @@ function LoginScreen({
                       });
                       if (error) throw error;
                     } catch (error: any) {
-                      setNotification({
-                        message: "We couldn't log you in via Google. Please try again or use your email.",
-                        type: "error",
+                      const rawMsg = error?.message || "";
+                      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+                      setAuthError({
+                        type: isOffline ? "offline" : "server_unreachable",
+                        title: "Google Sign-In Notice",
+                        message: isOffline ? "You are currently offline. Please reconnect to use Google Sign-In." : "Couldn't connect to Google authentication services.",
+                        suggestion: "You can sign in with your email and password, or explore as a guest.",
                       });
                     }
                   }}
@@ -6855,6 +6736,7 @@ function LoginScreen({
 
                 <button
                   id="apple-oauth-btn"
+                  type="button"
                   onClick={async () => {
                     try {
                       const { error } = await supabase.auth.signInWithOAuth({
@@ -6865,9 +6747,13 @@ function LoginScreen({
                       });
                       if (error) throw error;
                     } catch (error: any) {
-                      setNotification({
-                        message: "We couldn't log you in via Apple. Please try again or use your email.",
-                        type: "error",
+                      const rawMsg = error?.message || "";
+                      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+                      setAuthError({
+                        type: isOffline ? "offline" : "server_unreachable",
+                        title: "Apple Sign-In Notice",
+                        message: isOffline ? "You are currently offline. Please reconnect to use Apple Sign-In." : "Couldn't connect to Apple authentication services.",
+                        suggestion: "You can sign in with your email and password, or explore as a guest.",
                       });
                     }
                   }}
@@ -6879,197 +6765,39 @@ function LoginScreen({
               </div>
             </div>
           </div>
-          {/* Footer Redirect */}
+
+          {/* Footer Redirect & Guest Option */}
           <div className="mt-auto pb-10 px-6 text-center space-y-4">
             <p className="text-slate-500 dark:text-slate-400 text-sm">
               Don't have an account?
               <button
+                type="button"
                 onClick={onSignUp}
                 className="text-primary font-bold hover:underline ml-1 cursor-pointer"
               >
                 Sign up
               </button>
             </p>
-            <div className="flex justify-center">
-              <button
-                id="toggle-dev-panel-btn"
-                onClick={() => setShowDevPanel(!showDevPanel)}
-                className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-extrabold text-slate-400 hover:text-primary transition-colors cursor-pointer bg-slate-100 dark:bg-slate-900/50 px-2.5 py-1 rounded-full border border-slate-200/50 dark:border-slate-800/50"
-              >
-                <Bug className="w-3.5 h-3.5" />
-                <span>Toggle Session Debugger</span>
-              </button>
-            </div>
-          </div>
 
-          {/* Hidden Developer Session panel rendering */}
-          {showDevPanel && (
-            <div
-              id="dev-session-panel"
-              className="bg-slate-900 text-slate-100 p-6 rounded-[24px] border border-slate-800 shadow-2xl space-y-4 font-mono text-xs overflow-hidden mt-4"
-            >
-              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                  <span className="font-bold tracking-tight text-slate-300">DEV_SESSION_DIAGNOSTICS</span>
-                  {devUnlockedUntil && (
-                    <span className="ml-2 px-2 py-0.5 bg-orange-500/20 border border-orange-500/30 rounded-md text-[10px] font-bold text-orange-400">
-                      ⏱️ {formatTimeRemaining(secondsLeft)}
-                    </span>
-                  )}
-                </div>
+            {onGuestBrowse && (
+              <div className="pt-1">
                 <button
-                  onClick={() => setShowDevPanel(false)}
-                  className="text-slate-400 hover:text-white font-bold"
+                  type="button"
+                  id="guest-browse-btn"
+                  onClick={onGuestBrowse}
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors cursor-pointer py-1.5 px-4 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-800/50"
                 >
-                  ✕
+                  <Utensils className="w-3.5 h-3.5 text-primary" />
+                  <span>Skip sign-in & explore menus as guest</span>
                 </button>
               </div>
+            )}
 
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/50 col-span-3">
-                    <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Session Status</p>
-                    <p className="font-bold text-slate-200 text-[11px] truncate">{tokenMeta?.status || "Loading..."}</p>
-                  </div>
-                  {tokenMeta?.email && (
-                    <>
-                      <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/50 col-span-3">
-                        <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Authenticated Email / User ID</p>
-                        <p className="font-bold text-slate-200 text-[11px] truncate">{tokenMeta?.email} <span className="text-slate-500 text-[10px]">({tokenMeta?.id})</span></p>
-                      </div>
-                      <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/50">
-                        <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Expires At</p>
-                        <p className="font-bold text-orange-400 text-[11px] truncate">
-                          {tokenMeta?.expiresAt ? new Date(tokenMeta.expiresAt).toLocaleTimeString() : "N/A"}
-                        </p>
-                      </div>
-                      <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/50">
-                        <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Time Remaining</p>
-                        <p className="font-bold text-green-400 text-[11px] truncate">{tokenMeta?.timeLeft || "Calculating..."}</p>
-                      </div>
-                      <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/50">
-                        <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">Token Expiry</p>
-                        <p className="font-bold text-slate-200 text-[11px]">
-                          {tokenMeta?.isExpired ? "EXPIRED" : "VALID"}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="text-slate-400 font-bold text-[10px] uppercase tracking-wider">Detected Storage Tokens ({tokenMeta?.keysFound?.length || 0})</p>
-                  <div className="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800/50 max-h-36 overflow-y-auto space-y-1 divide-y divide-slate-900">
-                    {tokenMeta?.keysFound && tokenMeta.keysFound.length > 0 ? (
-                      tokenMeta.keysFound.map((keyObj: any, idx: number) => (
-                        <div key={idx} className="pt-1.5 first:pt-0 flex justify-between text-[10px]">
-                          <span className="text-slate-300 font-bold truncate max-w-[150px]">{keyObj.key}</span>
-                          <span className="text-slate-500 font-mono text-[9px] shrink-0">{keyObj.size} bytes</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-slate-500 text-center py-2">No session tokens in localStorage</div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    onClick={clearAllSavedTokens}
-                    className="flex-1 bg-red-950 hover:bg-red-900 text-red-200 border border-red-900/60 font-bold py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Clear Cached Tokens
-                  </button>
-                  <button
-                    onClick={simulateTokenExpiry}
-                    className="flex-1 bg-orange-950 hover:bg-orange-900 text-orange-200 border border-orange-900/60 font-bold py-2.5 px-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Simulate Token Expiry
-                  </button>
-                </div>
-              </div>
+            {/* Progress Indicator */}
+            <div className="fixed bottom-0 left-0 right-0 h-1 bg-primary/10">
+              <div className="h-full bg-primary w-1/3"></div>
             </div>
-          )}
-
-          {/* Progress Indicator */}
-          <div className="fixed bottom-0 left-0 right-0 h-1 bg-primary/10">
-            <div className="h-full bg-primary w-1/3"></div>
           </div>
-
-          {showPasscodeModal && (
-            <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-[320px] p-6 shadow-2xl flex flex-col items-center gap-5 animate-in zoom-in-95 duration-200">
-                <div className="bg-orange-500/10 dark:bg-orange-500/20 p-4 rounded-2xl border border-orange-500/20 text-primary">
-                  <Lock className="w-6 h-6" />
-                </div>
-                
-                <div className="space-y-1">
-                  <h3 className="text-lg font-black tracking-tight text-slate-900 dark:text-white">
-                    Developer Access
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold px-4">
-                    Enter the 4-digit passcode to unlock developer settings
-                  </p>
-                </div>
-
-                {/* Dots indicator */}
-                <div className="flex gap-4 justify-center py-2">
-                  {[0, 1, 2, 3].map((idx) => (
-                    <div
-                      key={idx}
-                      className={`w-4 h-4 rounded-full transition-all duration-150 ${
-                        idx < enteredPasscode.length
-                          ? "bg-primary scale-110 shadow-sm shadow-primary/30"
-                          : "bg-slate-100 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700"
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                {/* Grid of Keypad */}
-                <div className="grid grid-cols-3 gap-3 w-full max-w-[240px] mt-2">
-                  {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((num) => (
-                    <button
-                      key={num}
-                      type="button"
-                      onClick={() => handlePasscodePress(num)}
-                      className="w-14 h-14 rounded-full flex items-center justify-center font-black text-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer transition-all active:scale-95"
-                    >
-                      {num}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={handlePasscodeBackspace}
-                    className="w-14 h-14 rounded-full flex items-center justify-center font-semibold text-xs bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-pointer transition-all active:scale-95"
-                  >
-                    ⌫
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handlePasscodePress("0")}
-                    className="w-14 h-14 rounded-full flex items-center justify-center font-black text-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer transition-all active:scale-95"
-                  >
-                    0
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic?.(10);
-                      setShowPasscodeModal(false);
-                      setEnteredPasscode("");
-                    }}
-                    className="w-14 h-14 rounded-full flex items-center justify-center font-black text-[10px] uppercase tracking-wider text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer transition-all active:scale-95"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -7093,7 +6821,7 @@ function LoginSuccessScreen({
   }, [onHome]);
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display antialiased min-h-screen">
+    <div className="bg-white dark:bg-slate-950 font-sans antialiased min-h-screen">
       <div className="relative flex h-screen w-full flex-col max-w-md mx-auto overflow-x-hidden">
         <div className="flex items-center p-4 justify-between">
           <button
@@ -7159,7 +6887,7 @@ const HorizontalShopCard = ({
       whileHover={shop.isOpen !== false ? { y: -4, scale: 1.01 } : undefined}
       whileTap={shop.isOpen !== false ? { scale: 0.98 } : undefined}
       onClick={shop.isOpen !== false ? onClick : undefined}
-      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all active:scale-[0.98] group ${shop.isOpen !== false ? "cursor-pointer hover:shadow-xl" : "opacity-60 grayscale-[0.5]"}`}
+      className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all active:scale-[0.98] group ${shop.isOpen !== false ? "cursor-pointer hover:border-slate-300/80 dark:hover:border-slate-600" : "opacity-60 grayscale-[0.5]"}`}
     >
       <div className="aspect-video w-full rounded-2xl overflow-hidden relative bg-slate-100 dark:bg-slate-800">
         <BlurUpImage
@@ -7203,7 +6931,7 @@ const HorizontalShopCard = ({
         <div className="flex flex-col gap-1 mt-1">
           <TrustBadge shop={shop} />
           {isShopAway(shop) && (
-            <span className="w-max text-[9px] font-black bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 uppercase tracking-widest px-1.5 py-0.5 rounded animate-pulse border border-rose-200 dark:border-rose-900/30">
+            <span className="w-max text-[9px] font-black bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 uppercase tracking-widest px-2 py-1 rounded animate-pulse border border-rose-200 dark:border-rose-900/30">
               ⚠️ Away / Likely Offline
             </span>
           )}
@@ -7418,7 +7146,7 @@ function HomeScreen({
     }
   }, [session?.user?.id]);
   const [selectedCategory, setSelectedCategory] = useState("All");
-  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
+
   const [selectedQuickFilter, setSelectedQuickFilter] = useState<string | null>(null);
 
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
@@ -7478,7 +7206,7 @@ function HomeScreen({
           duration: 5000,
         });
         if (session?.user?.id) {
-          registerAndSyncPushToken(session.user.id).catch(console.error);
+          registerAndSyncPushToken(session.user.id).catch(() => {});
         }
       } else if (permission === "denied") {
         toast.error("Notifications Blocked", {
@@ -7486,7 +7214,7 @@ function HomeScreen({
         });
       }
     } catch (err) {
-      console.error("Failed to request notification permission:", err);
+      console.debug("Notice on notification permission:", err);
     }
   };
 
@@ -7759,7 +7487,7 @@ function HomeScreen({
 
   if (fetchError && shops.length === 0) {
     return (
-      <div className="bg-slate-50 dark:bg-slate-900 min-h-screen flex flex-col items-center justify-center p-8 max-w-md mx-auto shadow-2xl">
+      <div className="bg-slate-50 dark:bg-slate-900 min-h-screen flex flex-col items-center justify-center p-8 max-w-md mx-auto shadow-xl">
         <div className="bg-red-50 dark:bg-red-500/10 p-6 rounded-[32px] border border-red-100 dark:border-red-900/30 flex flex-col items-center text-center">
           <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 mb-4">
             <WifiOff className="w-8 h-8" />
@@ -7768,13 +7496,15 @@ function HomeScreen({
             Backend Timeout
           </h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 max-w-[240px]">
-            {fetchError.includes("Network Error")
-              ? "We couldn't reach South Africa's servers. Check your ad-blocker or internet."
+            {fetchError.includes("Network Error") || fetchError.includes("Failed to fetch")
+              ? (typeof navigator !== "undefined" && !navigator.onLine
+                  ? "You are currently offline. Please check your network connection."
+                  : "Unable to reach the servers. The database service may be temporarily waking up or reconnecting. Please retry in a moment.")
               : fetchError}
           </p>
           <button
             onClick={onRetry}
-            className="w-full py-4 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-2xl shadow-xl active:scale-95 transition-all cursor-pointer hover:shadow-2xl"
+            className="w-full py-4 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-2xl shadow-xl active:scale-95 transition-all cursor-pointer hover:shadow-xl"
           >
             Reconnect & Retry
           </button>
@@ -7787,113 +7517,21 @@ function HomeScreen({
     return <AppSkeletonLoader userProfile={userProfile} />;
   }
 
-  if (shops.length === 0 && !loadingShops) {
-    return (
-      <div className="bg-white dark:bg-slate-950 h-screen flex flex-col items-center justify-center p-6 text-center">
-        <div className="relative mb-8">
-          <div className="absolute inset-0 bg-orange-50 dark:bg-orange-900/20 rounded-full scale-150 blur-3xl opacity-50"></div>
-          <Store className="w-24 h-24 text-orange-500 relative z-10" />
-        </div>
-        <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">
-          No Shops Found
-        </h2>
-        <p className="text-gray-500 dark:text-slate-400 max-w-xs mb-6 leading-relaxed">
-          {fetchError
-            ? fetchError
-            : "It looks like there are no active shops in your area yet."}
-        </p>
-        <button
-          onClick={onRetry}
-          className="px-6 py-3 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-bold text-sm rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-2 mb-4"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Reload Shops & Live Data
-        </button>
-
-        {fetchError &&
-          (fetchError.includes("Network Error") ||
-            fetchError.includes("Failed to fetch")) && (
-            <div className="bg-orange-50 dark:bg-orange-900/10 p-4 rounded-2xl mb-6 text-left max-w-xs border border-orange-100 dark:border-orange-900/30">
-              <h4 className="text-[10px] font-bold text-orange-800 dark:text-orange-400 uppercase mb-2 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" />
-                Network Diagnosis
-              </h4>
-              <ul className="text-[10px] text-orange-700 dark:text-orange-300 space-y-1.5 list-disc pl-3">
-                <li>
-                  **Ad-Blockers:** Disable uBlock, AdBlock, or Brave Shields for
-                  this site.
-                </li>
-                <li>
-                  **VPN/Firewall:** Some corporate networks block Supabase
-                  domains.
-                </li>
-                <li>
-                  **Project Status:** Check if your Supabase project is active
-                  (not paused).
-                </li>
-                <li>
-                  **Config:** Ensure **VITE_SUPABASE_URL** is correct in your
-                  secrets.
-                </li>
-              </ul>
-            </div>
-          )}
-
-        <div className="bg-emerald-50/90 dark:bg-emerald-950/40 p-4 rounded-2xl mb-6 text-left w-full max-w-xs border border-emerald-200 dark:border-emerald-800/50 shadow-sm transition-all">
-          <div className="flex justify-between items-center mb-2">
-            <span className="font-bold text-xs text-slate-800 dark:text-slate-100 flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              Cloud Service Status
-            </span>
-            <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-300 dark:border-emerald-700">
-              Active
-            </span>
-          </div>
-          <p className="text-[11px] font-medium text-slate-700 dark:text-slate-300 leading-snug mb-1">
-            Connected to <strong>Supabase Cloud Database</strong>
-          </p>
-          <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-normal">
-            Your app is communicating with live database servers and ready for real-time orders.
-          </p>
-          {supabaseUrl && (
-            <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between text-[10px] font-mono text-emerald-800 dark:text-emerald-400">
-              <span className="opacity-75">Endpoint Domain</span>
-              <span className="truncate max-w-[150px] font-bold">{supabaseUrl.replace(/^https?:\/\//, '')}</span>
-            </div>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-          <button
-            onClick={onRetry}
-            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 px-8 rounded-2xl shadow-xl shadow-orange-200 dark:shadow-none transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-          >
-            <RefreshCw className="w-5 h-5" />
-            Retry Loading
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
       <SystemStatusIndicator />
       {isUpdateAvailable && (
         <button
           onClick={() => window.location.reload()}
-          className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-2xl z-[9999] font-bold flex items-center gap-2"
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-xl z-[9999] font-bold flex items-center gap-2"
         >
           <RefreshCw className="w-5 h-5" />
           Update Available!
         </button>
       )}
       {/* TopBar */}
-      <header ref={headerRef} className={`bg-white/95 dark:bg-slate-900/95 backdrop-blur-md fixed top-0 left-0 right-0 z-50 border-b border-slate-200/50 dark:border-slate-800/70 transition-all duration-300 pt-[env(safe-area-inset-top)] py-2 ${isScrolled ? 'shadow-sm' : ''}`}>
-        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 flex items-center justify-between gap-2 min-h-[44px] sm:min-h-[48px] relative">
+      <header ref={headerRef} className={`fixed top-4 left-4 right-4 max-w-screen-xl mx-auto z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled ? 'top-2' : ''}`}>
+        <div className={`px-4 sm:px-6 flex items-center justify-between gap-2 min-h-[52px] sm:min-h-[60px] relative bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-full shadow-xl border border-slate-200/60 dark:border-slate-700/60 transition-all duration-300 ${isScrolled ? 'shadow-md bg-white/90 dark:bg-slate-900/90' : 'shadow-xl'}`}>
           
           {/* Logo & Status Badge */}
           <div className={`flex items-center gap-2 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -7999,7 +7637,7 @@ function HomeScreen({
               >
                 <Bell className="w-4.5 h-4.5" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[10px] whitespace-nowrap font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
                     {unreadCount > 9 ? "9+" : unreadCount}
                   </span>
                 )}
@@ -8032,7 +7670,7 @@ function HomeScreen({
                       setIsSettingsOpen(false);
                     }}
                   />
-                  <div className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -8089,7 +7727,7 @@ function HomeScreen({
             <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
               <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
               <span className="truncate font-semibold tracking-tight">
-                ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-1.5 py-0.5 rounded text-white select-all font-bold">LOCALEATS10</span>
+                ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-2 py-1 rounded text-white select-all font-bold">LOCALEATS10</span>
               </span>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -8131,7 +7769,7 @@ function HomeScreen({
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1"
             >
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
                 {/* Clickable Horizontal Recent Searches Pills */}
                 {recentSearches.length > 0 && (
                   <div className="px-4 py-2 bg-slate-50/90 dark:bg-slate-950/70 border-b border-slate-100 dark:border-slate-800/80 flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -8197,7 +7835,7 @@ function HomeScreen({
                           >
                             <Store className="w-3.5 h-3.5 text-orange-500" />
                             <span>{shop.name}</span>
-                            <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
+                            <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-2 py-1 rounded-full font-black uppercase tracking-wide">
                               Frequent
                             </span>
                           </motion.button>
@@ -8305,7 +7943,7 @@ function HomeScreen({
                             >
                               <Store className="w-3.5 h-3.5 text-orange-500" />
                               <span>{shop.name}</span>
-                              <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">
+                              <span className="text-[9px] bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300 px-2 py-1 rounded-full font-black uppercase tracking-wide">
                                 Frequent
                               </span>
                             </motion.button>
@@ -8588,7 +8226,7 @@ function HomeScreen({
                         <h4 className="text-[10px] font-extrabold text-slate-900 dark:text-white line-clamp-1 leading-tight mb-0.5">
                           {menuItem.name}
                         </h4>
-                        <p className="text-[8px] font-bold text-slate-400 dark:text-slate-500 line-clamp-1 leading-none">
+                        <p className="text-[10px] whitespace-nowrap font-bold text-slate-400 dark:text-slate-500 line-clamp-1 leading-none">
                           {shopName}
                         </p>
                       </div>
@@ -8685,33 +8323,74 @@ function HomeScreen({
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3 }}
-            className="py-16 text-center flex flex-col items-center justify-center px-4"
+            className="py-12 text-center flex flex-col items-center justify-center px-4 max-w-md mx-auto"
           >
             <div className="relative mb-6">
-              <div className="absolute inset-0 rounded-full bg-orange-500/20 animate-ping opacity-75"></div>
-              <div className="relative size-20 bg-orange-50 dark:bg-orange-950/40 rounded-full flex items-center justify-center text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/60 shadow-xs">
-                <Search className="w-9 h-9 animate-pulse" />
+              <div className="absolute inset-0 rounded-full bg-orange-500/10 dark:bg-orange-500/20 scale-150 blur-2xl opacity-70"></div>
+              <div className="relative size-20 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-slate-800 dark:to-slate-900 rounded-3xl flex items-center justify-center text-orange-600 dark:text-orange-400 border border-orange-200/80 dark:border-orange-500/30 shadow-xl shadow-orange-500/10">
+                {shops.length === 0 ? (
+                  <Store className="w-10 h-10" />
+                ) : (
+                  <Search className="w-9 h-9" />
+                )}
               </div>
             </div>
-            <h3 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
-              No Kitchens Found
+
+            <h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+              {shops.length === 0 ? "No Shops Found" : "No Kitchens Found"}
             </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 max-w-xs mx-auto font-medium">
-              {searchQuery
+
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 max-w-xs mx-auto font-medium leading-relaxed">
+              {shops.length === 0
+                ? (fetchError || "It looks like there are no active shops in your area yet.")
+                : searchQuery
                 ? `No merchants matching "${searchQuery}". Try a different keyword.`
                 : `No kitchens currently open in "${selectedCategory}".`}
             </p>
-            <button
-              onClick={() => {
-                setSearchQuery("");
-                setSelectedCategory("All");
-                setSelectedQuickFilter(null);
-                triggerHaptic(5);
-              }}
-              className="mt-6 px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-xs uppercase tracking-wider shadow-md shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
-            >
-              Reset Filters & Search
-            </button>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-center gap-3 w-full max-w-xs">
+              {shops.length === 0 ? (
+                <button
+                  onClick={onRetry}
+                  className="w-full px-6 py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-orange-600/25 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Reload Shops & Live Data
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSelectedCategory("All");
+                    setSelectedQuickFilter(null);
+                    triggerHaptic(5);
+                  }}
+                  className="w-full px-6 py-3.5 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-bold text-xs uppercase tracking-widest shadow-lg shadow-orange-600/25 active:scale-95 transition-all cursor-pointer"
+                >
+                  Reset Filters & Search
+                </button>
+              )}
+            </div>
+
+            {shops.length === 0 && (
+              <div className="mt-8 bg-slate-50/90 dark:bg-slate-900/60 p-4 rounded-2xl max-w-sm w-full border border-slate-200/70 dark:border-slate-800 text-left shadow-sm">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Service Status
+                  </span>
+                  <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-200 dark:border-emerald-800">
+                    Online
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
+                  Connected to <strong>LocalEats Cloud Service</strong>. Live menu updates and real-time ordering are active and ready.
+                </p>
+              </div>
+            )}
           </motion.section>
         )}
       </main>
@@ -8891,7 +8570,7 @@ function OrderSuccessScreen({
         <div className="relative mb-12 flex items-center justify-center">
           <div className="absolute inset-0 bg-primary/10 rounded-full scale-150 blur-3xl"></div>
           <div className="relative h-48 w-48 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/5">
-            <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-2xl shadow-primary/40 animate-in zoom-in duration-500">
+            <div className="h-32 w-32 rounded-full bg-primary flex items-center justify-center shadow-xl shadow-primary/40 animate-in zoom-in duration-500">
               <Check className="w-16 h-16 text-white" strokeWidth={4} />
             </div>
           </div>
@@ -8967,7 +8646,7 @@ function OrderSuccessScreen({
               initial={{ opacity: 0, y: 20, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className="w-full max-w-md bg-[#221610] text-white p-8 rounded-[40px] shadow-2xl relative overflow-hidden mb-12 border border-white/5"
+              className="w-full max-w-md bg-[#221610] text-white p-8 rounded-[40px] shadow-xl relative overflow-hidden mb-12 border border-white/5"
             >
               <div className="absolute top-0 right-0 p-4">
                 <button
@@ -8978,7 +8657,7 @@ function OrderSuccessScreen({
                 </button>
               </div>
               <div className="flex flex-col items-center gap-6 relative z-10">
-                <div className="size-20 bg-orange-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-orange-600/30 rotate-3">
+                <div className="size-20 bg-orange-600 rounded-3xl flex items-center justify-center shadow-xl shadow-orange-600/30 rotate-3">
                   <Star className="w-10 h-10 text-white fill-current" />
                 </div>
                 <div className="text-center">
@@ -9022,7 +8701,7 @@ function OrderSuccessScreen({
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onHome}
-          className="w-full max-w-sm py-5 bg-slate-900 dark:bg-orange-600 text-white font-black uppercase tracking-[0.2em] rounded-3xl shadow-2xl active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
+          className="w-full max-w-sm py-5 bg-slate-900 dark:bg-orange-600 text-white font-black uppercase tracking-[0.2em] rounded-3xl shadow-xl active:scale-95 transition-all mb-4 flex items-center justify-center gap-3"
         >
           <Home className="w-5 h-5" />
           Back to Home
@@ -9100,12 +8779,12 @@ function QRScannerModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 rounded-[32px] w-full max-w-md overflow-hidden shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
+      <div className="bg-white dark:bg-slate-900 rounded-[32px] w-full max-w-md overflow-hidden shadow-xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <QrCode className="w-5 h-5 text-orange-500 animate-pulse" />
-            <h3 className="font-['Plus_Jakarta_Sans'] font-black text-sm uppercase tracking-wider text-slate-800 dark:text-slate-100">
+            <h3 className="font-sans font-black text-sm uppercase tracking-wider text-slate-800 dark:text-slate-100">
               Promo Code & Flyer QR Scanner
             </h3>
           </div>
@@ -9177,7 +8856,7 @@ function QRScannerModal({
                   <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400 group-hover:text-orange-500 flex items-center gap-1">
                     <Tag className="w-3.5 h-3.5 text-orange-500" /> Scan Promo: LOCALEATS10 (10% Off)
                   </span>
-                  <span className="text-[8px] text-slate-400 font-mono mt-0.5">
+                  <span className="text-[10px] whitespace-nowrap text-slate-400 font-mono mt-0.5">
                     Applies 10% discount promo code to clipboard
                   </span>
                 </button>
@@ -9190,7 +8869,7 @@ function QRScannerModal({
                     <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 group-hover:text-orange-500 truncate">
                       {shop.name}
                     </span>
-                    <span className="text-[8px] text-slate-400 font-mono mt-0.5">
+                    <span className="text-[10px] whitespace-nowrap text-slate-400 font-mono mt-0.5">
                       Flyer: {shop.id}
                     </span>
                   </button>
@@ -9288,7 +8967,7 @@ function DiscoverScreen({
   }, []);
 
   const [selectedCategory, setSelectedCategory] = useState("All");
-  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
+
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
@@ -9486,7 +9165,7 @@ function DiscoverScreen({
   });
 
   return (
-    <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+    <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
       {/* TopAppBar */}
       <header className="bg-[#f6f6f9] dark:bg-slate-900 w-full top-0 sticky z-40 transition-opacity duration-200 pt-[env(safe-area-inset-top)]">
         <div className="flex justify-between items-center px-6 py-4 w-full max-w-screen-xl mx-auto">
@@ -9497,7 +9176,7 @@ function DiscoverScreen({
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
-            <h1 className="font-['Plus_Jakarta_Sans'] font-bold tracking-tight text-xl text-[#FF6B00]">
+            <h1 className="font-sans font-bold tracking-tight text-xl text-[#FF6B00]">
               DISCOVER
             </h1>
           </div>
@@ -9549,7 +9228,7 @@ function DiscoverScreen({
                 <div>
                   <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
                     <span>Scan Promo Codes & Flyers</span>
-                    <span className="bg-orange-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase">Instant</span>
+                    <span className="bg-orange-600 text-white text-[9px] font-black px-2 py-1 rounded-full uppercase">Instant</span>
                   </h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
                     Scan QR codes on promotional cards or flyers to auto-apply discounts or view menus.
@@ -9607,13 +9286,67 @@ function DiscoverScreen({
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
-            <h2 className="font-['Plus_Jakarta_Sans'] text-3xl font-extrabold tracking-tight text-[#2d2f31] dark:text-white mb-2">
+            <h2 className="font-sans text-3xl font-extrabold tracking-tight text-[#2d2f31] dark:text-white mb-2">
               Local Flavor
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400 text-lg">
               Discover the finest local Kota spots.
             </p>
           </div>
+
+          {/* Bento Grid Categories */}
+          <div className="mb-8 max-w-xl mx-auto">
+            <div className="grid grid-cols-2 gap-3 h-[200px]">
+              {/* Primary Category (Kotas) */}
+              <div 
+                onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
+                className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-rose-500 transition-transform duration-500 group-hover:scale-105"></div>
+                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
+                <div className="absolute bottom-4 left-4 z-10">
+                  <h3 className="text-white font-black text-2xl tracking-tight drop-shadow-md">Kotas</h3>
+                  <p className="text-white/90 font-bold text-xs uppercase tracking-wider mt-1 drop-shadow-md">Local Legends</p>
+                </div>
+                <Store className="absolute top-4 right-4 w-6 h-6 text-white/50 z-10" />
+              </div>
+              
+              {/* Secondary Categories Stack */}
+              <div className="grid grid-rows-2 gap-3">
+                {/* Top Row */}
+                <div 
+                  onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
+                  className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
+                  <div className="absolute bottom-3 left-4 z-10">
+                    <h3 className="text-white font-black text-lg drop-shadow-md">Burgers</h3>
+                  </div>
+                </div>
+                
+                {/* Bottom Row (Split) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div 
+                    onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
+                  >
+                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
+                    <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
+                  </div>
+                  <div 
+                    onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
+                  >
+                    <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
+                      <ArrowRight className="w-3 h-3 text-slate-900 dark:text-white" />
+                    </div>
+                    <span className="font-bold text-xs text-slate-700 dark:text-slate-300 z-10">See All</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="relative group mb-6 max-w-xl mx-auto z-30">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
@@ -9657,7 +9390,7 @@ function DiscoverScreen({
             {/* Float Suggestions relative to search bar */}
             {showSuggestions && (
               <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-40">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden max-h-[350px] overflow-y-auto">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
                   {debouncedSearchQuery.length < 2 ? (
                     <>
                       {/* Recent Searches */}
@@ -9987,7 +9720,7 @@ function DiscoverScreen({
                     <div>
                       <div className="flex justify-between items-start mb-3 gap-3">
                         <div>
-                          <h3 className="font-['Plus_Jakarta_Sans'] font-black text-lg sm:text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-600 transition-colors line-clamp-2 break-words whitespace-normal flex items-center gap-1.5">
+                          <h3 className="font-sans font-black text-lg sm:text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-600 transition-colors line-clamp-2 break-words whitespace-normal flex items-center gap-1.5">
                             <span className="text-xl shrink-0" role="img" aria-label={shop.category}>
                               {getShopCategoryIcon(shop.category)}
                             </span>
@@ -10032,36 +9765,76 @@ function DiscoverScreen({
             }) // close map
             )} // close ternary
             {filteredShops.length === 0 && (
-              <div className="col-span-full py-20 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-8 duration-700">
+              <div className="col-span-full py-16 px-4 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-6 duration-500 max-w-lg mx-auto">
                 <div className="relative mb-6">
-                  <div className="size-24 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-300 dark:text-slate-700">
-                    <Store className="w-12 h-12" />
+                  <div className="absolute inset-0 bg-orange-500/10 dark:bg-orange-500/20 rounded-full scale-150 blur-2xl opacity-70"></div>
+                  <div className="size-20 bg-gradient-to-br from-orange-50 to-orange-100 dark:from-slate-800 dark:to-slate-900 border border-orange-200/80 dark:border-orange-500/30 rounded-3xl flex items-center justify-center text-orange-500 shadow-xl shadow-orange-500/10 relative z-10">
+                    <Store className="w-10 h-10" />
                   </div>
-                  <X className="absolute -top-1 -right-1 w-6 h-6 text-rose-500 bg-white dark:bg-slate-900 rounded-full p-1 shadow-sm" />
+                  {shops.length > 0 && (
+                    <X className="absolute -top-1 -right-1 w-6 h-6 text-rose-500 bg-white dark:bg-slate-900 rounded-full p-1 shadow-md border border-slate-100 dark:border-slate-800 z-20" />
+                  )}
                 </div>
-                <h3 className="text-xl font-black text-[#2d2f31] dark:text-white mb-2">
-                  No matches found
+
+                <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">
+                  {shops.length === 0 ? "No Shops Found" : "No matches found"}
                 </h3>
-                <p className="text-[#5a5c5e] dark:text-slate-400 text-sm max-w-[260px] mx-auto leading-relaxed">
-                  We couldn't find any stores matching your criteria. Try
-                  adjusting your filters or search query.
+                
+                <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
+                  {shops.length === 0
+                    ? "It looks like there are no active shops in your area yet."
+                    : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
                 </p>
-                <button
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSelectedCategory("All");
-                    setMinRating(0);
-                    setShowOnlyOpen(false);
-                  }}
-                  className="mt-8 px-8 py-3.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl cursor-pointer"
-                >
-                  Clear all filters
-                </button>
+
+                <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-xs">
+                  {shops.length === 0 ? (
+                    <button
+                      onClick={onHome}
+                      className="w-full px-6 py-3.5 bg-orange-600 hover:bg-orange-700 active:scale-95 text-white font-bold text-xs uppercase tracking-widest rounded-2xl shadow-lg shadow-orange-500/25 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      Back to Home
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSelectedCategory("All");
+                        setMinRating(0);
+                        setShowOnlyOpen(false);
+                        setMaxDistance(null);
+                      }}
+                      className="w-full px-6 py-3.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      Discover All Local Spots
+                    </button>
+                  )}
+                </div>
+
+                {shops.length === 0 && (
+                  <div className="mt-8 bg-slate-50/90 dark:bg-slate-900/60 p-4 rounded-2xl max-w-sm w-full border border-slate-200/70 dark:border-slate-800 text-left shadow-sm">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        Service Status
+                      </span>
+                      <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-200 dark:border-emerald-800">
+                        Online
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
+                      Connected to <strong>LocalEats Cloud Service</strong>. New vendors and local kitchens will appear automatically when available.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </section>
         ) : (
-          <section className="px-6 h-[500px] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 relative">
+          <section className="px-6 h-[500px] rounded-3xl overflow-hidden shadow-xl border border-slate-200 dark:border-slate-800 relative">
             {!isOnline && (
               <div className="absolute inset-0 z-[1001] bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
                 <WifiOff className="w-12 h-12 text-slate-400 mb-4" />
@@ -10091,7 +9864,7 @@ function DiscoverScreen({
                 />
 
                 {userLocation && (
-                  <Marker position={userLocation} icon={userIcon}>
+                  <Marker position={userLocation} icon={userMapIcon}>
                     <Popup>
                       <p className="font-extrabold text-xs text-blue-600 text-center m-0">
                         Your Spot
@@ -10121,7 +9894,7 @@ function DiscoverScreen({
                     <Marker
                       key={shop.id}
                       position={{ lat: sLat, lng: sLng }}
-                      icon={shopIcon}
+                      icon={createShopMapIcon(status.isOpen)}
                     >
                       <Popup minWidth={200}>
                         <div className="p-1">
@@ -10185,7 +9958,7 @@ function DiscoverScreen({
         {/* Chef's Selection Carousel */}
         <section className="mt-16 overflow-hidden">
           <div className="px-6 mb-6">
-            <h2 className="font-['Plus_Jakarta_Sans'] text-2xl font-bold text-[#2d2f31] dark:text-white">
+            <h2 className="font-sans text-2xl font-bold text-[#2d2f31] dark:text-white">
               Chef's Selection
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400">
@@ -10206,7 +9979,7 @@ function DiscoverScreen({
                     blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                   />
                 </div>
-                <h4 className="font-['Plus_Jakarta_Sans'] font-bold text-lg text-[#2d2f31] dark:text-white">
+                <h4 className="font-sans font-bold text-lg text-[#2d2f31] dark:text-white">
                   {shop.name}
                 </h4>
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">
@@ -10229,13 +10002,13 @@ function DiscoverScreen({
               className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer"
             >
               <Home className="w-6 h-6 mb-1" />
-              <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">
+              <span className="font-sans text-[11px] font-semibold tracking-wide">
                 {t("home")}
               </span>
             </button>
             <button className="flex flex-col items-center justify-center text-[#FF6B00] dark:text-[#ff7a2f] bg-[#FF6B00]/10 rounded-full px-5 py-2 transition-transform duration-150 active:scale-96 cursor-pointer">
               <Store className="w-6 h-6 mb-1" />
-              <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">
+              <span className="font-sans text-[11px] font-semibold tracking-wide">
                 {t("discover")}
               </span>
             </button>
@@ -10244,7 +10017,7 @@ function DiscoverScreen({
               className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer"
             >
               <MapIcon className="w-6 h-6 mb-1" />
-              <span className="font-['Inter'] text-[11px] font-semibold tracking-wide">
+              <span className="font-sans text-[11px] font-semibold tracking-wide">
                 {t("map")}
               </span>
             </button>
@@ -10291,8 +10064,10 @@ function AddressPicker({
   const selectSuggestion = (s: any) => {
     onAddressChange(s.display_name);
     setQuery(s.display_name);
-    setMarkerPos({ lat: s.lat, lng: s.lon });
-    onLocationChange(s.lat, s.lon);
+    const lat = parseFloat(s.lat || s.latitude);
+    const lng = parseFloat(s.lon || s.lng || s.longitude);
+    setMarkerPos({ lat, lng });
+    onLocationChange(lat, lng);
     setShowSuggestions(false);
   };
 
@@ -10318,9 +10093,13 @@ function AddressPicker({
         eventHandlers={eventHandlers}
         position={markerPos}
         ref={markerRef}
+        icon={userMapIcon}
       >
         <Popup minWidth={90}>
-          <span>Delivery point</span>
+          <div className="text-center p-0.5">
+            <p className="font-extrabold text-xs text-blue-600">Delivery Point</p>
+            <p className="text-[10px] text-slate-500 font-medium">Drag blue pin to exact door</p>
+          </div>
         </Popup>
       </Marker>
     ) : null;
@@ -10345,7 +10124,7 @@ function AddressPicker({
         />
 
         {showSuggestions && suggestions.length > 0 && (
-          <div className="absolute top-full left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl mt-2 overflow-hidden shadow-2xl z-50">
+          <div className="absolute top-full left-0 right-0 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl mt-2 overflow-hidden shadow-xl z-50">
             {suggestions.map((s, idx) => (
               <button
                 key={idx}
@@ -10422,6 +10201,10 @@ function ProfileScreen({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const fullNameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
 
   const isFullNameDirty = fullName.trim() !== (userProfile.fullName || "").trim();
   const isPhoneDirty = phone.trim() !== formatSAPhone(userProfile.phone || "").trim();
@@ -10725,7 +10508,7 @@ function ProfileScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto">
       {/* Header */}
       <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10 pt-[calc(1rem+env(safe-area-inset-top))]">
         <button
@@ -11001,13 +10784,15 @@ function ProfileScreen({
             <div className="relative group">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
+                ref={fullNameRef}
                 type="text"
                 value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
+                onChange={(e) => { setFullName(e.target.value); setFormErrors(prev => ({...prev, fullName: undefined})); }}
                 placeholder="Your full name"
                 disabled={isSaving || uploading}
-                className="w-full pl-12 pr-24 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all disabled:opacity-50"
+                className={`w-full pl-12 pr-24 py-4 bg-slate-50 dark:bg-slate-900 border ${formErrors.fullName ? 'border-red-500 focus:ring-red-500' : 'border-slate-100 dark:border-slate-800 focus:ring-primary/20'} rounded-2xl text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-50`}
               />
+              {formErrors.fullName && <p className="absolute -bottom-5 left-2 text-red-500 text-[10px] m-0">{formErrors.fullName}</p>}
               <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
                 {isFullNameDirty ? (
                   <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -11233,7 +11018,7 @@ function ProfileScreen({
       {/* Confirmation Dialog Modal before permanent Supabase upload */}
       {showConfirmModal && croppedPreviewUrlToConfirm && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl flex flex-col items-center text-center space-y-5 relative">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-xl flex flex-col items-center text-center space-y-5 relative">
             <button
               onClick={handleCancelConfirmation}
               className="absolute right-4 top-4 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
@@ -11334,7 +11119,7 @@ function ProfileScreen({
 
           {/* Viewfinder Video / Preview Area */}
           <div className="flex-1 flex flex-col items-center justify-center relative my-4">
-            <div className="w-72 h-72 sm:w-80 sm:h-80 rounded-full border-4 border-primary/60 overflow-hidden relative shadow-2xl bg-slate-900 flex items-center justify-center">
+            <div className="w-72 h-72 sm:w-80 sm:h-80 rounded-full border-4 border-primary/60 overflow-hidden relative shadow-xl bg-slate-900 flex items-center justify-center">
               {capturedCameraPhoto ? (
                 <img
                   src={capturedCameraPhoto}
@@ -11427,7 +11212,7 @@ function ProfileScreen({
       {/* Mock Selection Gallery Overlay */}
       {showGalleryModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex flex-col justify-end animate-in slide-in-from-bottom duration-300">
-          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 flex flex-col h-[70dvh] shadow-2xl border-t border-slate-200 dark:border-slate-800">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 flex flex-col h-[70dvh] shadow-xl border-t border-slate-200 dark:border-slate-800">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-black text-slate-900 dark:text-white">Recent Images</h3>
               <button onClick={() => setShowGalleryModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors">
@@ -11544,9 +11329,10 @@ const QuantityModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
-      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl overflow-y-auto max-h-[90vh] animate-in slide-in-from-bottom-10 duration-500">
-        <div className="flex justify-between items-start mb-6">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center p-0 sm:p-4 sm:items-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[40px] sm:rounded-[40px] px-8 pb-8 pt-4 shadow-xl overflow-y-auto max-h-[90vh] animate-in slide-in-from-bottom-10 duration-500 relative">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full sm:hidden" />
+        <div className="flex justify-between items-start mb-6 mt-4">
           <div className="flex-1 pr-4">
             <h3 className="text-2xl font-black text-slate-900 dark:text-white leading-tight">
               {item.name}
@@ -11669,7 +11455,7 @@ const QuantityModal = ({
               onConfirm(quantity, specialInstructions, selectedCustomizations);
             }}
             disabled={shopAway}
-            className={`flex-1 h-16 text-white font-black rounded-3xl shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer ${
+            className={`flex-1 h-16 text-white font-black rounded-3xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer ${
               shopAway
                 ? "bg-slate-300 dark:bg-slate-800 text-slate-500 cursor-not-allowed shadow-none"
                 : "bg-slate-900 dark:bg-orange-600"
@@ -12265,7 +12051,7 @@ function StoreInfoScreen({
 
       let { data, error } = await supabase
         .from("reviews")
-        .select("*")
+        .select("id, shop_id, user_id, rating, comment, user_name, created_at")
         .eq("shop_id", dbShopId)
         .order("createdAt", { ascending: false });
 
@@ -12278,7 +12064,7 @@ function StoreInfoScreen({
 
         const retry = await supabase
           .from("reviews")
-          .select("*")
+          .select("id, shop_id, user_id, rating, comment, user_name, created_at")
           .eq("shop_id", dbShopId);
 
         if (retry.error) {
@@ -12365,7 +12151,7 @@ function StoreInfoScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-2xl overflow-x-hidden">
+    <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
 
       {/* Immersive Header with Carousel */}
@@ -12450,7 +12236,7 @@ function StoreInfoScreen({
                 {shop.delivery_eta || "30-45 mins"}
               </div>
             </div>
-            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-2xl">
+            <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
               {shop.name}
             </h1>
             <p className="text-white/80 text-xs font-medium max-w-sm line-clamp-1">
@@ -12738,7 +12524,7 @@ function StoreInfoScreen({
                                   {getCategoryEmoji(category)}
                                 </span>
                                 <span>{category}</span>
-                                <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
+                                <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
                                   {collapsedCategories[category]
                                     ? "Tap to expand"
                                     : "Tap to collapse"}
@@ -13218,7 +13004,7 @@ function StoreInfoScreen({
       {/* Cash on Arrival Trust Tooltip / Micro-Drawer */}
       {showTrustTooltip && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[999] flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative animate-in slide-in-from-bottom duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-xl relative animate-in slide-in-from-bottom duration-300">
             <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full sm:hidden" />
             <div className="flex items-start gap-4 mt-2">
               <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
@@ -13347,12 +13133,12 @@ function ExploreScreen({
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
-  useEffect(() => { setTimeout(() => { const el = document.querySelector("div#root > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1)"); console.log("ELEMENT FOUND:", el?.className, el?.tagName, el?.innerHTML.slice(0, 150)); }, 2000); }, []);
+
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop'>('all');
+  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop' | 'rider'>('all');
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
@@ -13365,7 +13151,9 @@ function ExploreScreen({
     let isMounted = true;
     const loadRealRiders = async () => {
       try {
-        const { data, error } = await supabase.from("rider_profiles").select("*");
+        const { data, error } = await supabase
+          .from("rider_profiles")
+          .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online");
         if (!error && data && isMounted) {
           setRealRiders(data);
         }
@@ -13375,8 +13163,7 @@ function ExploreScreen({
     };
     loadRealRiders();
 
-    const channel = supabase
-      .channel("explore-map-riders-realtime")
+    const channel = getFreshChannel("explore-map-riders-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "rider_profiles" },
@@ -13520,12 +13307,12 @@ function ExploreScreen({
   }, [realRiders, userLocation, mapCenter]);
 
   return (
-    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-2xl overflow-hidden">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-xl overflow-hidden">
       {/* List Layout Header Overlay - Only rendered in List mode for full map visibility */}
       {layoutMode === "list" && (
         <div className="absolute top-6 left-4 right-4 z-[1000] flex flex-col gap-3">
           <div className="max-w-lg md:mx-auto w-full">
-            <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-2xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
+            <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
               <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
               <input
                 type="text"
@@ -13621,7 +13408,7 @@ function ExploreScreen({
                 height: isFilterOpen ? "auto" : 0,
                 opacity: isFilterOpen ? 1 : 0,
               }}
-              className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-2xl border border-gray-100 dark:border-slate-800"
+              className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-xl border border-gray-100 dark:border-slate-800"
             >
               <div className="p-6 flex flex-col gap-6 max-h-[70vh] overflow-y-auto">
                 {/* Category Toggles */}
@@ -13861,7 +13648,7 @@ function ExploreScreen({
                   }}
                   className="mt-6 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 cursor-pointer"
                 >
-                  Clear All Filters
+                  Discover All Local Spots
                 </button>
               </div>
             ) : (
@@ -13892,7 +13679,7 @@ function ExploreScreen({
                       setSelectedShopId(shop.id);
                       triggerHaptic(10);
                     }}
-                    className="group bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm dark:shadow-none hover:shadow-xl dark:hover:border-slate-700/80 transition-all duration-300 flex flex-col cursor-pointer"
+                    className="group bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600 transition-all duration-300 flex flex-col cursor-pointer"
                   >
                     <div className="h-44 relative overflow-hidden">
                       <BlurUpImage
@@ -13927,15 +13714,15 @@ function ExploreScreen({
                       {/* Speed/Opening Overlays */}
                       <div className="absolute bottom-4 left-4 flex gap-1.5 flex-wrap">
                         {status.isOpen ? (
-                          <span className="bg-emerald-500 text-white font-black text-[8px] uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
+                          <span className="bg-emerald-500 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                             Open Now
                           </span>
                         ) : (
-                          <span className="bg-slate-600 text-white font-black text-[8px] uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
+                          <span className="bg-slate-600 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                             Closed
                           </span>
                         )}
-                        <span className="bg-[#fff0ea] leading-tight text-orange-700 font-black text-[8px] uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
+                        <span className="bg-[#fff0ea] leading-tight text-orange-700 font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                           {shop.category}
                         </span>
                       </div>
@@ -13943,7 +13730,7 @@ function ExploreScreen({
 
                     <div className="p-5 flex flex-col justify-between flex-grow">
                       <div>
-                        <h4 className="font-['Plus_Jakarta_Sans'] font-black text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-500 transition-colors line-clamp-1 break-all flex items-center gap-1.5">
+                        <h4 className="font-sans font-black text-xl text-slate-900 dark:text-white tracking-tight leading-tight group-hover:text-orange-500 transition-colors line-clamp-1 break-all flex items-center gap-1.5">
                           <span className="text-xl shrink-0" role="img" aria-label={shop.category}>
                             {getShopCategoryIcon(shop.category)}
                           </span>
@@ -14052,6 +13839,7 @@ function ExploreScreen({
                 activeFilter={legendFilter}
                 onSelectFilter={(f) => setLegendFilter(f)}
                 shopCount={filteredShops.length}
+                riderCount={activeProximityRiders?.length || 0}
                 onFocusCustomer={() => {
                   if (!userLocation) {
                     onRequestLocation();
@@ -14064,6 +13852,11 @@ function ExploreScreen({
                     const s = filteredShops[0];
                     setSelectedShopId(s.id);
                     toast.info(`Focused on ${s.name}`);
+                  }
+                }}
+                onFocusRider={() => {
+                  if (activeProximityRiders && activeProximityRiders.length > 0) {
+                    toast.info(`Found ${activeProximityRiders.length} active couriers nearby`);
                   }
                 }}
               />
@@ -14130,13 +13923,17 @@ function ExploreScreen({
               />
             )}
 
-            {/* Customer Location Pin (Memoized for zero redundant re-renders) */}
-            {userLocation && (legendFilter === 'all' || legendFilter === 'customer') && (
-              <MemoizedCustomerMarker
-                lat={userLocation.lat}
-                lng={userLocation.lng}
-              />
-            )}
+            {/* Active Couriers / Riders Pins (Memoized Riders) */}
+            {(legendFilter === 'all' || legendFilter === 'rider') && (activeProximityRiders || []).map((rider) => {
+              const dist = userLocation ? calculateDistance(rider.latitude, rider.longitude, userLocation.lat, userLocation.lng) : 0;
+              return (
+                <MemoizedRiderMarker
+                  key={rider.id}
+                  rider={rider}
+                  distVal={dist}
+                />
+              );
+            })}
 
             {/* Shop Pins Cluster (Memoized Shops) */}
             <MarkerClusterGroup
@@ -14144,24 +13941,40 @@ function ExploreScreen({
               maxClusterRadius={40}
               spiderfyOnMaxZoom={true}
             >
-              {(legendFilter === 'all' || legendFilter === 'shop') && filteredShops.map((shop) => {
-                const isFollowed = favorites.includes(shop.id);
-                const status = getShopStatus(shop);
+              {filteredShops
+                .filter((shop) => {
+                  const status = getShopStatus(shop);
+                  if (legendFilter === 'all') return true;
+                  if (legendFilter === 'shop') return status.isOpen;
+                  if (legendFilter === 'closed_shop') return !status.isOpen;
+                  return false;
+                })
+                .map((shop) => {
+                  const isFollowed = favorites.includes(shop.id);
+                  const status = getShopStatus(shop);
 
-                return (
-                  <MemoizedShopMarker
-                    key={shop.id}
-                    shop={shop}
-                    isFollowed={isFollowed}
-                    isOpen={status.isOpen}
-                    onSelectShop={(id) => {
-                      setSelectedShopId(id);
-                      triggerHaptic(10);
-                    }}
-                  />
-                );
-              })}
+                  return (
+                    <MemoizedShopMarker
+                      key={shop.id}
+                      shop={shop}
+                      isFollowed={isFollowed}
+                      isOpen={status.isOpen}
+                      onSelectShop={(id) => {
+                        setSelectedShopId(id);
+                        triggerHaptic(10);
+                      }}
+                    />
+                  );
+                })}
             </MarkerClusterGroup>
+
+            {/* Customer Location Pin (Always rendered on top with top z-index) */}
+            {userLocation && (legendFilter === 'all' || legendFilter === 'customer') && (
+              <MemoizedCustomerMarker
+                lat={userLocation.lat}
+                lng={userLocation.lng}
+              />
+            )}
           </MapContainer>
 
           {/* Compact Map Overlay: Floating Bottom-Right Action Menu (Z-Index Strategy: 600) */}
@@ -14173,7 +13986,7 @@ function ExploreScreen({
                 setIsMapOverlayMenuOpen(true);
                 triggerHaptic(10);
               }}
-              className="bg-slate-900/95 dark:bg-slate-900/95 text-white backdrop-blur-xl px-4 py-3 rounded-full shadow-2xl flex items-center gap-2 border border-slate-700/60 font-black text-xs active:scale-95 transition-all cursor-pointer pointer-events-auto hover:bg-slate-800"
+              className="bg-slate-900/95 dark:bg-slate-900/95 text-white backdrop-blur-xl px-4 py-3 rounded-full shadow-xl flex items-center gap-2 border border-slate-700/60 font-black text-xs active:scale-95 transition-all cursor-pointer pointer-events-auto hover:bg-slate-800"
             >
               <Search className="w-4 h-4 text-orange-400 shrink-0" />
               <span>Search & Filters</span>
@@ -14228,7 +14041,7 @@ function ExploreScreen({
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 40, scale: 0.95 }}
-                  className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-[32px] p-5 shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
+                  className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-[32px] p-5 shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2">
@@ -14492,7 +14305,7 @@ function ExploreScreen({
 
       {/* Bottom Navigation */}
       <div className="fixed bottom-0 left-0 right-0 z-50 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pointer-events-none">
-        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-2xl pointer-events-auto transition-all">
+        <div className="max-w-screen-xl mx-auto px-6 py-3 flex justify-around items-center bg-slate-100/90 dark:bg-slate-950/90 backdrop-blur-xl rounded-[20px] border-[3px] border-white/50 dark:border-slate-800/50 shadow-xl pointer-events-auto transition-all">
           <button
             onClick={onHome}
             className="flex flex-col items-center gap-1 text-slate-500 dark:text-slate-400 hover:text-orange-600 transition-colors cursor-pointer group"
@@ -14610,7 +14423,7 @@ function ExploreMapUserTracker({
       <button
         type="button"
         onClick={handleReturnToLocation}
-        className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 transition-all active:scale-95 cursor-pointer border-2 border-white/80 dark:border-slate-800"
+        className="bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider px-4 py-2.5 rounded-full shadow-xl flex items-center gap-2 transition-all active:scale-95 cursor-pointer border-2 border-white/80 dark:border-slate-800"
       >
         <span className="relative flex h-2.5 w-2.5">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-300 opacity-75"></span>
@@ -14634,106 +14447,167 @@ function NotificationsScreen({
   onRead: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
+  
+  const displayNotifications = notifications
+    .filter(n => activeTab === 'all' || !n.read)
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  // Group notifications loosely by day
+  const groupedNotifications: Record<string, AppNotification[]> = {};
+  displayNotifications.forEach(notif => {
+    const d = new Date(notif.timestamp);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    let groupKey = "Earlier";
+    if (d.toDateString() === today.toDateString()) {
+      groupKey = "Today";
+    } else if (d.toDateString() === yesterday.toDateString()) {
+      groupKey = "Yesterday";
+    }
+    
+    if (!groupedNotifications[groupKey]) groupedNotifications[groupKey] = [];
+    groupedNotifications[groupKey].push(notif);
+  });
+
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
-      <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
-        <div className="px-4 py-4 flex items-center justify-between">
+    <div className="bg-[#f8f6f5] dark:bg-slate-950 text-[#222C36] dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl overflow-x-hidden">
+      <header className="bg-white dark:bg-slate-900 pt-8 sm:pt-12 pb-4 px-6 sticky top-0 z-20 shadow-[0_4px_20px_rgba(34,44,54,0.05)] dark:shadow-none dark:border-b dark:border-slate-800">
+        <div className="flex items-center justify-between mb-6">
           <button
             onClick={onBack}
-            className="w-10 h-10 flex items-center justify-start text-slate-900 dark:text-slate-100 cursor-pointer"
+            className="w-12 h-12 flex items-center justify-center rounded-full bg-[#f8f6f5] dark:bg-slate-800 cursor-pointer text-[#222C36] dark:text-slate-100 transition-transform active:scale-95"
           >
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-xl font-bold tracking-tight">Notifications</h1>
-          <div className="w-10"></div>
+          <div className="w-12 h-12"></div> {/* Spacer for centering */}
+        </div>
+        <h1 className="text-[32px] font-sans font-bold leading-tight tracking-[-0.02em] mb-6 text-slate-900 dark:text-white">
+          Notifications
+        </h1>
+        
+        {/* Segmented Control */}
+        <div className="flex bg-[#f8f6f5] dark:bg-slate-800 rounded-xl p-1 relative h-12 w-full">
+          <div 
+            className="absolute left-1 top-1 bottom-1 w-[calc(50%-4px)] bg-white dark:bg-slate-700 rounded-[10px] shadow-sm transition-transform duration-300 ease-in-out z-0"
+            style={{ transform: activeTab === 'unread' ? 'translateX(100%)' : 'translateX(0)' }}
+          />
+          <button 
+            onClick={() => setActiveTab('all')}
+            className={`flex-1 relative z-10 text-sm font-medium transition-colors cursor-pointer rounded-lg ${activeTab === 'all' ? 'text-slate-900 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+          >
+            All
+          </button>
+          <button 
+            onClick={() => setActiveTab('unread')}
+            className={`flex-1 relative z-10 text-sm font-medium transition-colors cursor-pointer rounded-lg ${activeTab === 'unread' ? 'text-slate-900 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+          >
+            Unread
+          </button>
         </div>
       </header>
 
-      <main className="flex-grow overflow-y-auto px-4 py-6 space-y-4 flex flex-col justify-between">
-        {notifications.length === 0 ? (
-          <div className="flex-grow flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-500 my-auto">
-            <div className="relative mb-8">
-              <div className="absolute inset-0 bg-indigo-500/10 rounded-full scale-110 blur-xl opacity-50"></div>
-              <div className="size-24 bg-white dark:bg-slate-900 rounded-[36px] shadow-lg flex items-center justify-center text-indigo-500 relative z-10 border border-slate-100 dark:border-slate-800">
-                <Bell className="w-11 h-11" />
-              </div>
-            </div>
-            <h3 className="text-lg font-black mb-1 text-slate-900 dark:text-white leading-tight">
-              All Caught Up
-            </h3>
-            <p className="text-slate-500 dark:text-slate-400 text-xs max-w-[220px] leading-relaxed font-semibold mb-6">
-              You have no notifications yet. We'll let you know when tasty
-              offers or order updates land here!
-            </p>
-            <button
-              onClick={onBack}
-              className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-3 px-6 rounded-xl transition-all active:scale-95 cursor-pointer text-xs uppercase tracking-wider mx-auto"
-            >
-              Back to Home
-            </button>
-          </div>
-        ) : (
-          notifications
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .map((notif) => (
-              <div
-                key={notif.id}
-                onClick={() => onRead(notif.id)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer relative group ${notif.read ? "bg-white dark:bg-slate-900/30 border-slate-100 dark:border-slate-800" : "bg-primary/5 border-primary/20 shadow-sm"}`}
-              >
-                <div className="flex items-start space-x-3">
-                  <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      notif.type === "order"
-                        ? "bg-orange-100 text-orange-600"
-                        : notif.type === "promo"
-                          ? "bg-indigo-100 text-indigo-600"
-                          : notif.type === "follow"
-                            ? "bg-pink-100 text-pink-600"
-                            : "bg-blue-100 text-blue-600"
-                    }`}
-                  >
-                    {notif.type === "order" ? (
-                      <Package className="w-5 h-5" />
-                    ) : notif.type === "promo" ? (
-                      <Tag className="w-5 h-5" />
-                    ) : notif.type === "follow" ? (
-                      <Heart className="w-5 h-5" />
-                    ) : (
-                      <Info className="w-5 h-5" />
-                    )}
-                  </div>
-                  <div className="flex-grow">
-                    <div className="flex justify-between items-start">
-                      <h3
-                        className={`font-bold text-sm ${notif.read ? "text-slate-700 dark:text-slate-300" : "text-slate-900 dark:text-white"}`}
-                      >
-                        {notif.title}
-                      </h3>
-                      <span className="text-[10px] text-slate-400">
-                        {new Date(notif.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                      {notif.message}
-                    </p>
-                  </div>
+      <main className="flex-grow overflow-y-auto pb-24 bg-[#f8f6f5] dark:bg-slate-950">
+        <div className="flex flex-col gap-2 p-4">
+          {displayNotifications.length === 0 ? (
+            <div className="flex-grow flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in-95 duration-500 mt-20">
+              <div className="relative mb-8">
+                <div className="absolute inset-0 bg-orange-500/10 rounded-full scale-110 blur-xl opacity-50"></div>
+                <div className="size-24 bg-white dark:bg-slate-900 rounded-[36px] shadow-lg flex items-center justify-center text-orange-500 relative z-10 border border-slate-100 dark:border-slate-800">
+                  <Bell className="w-11 h-11" />
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(notif.id);
-                  }}
-                  className="absolute top-2 right-2 p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              </div>
+              <h3 className="text-xl font-sans font-bold mb-2 text-slate-900 dark:text-white leading-tight">
+                All Caught Up
+              </h3>
+              <p className="text-slate-500 dark:text-slate-400 text-sm max-w-[240px] leading-relaxed mb-6">
+                You have no {activeTab === 'unread' ? 'unread ' : ''}notifications right now.
+              </p>
+              <button
+                onClick={onBack}
+                className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold py-3 px-6 rounded-xl transition-all active:scale-95 cursor-pointer text-sm shadow-sm border border-slate-200 dark:border-slate-700 mx-auto"
+              >
+                Back to Home
+              </button>
+            </div>
+          ) : (
+            Object.entries(groupedNotifications).map(([group, notifs]) => (
+              <div key={group} className="mb-4">
+                <div className="py-2 mb-2">
+                  <span className="text-[12px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider pl-2">
+                    {group}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {notifs.map((notif) => (
+                    <div 
+                      key={notif.id}
+                      className="relative bg-white dark:bg-slate-900 rounded-2xl overflow-hidden group cursor-pointer"
+                      onClick={() => onRead(notif.id)}
+                    >
+                      {/* Swipe Action Layer (Delete) */}
+                      <div className="absolute inset-y-0 right-0 w-24 bg-red-500 flex items-center justify-center text-white z-0">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onDelete(notif.id); }} 
+                          className="w-full h-full flex flex-col items-center justify-center cursor-pointer active:bg-red-600 transition-colors"
+                        >
+                          <Trash2 className="w-6 h-6 mb-1" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider">Delete</span>
+                        </button>
+                      </div>
+                      
+                      {/* Content Layer */}
+                      <div className="relative bg-white dark:bg-slate-900 z-10 flex gap-4 p-4 transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] hover:-translate-x-24 shadow-sm border border-slate-100 dark:border-slate-800 h-full">
+                        {/* Unread Indicator */}
+                        {!notif.read && (
+                          <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-[#fa792e]"></div>
+                        )}
+                        
+                        {/* Icon */}
+                        <div className={`w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center text-white ${notif.read ? 'opacity-70 bg-slate-700 dark:bg-slate-600' : notif.type === 'order' ? 'bg-[#222C36] dark:bg-slate-800' : notif.type === 'promo' ? 'bg-[#fa792e]' : 'bg-[#10B981]'}`}>
+                          {notif.type === "order" ? (
+                            <Package className="w-6 h-6" />
+                          ) : notif.type === "promo" ? (
+                            <Tag className="w-6 h-6" />
+                          ) : notif.type === "follow" ? (
+                            <Heart className="w-6 h-6" />
+                          ) : (
+                            <Info className="w-6 h-6" />
+                          )}
+                        </div>
+                        
+                        {/* Text Content */}
+                        <div className={`flex-1 min-w-0 flex flex-col justify-center ${notif.read ? 'opacity-80' : ''}`}>
+                          <div className="flex justify-between items-start mb-1">
+                            <h3 className="font-sans font-semibold text-[16px] text-slate-900 dark:text-white truncate pr-2">
+                              {notif.title}
+                            </h3>
+                            <span className="text-[12px] text-slate-500 dark:text-slate-400 whitespace-nowrap mt-1">
+                              {new Date(notif.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p className="text-[14px] text-slate-500 dark:text-slate-400 leading-relaxed mb-2 line-clamp-2">
+                            {notif.message}
+                          </p>
+                          {/* Action Button (only on unread or specifically actionable types) */}
+                          {!notif.read && (
+                            <button 
+                              className="bg-[#f8f6f5] dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white text-[13px] font-bold py-2 px-4 rounded-xl w-fit transition-colors cursor-pointer mt-1"
+                            >
+                              View Details
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))
-        )}
+          )}
+        </div>
       </main>
     </div>
   );
@@ -14745,7 +14619,7 @@ function RecenterMap({ coords }: { coords: { lat: number; lng: number } }) {
   const lng = coords?.lng;
   useEffect(() => {
     if (lat !== undefined && lng !== undefined) {
-      map.setView({ lat, lng }, map.getZoom());
+      map.setView([lat, lng], map.getZoom());
     }
   }, [lat, lng, map]);
   return null;
@@ -14764,29 +14638,32 @@ function RealTimeRiderTracking({ order, shop }: { order: Order; shop?: Shop }) {
 
     // Fetch initial location and info
     const initTracking = async () => {
-      const { data: loc } = await supabase
-        .from("rider_locations")
-        .select("*")
-        .eq("rider_id", order.rider_id)
-        .single();
-      if (loc)
-        setRiderLocation({
-          lat: Number(loc.latitude),
-          lng: Number(loc.longitude),
-        });
+      try {
+        const { data: loc } = await supabase
+          .from("rider_locations")
+          .select("rider_id, latitude, longitude, heading, speed, updated_at")
+          .eq("rider_id", order.rider_id)
+          .single();
+        if (loc)
+          setRiderLocation({
+            lat: Number(loc.latitude),
+            lng: Number(loc.longitude),
+          });
 
-      const { data: profile } = await supabase
-        .from("rider_profiles")
-        .select("*")
-        .eq("id", order.rider_id)
-        .single();
-      setRiderInfo(profile);
+        const { data: profile } = await supabase
+          .from("rider_profiles")
+          .select("id, name, full_name, phone, avatar_url, vehicle_type, rating")
+          .eq("id", order.rider_id)
+          .single();
+        setRiderInfo(profile);
+      } catch (err) {
+        console.error("Tracking init error:", err);
+      }
     };
 
     initTracking();
 
-    const channel = supabase
-      .channel(`tracking-${order.id}`)
+    const channel = getFreshChannel(`tracking-${order.id}`)
       .on(
         "postgres_changes",
         {
@@ -14846,7 +14723,7 @@ function RealTimeRiderTracking({ order, shop }: { order: Order; shop?: Shop }) {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           {order.delivery_status === "picked_up" ? (
-            <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase animate-pulse">
+            <span className="bg-orange-600 text-white text-[10px] whitespace-nowrap font-black px-2 py-1 rounded-full uppercase animate-pulse">
               Out for Delivery
             </span>
           ) : (
@@ -14988,7 +14865,7 @@ function ChangeView({ center }: { center: { lat: number; lng: number } }) {
   const lng = center?.lng;
   useEffect(() => {
     if (lat !== undefined && lng !== undefined) {
-      map.setView({ lat, lng }, 13);
+      map.setView([lat, lng], 13);
     }
   }, [lat, lng, map]);
   return null;
@@ -15046,7 +14923,7 @@ function SystemStatusDrawer({
   return (
     <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="fixed inset-0" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[90vh] flex flex-col animate-in slide-in-from-bottom-5 duration-250">
+      <div className="relative z-10 w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[90vh] flex flex-col animate-in slide-in-from-bottom-5 duration-250">
         <div className="px-6 py-5 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-700/50">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-500/30">
@@ -15310,8 +15187,7 @@ function SettingsScreen({
       }
       const start = performance.now();
       try {
-        const pingTarget = supabaseUrl || window.location.origin;
-        await fetch(`${pingTarget}/rest/v1/`, { method: "HEAD", mode: "no-cors" });
+        await fetch("/api/health", { method: "GET" });
         if (active) {
           setBgLatency(Math.round(performance.now() - start));
         }
@@ -15356,7 +15232,7 @@ function SettingsScreen({
       if (ownerId) {
         const { data: shopData } = await supabase
           .from("shops")
-          .select("*")
+          .select("id, name, description, location, category, rating, logo_url")
           .eq("owner_id", ownerId)
           .maybeSingle();
         if (shopData) {
@@ -15369,7 +15245,7 @@ function SettingsScreen({
         try {
           const { data: firstShop } = await supabase
             .from("shops")
-            .select("*")
+            .select("id, name, description, location, category, rating, logo_url")
             .limit(1)
             .maybeSingle();
           if (firstShop) {
@@ -15400,21 +15276,21 @@ function SettingsScreen({
         is_delivery: true,
         delivery_status: "finding_rider",
         payment_method: "cash",
-        latitude: userProfile.latitude || -26.2041,
-        longitude: userProfile.longitude || 28.0473
+        lat: userProfile.latitude || -26.2041,
+        lng: userProfile.longitude || 28.0473
       };
 
       const { data, error } = await supabase
         .from("orders")
         .insert([mockOrder])
-        .select();
+        .select("id");
 
       if (error) {
-        const { latitude, longitude, ...safeMockOrder } = mockOrder;
+        const { lat, lng, ...safeMockOrder } = mockOrder as any;
         const { error: retryError } = await supabase
           .from("orders")
           .insert([safeMockOrder])
-          .select();
+          .select("id");
         
         if (retryError) throw retryError;
       }
@@ -15639,8 +15515,7 @@ function SettingsScreen({
     setLatencyTestResult("Pinging database...");
     const start = performance.now();
     try {
-      const pingTarget = supabaseUrl || window.location.origin;
-      await fetch(`${pingTarget}/rest/v1/`, { method: "HEAD", mode: "no-cors" });
+      await fetch("/api/health", { method: "GET" });
       const diff = Math.round(performance.now() - start);
       setLatencyTestResult(`${diff}ms (${diff < 150 ? "Excellent" : "Fair"})`);
     } catch (e) {
@@ -15680,7 +15555,7 @@ function SettingsScreen({
   const [showSystemStatusDrawer, setShowSystemStatusDrawer] = useState(false);
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl">
       {/* Hidden File Input */}
       <input
         type="file"
@@ -15740,7 +15615,7 @@ function SettingsScreen({
               <span className="text-slate-500 dark:text-slate-400 text-xs">
                 {userProfile.email || "No email set"}
               </span>
-              <span className="bg-primary/10 text-primary dark:text-orange-400 font-extrabold uppercase text-[8px] px-1.5 py-0.5 rounded-full tracking-widest">
+              <span className="bg-primary/10 text-primary dark:text-orange-400 font-extrabold uppercase text-[10px] whitespace-nowrap px-2 py-1 rounded-full tracking-widest">
                 Verified Customer
               </span>
             </div>
@@ -15795,7 +15670,7 @@ function SettingsScreen({
               </div>
               <div className="flex items-center gap-2">
                 {userProfile.address && (
-                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-extrabold uppercase px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-extrabold uppercase px-2 py-1 rounded">
                     Active
                   </span>
                 )}
@@ -16125,7 +16000,7 @@ function SettingsScreen({
                     <div className="flex flex-col text-left pr-3">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-slate-800 dark:text-slate-200">Button Press & Taps</span>
-                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                        <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                           Light Tap
                         </span>
                       </div>
@@ -16162,7 +16037,7 @@ function SettingsScreen({
                     <div className="flex flex-col text-left pr-3">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-slate-800 dark:text-slate-200">Order Status Updates</span>
-                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+                        <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded bg-orange-100 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
                           Double Pulse
                         </span>
                       </div>
@@ -16199,7 +16074,7 @@ function SettingsScreen({
                     <div className="flex flex-col text-left pr-3">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-slate-800 dark:text-slate-200">Cart & Item Actions</span>
-                        <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
+                        <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400">
                           Bounce Rhythm
                         </span>
                       </div>
@@ -16544,7 +16419,7 @@ function SettingsScreen({
                             </span>
                             <span className="flex-grow text-slate-300 break-all">{log.message}</span>
                             {log.status && (
-                              <span className={`font-black uppercase tracking-widest shrink-0 text-[8px] ${
+                              <span className={`font-black uppercase tracking-widest shrink-0 text-[10px] whitespace-nowrap ${
                                 log.status === "success" ? "text-emerald-500" : log.status === "error" ? "text-red-500" : "text-amber-500 animate-pulse"
                               }`}>
                                 ● {log.status}
@@ -16635,8 +16510,8 @@ function SettingsScreen({
                           .map((log) => (
                             <div key={log.id || log.timestamp} className="border-b border-slate-900 pb-2 last:border-0 last:pb-0 space-y-1">
                               <div className="flex items-center justify-between gap-2">
-                                <span className="text-slate-500 text-[8px] shrink-0 font-sans">{log.timestamp}</span>
-                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase shrink-0 ${
+                                <span className="text-slate-500 text-[10px] whitespace-nowrap shrink-0 font-sans">{log.timestamp}</span>
+                                <span className={`px-2 py-1 rounded text-[10px] whitespace-nowrap font-black uppercase shrink-0 ${
                                   log.type === "network_timeout"
                                     ? "bg-amber-950 text-amber-400 border border-amber-800/50"
                                     : log.type === "unhandledrejection"
@@ -16650,9 +16525,9 @@ function SettingsScreen({
                               </div>
                               <div className="text-slate-200 break-words font-semibold text-[9px]">{log.message}</div>
                               {log.stack && (
-                                <details className="text-[8px] text-slate-400 mt-0.5">
+                                <details className="text-[10px] whitespace-nowrap text-slate-400 mt-0.5">
                                   <summary className="cursor-pointer text-slate-500 hover:text-slate-300 select-none">Show stack trace</summary>
-                                  <pre className="mt-1 p-1.5 bg-slate-900 rounded overflow-x-auto text-slate-400 font-mono text-[8px] whitespace-pre-wrap">{log.stack}</pre>
+                                  <pre className="mt-1 p-1.5 bg-slate-900 rounded overflow-x-auto text-slate-400 font-mono text-[10px] whitespace-nowrap whitespace-pre-wrap">{log.stack}</pre>
                                 </details>
                               )}
                             </div>
@@ -16809,7 +16684,7 @@ function SettingsScreen({
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] p-6 pb-12 shadow-2xl max-h-[80vh] flex flex-col"
+              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] p-6 pb-12 shadow-xl max-h-[80vh] flex flex-col"
             >
               <div className="flex items-center justify-between mb-6 shrink-0">
                 <h3 className="text-xl font-bold">{t("app_language")}</h3>
@@ -16851,7 +16726,7 @@ function SettingsScreen({
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] p-6 pb-8 shadow-2xl flex flex-col max-h-[85vh]"
+              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] p-6 pb-8 shadow-xl flex flex-col max-h-[85vh]"
             >
               {/* Header */}
               <div className="flex items-center justify-between mb-4">
@@ -16991,7 +16866,7 @@ function SettingsScreen({
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: "100%", opacity: 0.5 }}
               transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] max-h-[85vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-100 dark:border-slate-800"
+              className="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] max-h-[85vh] sm:max-h-[90vh] overflow-hidden flex flex-col shadow-xl border border-slate-100 dark:border-slate-800"
             >
               {/* Header */}
               <header className="px-6 py-5 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between shrink-0">
@@ -17221,68 +17096,6 @@ function RiderDashboardScreen({
   ) => Promise<void>;
   isOnline: boolean;
 }) {
-  return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl relative">
-      <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
-        <button
-          onClick={onBack}
-          className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="font-black uppercase tracking-tighter text-xl text-slate-900 dark:text-white">
-            Rider Portal Moved
-          </h1>
-          <p className="text-[9px] font-black tracking-widest text-primary uppercase">
-            Official Delivery App
-          </p>
-        </div>
-        <div className="w-10"></div>
-      </header>
-
-      <main className="flex-grow flex flex-col items-center justify-center p-6 text-center space-y-6">
-        <div className="w-20 h-20 bg-green-100 dark:bg-green-500/20 text-green-600 rounded-full flex items-center justify-center shadow-inner">
-          <Bike className="w-10 h-10 animate-bounce" />
-        </div>
-
-        <div className="space-y-2">
-          <h2 className="font-black text-xl text-slate-900 dark:text-white tracking-tight uppercase">
-            Rider Deliveries Have Moved!
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
-            This customer application is strictly for ordering delicious local meals.
-            Thabo's Rider Delivery App now operates on its own dedicated, optimized separate portal.
-          </p>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900/50 p-4 rounded-2xl border border-primary/5 w-full space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Official Rider App Link</span>
-          <p className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">https://rider.localeatssa.co.za</p>
-        </div>
-
-        <div className="flex flex-col w-full gap-3">
-          <a
-            href="https://rider.localeatssa.co.za"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-xs uppercase tracking-wider py-4 rounded-xl shadow-lg shadow-orange-500/15 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-          >
-            <span>Open Rider App</span>
-            <ExternalLink className="w-4 h-4" />
-          </a>
-
-          <button
-            onClick={onBack}
-            className="w-full bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-extrabold text-xs uppercase tracking-wider py-4 rounded-xl transition-all cursor-pointer active:scale-95 border-0"
-          >
-            Go Back to Food ordering
-          </button>
-        </div>
-      </main>
-    </div>
-  );
-
   const [riderProfile, setRiderProfile] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
   const [orderShop, setOrderShop] = useState<Shop | null>(null);
@@ -17305,7 +17118,7 @@ function RiderDashboardScreen({
 
       const { data: profile, error: profileErr } = await supabase
         .from("rider_profiles")
-        .select("*")
+        .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online, current_order_id")
         .eq("id", session.user.id)
         .maybeSingle();
 
@@ -17344,24 +17157,32 @@ function RiderDashboardScreen({
       if (profile.current_order_id) {
         const { data: order } = await supabase
           .from("orders")
-          .select("*")
+          .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history, delivery_pin, order_type")
           .eq("id", profile.current_order_id)
           .single();
 
-        // Trigger haptic if this is a NEW assignment
-        if (order && !activeOrder) {
-          triggerHaptic([100, 50, 100]);
-        }
+        // Adjust rider dashboard broadcast filter to exclude cash / cash_on_arrival orders
+        const isCashOrder =
+          order?.payment_method === "cash_on_arrival" ||
+          order?.payment_method === "cash";
 
-        setActiveOrder(order);
+        if (order && !isCashOrder) {
+          // Trigger haptic if this is a NEW assignment
+          if (order && !activeOrder) {
+            triggerHaptic([100, 50, 100]);
+          }
 
-        if (order) {
+          setActiveOrder(order as unknown as Order);
+
           const { data: shop } = await supabase
             .from("shops")
-            .select("*")
+            .select("id, name, description, location, category, rating, logo_url, phone, latitude:lat, longitude:lng")
             .eq("id", order.shop_id)
             .single();
-          setOrderShop(shop);
+          setOrderShop(shop as unknown as Shop);
+        } else {
+          setActiveOrder(null);
+          setOrderShop(null);
         }
       } else {
         setActiveOrder(null);
@@ -17393,8 +17214,7 @@ function RiderDashboardScreen({
     if (!riderProfile?.id) return;
 
     // Subscribe to changes for THIS rider specifically
-    const channel = supabase
-      .channel(`rider-dashboard-${riderProfile.id}`)
+    const channel = getFreshChannel(`rider-dashboard-${riderProfile.id}`)
       .on(
         "postgres_changes",
         {
@@ -17453,12 +17273,19 @@ function RiderDashboardScreen({
           try {
             const { latitude, longitude } = pos.coords;
 
-            const { error } = await supabase.from("rider_locations").upsert({
+            
+    await FirestoreService.updateRiderLocation(riderProfile.id, {
+        latitude: latitude,
+        longitude: longitude,
+        order_id: activeOrder?.id || undefined
+    });
+    const { error } = await supabase.from("rider_locations").upsert({
               rider_id: riderProfile.id,
               latitude,
               longitude,
               updated_at: new Date().toISOString(),
             });
+  
 
             if (error) {
               console.error("Location update failed:", error);
@@ -17502,13 +17329,22 @@ function RiderDashboardScreen({
     try {
       const results = await searchAddress(manualLocation);
       if (results && results.length > 0) {
-        const { lat, lng } = results[0];
-        const { error } = await supabase.from("rider_locations").upsert({
+        const res = results[0];
+        const lat = typeof res.lat === "number" ? res.lat : parseFloat(String(res.lat || 0));
+        const lng = typeof res.lon === "number" ? res.lon : parseFloat(String(res.lon || 0));
+        
+    await FirestoreService.updateRiderLocation(riderProfile.id, {
+        latitude: lat,
+        longitude: lng,
+        order_id: activeOrder?.id || undefined
+    });
+    const { error } = await supabase.from("rider_locations").upsert({
           rider_id: riderProfile.id,
           latitude: lat,
           longitude: lng,
           updated_at: new Date().toISOString(),
         });
+  
 
         if (error) throw error;
         setRiderLocation({ lat, lng });
@@ -17558,6 +17394,7 @@ function RiderDashboardScreen({
     }
 
     await runWithProcessing(async () => {
+      await FirestoreService.updateOrder(activeOrder.id, { status, delivery_status: deliveryStatus });
       const { error: orderErr } = await supabase
         .from("orders")
         .update({ status, delivery_status: deliveryStatus })
@@ -17603,7 +17440,7 @@ function RiderDashboardScreen({
   }
 
   return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl">
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-xl">
       <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
         <button
           onClick={onBack}
@@ -17805,7 +17642,7 @@ function RiderDashboardScreen({
                     </p>
                     {orderShop && (
                       <span
-                        className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border mt-1 ${
+                        className={`text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter border mt-1 ${
                           calculateDistance(
                             orderShop.latitude || 0,
                             orderShop.longitude || 0,
@@ -17956,6 +17793,16 @@ function RiderDashboardScreen({
                 </div>
               </div>
 
+              {/* Secure Handshake Handover Instructional Prompt */}
+              {(activeOrder.is_delivery || activeOrder.order_type === "delivery" || activeOrder.delivery_status) && (
+                <RiderHandshakeInstructionPrompt
+                  expectedPin={activeOrder.delivery_pin}
+                  orderId={activeOrder.id}
+                  customerName={activeOrder.customer_name}
+                  triggerHaptic={triggerHaptic}
+                />
+              )}
+
               {/* Action Buttons */}
               <div className="space-y-3">
                 {activeOrder.delivery_status === "rider_assigned" && (
@@ -18058,7 +17905,7 @@ function ShopDashboardScreen({
   isOnline: boolean;
 }) {
   return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-2xl relative">
+    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-xl relative">
       <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
         <button
           onClick={onBack}
@@ -18221,13 +18068,13 @@ function ShopDashboardScreen({
     try {
       const { data: riderData } = await supabase
         .from("rider_profiles")
-        .select("*")
+        .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online")
         .eq("is_online", true);
       setRiders(riderData || []);
 
       const { data: locData } = await supabase
         .from("rider_locations")
-        .select("*");
+        .select("rider_id, latitude, longitude, heading, speed, updated_at");
       const locMap: Record<string, { lat: number; lng: number }> = {};
       locData?.forEach((loc) => {
         locMap[loc.rider_id] = {
@@ -18244,8 +18091,7 @@ function ShopDashboardScreen({
   useEffect(() => {
     if (activeTab === "riders") {
       fetchRiders();
-      const channel = supabase
-        .channel("rider-tracking")
+      const channel = getFreshChannel("rider-tracking")
         .on(
           "postgres_changes",
           { event: "*", schema: "public", table: "rider_locations" },
@@ -18283,10 +18129,29 @@ function ShopDashboardScreen({
     if (!shop) return;
 
     try {
+      // Exclude cash_on_arrival / cash orders from being broadcasted to external riders
+      const { data: orderToCheck } = await supabase
+        .from("orders")
+        .select("id, payment_method, is_delivery")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (orderToCheck) {
+        const isCashOrder =
+          orderToCheck.payment_method === "cash_on_arrival" ||
+          orderToCheck.payment_method === "cash";
+        if (isCashOrder) {
+          console.log(
+            `[AutoAssign] Order ${orderId} is cash/cash_on_arrival. Skipping rider auto-assignment. Only prepaid digital orders are broadcasted to riders.`
+          );
+          return;
+        }
+      }
+
       // 1. Get online riders who are not busy
       const { data: onlineRiders, error: riderError } = await supabase
         .from("rider_profiles")
-        .select("*")
+        .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online, current_order_id")
         .eq("is_online", true)
         .is("current_order_id", null);
 
@@ -18299,7 +18164,7 @@ function ShopDashboardScreen({
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       const { data: locations, error: locError } = await supabase
         .from("rider_locations")
-        .select("*")
+        .select("rider_id, latitude, longitude, heading, speed, updated_at")
         .in(
           "rider_id",
           onlineRiders.map((r) => r.id),
@@ -18380,6 +18245,7 @@ function ShopDashboardScreen({
       // Note: uploadAvatar already handles compression via compressImage
       const url = await uploadAvatar(file, shop.id);
 
+      await FirestoreService.updateShop(shop.id, { logo_url: url });
       const { error: updateError } = await supabase
         .from("shops")
         .update({ logo_url: url })
@@ -18425,13 +18291,15 @@ function ShopDashboardScreen({
     await runWithProcessing(
       async () => {
         if (editingItem) {
-          const { error } = await supabase
+          await FirestoreService.updateMenuItem(editingItem.id, itemData);
+      const { error } = await supabase
             .from("menu_items")
             .update(itemData)
             .eq("id", editingItem.id);
           if (error) throw error;
         } else {
-          const { error } = await supabase
+          await FirestoreService.addMenuItem(itemData);
+      const { error } = await supabase
             .from("menu_items")
             .insert([itemData]);
           if (error) throw error;
@@ -18452,7 +18320,8 @@ function ShopDashboardScreen({
       "Are you sure you want to remove this item from your menu?",
       async () => {
         try {
-          const { error } = await supabase
+          await FirestoreService.deleteMenuItem(itemId);
+      const { error } = await supabase
             .from("menu_items")
             .delete()
             .eq("id", itemId);
@@ -18533,7 +18402,7 @@ function ShopDashboardScreen({
         console.log("Fetching shop for owner:", user.id);
         const { data: shopData, error: shopError } = await supabase
           .from("shops")
-          .select("*")
+          .select("id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude:lat, longitude:lng, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id, updated_at")
           .eq("owner_id", user.id)
           .maybeSingle();
 
@@ -18582,7 +18451,7 @@ function ShopDashboardScreen({
         // Fetch menu items for the shop
         const { data: menuData } = await supabase
           .from("menu_items")
-          .select("*")
+          .select("id, shop_id, name, price, description, image_url, category, is_available, customizations")
           .eq("shop_id", shopData.id);
 
         const formattedShop: Shop = {
@@ -18624,9 +18493,10 @@ function ShopDashboardScreen({
           console.log("Fetching orders for shop ID:", shopData.id);
           const { data: ordersData, error: ordersError } = await supabase
             .from("orders")
-            .select("*")
+            .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history")
             .eq("shop_id", shopData.id)
-            .order("created_at", { ascending: false });
+            .order("created_at", { ascending: false })
+            .limit(100);
 
           if (ordersError) {
             const isNetworkError = String(ordersError.message || '').includes("Failed to fetch") || String(ordersError).includes("Failed to fetch");
@@ -18652,15 +18522,14 @@ function ShopDashboardScreen({
           }
 
           console.log(`Found ${ordersData?.length || 0} orders for this shop.`);
-          setOrders((ordersData || []) as Order[]);
+          setOrders((ordersData || []) as unknown as Order[]);
           localStorage.setItem(
             `cached_shop_orders_${user.id}`,
             JSON.stringify(ordersData || []),
           );
 
           // 3. Subscribe to real-time updates for THIS shop
-          channel = supabase
-            .channel(`orders:${shopData.id}`)
+          channel = getFreshChannel(`orders:${shopData.id}`)
             .on(
               "postgres_changes",
               {
@@ -18694,9 +18563,12 @@ function ShopDashboardScreen({
         }
       } catch (err: any) {
         console.error("Error in Shop Dashboard:", err);
+        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
         setError(
           err.message === "Failed to fetch"
-            ? "Network Error: Please check your internet connection."
+            ? (isOffline
+                ? "You are currently offline. Please check your network connection."
+                : "Unable to reach the shop dashboard server. Please try again shortly.")
             : err.message || "Failed to load dashboard data",
         );
       } finally {
@@ -18760,7 +18632,7 @@ function ShopDashboardScreen({
         // Fetch current order to get existing history and delivery info
         const { data: currentOrder, error: fetchError } = await supabase
           .from("orders")
-          .select("*")
+          .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history")
           .eq("id", orderId)
           .single();
 
@@ -18777,14 +18649,31 @@ function ShopDashboardScreen({
         ];
 
         // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready,
-        // it shifts to 'finding_rider' status instead of just 'ready'
+        // it shifts to 'finding_rider' status only for prepaid digital orders.
+        // Cash-on-arrival and cash orders are fulfilled in-house and excluded from riders.
         let finalStatus = newStatus;
         let deliveryStatus = currentOrder?.delivery_status || "none";
 
+        const isCashOrder =
+          currentOrder?.payment_method === "cash_on_arrival" ||
+          currentOrder?.payment_method === "cash";
+
         if (newStatus === "ready" && currentOrder?.is_delivery) {
           finalStatus = "ready";
-          deliveryStatus = "finding_rider";
-          autoAssignClosestRider(orderId);
+          if (!isCashOrder) {
+            deliveryStatus = "finding_rider";
+            autoAssignClosestRiderService(
+              orderId,
+              shop
+                ? {
+                    lat: shop.latitude || DEFAULT_COORDS.lat,
+                    lng: shop.longitude || DEFAULT_COORDS.lng,
+                  }
+                : undefined
+            );
+          } else {
+            deliveryStatus = "none";
+          }
         }
 
         const updateData: any = {
@@ -18795,7 +18684,8 @@ function ShopDashboardScreen({
         if (ownerMessage) updateData.owner_message = ownerMessage;
         if (reason) updateData.cancellation_reason = reason;
 
-        let { error } = await supabase
+        await FirestoreService.updateOrder(orderId, updateData);
+      let { error } = await supabase
           .from("orders")
           .update(updateData)
           .eq("id", orderId);
@@ -18994,6 +18884,7 @@ function ShopDashboardScreen({
     currentStatus: boolean,
   ) => {
     try {
+      await FirestoreService.updateMenuItem(itemId, { is_available: !currentStatus });
       const { error } = await supabase
         .from("menu_items")
         .update({ is_available: !currentStatus })
@@ -19078,7 +18969,7 @@ function ShopDashboardScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-display text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-2xl">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
       <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="max-w-screen-xl mx-auto px-4 py-4 flex items-center justify-between">
           <button
@@ -19172,7 +19063,7 @@ function ShopDashboardScreen({
                 <div className="min-w-0">
                   <p className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5 leading-none">
                     <span>COA Trust Badge</span>
-                    <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded leading-none ${
+                    <span className={`text-[10px] whitespace-nowrap font-black uppercase tracking-wider px-2 py-1 rounded leading-none ${
                       isTrustCurrentlyActive 
                         ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400" 
                         : "bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
@@ -19192,7 +19083,11 @@ function ShopDashboardScreen({
                   const nextVal = !isTrustCurrentlyActive;
                   await runWithProcessing(async () => {
                     try {
-                      const { error } = await supabase
+                      await FirestoreService.updateShop(shop.id, {
+                          localeats_cash_trust: nextVal,
+                          cash_trust_enabled: nextVal,
+                        });
+      const { error } = await supabase
                         .from("shops")
                         .update({
                           localeats_cash_trust: nextVal,
@@ -19572,10 +19467,10 @@ function ShopDashboardScreen({
                       style={{ height: `${stat.height}%` }}
                       className="bg-primary rounded-t-lg transition-all group-hover:bg-orange-600"
                     ></div>
-                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[8px] py-1 px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] whitespace-nowrap py-1 px-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
                       R{Math.round(stat.value)}
                     </div>
-                    <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 uppercase">
+                    <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap font-bold text-slate-400 uppercase">
                       {stat.label}
                     </span>
                   </div>
@@ -19630,7 +19525,7 @@ function ShopDashboardScreen({
                       <span className="text-2xl font-black text-slate-900 dark:text-white leading-none">
                         {orderStatusBreakdown.reduce((sum, item) => sum + item.value, 0)}
                       </span>
-                      <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-1">Total Today</span>
+                      <span className="text-[10px] whitespace-nowrap font-bold text-slate-400 uppercase tracking-wider mt-1">Total Today</span>
                     </div>
                   </div>
 
@@ -19906,7 +19801,7 @@ function ShopDashboardScreen({
                         </div>
                         <div className="flex flex-col items-end">
                           <span
-                            className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase ${rider.current_order_id ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600"}`}
+                            className={`text-[10px] whitespace-nowrap font-bold px-2 py-0.5 rounded-full uppercase ${rider.current_order_id ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600"}`}
                           >
                             {rider.current_order_id ? "Busy" : "Free"}
                           </span>
@@ -19915,17 +19810,25 @@ function ShopDashboardScreen({
 
                       {/* Manual Assignment Section */}
                       {orders.some(
-                        (o) => o.status.toLowerCase() === "ready" && !o.rider_id,
+                        (o) =>
+                          o.status.toLowerCase() === "ready" &&
+                          !o.rider_id &&
+                          o.payment_method !== "cash_on_arrival" &&
+                          o.payment_method !== "cash",
                       ) &&
                         !rider.current_order_id && (
                           <div className="pt-3 border-t border-slate-50 dark:border-slate-800">
-                            <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                            <p className="text-[10px] whitespace-nowrap font-bold text-slate-400 uppercase tracking-widest mb-2">
                               Assign Pending Order
                             </p>
                             <div className="flex flex-col gap-2">
                               {orders
                                 .filter(
-                                  (o) => o.status.toLowerCase() === "ready" && !o.rider_id,
+                                  (o) =>
+                                    o.status.toLowerCase() === "ready" &&
+                                    !o.rider_id &&
+                                    o.payment_method !== "cash_on_arrival" &&
+                                    o.payment_method !== "cash",
                                 )
                                 .map((readyOrder) => {
                                   // Rider Suggestion Logic: Calculate Proximity
@@ -19963,7 +19866,7 @@ function ShopDashboardScreen({
                                           Order #{readyOrder.id.slice(0, 5)}
                                         </p>
                                         {distance !== null && (
-                                          <p className="text-[8px] text-indigo-600 font-bold uppercase">
+                                          <p className="text-[10px] whitespace-nowrap text-indigo-600 font-bold uppercase">
                                             {distance.toFixed(1)}km away
                                           </p>
                                         )}
@@ -19971,7 +19874,12 @@ function ShopDashboardScreen({
                                       <button
                                         onClick={async () => {
                                           try {
-                                            const { error: updateErr } =
+                                            await FirestoreService.updateOrder(readyOrder.id, {
+                                                  rider_id: rider.id,
+                                                  delivery_status:
+                                                    "finding_rider",
+                                                });
+      const { error: updateErr } =
                                               await supabase
                                                 .from("orders")
                                                 .update({
@@ -20140,7 +20048,8 @@ function ShopDashboardScreen({
                       ) as HTMLTextAreaElement
                     )?.value;
                     await runWithProcessing(async () => {
-                      const { error } = await supabase
+                      await FirestoreService.updateShop(shop.id, { description: desc });
+      const { error } = await supabase
                         .from("shops")
                         .update({ description: desc })
                         .eq("id", shop.id);
@@ -20191,7 +20100,11 @@ function ShopDashboardScreen({
                       navigator.geolocation.getCurrentPosition(
                         async (position) => {
                           try {
-                            const { error } = await supabase
+                            await FirestoreService.updateShop(shop.id, {
+                                latitude: position.coords.latitude,
+                                longitude: position.coords.longitude,
+                              });
+      const { error } = await supabase
                               .from("shops")
                               .update({
                                 latitude: position.coords.latitude,
@@ -20285,7 +20198,11 @@ function ShopDashboardScreen({
                     await runWithProcessing(async () => {
                       // Attempt to persist remote db column update
                       try {
-                        const { error } = await supabase
+                        await FirestoreService.updateShop(shop.id, {
+                            localeats_cash_trust: nextVal,
+                            cash_trust_enabled: nextVal,
+                          });
+      const { error } = await supabase
                           .from("shops")
                           .update({
                             localeats_cash_trust: nextVal,
@@ -20378,7 +20295,10 @@ function ShopDashboardScreen({
 
                       await runWithProcessing(async () => {
                         try {
-                          const { error } = await supabase
+                          await FirestoreService.updateShop(shop.id, {
+                              card_machine_enabled: nextVal,
+                            });
+      const { error } = await supabase
                             .from("shops")
                             .update({
                               card_machine_enabled: nextVal,
@@ -20560,13 +20480,13 @@ function ShopDashboardScreen({
                       </span>
                       {order.is_delivery && (
                         <>
-                          <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                          <span className="bg-orange-600 text-white text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter flex items-center gap-1">
                             <Navigation className="w-2 h-2" />
                             Rider Required
                           </span>
                           {zone && (
                             <span
-                              className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border ${zone === "A" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-orange-100 text-orange-700 border-orange-200"}`}
+                              className={`text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter border ${zone === "A" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-orange-100 text-orange-700 border-orange-200"}`}
                             >
                               Zone {zone} - R{zoneFee}{" "}
                               {dist && `(${dist.toFixed(1)}km)`}
@@ -20680,7 +20600,7 @@ function ShopDashboardScreen({
                               <p className="text-xs font-bold text-slate-200">{cardData.brand} ({cardData.terminal})</p>
                             </div>
                           </div>
-                          <span className={`px-2.5 py-1 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                          <span className={`px-2.5 py-1 text-[10px] whitespace-nowrap font-black uppercase tracking-widest rounded-full ${
                             txStatus === "success" 
                               ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
                               : txStatus === "failed" 
@@ -20702,15 +20622,15 @@ function ShopDashboardScreen({
                         {/* Masked visual card strip */}
                         <div className="grid grid-cols-2 bg-white/5 p-3 rounded-xl border border-white/5 font-mono text-xs gap-y-1.5 gap-x-3">
                           <div className="col-span-2 font-sans">
-                            <span className="text-[8px] text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Cardholder</span>
+                            <span className="text-[10px] whitespace-nowrap text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Cardholder</span>
                             <span className="font-sans font-black tracking-wider uppercase text-slate-100">{cardData.holder}</span>
                           </div>
                           <div>
-                            <span className="text-[8px] text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Card Number</span>
+                            <span className="text-[10px] whitespace-nowrap text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Card Number</span>
                             <span className="font-bold tracking-widest text-slate-200">{cardData.card}</span>
                           </div>
                           <div>
-                            <span className="text-[8px] text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Expiry / CVV</span>
+                            <span className="text-[10px] whitespace-nowrap text-slate-400 font-extrabold uppercase block leading-none mb-0.5">Expiry / CVV</span>
                             <span className="font-bold text-slate-200">{cardData.exp} • {cardData.cvv}</span>
                           </div>
                         </div>
@@ -20869,7 +20789,7 @@ function ShopDashboardScreen({
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === "orders" ? "text-primary" : "text-slate-400"}`}
         >
           <ClipboardList className="w-5 h-5" />
-          <span className="text-[8px] font-bold uppercase tracking-wider">
+          <span className="text-[10px] whitespace-nowrap font-bold uppercase tracking-wider">
             Orders
           </span>
         </button>
@@ -20878,7 +20798,7 @@ function ShopDashboardScreen({
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === "riders" ? "text-indigo-600" : "text-slate-400"}`}
         >
           <Navigation className="w-5 h-5" />
-          <span className="text-[8px] font-bold uppercase tracking-wider">
+          <span className="text-[10px] whitespace-nowrap font-bold uppercase tracking-wider">
             Riders
           </span>
         </button>
@@ -20887,7 +20807,7 @@ function ShopDashboardScreen({
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === "inventory" ? "text-primary" : "text-slate-400"}`}
         >
           <Package className="w-5 h-5" />
-          <span className="text-[8px] font-bold uppercase tracking-wider">
+          <span className="text-[10px] whitespace-nowrap font-bold uppercase tracking-wider">
             Stock
           </span>
         </button>
@@ -20896,7 +20816,7 @@ function ShopDashboardScreen({
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === "marketing" ? "text-primary" : "text-slate-400"}`}
         >
           <Megaphone className="w-5 h-5" />
-          <span className="text-[8px] font-bold uppercase tracking-wider">
+          <span className="text-[10px] whitespace-nowrap font-bold uppercase tracking-wider">
             Promo
           </span>
         </button>
@@ -20905,7 +20825,7 @@ function ShopDashboardScreen({
           className={`flex flex-col items-center gap-1 transition-colors cursor-pointer flex-1 ${activeTab === "settings" ? "text-primary" : "text-slate-400"}`}
         >
           <MapPin className="w-5 h-5" />
-          <span className="text-[8px] font-bold uppercase tracking-wider">
+          <span className="text-[10px] whitespace-nowrap font-bold uppercase tracking-wider">
             Map
           </span>
         </button>
@@ -20928,7 +20848,7 @@ function ShopDashboardScreen({
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden"
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-xl overflow-hidden"
             >
               <div className="p-6 border-b border-slate-100 dark:border-slate-800">
                 <h3 className="text-xl font-bold">Cancellation Reason</h3>
@@ -21023,7 +20943,7 @@ function ShopDashboardScreen({
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden"
+              className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-xl overflow-hidden"
             >
               <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
                 <div>
@@ -21229,6 +21149,284 @@ function ShopDashboardScreen({
   );
 }
 
+function AdminCashDiagnosticsSection({
+  orders,
+  shops,
+  onUpdateStatus,
+  onBack,
+  isOnline,
+  showAlert,
+  onRefresh,
+}: {
+  orders: Order[];
+  shops: Shop[];
+  onUpdateStatus: (status: string, orderId: string, message?: string) => Promise<void>;
+  onBack: () => void;
+  isOnline: boolean;
+  showAlert: (title: string, message: string) => void;
+  onRefresh: () => void;
+}) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Filter strictly for Cash on Arrival and Cash transactions
+  const cashOrders = useMemo(() => {
+    return orders.filter(
+      (o) =>
+        o.payment_method === "cash_on_arrival" ||
+        o.payment_method === "cash" ||
+        o.payment_method === "cod"
+    );
+  }, [orders]);
+
+  const filteredCashOrders = useMemo(() => {
+    return cashOrders.filter((order) => {
+      const matchesSearch =
+        order.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (order.address || "").toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus =
+        statusFilter === "all" || order.status.toLowerCase() === statusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [cashOrders, searchTerm, statusFilter]);
+
+  const totalValue = useMemo(() => {
+    return cashOrders
+      .filter((o) => o.status !== "cancelled")
+      .reduce((sum, o) => sum + (o.total_price || o.price || 0), 0);
+  }, [cashOrders]);
+
+  const pendingCount = cashOrders.filter((o) => o.status === "pending").length;
+  const readyCount = cashOrders.filter((o) => o.status === "ready").length;
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header Info Banner */}
+      <div className="p-5 rounded-3xl bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 dark:border-amber-500/20 shadow-sm space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2.5">
+            <div className="size-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-black tracking-tight text-amber-900 dark:text-amber-200 uppercase">
+                Cash-on-Arrival Dispatch Diagnostics
+              </h2>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
+                Auto-assignment isolation & in-house fulfillment verification
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1 bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[10px] font-black uppercase tracking-wider rounded-full flex items-center gap-1.5">
+            <span className="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            Filter Active: 100% Isolated
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-white/60 dark:bg-slate-900/60 p-3.5 rounded-2xl border border-amber-500/20">
+          <strong className="text-amber-800 dark:text-amber-300">Rider Auto-Assignment Policy:</strong> External digital courier dispatch is reserved exclusively for prepaid digital orders. All orders placed with <strong>Cash on Arrival</strong> or <strong>Cash</strong> are automatically filtered out from courier auto-assignment. This protects drivers from handling cash disputes and keeps fulfillment directly with the vendor&apos;s in-house staff.
+        </p>
+      </div>
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total COA Orders</span>
+          <span className="text-xl font-black text-slate-900 dark:text-white">{cashOrders.length}</span>
+          <span className="text-[9px] text-amber-600 font-bold">Excluded from riders</span>
+        </div>
+        <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Cash Order Volume</span>
+          <span className="text-xl font-black text-slate-900 dark:text-white">R {totalValue.toFixed(2)}</span>
+          <span className="text-[9px] text-emerald-600 font-bold">In-house collection</span>
+        </div>
+        <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pending Preparation</span>
+          <span className="text-xl font-black text-amber-600">{pendingCount}</span>
+          <span className="text-[9px] text-slate-400">Awaiting kitchen</span>
+        </div>
+        <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Ready for Staff</span>
+          <span className="text-xl font-black text-blue-600">{readyCount}</span>
+          <span className="text-[9px] text-slate-400">In-house delivery</span>
+        </div>
+      </div>
+
+      {/* Search & Filters */}
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search COA orders by customer, product, ID..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full h-11 pl-10 pr-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 shadow-sm"
+          />
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+          {["all", "pending", "confirmed", "ready", "completed", "cancelled"].map((status) => (
+            <button
+              key={status}
+              onClick={() => setStatusFilter(status)}
+              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer border ${
+                statusFilter === status
+                  ? "bg-amber-600 text-white border-amber-600 shadow-sm"
+                  : "bg-white dark:bg-slate-900 text-slate-500 border-slate-200 dark:border-slate-800 hover:border-amber-500/30"
+              }`}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Order List */}
+      <div className="space-y-3">
+        {filteredCashOrders.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center gap-3 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+            <ShieldCheck className="w-12 h-12 text-slate-300 dark:text-slate-600" />
+            <div>
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No Cash Orders Found</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {searchTerm || statusFilter !== "all"
+                  ? "Try resetting your search or filter."
+                  : "All current orders are prepaid digital transactions dispatched to riders."}
+              </p>
+            </div>
+          </div>
+        ) : (
+          filteredCashOrders.map((order) => {
+            const shop = shops.find((s) => s.id === order.shop_id);
+            const isExpanded = expandedId === order.id;
+            const isDelivery = order.is_delivery;
+
+            return (
+              <div
+                key={order.id}
+                className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-amber-500/20 dark:border-amber-500/10 shadow-sm space-y-3 transition-all hover:border-amber-500/40"
+              >
+                {/* Header */}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-black text-slate-900 dark:text-white">
+                        #{order.id.slice(0, 8)}
+                      </span>
+                      <span className="px-2 py-0.5 bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-400 text-[10px] font-black uppercase tracking-wider rounded-md flex items-center gap-1">
+                        <Banknote className="w-3 h-3" />
+                        {order.payment_method === "cash_on_arrival" ? "Cash on Arrival" : "Cash"}
+                      </span>
+                      <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-bold rounded-md flex items-center gap-1">
+                        {isDelivery ? <Truck className="w-3 h-3 text-orange-500" /> : <ShoppingBag className="w-3 h-3 text-blue-500" />}
+                        {isDelivery ? "In-House Delivery" : "Store Collection"}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">
+                      {order.customer_name || "Guest Customer"} • {order.phone || "No phone"}
+                    </p>
+                    {order.address && (
+                      <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                        {order.address}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-sm font-black text-slate-900 dark:text-white block">
+                      R {(order.total_price || order.price || 0).toFixed(2)}
+                    </span>
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider mt-1 ${
+                      order.status === "ready"
+                        ? "bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-400"
+                        : order.status === "pending"
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+                        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    }`}>
+                      {order.status}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Items preview */}
+                <div className="p-2.5 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-700 dark:text-slate-300 truncate">
+                    {order.quantity || 1}x {order.product_name}
+                  </span>
+                  <span className="text-[10px] text-slate-400 shrink-0 ml-2">
+                    {new Date(order.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+
+                {/* Diagnostic Verification & Workflow Controls */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Rider Pool Bypassed (Verified)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isExpanded ? null : order.id)}
+                      className="text-[10px] font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 underline cursor-pointer"
+                    >
+                      {isExpanded ? "Hide Details" : "View Diagnostic"}
+                    </button>
+                  </div>
+
+                  {/* Status Action Buttons for In-House Staff */}
+                  <div className="flex items-center gap-1.5">
+                    {order.status === "pending" && (
+                      <button
+                        onClick={() => onUpdateStatus("confirmed", order.id)}
+                        className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                      >
+                        Confirm
+                      </button>
+                    )}
+                    {order.status === "confirmed" && (
+                      <button
+                        onClick={() => onUpdateStatus("ready", order.id)}
+                        className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                      >
+                        Mark Ready (In-House)
+                      </button>
+                    )}
+                    {order.status === "ready" && (
+                      <button
+                        onClick={() => onUpdateStatus("completed", order.id)}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                      >
+                        Complete Order
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded Raw Diagnostic Data */}
+                {isExpanded && (
+                  <div className="mt-3 p-3 bg-slate-900 text-slate-200 rounded-xl text-[10px] font-mono space-y-1.5 animate-in fade-in">
+                    <p className="font-bold text-amber-400 uppercase tracking-widest">Diagnostic Verification Snapshot</p>
+                    <p>• Payment Method: <span className="text-emerald-400">{order.payment_method}</span></p>
+                    <p>• External Rider Assigned: <span className="text-rose-400">null (Auto-assign prevented)</span></p>
+                    <p>• Delivery Status: <span className="text-slate-300">{order.delivery_status || "none"}</span></p>
+                    <p>• Fulfillment Mode: <span className="text-blue-300">{isDelivery ? "Vendor In-House Staff Courier" : "Walk-in Takeaway"}</span></p>
+                    <p>• Dispatch Reason: <span className="text-slate-400">Filtered by autoAssignClosestRiderService policy (cash transactions require manual in-house cash exchange).</span></p>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdminOrdersScreen({
   shops,
   onBack,
@@ -21247,7 +21445,7 @@ function AdminOrdersScreen({
   ) => Promise<void>;
   isOnline: boolean;
 }) {
-  const [activeAdminTab, setActiveAdminTab] = useState<"orders" | "error-logs">("orders");
+  const [activeAdminTab, setActiveAdminTab] = useState<"orders" | "cash-diagnostics" | "error-logs">("orders");
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -21267,8 +21465,7 @@ function AdminOrdersScreen({
     const timer = setInterval(fetchOrders, 30000);
 
     // Real-time updates for admin
-    const channel = supabase
-      .channel("admin_orders")
+    const channel = getFreshChannel("admin_orders")
       .on(
         "postgres_changes",
         {
@@ -21301,29 +21498,42 @@ function AdminOrdersScreen({
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng";
 
       let fetchedData: Order[] | null = null;
+      
+      // Tier 1: Firestore shared db
       try {
-        const { data, error } = await supabase
-          .from("orders")
-          .select(safeColumns)
-          .order("created_at", { ascending: false });
-
-        if (!error && data) {
-          fetchedData = data as unknown as Order[];
+        const fsOrders = await FirestoreService.getAllOrders ? await FirestoreService.getAllOrders() : [];
+        if (fsOrders && fsOrders.length > 0) {
+          fetchedData = fsOrders as unknown as Order[];
         }
-      } catch (sbErr) {
-        console.info("[Merchant] Supabase orders fetch notice:", sbErr);
+      } catch (fErr) {}
+
+      // Tier 2: Supabase
+      if (!fetchedData || fetchedData.length === 0) {
+        try {
+          const { data, error } = await supabase
+            .from("orders")
+            .select(safeColumns)
+            .order("created_at", { ascending: false })
+            .limit(100);
+
+          if (!error && data) {
+            fetchedData = data as unknown as Order[];
+          }
+        } catch (sbErr) {
+          console.info("[Merchant] Supabase orders fetch notice:", sbErr);
+        }
       }
 
       // Tier 2 Fallback: Server API
       if (!fetchedData) {
         try {
-          const apiRes = await fetch("/api/orders");
-          if (apiRes.ok) {
-            const apiJson = await apiRes.json();
-            if (Array.isArray(apiJson.orders)) {
+          const apiRes = await fetch("/api/orders").catch(() => null);
+          if (apiRes && apiRes.ok) {
+            const apiJson = await apiRes.json().catch(() => null);
+            if (apiJson && Array.isArray(apiJson.orders)) {
               fetchedData = apiJson.orders as Order[];
             }
           }
@@ -21376,7 +21586,7 @@ function AdminOrdersScreen({
       // Fetch current order to get existing history and delivery info
       const { data: currentOrder } = await supabase
         .from("orders")
-        .select("*")
+        .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history")
         .eq("id", orderId)
         .maybeSingle();
 
@@ -21387,13 +21597,23 @@ function AdminOrdersScreen({
       ];
 
       // BUSINESS LOGIC: If a guest ordered delivery and it's marked as ready,
-      // it shifts to 'finding_rider' status instead of just 'ready'
+      // it shifts to 'finding_rider' status only for prepaid digital orders.
+      // Cash-on-arrival and cash orders are fulfilled in-house and excluded from riders.
       let finalStatus = status;
       let deliveryStatus = currentOrder?.delivery_status || "none";
 
+      const isCashOrder =
+        currentOrder?.payment_method === "cash_on_arrival" ||
+        currentOrder?.payment_method === "cash";
+
       if (status === "ready" && currentOrder?.is_delivery) {
         finalStatus = "ready";
-        deliveryStatus = "finding_rider";
+        if (!isCashOrder) {
+          deliveryStatus = "finding_rider";
+          autoAssignClosestRiderService(orderId);
+        } else {
+          deliveryStatus = "none";
+        }
       }
 
       const updateData: any = {
@@ -21403,6 +21623,7 @@ function AdminOrdersScreen({
       };
       if (message) updateData.owner_message = message;
 
+      await FirestoreService.updateOrder(orderId, updateData);
       let { error } = await supabase
         .from("orders")
         .update(updateData)
@@ -21418,7 +21639,7 @@ function AdminOrdersScreen({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orders: [{ id: orderId, ...updateData }] }),
-        });
+        }).catch(() => null);
       } catch (_) {}
     }, fetchOrders);
   };
@@ -21468,7 +21689,7 @@ function AdminOrdersScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
-      <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden shadow-2xl">
+      <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden shadow-xl">
         <header className="flex items-center justify-between p-4 bg-white dark:bg-slate-950 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 gap-3">
           <div className="flex items-center gap-3">
             <button
@@ -21482,17 +21703,21 @@ function AdminOrdersScreen({
                 Admin Dashboard
               </h1>
               <p className="text-xs text-slate-400">
-                {activeAdminTab === "orders" ? "Live customer orders & operations" : "Maintenance & crash inspection"}
+                {activeAdminTab === "orders"
+                  ? "Live customer orders & operations"
+                  : activeAdminTab === "cash-diagnostics"
+                  ? "Cash on Arrival isolation & rider diagnostics"
+                  : "Maintenance & crash inspection"}
               </p>
             </div>
           </div>
 
           {/* Tab Pill Switcher */}
-          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 gap-1">
             <button
               type="button"
               onClick={() => setActiveAdminTab("orders")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeAdminTab === "orders"
                   ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm"
                   : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
@@ -21502,14 +21727,26 @@ function AdminOrdersScreen({
             </button>
             <button
               type="button"
+              onClick={() => setActiveAdminTab("cash-diagnostics")}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeAdminTab === "cash-diagnostics"
+                  ? "bg-amber-600 text-white shadow-sm shadow-amber-600/20"
+                  : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>COA Diagnostics ({orders.filter(o => o.payment_method === 'cash_on_arrival' || o.payment_method === 'cash' || o.payment_method === 'cod').length})</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveAdminTab("error-logs")}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 activeAdminTab === "error-logs"
                   ? "bg-rose-600 text-white shadow-sm shadow-rose-600/20"
                   : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
               }`}
             >
-              <span>Error Diagnostics</span>
+              <span>Errors</span>
             </button>
           </div>
         </header>
@@ -21517,6 +21754,18 @@ function AdminOrdersScreen({
         {activeAdminTab === "error-logs" ? (
           <main className="flex-1 overflow-y-auto p-4">
             <AdminErrorLogsSection embedded={false} onBack={() => setActiveAdminTab("orders")} />
+          </main>
+        ) : activeAdminTab === "cash-diagnostics" ? (
+          <main className="flex-1 overflow-y-auto p-4">
+            <AdminCashDiagnosticsSection
+              orders={orders}
+              shops={shops}
+              onUpdateStatus={updateOrderStatus}
+              onBack={() => setActiveAdminTab("orders")}
+              isOnline={isOnline}
+              showAlert={showAlert}
+              onRefresh={fetchOrders}
+            />
           </main>
         ) : (
           <main className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -21641,13 +21890,13 @@ function AdminOrdersScreen({
                   </div>
                   {order.is_delivery && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className="bg-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                      <span className="bg-orange-600 text-white text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter flex items-center gap-1">
                         <Navigation className="w-2 h-2" />
                         Rider Needed (R{order.delivery_fee})
                       </span>
                       {zone && (
                         <span
-                          className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter border ${zone === "A" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-orange-100 text-orange-700 border-orange-200"}`}
+                          className={`text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter border ${zone === "A" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-orange-100 text-orange-700 border-orange-200"}`}
                         >
                           Zone {zone} {dist && `(${dist.toFixed(1)}km)`}
                         </span>
@@ -21915,7 +22164,7 @@ function AdminOrdersScreen({
         {/* Cancellation Confirmation Modal */}
         {orderToCancel && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-full flex items-center justify-center mb-4 mx-auto">
                 <XCircle className="w-6 h-6" />
               </div>
@@ -21953,7 +22202,7 @@ function AdminOrdersScreen({
         {/* Order Confirmation Modal (with Message) */}
         {orderToConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-950 w-full max-w-xs rounded-3xl p-6 shadow-xl animate-in zoom-in-95 duration-200">
               <div className="size-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-4 mx-auto">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
@@ -22083,7 +22332,45 @@ function OrderHistoryScreen({
   );
 
   const [addedToCartOrderId, setAddedToCartOrderId] = useState<string | null>(null);
+  const [trackingOrder, setTrackingOrder] = useState<any | null>(null);
   const prevOrdersRef = useRef<any[]>(orders);
+
+  // Real-time detection of pending offline cancellations or orders in local storage
+  const [pendingCancellationsCount, setPendingCancellationsCount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem("pending_cancellation");
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list.length : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [offlineOrdersCount, setOfflineOrdersCount] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem("offline_orders_queue");
+      const list = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list) ? list.length : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [isManualSyncing, setIsManualSyncing] = useState<boolean>(false);
+
+  const checkPendingOfflineItems = useCallback(() => {
+    try {
+      const rawCancels = localStorage.getItem("pending_cancellation");
+      const cancelsList = rawCancels ? JSON.parse(rawCancels) : [];
+      setPendingCancellationsCount(Array.isArray(cancelsList) ? cancelsList.length : 0);
+
+      const rawOffline = localStorage.getItem("offline_orders_queue");
+      const offlineList = rawOffline ? JSON.parse(rawOffline) : [];
+      setOfflineOrdersCount(Array.isArray(offlineList) ? offlineList.length : 0);
+    } catch (e) {
+      console.warn("Failed checking pending offline items:", e);
+    }
+  }, []);
 
   useEffect(() => {
     // Check for status changes to trigger a toast notification
@@ -22118,32 +22405,40 @@ function OrderHistoryScreen({
         return;
       }
 
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, delivery_pin, order_type";
 
       let fetchedData: any[] | null = null;
       try {
-        const { data, error } = await supabase
-          .from("orders")
-          .select(safeColumns)
-          .eq("user_id", activeUserId)
-          .order("created_at", { ascending: false });
-
-        if (!error && data) {
-          fetchedData = data;
-        } else if (error) {
-          console.info("[OrderHistory] Supabase fetch notice, falling back to server sync:", error.message || error);
+        const fsOrders = await FirestoreService.getOrdersByUser(activeUserId);
+        if (fsOrders && fsOrders.length > 0) {
+          fetchedData = fsOrders;
         }
-      } catch (sbErr) {
-        console.info("[OrderHistory] Supabase direct query notice:", sbErr);
+      } catch (fErr) {}
+
+      if (!fetchedData || fetchedData.length === 0) {
+        try {
+          const { data, error } = await supabase
+            .from("orders")
+            .select(safeColumns)
+            .eq("user_id", activeUserId)
+            .order("created_at", { ascending: false })
+            .limit(50);
+
+          if (!error && data) {
+            fetchedData = data;
+          } else if (error) {
+            console.info("[OrderHistory] Supabase fetch notice, falling back to server sync:", error.message || error);
+          }
+        } catch (err) {}
       }
 
       // Tier 2 Fallback: Server API
       if (!fetchedData) {
         try {
-          const apiRes = await fetch(`/api/orders?user_id=${activeUserId}`);
-          if (apiRes.ok) {
-            const apiJson = await apiRes.json();
-            if (Array.isArray(apiJson.orders)) {
+          const apiRes = await fetch(`/api/orders?user_id=${activeUserId}`).catch(() => null);
+          if (apiRes && apiRes.ok) {
+            const apiJson = await apiRes.json().catch(() => null);
+            if (apiJson && Array.isArray(apiJson.orders)) {
               fetchedData = apiJson.orders;
             }
           }
@@ -22183,19 +22478,51 @@ function OrderHistoryScreen({
 
   useEffect(() => {
     fetchOrders();
+    checkPendingOfflineItems();
 
-    // Polling fallback
-    const timer = setInterval(fetchOrders, 30000);
+    // Periodic check & polling fallback
+    const timer = setInterval(() => {
+      fetchOrders();
+      checkPendingOfflineItems();
+    }, 15000);
 
     const handleSync = () => {
+      checkPendingOfflineItems();
       fetchOrders();
     };
+
     window.addEventListener("local-orders-synced", handleSync);
+    window.addEventListener("storage", checkPendingOfflineItems);
+    window.addEventListener("online", handleSync);
+    window.addEventListener("offline", checkPendingOfflineItems);
+
     return () => {
       window.removeEventListener("local-orders-synced", handleSync);
+      window.removeEventListener("storage", checkPendingOfflineItems);
+      window.removeEventListener("online", handleSync);
+      window.removeEventListener("offline", checkPendingOfflineItems);
       clearInterval(timer);
     };
-  }, [fetchOrders]);
+  }, [fetchOrders, checkPendingOfflineItems]);
+
+  const handleManualTriggerSync = async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast.error("Device is currently offline. Local actions will sync automatically once internet returns.");
+      return;
+    }
+    setIsManualSyncing(true);
+    try {
+      await processPendingCancellationsQueue();
+      checkPendingOfflineItems();
+      await fetchOrders();
+      toast.success("Synchronization complete! Orders and cancellations are updated.");
+    } catch (err) {
+      console.warn("Manual sync error:", err);
+      toast.error("Sync in progress. Will retry automatically.");
+    } finally {
+      setIsManualSyncing(false);
+    }
+  };
 
   // Aggregate veteran diner statistics
   const stats = useMemo(() => {
@@ -22420,7 +22747,7 @@ function OrderHistoryScreen({
       // Defensive maybeSingle fetch to verify the order exists and check cache/schema compatibility
       let { data: targetOrder, error: fetchOrderError } = await supabase
         .from("orders")
-        .select("*")
+        .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history")
         .eq("id", cancellingOrderId)
         .maybeSingle();
 
@@ -22431,7 +22758,7 @@ function OrderHistoryScreen({
           .select("id, created_at, shop_id")
           .eq("id", cancellingOrderId)
           .maybeSingle();
-        targetOrder = fallbackOrder;
+        targetOrder = fallbackOrder as any;
       }
 
       const orderToUse = targetOrder || orders.find((o) => o.id === cancellingOrderId);
@@ -22855,28 +23182,38 @@ function OrderHistoryScreen({
           return;
         }
 
-        const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, address";
+        const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng";
 
         let fetched: any[] | null = null;
         try {
-          const { data, error } = await supabase
-            .from("orders")
-            .select(safeColumns)
-            .eq("user_id", userId)
-            .order("created_at", { ascending: false });
-
-          if (!error && data) {
-            fetched = data;
+          const fsOrders = await FirestoreService.getOrdersByUser(userId);
+          if (fsOrders && fsOrders.length > 0) {
+            fetched = fsOrders;
           }
-        } catch (_) {}
+        } catch (fErr) {}
+
+        if (!fetched || fetched.length === 0) {
+          try {
+            const { data, error } = await supabase
+              .from("orders")
+              .select(safeColumns)
+              .eq("user_id", userId)
+              .order("created_at", { ascending: false })
+              .limit(50);
+
+            if (!error && data) {
+              fetched = data;
+            }
+          } catch (_) {}
+        }
 
         // Fallback to server API
         if (!fetched) {
           try {
-            const res = await fetch(`/api/orders?user_id=${userId}`);
-            if (res.ok) {
-              const json = await res.json();
-              if (Array.isArray(json.orders)) fetched = json.orders;
+            const res = await fetch(`/api/orders?user_id=${userId}`).catch(() => null);
+            if (res && res.ok) {
+              const json = await res.json().catch(() => null);
+              if (json && Array.isArray(json.orders)) fetched = json.orders;
             }
           } catch (_) {}
         }
@@ -22903,8 +23240,7 @@ function OrderHistoryScreen({
     const timer = setInterval(fetchOrders, 30000);
 
     const userId = session?.user?.id || userProfile?.id;
-    const channel = supabase
-      .channel(`order_history:${userId}`)
+    const channel = getFreshChannel(`order_history:${userId}`)
       .on(
         "postgres_changes",
         {
@@ -22934,7 +23270,18 @@ function OrderHistoryScreen({
   }, [session]);
 
   return (
-    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-display">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
+      {trackingOrder && (
+        <div className="fixed inset-0 z-50 bg-white dark:bg-slate-950 overflow-y-auto">
+          <OrderTrackingScreen
+            orders={[trackingOrder]}
+            shops={shops || []}
+            onBack={() => setTrackingOrder(null)}
+            showAlert={showAlert}
+            triggerHaptic={triggerHaptic}
+          />
+        </div>
+      )}
       <div className="relative flex h-auto min-h-screen w-full flex-col bg-white dark:bg-slate-950 overflow-x-hidden shadow-xl">
         <header className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 mr-4">
           <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between w-full">
@@ -22976,6 +23323,52 @@ function OrderHistoryScreen({
         </header>
 
         <main className="flex-1 p-4 max-w-screen-xl mx-auto w-full flex flex-col gap-4">
+          {/* Real-time Syncing Indicator for Pending Cancellations & Offline Orders */}
+          {(pendingCancellationsCount > 0 || offlineOrdersCount > 0) && (
+            <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 border border-amber-500/30 dark:border-amber-500/20 rounded-3xl p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-start gap-3">
+                <div className="size-10 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0 mt-0.5">
+                  <RefreshCw className={`w-5 h-5 ${isManualSyncing || !isOnline ? "animate-spin" : "animate-pulse"}`} />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-black uppercase tracking-wider text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                      </span>
+                      Syncing Pending Actions...
+                    </span>
+                    {pendingCancellationsCount > 0 && (
+                      <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/30">
+                        {pendingCancellationsCount} Cancellation{pendingCancellationsCount > 1 ? "s" : ""} Queued
+                      </span>
+                    )}
+                    {offlineOrdersCount > 0 && (
+                      <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-orange-500/20 text-orange-700 dark:text-orange-300 border border-orange-500/30">
+                        {offlineOrdersCount} Offline Order{offlineOrdersCount > 1 ? "s" : ""} Queued
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-amber-800/80 dark:text-amber-300/80 leading-relaxed max-w-xl">
+                    Pending cancellation requests or offline orders detected in local storage. LocalEats will automatically sync with the cloud once your connection is fully restored.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+                <button
+                  type="button"
+                  disabled={isManualSyncing}
+                  onClick={handleManualTriggerSync}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isManualSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Sync Now
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Veteran Dashboard Summary Card */}
           {!loading && orders.length > 0 && (
             <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-orange-950/80 text-white p-5 rounded-3xl border border-slate-200/5 dark:border-slate-800/80 shadow-xl flex flex-col gap-4 animate-in fade-in slide-in-from-top duration-500">
@@ -22998,7 +23391,7 @@ function OrderHistoryScreen({
 
               <div className="grid grid-cols-3 gap-2.5 pt-3 border-t border-slate-800/60">
                 <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40">
-                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
+                  <span className="text-[10px] whitespace-nowrap font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
                     <Banknote className="w-3 h-3 text-emerald-500" /> Spendings
                   </span>
                   <span className="text-xs font-black text-white mt-1">
@@ -23006,7 +23399,7 @@ function OrderHistoryScreen({
                   </span>
                 </div>
                 <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40">
-                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
+                  <span className="text-[10px] whitespace-nowrap font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none">
                     <ShoppingBag className="w-3 h-3 text-orange-500" /> Count
                   </span>
                   <span className="text-xs font-black text-white mt-1">
@@ -23014,7 +23407,7 @@ function OrderHistoryScreen({
                   </span>
                 </div>
                 <div className="flex flex-col gap-0.5 p-2 bg-slate-900/60 rounded-2xl border border-slate-800/40 overflow-hidden">
-                  <span className="text-[8px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none overflow-hidden truncate whitespace-nowrap">
+                  <span className="text-[10px] whitespace-nowrap font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1 leading-none overflow-hidden truncate whitespace-nowrap">
                     <Heart className="w-3 h-3 text-rose-500" /> Fav Spot
                   </span>
                   <span className="text-[10px] font-black text-orange-400 mt-1 truncate max-w-full leading-none">
@@ -23217,7 +23610,7 @@ function OrderHistoryScreen({
                       }`}
                     >
                       <span>{st.label}</span>
-                      <span className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded-md ${
+                      <span className={`text-[10px] font-extrabold px-2 py-1 rounded-md ${
                         isActive
                           ? "bg-white/20 text-white"
                           : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
@@ -23276,7 +23669,7 @@ function OrderHistoryScreen({
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-primary/10 rounded-full scale-[2] blur-3xl opacity-50 animate-pulse"></div>
-                <div className="size-32 bg-white dark:bg-slate-800 rounded-full shadow-2xl flex items-center justify-center text-primary relative z-10 hover:scale-105 transition-transform duration-500 border-4 border-slate-50 dark:border-slate-800/80">
+                <div className="size-32 bg-white dark:bg-slate-800 rounded-full shadow-xl flex items-center justify-center text-primary relative z-10 hover:scale-105 transition-transform duration-500 border-4 border-slate-50 dark:border-slate-800/80">
                   <div className="relative w-full max-w-[100vw] overflow-x-hidden">
                     <SearchX className="w-12 h-12 text-slate-400 dark:text-slate-500 mb-1" />
                     <Utensils className="w-6 h-6 text-orange-500 absolute -bottom-2 -right-3 rotate-12" />
@@ -23316,7 +23709,7 @@ function OrderHistoryScreen({
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 py-20 animate-in fade-in zoom-in duration-500">
               <div className="relative mb-8">
                 <div className="absolute inset-0 bg-primary/20 rounded-full scale-150 blur-3xl opacity-30 animate-pulse"></div>
-                <div className="size-28 bg-white dark:bg-slate-800 rounded-[40px] shadow-2xl flex items-center justify-center text-primary relative z-10 rotate-3 transition-transform hover:rotate-0 duration-500">
+                <div className="size-28 bg-white dark:bg-slate-800 rounded-[40px] shadow-xl flex items-center justify-center text-primary relative z-10 rotate-3 transition-transform hover:rotate-0 duration-500">
                   <ShoppingBag className="w-14 h-14" />
                 </div>
                 <div className="absolute -bottom-2 -right-2 size-10 bg-orange-500 text-white rounded-2xl flex items-center justify-center shadow-lg animate-bounce">
@@ -23335,9 +23728,9 @@ function OrderHistoryScreen({
               {filterStatus === "All" && (
                 <button
                   onClick={onBack}
-                  className="group bg-primary text-white font-black py-4 px-10 rounded-[28px] shadow-2xl shadow-primary/30 transition-all active:scale-95 cursor-pointer flex items-center gap-3"
+                  className="group bg-primary text-white font-black py-4 px-10 rounded-[28px] shadow-xl shadow-primary/30 transition-all active:scale-95 cursor-pointer flex items-center gap-3"
                 >
-                  <span>Find Good Food</span>
+                  <span>Find Local Food</span>
                   <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </button>
               )}
@@ -23474,7 +23867,7 @@ function OrderHistoryScreen({
                             ? "Cash"
                             : "Card"}
                       </span>
-                      <span className="text-primary font-black text-xs normal-case font-display">
+                      <span className="text-primary font-black text-xs normal-case font-sans">
                         Total: R {group.totalPrice.toFixed(2)}
                       </span>
                     </div>
@@ -23671,28 +24064,39 @@ function OrderHistoryScreen({
                         </button>
                       )}
 
-                      {/* Reorder Button on Completed Orders */}
-                      <button
-                        type="button"
-                        onClick={() => handleReorderGroup(group)}
-                        className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 border-0 ${
-                          addedToCartOrderId === group.id
-                            ? "bg-emerald-500 text-white shadow-emerald-500/20"
-                            : "bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-600 text-white hover:from-orange-600 hover:to-amber-600 shadow-orange-500/20"
-                        }`}
-                      >
-                        {addedToCartOrderId === group.id ? (
-                          <>
-                            <CheckCircle2 className="w-3.5 h-3.5 animate-bounce" />
-                            Cart Populated!
-                          </>
-                        ) : (
-                          <>
-                            <RotateCw className="w-3.5 h-3.5" />
-                            Reorder
-                          </>
-                        )}
-                      </button>
+                      {/* Track or Reorder Action based on status */}
+                      {!["completed", "cancelled"].includes(group.status) ? (
+                        <button
+                          type="button"
+                          onClick={() => setTrackingOrder(group.originalOrder)}
+                          className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm shadow-indigo-600/20 active:scale-95 border-0"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          Track Order
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleReorderGroup(group)}
+                          className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 border-0 ${
+                            addedToCartOrderId === group.id
+                              ? "bg-emerald-500 text-white shadow-emerald-500/20"
+                              : "bg-gradient-to-r from-orange-500 to-amber-500 dark:from-orange-600 dark:to-amber-600 text-white hover:from-orange-600 hover:to-amber-600 shadow-orange-500/20"
+                          }`}
+                        >
+                          {addedToCartOrderId === group.id ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 animate-bounce" />
+                              Cart Populated!
+                            </>
+                          ) : (
+                            <>
+                              <RotateCw className="w-3.5 h-3.5" />
+                              Reorder
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -23705,7 +24109,7 @@ function OrderHistoryScreen({
         {/* Beautiful Custom Predefined Cancel Reason Modal */}
         {cancellingOrderId && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-900 w-full max-w-xs rounded-3xl p-6 shadow-xl border border-slate-100 dark:border-slate-800 animate-in zoom-in-95 duration-200">
               <div className="size-16 bg-rose-100 dark:bg-rose-900/30 rounded-full flex items-center justify-center text-rose-600 mx-auto mb-4">
                 <AlertTriangle className="w-8 h-8" />
               </div>
@@ -23789,7 +24193,7 @@ function OrderHistoryScreen({
         {/* Quick Reorder Modal */}
         {reorderPreviewItem && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-805 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-805 shadow-xl relative animate-in zoom-in-95 duration-200">
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
@@ -23906,7 +24310,7 @@ function OrderHistoryScreen({
         {/* Support Ticket Modal */}
         {supportOrder && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-808 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-[32px] p-6 max-w-sm w-full border border-slate-100 dark:border-slate-808 shadow-xl relative animate-in zoom-in-95 duration-200">
               <div className="flex justify-between items-start mb-4">
                 <div>
                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
@@ -23998,7 +24402,7 @@ function OrderHistoryScreen({
   );
 }
 
-function ReviewScreen({
+function OrderRating({
   pendingReview,
   onSnooze,
   onSubmit,
@@ -24038,7 +24442,7 @@ function ReviewScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-2xl p-6 overflow-y-auto">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto shadow-xl p-6 overflow-y-auto">
       <div className="flex-grow flex flex-col space-y-8 py-10">
         <div className="text-center space-y-2">
           <div className="bg-orange-100 dark:bg-orange-900/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -24230,7 +24634,7 @@ function ContactScreen({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl animate-in fade-in slide-in-from-bottom-4 duration-500">
       <header className="sticky top-0 z-50 glass-effect border-b border-primary/10">
         <div className="px-4 py-4 flex items-center">
           <button

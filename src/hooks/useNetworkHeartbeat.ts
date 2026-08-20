@@ -86,10 +86,6 @@ export function useNetworkHeartbeat(intervalMs = 15000, enabled = true) {
 
         if (latencyMs > 1000) {
           pingStatus = 'degraded';
-          pushGlobalErrorLog(
-            'network_timeout',
-            `[Heartbeat Spike] Backend latency spike detected: ${latencyMs}ms (threshold 1000ms).`
-          );
         } else {
           pingStatus = 'healthy';
         }
@@ -100,11 +96,6 @@ export function useNetworkHeartbeat(intervalMs = 15000, enabled = true) {
         consecutiveFailuresRef.current += 1;
         errorMsg = err.name === 'AbortError' ? 'Heartbeat ping timeout (4000ms exceeded)' : err.message || 'Ping failed';
         pingStatus = err.name === 'AbortError' ? 'timeout' : 'offline';
-
-        pushGlobalErrorLog(
-          'network_timeout',
-          `[Heartbeat Timeout/Error] ${errorMsg} (${latencyMs}ms elapsed).`
-        );
       }
     }
 

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Shop } from '../types';
 import { supabase } from '../lib/supabase';
+import { FirestoreService } from '../lib/firebase';
 import { DEFAULT_FALLBACK_SHOPS } from '../App-constants';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../utils';
 import { getCachedBusinessResults, cacheBusinessResults } from '../lib/offlineCache';
@@ -110,10 +111,34 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
 
         try {
           await CircuitBreaker.execute('fetchShopsAndMenu', async () => {
-            const { data: shopsData, error: shopsError } = await supabase.from('shops').select('*');
+            // Priority 1: Query shared Firestore database (merchant app instance)
+            let firestoreShops: Shop[] = [];
+            try {
+              firestoreShops = await FirestoreService.getShops();
+            } catch (e) {
+              console.debug('[FirestoreService] fetch error:', e);
+            }
+
+            if (firestoreShops && firestoreShops.length > 0) {
+              console.log('[Firestore] Loaded', firestoreShops.length, 'live shops from Firestore');
+              setShops(firestoreShops);
+              safeLocalStorageSet('cached_shops', JSON.stringify(firestoreShops));
+              cacheBusinessResults('all_shops', firestoreShops);
+              setIsOnline(true);
+              lastFetchedTimeRef.current = Date.now();
+              return firestoreShops;
+            }
+
+            // Priority 2: Query Supabase
+            const { data: shopsData, error: shopsError } = await supabase
+              .from('shops')
+              .select('id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude, longitude, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id, updated_at');
+
             if (shopsError) throw shopsError;
 
-            const { data: menuData, error: menuError } = await supabase.from('menu_items').select('*');
+            const { data: menuData, error: menuError } = await supabase
+              .from('menu_items')
+              .select('id, shop_id, name, price, description, image_url, category, is_available, customizations');
             if (menuError) throw menuError;
 
             if (shopsData && shopsData.length === 0) {
@@ -229,6 +254,38 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
     [stalenessThresholdMs, shops]
   );
 
+  // Set up real-time listener to Firestore shops
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = FirestoreService.listenToShops((liveShops) => {
+        if (liveShops && liveShops.length > 0) {
+          console.log('[Firestore] Live shop updates received:', liveShops.length);
+          setShops(liveShops);
+          safeLocalStorageSet('cached_shops', JSON.stringify(liveShops));
+          cacheBusinessResults('all_shops', liveShops);
+          setLoadingShops(false);
+        }
+      });
+    } catch (e) {
+      console.debug('[Firestore] Listener init notice:', e);
+    }
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  const seedDemoShops = useCallback(async () => {
+    setLoadingShops(true);
+    await FirestoreService.seedDemoShopsIfEmpty();
+    const fresh = await FirestoreService.getShops();
+    const shopsToSet = fresh.length > 0 ? fresh : DEFAULT_FALLBACK_SHOPS;
+    setShops(shopsToSet);
+    safeLocalStorageSet('cached_shops', JSON.stringify(shopsToSet));
+    cacheBusinessResults('all_shops', shopsToSet);
+    setLoadingShops(false);
+  }, []);
+
   return {
     shops,
     setShops,
@@ -239,5 +296,6 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
     lastFetchedTime: lastFetchedTimeRef.current,
     fetchShopsData,
     invalidateCache,
+    seedDemoShops,
   };
 }

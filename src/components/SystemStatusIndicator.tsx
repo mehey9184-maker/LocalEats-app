@@ -33,7 +33,7 @@ export default function SystemStatusIndicator() {
       try {
         if (isMounted) setSupabaseStatus('checking');
         const { error } = await supabase.from('shops').select('id').limit(1).maybeSingle();
-        if (error && (error.message.includes('fetch') || error.code === 'PGRST205')) {
+        if (error && ((error.message && error.message.includes('fetch')) || error.code === 'PGRST205')) {
            // Allow PGRST205 (missing table) as technically reachable database
            if (error.code === 'PGRST205') {
                if (isMounted) setSupabaseStatus('ok');

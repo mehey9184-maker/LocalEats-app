@@ -30,10 +30,13 @@ export type Order = {
   product_variant: string;
   quantity: number;
   price: number;
+  total_price?: number;
   notes: string;
   delivery_instructions?: string;
   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
+  order_type?: 'delivery' | 'collection' | string;
+  delivery_pin?: string;
   delivery_fee?: number;
   rider_id?: string;
   delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled' | 'delivery' | 'collection' | 'ready' | 'pending' | 'preparing' | 'confirmed' | 'completed';
@@ -126,4 +129,20 @@ export type Shop = {
   is_test_store?: boolean;
   owner_email?: string;
   created_by?: string;
+};
+
+export type UserProfile = {
+  id?: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  city: string;
+  address: string;
+  country: string;
+  role: "user" | "admin" | "shop_owner" | "rider";
+  photoURL?: string;
+  latitude?: number;
+  longitude?: number;
+  language?: string;
+  loyaltyPoints?: number;
 };
