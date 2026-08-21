@@ -1317,13 +1317,14 @@ export function CheckoutScreen({
         const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
 
         // Resolve authenticated user ID or obtain secure Anonymous Firebase UID for guest checkout
-        let activeUserId = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
-        const isGuestCheckout = !activeUserId;
+        let activeUserId: string | null = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
+        let isGuestCheckout = false;
 
         if (!activeUserId) {
           try {
-            const anonUser = await ensureAnonymousAuth();
-            activeUserId = anonUser?.uid || null;
+            const user = await ensureAnonymousAuth();
+            activeUserId = user?.uid || null;
+            isGuestCheckout = user?.isAnonymous === true;
           } catch (authErr) {
             console.error("[Checkout] Anonymous Firebase auth failed:", authErr);
             throw new Error("Could not initialize secure guest session. Please check your network connection.");
