@@ -13,7 +13,7 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
-import { registerAndSyncPushToken, FirestoreService } from "../lib/firebase";
+import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth } from "../lib/firebase";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
@@ -1316,9 +1316,27 @@ export function CheckoutScreen({
         // Calculate proportional discount per item to persist exact client payments into database
         const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
 
+        // Resolve authenticated user ID or obtain secure Anonymous Firebase UID for guest checkout
+        let activeUserId = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
+        const isGuestCheckout = !activeUserId;
+
+        if (!activeUserId) {
+          try {
+            const anonUser = await ensureAnonymousAuth();
+            activeUserId = anonUser?.uid || null;
+          } catch (authErr) {
+            console.error("[Checkout] Anonymous Firebase auth failed:", authErr);
+            throw new Error("Could not initialize secure guest session. Please check your network connection.");
+          }
+        }
+
+        if (!activeUserId) {
+          throw new Error("Authentication failed: Missing secure user identity for order placement.");
+        }
+
         // Trigger FCM Web Push Token acquisition and sync to Supabase user_push_tokens
-        if (session?.user?.id) {
-          registerAndSyncPushToken(session.user.id).catch((err) => {
+        if (activeUserId) {
+          registerAndSyncPushToken(activeUserId).catch((err) => {
             console.warn("[FCM] Push token registration notice on checkout:", err);
           });
         }
@@ -1374,11 +1392,10 @@ export function CheckoutScreen({
               ? Number(rawShopId)
               : rawShopId;
 
-          const validUserId = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
-
           return {
             id: orderId,
-            user_id: validUserId,
+            user_id: activeUserId,
+            is_guest: isGuestCheckout,
             shop_id: resolvedShopId,
             customer_name: finalCustomerName,
             phone: finalCustomerPhone,
@@ -1434,7 +1451,8 @@ export function CheckoutScreen({
           const payload: Record<string, any> = {
             id: d.id,
             created_at: new Date().toISOString(),
-            user_id: d.user_id || null,
+            user_id: d.user_id,
+            is_guest: Boolean(d.is_guest),
             shop_id: d.shop_id,
             customer_name: d.customer_name || "Valued Customer",
             phone: d.phone || "",
@@ -1612,12 +1630,18 @@ export function CheckoutScreen({
         }
 
         // Direct Firestore Real-time Persistence for live client and driver tracking
-        try {
-          await Promise.allSettled(
-            cleanOrderData.map((ord) => FirestoreService.saveOrder(ord))
-          );
-        } catch (fsErr) {
-          console.info("[Checkout] Firestore sync notice:", fsErr);
+        const fsResults = await Promise.allSettled(
+          cleanOrderData.map((ord) => FirestoreService.saveOrder(ord))
+        );
+
+        const failedFs = fsResults.filter(res => res.status === "rejected");
+        if (failedFs.length > 0) {
+          console.error("[CHECKOUT] Firestore persistence failed...");
+          if (failedFs.length === cleanOrderData.length) {
+            throw new Error("Order submission failed: Could not persist to database.");
+          } else {
+            throw new Error("PARTIAL PERSISTENCE REQUIRES FUTURE TRANSACTION/ORDER-BATCH DESIGN");
+          }
         }
 
         // Cache order in local storage for instant sync across all tracking and order history screens

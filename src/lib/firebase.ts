@@ -27,7 +27,8 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  User as FirebaseUser
+  User as FirebaseUser,
+  signInAnonymously
 } from "firebase/auth";
 import { getMessaging, getToken, onMessage, isSupported, Messaging } from "firebase/messaging";
 import { Shop, MenuItem } from "../types";
@@ -108,8 +109,22 @@ export function getFirebaseAuth(): Auth {
 
 export const auth: Auth = getFirebaseAuth();
 
+/**
+ * Ensures a valid Firebase Auth user exists (either active user or anonymous guest user).
+ * Does not create duplicate anonymous sessions if already signed in.
+ */
+export async function ensureAnonymousAuth(): Promise<FirebaseUser> {
+  const currentAuth = getFirebaseAuth();
+  if (currentAuth.currentUser) {
+    return currentAuth.currentUser;
+  }
+  const credential = await signInAnonymously(currentAuth);
+  return credential.user;
+}
+
 // Re-export common Firestore utilities
 export {
+  signInAnonymously,
   collection,
   doc,
   getDoc,

@@ -28,5 +28,10 @@
   - Enabled 1-tap filtering to isolate open spots, closed spots, couriers, or the customer's delivery destination.
   - Synchronized location picker tooltips to match the visual styling of the pins.
 
+### Phase 6: Secure Guest Checkout & Firestore Access Control Hardening
+- **Firebase Anonymous Authentication**: Integrated on-demand anonymous authentication for guest checkouts via `ensureAnonymousAuth()`.
+- **Order Identity Alignment**: Eliminated `user_id: null` in guest order payloads in favor of persistent anonymous Firebase UIDs (`user_id: anonymousUid`), restoring live order tracking and `onSnapshot` listeners without compromising security.
+- **Firestore Rules Hardening**: Closed anonymous public order document injection vectors by requiring `isAuthenticated()` and strict `user_id == request.auth.uid` validation on `/orders/{orderId}` creation.
+
 ### Pre-Phase 6: Critical Map Fixes
 - **Coordinate Stacking Fix**: Resolved an issue where the user's location and shops without coordinates would fight for the same default map pixel, causing visual overlapping.

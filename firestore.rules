@@ -87,40 +87,51 @@ service cloud.firestore {
 
     // 4. Orders Collection (Customer & Merchant isolated)
     match /orders/{orderId} {
-      // Single order lookup (get) is allowed for tracking if authorized or referencing valid order
-      allow get: if true;
+      // Read access requires ownership or assignment
+      allow get: if isAuthenticated() && (
+        resource.data.get('user_id', '') == request.auth.uid ||
+        resource.data.get('rider_id', '') == request.auth.uid ||
+        resource.data.get('customer_id', '') == request.auth.uid
+      );
 
       // List queries are strictly scoped: customers only see their orders, riders see assigned orders
       allow list: if isAuthenticated() && (
-        resource.data.user_id == request.auth.uid ||
-        resource.data.rider_id == request.auth.uid ||
-        resource.data.customer_id == request.auth.uid
+        resource.data.get('user_id', '') == request.auth.uid ||
+        resource.data.get('rider_id', '') == request.auth.uid ||
+        resource.data.get('customer_id', '') == request.auth.uid
       );
 
-      // Order creation: authenticated user must be author, or guest checkout with valid attributes
-      allow create: if (
-        request.resource.data.shop_id is string &&
-        (
-          (isAuthenticated() && (
-            !('user_id' in request.resource.data) ||
-            request.resource.data.user_id == request.auth.uid
-          )) ||
-          request.resource.data.is_guest == true ||
-          request.resource.data.user_id == 'guest' ||
-          !('user_id' in request.resource.data)
-        )
-      );
+      // Order creation: authenticated user must be author (user_id must match auth UID)
+      allow create: if isAuthenticated() &&
+        request.resource.data.get('shop_id', null) != null &&
+        request.resource.data.get('user_id', '') == request.auth.uid;
 
-      // Order updates: customer cancellation or status updates by authorized actors
+      // Order updates: customer status transitions
       allow update: if (
-        // Customer canceling their own pending order
-        (isAuthenticated() && resource.data.user_id == request.auth.uid) ||
-        // Assigned rider updating delivery status
-        (isAuthenticated() && resource.data.rider_id == request.auth.uid) ||
-        // Shop owner updating preparation/ready status
-        (isAuthenticated() && resource.data.shop_id is string) ||
-        // Status transition permissions
-        (request.resource.data.status is string || request.resource.data.delivery_status is string)
+        // Customer canceling their own pending order, marking as completed, or converting to delivery
+        isAuthenticated() && resource.data.get('user_id', '') == request.auth.uid && (
+          // 1. Cancellation
+          (
+            request.resource.data.get('status', '') == 'cancelled' &&
+            resource.data.get('status', '') == 'pending' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancellation_reason', 'updated_at'])
+          )
+          ||
+          // 2. Mark as Completed
+          (
+            request.resource.data.get('status', '') == 'completed' &&
+            (resource.data.get('status', '') == 'ready' || resource.data.get('status', '') == 'delivering') &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])
+          )
+          ||
+          // 3. Convert to Delivery
+          (
+            request.resource.data.get('is_delivery', false) == true &&
+            resource.data.get('is_delivery', false) != true &&
+            request.resource.data.get('delivery_status', '') == 'finding_rider' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_delivery', 'delivery_status', 'delivery_fee', 'updated_at'])
+          )
+        )
       );
 
       // Deletions are forbidden to protect financial and order history

@@ -5254,6 +5254,7 @@ function CompleteProfileScreen({
   const [longitude, setLongitude] = useState<number | undefined>(
     userProfile.longitude,
   );
+
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
