@@ -30,6 +30,18 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
+- **[2026-08-21] Phase 7: Architectural Monolith Modularization (Auth & Onboarding Flow)**:
+  - Extracted all auth and onboarding screens from the monolithic `src/App.tsx` into modular components under `src/screens/auth/`:
+    - `SignUpScreen.tsx`
+    - `VerifyScreen.tsx`
+    - `SetupPasswordScreen.tsx`
+    - `SuccessScreen.tsx`
+    - `CompleteProfileScreen.tsx`
+    - `ResetPasswordScreen.tsx`
+    - `LoginScreen.tsx`
+    - `LoginSuccessScreen.tsx`
+  - Integrated `NotificationState` and `SignUpData` into `src/types.ts`.
+  - Replaced monolithic definitions with clean module imports in `src/App.tsx`, preserving 100% functional equivalence, biometric WebAuthn interactions, responsive layouts, and live error boundaries.
 - **[2026-08-21] Security Hardening: Anonymous Guest Checkout & Firestore Access Control**:
   - Implemented Firebase Anonymous Authentication for guest checkout flows (`ensureAnonymousAuth`) without creating duplicate instances or sessions.
   - Replaced open `user_id: null` assignment for guest orders with authoritative anonymous Firebase Auth UIDs (`user_id: anonymousUid`, `is_guest: true`).

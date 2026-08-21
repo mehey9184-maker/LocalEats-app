@@ -146,3 +146,17 @@ export type UserProfile = {
   language?: string;
   loyaltyPoints?: number;
 };
+
+export type NotificationState = {
+  message: string;
+  type: "success" | "info" | "ready" | "error";
+  actions?: { label: string; onClick: () => void }[];
+  persistent?: boolean;
+} | null;
+
+export type SignUpData = {
+  email: string;
+  phone: string;
+  fullName: string;
+};
+
