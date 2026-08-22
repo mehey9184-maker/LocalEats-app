@@ -24,6 +24,7 @@ import {
 import { LocalEatsLogo } from "../../components/LocalEatsLogo";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { UserProfile, NotificationState } from "../../types";
+import { FirestoreService } from "../../lib/firebase";
 
 export interface LoginScreenProps {
   onLogin: () => void;
@@ -357,7 +358,7 @@ export function LoginScreen({
         }
 
         try {
-          await supabase.from("profiles").upsert(
+          await FirestoreService.saveProfile(authData.user.id, 
             {
               user_id: authData.user.id,
               id: authData.user.id,
@@ -370,7 +371,7 @@ export function LoginScreen({
               country: "South Africa",
               updated_at: new Date().toISOString(),
             },
-            { onConflict: "user_id" }
+            
           );
         } catch (profileErr) {
           console.warn("[Profile Auto-Provision Notice]", profileErr);

@@ -146,6 +146,84 @@ export type { DocumentData, QueryConstraint, Unsubscribe, FirebaseUser };
  */
 
 export const FirestoreService = {
+  async addReview(shopId: string, reviewData: any): Promise<void> {
+    try {
+      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+      await addDoc(collection(db, 'reviews'), {
+        shop_id: String(shopId),
+        ...reviewData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn("[FirestoreService] addReview notice:", e);
+      throw e;
+    }
+  },
+  
+  async getReviewsForShop(shopId: string): Promise<any[]> {
+    try {
+      const { collection, getDocs, query, where } = await import('firebase/firestore');
+      const q = query(collection(db, 'reviews'), where('shop_id', '==', String(shopId)));
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+      console.warn("[FirestoreService] getReviewsForShop notice:", e);
+      return [];
+    }
+  },
+
+  async followShop(userId: string, shopId: string): Promise<void> {
+    try {
+      const { doc, setDoc } = await import('firebase/firestore');
+      const followId = `${userId}_${shopId}`;
+      await setDoc(doc(db, 'follows', followId), {
+        user_id: String(userId),
+        shop_id: String(shopId),
+        created_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn("[FirestoreService] followShop notice:", e);
+      throw e;
+    }
+  },
+
+  async unfollowShop(userId: string, shopId: string): Promise<void> {
+    try {
+      const { doc, deleteDoc } = await import('firebase/firestore');
+      const followId = `${userId}_${shopId}`;
+      await deleteDoc(doc(db, 'follows', followId));
+    } catch (e) {
+      console.warn("[FirestoreService] unfollowShop notice:", e);
+      throw e;
+    }
+  },
+
+  async getFollowedShops(userId: string): Promise<any[]> {
+    try {
+      const { collection, getDocs, query, where } = await import('firebase/firestore');
+      const q = query(collection(db, 'follows'), where('user_id', '==', String(userId)));
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+      console.warn("[FirestoreService] getFollowedShops notice:", e);
+      return [];
+    }
+  },
+
+  async submitContactMessage(messageData: any): Promise<void> {
+    try {
+      const { collection, addDoc } = await import('firebase/firestore');
+      await addDoc(collection(db, 'contact_messages'), {
+        ...messageData,
+        created_at: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn("[FirestoreService] submitContactMessage notice:", e);
+      throw e;
+    }
+  },
+
   // Orders
   async saveOrder(order: any): Promise<void> {
     if (!order || !order.id) return;

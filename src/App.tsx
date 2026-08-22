@@ -304,8 +304,7 @@ import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
   OrderHistorySkeleton,
   ShopOrdersSkeleton,
-  RiderDashboardSkeleton,
-  StatsSkeleton,
+StatsSkeleton,
 } from "./components/FacebookSkeleton";
 import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
@@ -1972,86 +1971,18 @@ export default function App() {
 
   const subscribeToPushNotifications = useCallback(
     async (customUserId?: string) => {
-      // 1. Check browser and platform capabilities
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        console.warn("Web push is not supported in this browser environment.");
-        return;
-      }
-
-      // 1b. Fast-bypass in developer/preview environments where service workers are unregistered
-      const isDev =
-        window.location.hostname.includes("run.app") ||
-        window.location.hostname.includes("localhost") ||
-        window.location.hostname.includes("127.0.0.1");
-
-      if (isDev) {
-        console.log("[Push] Developer preview environment detected. Granting mock/simulated push registration.");
-        if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
-          await Notification.requestPermission();
-        }
-        setNotification({
-          message: "Preview Mode: Local push registration simulated! 👍",
-          type: "success",
-        });
-        setTimeout(() => setNotification(null), 3000);
-        return;
-      }
-
       const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) {
-        console.warn(
-          "Cannot subscribe to push notifications: User is not authenticated.",
-        );
-        return;
-      }
-
+      if (!targetUserId) return;
       try {
-        // 2. Request explicit notification permission
         const permission = await Notification.requestPermission();
-        if (permission !== "granted") {
-          setNotification({
-            message:
-              "Notification permission is required to enable real-time local delivery updates.",
-            type: "error",
-          });
-          return;
+        if (permission === "granted") {
+           await registerAndSyncPushToken(targetUserId);
         }
-
-        // 3. Obtain ready service worker registration
-        const registration = await navigator.serviceWorker.ready;
-        if (!registration) {
-          throw new Error(
-            "Our platform service worker registration is not ready.",
-          );
-        }
-
-        // 4. Create push manager subscription with VAPID key
-        try {
-          const publicVapidKey =
-            "BD1XkIROdUwh10mz-IoWXYIy3awy5SN37JRExUeG0eIkgcyvSt7HzrXmRhERIDigFylQOP9GgglaWmVStB2Cx1c";
-          const subscription = await registration.pushManager?.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(publicVapidKey),
-          }).catch(() => null);
-
-          if (subscription) {
-            console.debug("[Push] Registration details obtained:", subscription);
-
-            // 5. Securely upsert push subscription details to Supabase backend
-            try {
-              await supabase.from("push_subscriptions").upsert({
-                user_id: targetUserId,
-                subscription: subscription.toJSON(),
-                updated_at: new Date().toISOString(),
-              });
-            } catch (_) {}
-          }
-        } catch (_) {}
-      } catch (err: any) {
-        console.debug("[Push] Notice:", err?.message || err);
+      } catch (err) {
+        console.debug("[Push] Notice:", err);
       }
     },
-    [session, setNotification],
+    [session]
   );
 
   const requestNotificationPermission = useCallback(async () => {
@@ -2186,26 +2117,19 @@ export default function App() {
 
             // Non-blocking upsert to ensure row exists in profiles table
             Promise.resolve(
-              supabase.from("profiles").upsert(
-                {
-                  user_id: userId,
-                  id: userId,
-                  email: authUser.email,
-                  full_name: fallbackName,
-                  "fullName": fallbackName,
-                  phone: fallbackPhone,
-                  role: fallbackRole,
-                  city: "Johannesburg",
-                  country: "South Africa",
-                  updated_at: new Date().toISOString(),
-                },
-                { onConflict: "user_id" }
-              )
-            ).then(({ error: upsertErr }) => {
-              if (upsertErr) {
-                console.info("[Profile Auto-Upsert Notice]", upsertErr.message);
-              }
-            }).catch((e) => {
+              FirestoreService.saveProfile(userId, {
+                user_id: userId,
+                id: userId,
+                email: authUser.email,
+                full_name: fallbackName,
+                "fullName": fallbackName,
+                phone: fallbackPhone,
+                role: fallbackRole,
+                city: "Johannesburg",
+                country: "South Africa",
+                updated_at: new Date().toISOString(),
+              })
+            ).catch((e) => {
               console.info("[Profile Auto-Upsert Notice]", e?.message || e);
             });
           }
@@ -3153,29 +3077,11 @@ export default function App() {
   }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
 
   useEffect(() => {
-    // Sync favorites to profiles table if session exists (Storage is managed by top hook)
+    // Sync favorites to profile if session exists
     if (session?.user?.id) {
-      const syncFavorites = async () => {
-        try {
-          const { error } = await supabase
-            .from("profiles")
-            .update({ favorites })
-            .eq("user_id", session.user.id);
-
-          if (
-            error &&
-            (error.code === "PGRST204" || error.message?.includes("column"))
-          ) {
-            console.warn(
-              "Profiles table missing favorites column, skipping sync",
-            );
-            return;
-          }
-        } catch (err) {
-          console.error("Error syncing favorites:", err);
-        }
-      };
-      syncFavorites();
+      FirestoreService.saveProfile(session.user.id, { favorites }).catch((err) => {
+        console.warn("Error syncing favorites to profile:", err);
+      });
     }
   }, [favorites, session]);
 
@@ -3192,26 +3098,17 @@ export default function App() {
       }
 
       const isFollowing = favorites.includes(shopId);
+      const targetUserId = session?.user?.id || userProfile?.id;
       setFavorites((prev) =>
         isFollowing ? prev.filter((id) => id !== shopId) : [...prev, shopId],
       );
       triggerHaptic();
 
-      if (!isFollowing && session?.user?.id) {
-        // Send notification to shop owner
-        const shop = shops.find((s) => s.id === shopId);
-        if (shop && (shop as any).owner_id) {
-          try {
-            await supabase.from("notifications").insert({
-              user_id: (shop as any).owner_id,
-              title: "New Follower!",
-              message: `${userProfile.fullName || "Someone"} started following your shop ${shop.name}!`,
-              type: "follow",
-              data: { follower_id: session.user.id, shop_id: shopId },
-            });
-          } catch (err) {
-            console.error("Error sending follow notification:", err);
-          }
+      if (targetUserId) {
+        if (isFollowing) {
+          FirestoreService.unfollowShop(targetUserId, shopId).catch(console.warn);
+        } else {
+          FirestoreService.followShop(targetUserId, shopId).catch(console.warn);
         }
       }
     },
@@ -4172,10 +4069,6 @@ export default function App() {
                     setPreviousScreen("settings");
                     setCurrentScreen("shop-dashboard");
                   }}
-                  onRiderDashboard={() => {
-                    setPreviousScreen("settings");
-                    setCurrentScreen("rider-dashboard");
-                  }}
                   onContactUs={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("contact");
@@ -4284,16 +4177,7 @@ export default function App() {
                   isOnline={isOnline}
                 />
               )}
-              {currentScreen === "rider-dashboard" && (
-                <RiderDashboardScreen
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  triggerHaptic={triggerHaptic}
-                  runWithProcessing={runWithProcessing}
-                  isOnline={isOnline}
-                />
-              )}
+
               {currentScreen === "profile" && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -4524,7 +4408,7 @@ export default function App() {
               );
               if (
                 !activeOrder ||
-                ["order-tracking", "checkout", "shop-dashboard", "admin-orders", "rider-dashboard", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
+                ["order-tracking", "checkout", "shop-dashboard", "admin-orders", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
               ) return null;
               
               const activeOrderShop = shops.find((s) => s.id === activeOrder.shop_id);
@@ -9823,44 +9707,11 @@ function StoreInfoScreen({
     setLoadingReviews(true);
     setTableMissing(false);
     try {
-      const dbShopId = typeof shop.id === "number"
-        ? shop.id
-        : (parseInt(String(shop.id).replace(/\D/g, "")) || 1);
-
-      let { data, error } = await supabase
-        .from("reviews")
-        .select("id, shop_id, user_id, rating, comment, user_name, created_at")
-        .eq("shop_id", dbShopId)
-        .order("createdAt", { ascending: false });
-
-      // If createdAt column fails or table missing, retry with created_at or without order clause
-      if (error) {
-        if (error.code === "PGRST205" || error.code === "42P01" || error.message?.includes("does not exist")) {
-          setTableMissing(true);
-          return;
-        }
-
-        const retry = await supabase
-          .from("reviews")
-          .select("id, shop_id, user_id, rating, comment, user_name, created_at")
-          .eq("shop_id", dbShopId);
-
-        if (retry.error) {
-          if (retry.error.code === "PGRST205" || retry.error.code === "42P01") {
-            setTableMissing(true);
-            return;
-          }
-          console.warn("Notice fetching reviews:", retry.error.message || retry.error);
-        } else {
-          data = retry.data;
-          error = null;
-        }
-      }
-
-      const mappedReviews = (data || [])
+      const fsReviews = await FirestoreService.getReviewsForShop(String(shop.id));
+      const mappedReviews = (fsReviews || [])
         .map((r: any) => ({
           ...r,
-          userName: r.userName || r.username || "Anonymous",
+          userName: r.userName || r.username || r.user_name || "Anonymous",
           createdAt: r.createdAt || r.created_at || new Date().toISOString(),
         }))
         .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -9888,32 +9739,13 @@ function StoreInfoScreen({
     if (!newComment.trim() || !userProfile) return;
     setIsSubmittingReview(true);
     try {
-      const dbShopId = typeof shop.id === "number"
-        ? shop.id
-        : (parseInt(String(shop.id).replace(/\D/g, "")) || 1);
-
-      const { error } = await supabase.from("reviews").insert([
-        {
-          shop_id: dbShopId,
-          user_id: userProfile?.id || session?.user?.id,
-          username: userProfile.fullName || "Anonymous",
-          rating: newRating,
-          comment: newComment,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-
-      if (error) {
-        if (error.code === "PGRST205") {
-          setTableMissing(true);
-          showAlert(
-            "Database Error",
-            "The reviews table is missing from the database. Please run the SQL setup in the Home screen.",
-          );
-          return;
-        }
-        throw error;
-      }
+      await FirestoreService.addReview(String(shop.id), {
+        user_id: userProfile?.id || session?.user?.id,
+        username: userProfile.fullName || "Anonymous",
+        user_name: userProfile.fullName || "Anonymous",
+        rating: newRating,
+        comment: newComment,
+      });
 
       setShowReviewForm(false);
       setNewComment("");
@@ -12810,7 +12642,6 @@ function SettingsScreen({
   onOrderHistory,
   onAdminOrders,
   onShopDashboard,
-  onRiderDashboard,
   onContactUs,
   onUpdateProfile,
   isDarkMode,
@@ -12854,7 +12685,6 @@ function SettingsScreen({
   onOrderHistory: () => void;
   onAdminOrders: () => void;
   onShopDashboard: () => void;
-  onRiderDashboard: () => void;
   onContactUs?: () => void;
   onUpdateProfile: (data: Partial<UserProfile>, showSuccess?: boolean) => void;
   isDarkMode: boolean;
@@ -14329,11 +14159,7 @@ function SettingsScreen({
           </div>
           <div className="bg-white dark:bg-slate-900/50 rounded-xl overflow-hidden border border-primary/5 shadow-sm">
             <button
-              onClick={() =>
-                onRiderDashboard
-                  ? onContactUs?.()
-                  : window.open("https://wa.me/27123456789", "_blank")
-              }
+              onClick={() => onContactUs ? onContactUs() : window.open("https://wa.me/27123456789", "_blank")}
               className="w-full flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors border-b border-slate-50 dark:border-slate-800 cursor-pointer text-left"
             >
               <div className="flex items-center space-x-3">
@@ -14846,799 +14672,6 @@ function SettingsScreen({
         onClose={() => setShowSystemStatusDrawer(false)}
         isOnline={isOnline}
       />
-    </div>
-  );
-}
-
-function RiderDashboardScreen({
-  onBack,
-  showAlert,
-  showConfirm,
-  triggerHaptic,
-  runWithProcessing,
-  isOnline,
-}: {
-  onBack: () => void;
-  showAlert: (title: string, message: string) => void;
-  showConfirm: (
-    title: string,
-    message: string,
-    onConfirm: () => void,
-    confirmLabel?: string,
-    cancelLabel?: string,
-  ) => void;
-  triggerHaptic: (pattern?: number | number[]) => void;
-  runWithProcessing: (
-    action: () => Promise<void>,
-    successCallback?: () => void,
-  ) => Promise<void>;
-  isOnline: boolean;
-}) {
-  const [riderProfile, setRiderProfile] = useState<any>(null);
-  const [activeOrder, setActiveOrder] = useState<Order | null>(null);
-  const [orderShop, setOrderShop] = useState<Shop | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastLocationUpdate, setLastLocationUpdate] = useState<number>(0);
-  const [riderLocation, setRiderLocation] = useState<{
-    lat: number;
-    lng: number;
-  } | null>(null);
-  const [gpsError, setGpsError] = useState<string | null>(null);
-  const [manualLocation, setManualLocation] = useState("");
-  const [isUpdatingManual, setIsUpdatingManual] = useState(false);
-
-  const fetchRiderData = useCallback(async () => {
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.user) return;
-
-      const { data: profile, error: profileErr } = await supabase
-        .from("rider_profiles")
-        .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online, current_order_id")
-        .eq("id", session.user.id)
-        .maybeSingle();
-
-      if (profileErr) {
-        const isNetworkError = String(profileErr.message || '').includes("Failed to fetch") || String(profileErr).includes("Failed to fetch");
-        if (!isOnline || isNetworkError) {
-          const cached = localStorage.getItem(
-            `rider_profile_${session.user.id}`,
-          );
-          if (cached) {
-            try {
-              const parsed = JSON.parse(cached);
-              setRiderProfile(parsed.profile);
-              setActiveOrder(parsed.order);
-              setOrderShop(parsed.shop);
-            } catch (e) {
-              console.warn(
-                "[SelfCleaning] Failed parsing cached rider profile:",
-                e,
-              );
-            }
-          }
-          setLoading(false);
-          return;
-        }
-        throw profileErr;
-      }
-
-      if (!profile) {
-        setLoading(false);
-        return;
-      }
-
-      setRiderProfile(profile);
-
-      if (profile.current_order_id) {
-        const { data: order } = await supabase
-          .from("orders")
-          .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, rider_id, status_history, delivery_pin, order_type")
-          .eq("id", profile.current_order_id)
-          .single();
-
-        // Adjust rider dashboard broadcast filter to exclude cash / cash_on_arrival orders
-        const isCashOrder =
-          order?.payment_method === "cash_on_arrival" ||
-          order?.payment_method === "cash";
-
-        if (order && !isCashOrder) {
-          // Trigger haptic if this is a NEW assignment
-          if (order && !activeOrder) {
-            triggerHaptic([100, 50, 100]);
-          }
-
-          setActiveOrder(order as unknown as Order);
-
-          const { data: shop } = await supabase
-            .from("shops")
-            .select("id, name, description, location, category, rating, logo_url, phone, latitude:lat, longitude:lng")
-            .eq("id", order.shop_id)
-            .single();
-          setOrderShop(shop as unknown as Shop);
-        } else {
-          setActiveOrder(null);
-          setOrderShop(null);
-        }
-      } else {
-        setActiveOrder(null);
-        setOrderShop(null);
-      }
-
-      // Add caching after all data is fetched successfully
-      const {
-        data: { session: currentSession },
-      } = await supabase.auth.getSession();
-      if (currentSession?.user) {
-        localStorage.setItem(
-          `rider_profile_${currentSession.user.id}`,
-          JSON.stringify({
-            profile,
-            order: activeOrder,
-            shop: orderShop,
-          }),
-        );
-      }
-    } catch (err) {
-      console.error("Error fetching rider data:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!riderProfile?.id) return;
-
-    // Subscribe to changes for THIS rider specifically
-    const channel = getFreshChannel(`rider-dashboard-${riderProfile.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "rider_profiles",
-          filter: `id=eq.${riderProfile.id}`,
-        },
-        fetchRiderData,
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "orders",
-          filter: `rider_id=eq.${riderProfile.id}`,
-        },
-        fetchRiderData,
-      )
-      .on(
-        "postgres_changes",
-        {
-          // Also watch for unassigned orders that might need auto-assignment
-          // Or wait for the server-side/shop-side auto-assign to update our rider_id
-          event: "UPDATE",
-          schema: "public",
-          table: "orders",
-          filter: `status=eq.ready`,
-        },
-        fetchRiderData,
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchRiderData, riderProfile?.id]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchRiderData();
-  }, [fetchRiderData]);
-
-  // Periodic Location Updates
-  useEffect(() => {
-    if (!riderProfile?.is_online) {
-      return;
-    }
-
-    const updateLocation = async () => {
-      if (!navigator.geolocation) return;
-
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          try {
-            const { latitude, longitude } = pos.coords;
-
-            
-    await FirestoreService.updateRiderLocation(riderProfile.id, {
-        latitude: latitude,
-        longitude: longitude,
-        order_id: activeOrder?.id || undefined
-    });
-    const { error } = await supabase.from("rider_locations").upsert({
-              rider_id: riderProfile.id,
-              latitude,
-              longitude,
-              updated_at: new Date().toISOString(),
-            });
-  
-
-            if (error) {
-              console.error("Location update failed:", error);
-              setGpsError("Sync Error");
-            } else {
-              setLastLocationUpdate(Date.now());
-              setRiderLocation({ lat: latitude, lng: longitude });
-              setGpsError(null);
-            }
-          } catch (err) {
-            console.error("Error in location sync task:", err);
-            setGpsError("Sync Connection Failed");
-          }
-        },
-        (err) => {
-          console.error("Geolocation error:", err);
-          setGpsError(err.message || "GPS Signal Lost");
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0,
-        },
-      );
-    };
-
-    const interval = setInterval(updateLocation, 10000); // Every 10 seconds
-    updateLocation();
-
-    return () => clearInterval(interval);
-  }, [
-    riderProfile?.is_online,
-    activeOrder?.id,
-    activeOrder?.delivery_status,
-    riderProfile?.id,
-  ]);
-
-  const handleManualLocationSubmit = async () => {
-    if (!manualLocation.trim() || !riderProfile) return;
-    setIsUpdatingManual(true);
-    try {
-      const results = await searchAddress(manualLocation);
-      if (results && results.length > 0) {
-        const res = results[0];
-        const lat = typeof res.lat === "number" ? res.lat : parseFloat(String(res.lat || 0));
-        const lng = typeof res.lon === "number" ? res.lon : parseFloat(String(res.lon || 0));
-        
-    await FirestoreService.updateRiderLocation(riderProfile.id, {
-        latitude: lat,
-        longitude: lng,
-        order_id: activeOrder?.id || undefined
-    });
-    const { error } = await supabase.from("rider_locations").upsert({
-          rider_id: riderProfile.id,
-          latitude: lat,
-          longitude: lng,
-          updated_at: new Date().toISOString(),
-        });
-  
-
-        if (error) throw error;
-        setRiderLocation({ lat, lng });
-        setManualLocation("");
-        setLastLocationUpdate(Date.now());
-        showAlert(
-          "Location Updated",
-          "Your location has been manually updated.",
-        );
-      } else {
-        showAlert(
-          "Not Found",
-          "Could not find that address. Please be more specific.",
-        );
-      }
-    } catch (err: any) {
-      showAlert("Update Failed", err.message);
-    } finally {
-      setIsUpdatingManual(false);
-    }
-  };
-
-  const toggleOnline = async () => {
-    const { error } = await supabase
-      .from("rider_profiles")
-      .update({ is_online: !riderProfile.is_online })
-      .eq("id", riderProfile.id);
-
-    if (error) {
-      showAlert("Error", "Failed to update status");
-    } else {
-      fetchRiderData();
-    }
-  };
-
-  const updateDeliveryStatus = async (
-    status: string,
-    deliveryStatus: string,
-  ) => {
-    if (!activeOrder) return;
-    if (!isOnline) {
-      showAlert(
-        "Offline Mode",
-        "Cannot update delivery status while offline. Please check your connection.",
-      );
-      return;
-    }
-
-    await runWithProcessing(async () => {
-      await FirestoreService.updateOrder(activeOrder.id, { status, delivery_status: deliveryStatus });
-      const { error: orderErr } = await supabase
-        .from("orders")
-        .update({ status, delivery_status: deliveryStatus })
-        .eq("id", activeOrder.id);
-
-      if (orderErr) throw orderErr;
-
-      if (deliveryStatus === "delivered") {
-        const earned = activeOrder.delivery_fee || 0; // The rider earns the delivery fee
-        const { error: riderErr } = await supabase
-          .from("rider_profiles")
-          .update({
-            current_order_id: null,
-            completed_deliveries: (riderProfile.completed_deliveries || 0) + 1,
-            total_earnings: (riderProfile.total_earnings || 0) + earned,
-          })
-          .eq("id", riderProfile.id);
-        if (riderErr) throw riderErr;
-      }
-    }, fetchRiderData);
-  };
-
-  if (loading && !riderProfile) {
-    return <RiderDashboardSkeleton />;
-  }
-
-  if (!riderProfile) {
-    return (
-      <div className="h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
-        <XCircle className="w-16 h-16 text-slate-300 mb-4" />
-        <h2 className="text-xl font-bold mb-2">Rider Profile Not Found</h2>
-        <p className="text-sm text-slate-500 mb-6">
-          You need to be registered as a rider to access this dashboard.
-        </p>
-        <button
-          onClick={onBack}
-          className="bg-primary text-white px-8 py-3 rounded-xl font-bold"
-        >
-          Return Home
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="bg-slate-50 dark:bg-slate-950 min-h-screen flex flex-col font-sans max-w-md mx-auto shadow-xl">
-      <header className="p-4 flex items-center justify-between sticky top-0 glass-effect z-50 border-b border-primary/10">
-        <button
-          onClick={onBack}
-          className="p-2 -ml-2 text-slate-900 dark:text-white cursor-pointer"
-        >
-          <ArrowLeft className="w-6 h-6" />
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="font-black uppercase tracking-tighter text-xl">
-            Rider Dashboard
-          </h1>
-          <p className="text-[9px] font-black tracking-widest text-primary uppercase">
-            Fleet Service
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${riderProfile.is_online ? "bg-green-500 animate-pulse" : "bg-slate-300"}`}
-          ></div>
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mr-2">
-            {riderProfile.is_online ? "Live & Active" : "Offline"}
-          </p>
-          <button
-            onClick={toggleOnline}
-            className={`text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg border transition-all active:scale-95 ${riderProfile.is_online ? "bg-orange-50 text-orange-600 border-orange-200" : "bg-slate-100 text-slate-500 border-slate-200"}`}
-          >
-            {riderProfile.is_online
-              ? "Take a Break (Offline)"
-              : "Start Shift (Online)"}
-          </button>
-        </div>
-      </header>
-
-      {/* External Portal Info Bar */}
-      <div className="bg-orange-500 text-white text-[11px] py-2 px-4 font-bold flex items-center justify-between shadow-inner shrink-0">
-        <span className="flex items-center gap-1.5">
-          <Bike className="w-4 h-4 shrink-0 animate-bounce" />
-          <span>Need Thabo's official Rider App?</span>
-        </span>
-        <a
-          href="https://rider.localeatssa.co.za"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="bg-white text-orange-600 px-2.5 py-1 rounded-full uppercase text-[9px] font-black tracking-wider shadow hover:bg-orange-50 transition-all flex items-center gap-1"
-        >
-          <span>Open App</span>
-          <ExternalLink className="w-2.5 h-2.5" />
-        </a>
-      </div>
-
-      {riderProfile.is_online && (
-        <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-900/30 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="size-2 bg-indigo-600 rounded-full animate-ping"></div>
-            <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">
-              Searching for nearby orders...
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            {gpsError && (
-              <span className="text-[9px] font-black text-red-500 uppercase flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> {gpsError}
-              </span>
-            )}
-            {lastLocationUpdate > 0 && (
-              <span className="text-[9px] text-slate-400 font-medium italic">
-                GPS: {Math.floor((Date.now() - lastLocationUpdate) / 1000)}s ago
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      <main className="flex-grow p-4 space-y-6 overflow-y-auto">
-        {/* Stats & Vehicle Card */}
-        <div className="bg-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-600/20 relative overflow-hidden">
-          <div className="relative z-10">
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-80 mb-1">
-                  Total Earnings
-                </p>
-                <p className="text-4xl font-black text-white">
-                  R{(riderProfile.total_earnings || 0).toFixed(2)}
-                </p>
-              </div>
-              <div className="flex gap-1 bg-white/10 backdrop-blur-md p-1 rounded-xl border border-white/10">
-                {(["bicycle", "scooter", "car"] as const).map((v) => (
-                  <button
-                    key={v}
-                    onClick={async () => {
-                      const { error } = await supabase
-                        .from("rider_profiles")
-                        .update({ vehicle_type: v })
-                        .eq("id", riderProfile.id);
-                      if (!error) fetchRiderData();
-                    }}
-                    className={`p-2 rounded-lg transition-all active:scale-95 ${riderProfile.vehicle_type === v ? "bg-white text-indigo-600 shadow-sm" : "text-indigo-100 hover:bg-white/5"}`}
-                  >
-                    {v === "bicycle" && <Bike className="w-4 h-4" />}
-                    {v === "scooter" && <Navigation className="w-4 h-4" />}
-                    {v === "car" && <Layers className="w-4 h-4" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 border-t border-white/10 pt-4">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-0.5">
-                  Completed
-                </p>
-                <p className="text-xl font-bold">
-                  {riderProfile.completed_deliveries || 0} Drops
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200 opacity-60 mb-0.5">
-                  Rating
-                </p>
-                <div className="flex items-center justify-end gap-1">
-                  <span className="text-xl font-bold">
-                    {riderProfile.rating || "5.0"}
-                  </span>
-                  <Star className="w-4 h-4 text-amber-300 fill-amber-300" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Decorative background element */}
-          <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
-        </div>
-
-        {/* Active Order Section */}
-        <section>
-          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 px-1">
-            Active Assignment
-          </h3>
-
-          {!activeOrder ? (
-            <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 p-10 text-center space-y-4">
-              <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-300">
-                <Package className="w-8 h-8" />
-              </div>
-              <p className="text-sm font-bold text-slate-500">
-                Wait for new assignments
-              </p>
-              {!riderProfile.is_online && (
-                <p className="text-[10px] text-orange-500 font-bold uppercase animate-bounce">
-                  Go online to receive orders
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="bg-white dark:bg-slate-900/50 rounded-3xl border border-primary/10 p-6 shadow-sm space-y-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <span className="bg-orange-100 text-orange-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase mb-2 inline-block">
-                    {activeOrder.delivery_status.replace("_", " ")}
-                  </span>
-                  <h4 className="text-lg font-bold text-slate-900 dark:text-white leading-tight">
-                    Order #{activeOrder.id.slice(0, 8)}
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    {activeOrder.product_name} x{activeOrder.quantity}
-                  </p>
-                </div>
-                <div className="size-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
-                  <Bike className="w-6 h-6" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 py-4 border-y border-slate-50 dark:border-slate-800">
-                <div>
-                  <p className="text-[9px] font-black text-slate-400 uppercase mb-1">
-                    Customer
-                  </p>
-                  <p className="text-sm font-bold">
-                    {activeOrder.customer_name}
-                  </p>
-                  <a
-                    href={`tel:${activeOrder.phone}`}
-                    className="text-xs text-primary font-bold flex items-center gap-1 mt-1"
-                  >
-                    <Phone className="w-3 h-3" />
-                    {activeOrder.phone}
-                  </a>
-                </div>
-                <div className="text-right">
-                  <p className="text-[9px] font-black text-slate-400 uppercase mb-1">
-                    Fixed Payout
-                  </p>
-                  <div className="flex flex-col items-end">
-                    <p
-                      className={`text-xl font-black ${activeOrder.delivery_fee > 5 ? "text-orange-600" : "text-emerald-600"}`}
-                    >
-                      R{activeOrder.delivery_fee?.toFixed(2) || "5.00"}
-                    </p>
-                    {orderShop && (
-                      <span
-                        className={`text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-tighter border mt-1 ${
-                          calculateDistance(
-                            orderShop.latitude || 0,
-                            orderShop.longitude || 0,
-                            activeOrder.latitude || 0,
-                            activeOrder.longitude || 0,
-                          ) > 3
-                            ? "bg-orange-100 text-orange-700 border-orange-200"
-                            : "bg-emerald-100 text-emerald-700 border-emerald-200"
-                        }`}
-                      >
-                        {calculateDistance(
-                          orderShop.latitude || 0,
-                          orderShop.longitude || 0,
-                          activeOrder.latitude || 0,
-                          activeOrder.longitude || 0,
-                        ) > 3
-                          ? "Zone B (3-6km)"
-                          : "Zone A (0-3km)"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Address Section */}
-              <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl flex items-start gap-3">
-                <div className="size-8 bg-white dark:bg-slate-900 rounded-xl flex items-center justify-center text-slate-400 shadow-sm shrink-0">
-                  <MapPin className="w-4 h-4" />
-                </div>
-                <div className="flex-grow">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">
-                    Delivery Address
-                  </p>
-                  <p className="text-xs font-bold leading-relaxed">
-                    {activeOrder.address}
-                  </p>
-                </div>
-                <button
-                  onClick={() =>
-                    window.open(
-                      `https://www.google.com/maps/dir/?api=1&destination=${activeOrder.latitude},${activeOrder.longitude}`,
-                      "_blank",
-                    )
-                  }
-                  className="p-2 bg-primary text-white rounded-lg shadow-lg active:scale-95 transition-all shrink-0"
-                >
-                  <Navigation className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Manual Location Access */}
-              <div className="bg-white dark:bg-slate-900/50 p-4 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="size-8 bg-indigo-50 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600">
-                    <LocateFixed className="w-4 h-4" />
-                  </div>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    Manual Location Fix
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Enter nearest street..."
-                    value={manualLocation}
-                    onChange={(e) => setManualLocation(e.target.value)}
-                    className="flex-grow bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2 text-[10px] outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono"
-                  />
-                  <button
-                    onClick={handleManualLocationSubmit}
-                    disabled={isUpdatingManual}
-                    className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest active:scale-95 transition-all disabled:opacity-50"
-                  >
-                    {isUpdatingManual ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      "Set"
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Tracking Progress */}
-              <div className="bg-white dark:bg-slate-900/50 p-4 rounded-3xl border border-slate-100 dark:border-slate-800">
-                <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">
-                  <span>Active Route</span>
-                  <span className="text-primary">Live Now</span>
-                </div>
-                <div className="h-48 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 relative z-10 shadow-inner">
-                  <MapContainer
-                    center={{
-                      lat: activeOrder.latitude,
-                      lng: activeOrder.longitude,
-                    }}
-                    zoom={14}
-                    scrollWheelZoom={false}
-                    style={{ height: "100%", width: "100%" }}
-                  >
-                    <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                    <RecenterMap
-                      coords={
-                        riderLocation || {
-                          lat: activeOrder.latitude,
-                          lng: activeOrder.longitude,
-                        }
-                      }
-                    />
-
-                    {/* Destination Marker */}
-                    <Marker
-                      position={{
-                        lat: activeOrder.latitude,
-                        lng: activeOrder.longitude,
-                      }}
-                    >
-                      <Popup>Delivery: {activeOrder.customer_name}</Popup>
-                    </Marker>
-
-                    {/* Shop Marker */}
-                    {orderShop && (
-                      <Marker
-                        position={{
-                          lat: orderShop.latitude || 0,
-                          lng: orderShop.longitude || 0,
-                        }}
-                        icon={L.divIcon({
-                          className: "custom-shop-icon",
-                          html: `<div class="bg-orange-600 p-1.5 rounded-xl border-2 border-white shadow-lg flex items-center justify-center text-white"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>`,
-                          iconSize: [28, 28],
-                          iconAnchor: [14, 28],
-                        })}
-                      />
-                    )}
-
-                    {/* Rider Location Marker */}
-                    {riderProfile?.is_online && riderLocation && (
-                      <Marker
-                        position={riderLocation}
-                        icon={L.divIcon({
-                          className: "custom-rider-icon",
-                          html: `<div class="bg-indigo-600 p-1 rounded-full border-2 border-white shadow-lg flex items-center justify-center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
-                          iconSize: [28, 28],
-                          iconAnchor: [14, 28],
-                        })}
-                      />
-                    )}
-                  </MapContainer>
-                </div>
-              </div>
-
-              {/* Secure Handshake Handover Instructional Prompt */}
-              {(activeOrder.is_delivery || activeOrder.order_type === "delivery" || activeOrder.delivery_status) && (
-                <RiderHandshakeInstructionPrompt
-                  expectedPin={activeOrder.delivery_pin}
-                  orderId={activeOrder.id}
-                  customerName={activeOrder.customer_name}
-                  triggerHaptic={triggerHaptic}
-                />
-              )}
-
-              {/* Action Buttons */}
-              <div className="space-y-3">
-                {activeOrder.delivery_status === "rider_assigned" && (
-                  <button
-                    onClick={() =>
-                      updateDeliveryStatus("preparing", "picked_up")
-                    }
-                    disabled={loading}
-                    className="w-full py-4 bg-orange-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-orange-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {loading ? (
-                      <Loader2 className="animate-spin w-5 h-5" />
-                    ) : (
-                      <Package className="w-5 h-5" />
-                    )}
-                    Mark as Picked Up
-                  </button>
-                )}
-                {activeOrder.delivery_status === "picked_up" && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-center gap-2 text-[10px] font-bold text-green-500 animate-pulse bg-green-50 dark:bg-green-500/10 py-2 rounded-lg">
-                      <Navigation className="w-3 h-3" />
-                      <span>Live Tracking Active</span>
-                      {lastLocationUpdate > 0 && (
-                        <span className="opacity-50">
-                          (
-                          {Math.round((Date.now() - lastLocationUpdate) / 1000)}
-                          s ago)
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={() =>
-                        updateDeliveryStatus("completed", "delivered")
-                      }
-                      disabled={loading}
-                      className="w-full py-4 bg-green-600 text-white rounded-2xl font-bold uppercase tracking-widest shadow-lg shadow-green-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      {loading ? (
-                        <Loader2 className="animate-spin w-5 h-5" />
-                      ) : (
-                        <CheckCircle2 className="w-5 h-5" />
-                      )}
-                      Confirm Delivery
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
-      </main>
-
-      <div className="p-4 bg-white dark:bg-slate-950 border-t border-primary/10">
-        <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-[0.2em]">
-          LocalEats Rider Fleet v{APP_VERSION.split(" ")[0]}
-        </p>
-      </div>
     </div>
   );
 }
@@ -20754,18 +19787,16 @@ function OrderHistoryScreen({
       const subject = `[ORDER SUPPORT] ID: #${supportOrder.id.toString().slice(-6)} (${shopName})`;
       const completeMessage = `Issue Type: ${issueType}\n\nDetails:\n${issueDesc}\n\nOrder Info:\nProduct: ${supportOrder.product_name} x${supportOrder.quantity}\nTotal: R ${(supportOrder.price + (supportOrder.delivery_fee || 0)).toFixed(2)}`;
 
-      const { error } = await supabase.from("contact_messages").insert([
-        {
-          name: userProfile.fullName || userProfile.email || "Loyal Client",
-          email:
-            userProfile.email ||
-            session?.user?.email ||
-            "client@localeats.co.za",
-          message: `${subject}\n\n${completeMessage}`,
-          user_id: session?.user?.id || null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      await FirestoreService.submitContactMessage({
+        name: userProfile.fullName || userProfile.email || "Loyal Client",
+        email:
+          userProfile.email ||
+          session?.user?.email ||
+          "client@localeats.co.za",
+        message: `${subject}\n\n${completeMessage}`,
+        user_id: session?.user?.id || null,
+      });
+      const error = null;
 
       if (error) {
         console.warn(
@@ -22380,29 +21411,18 @@ function ContactScreen({
     }
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from("contact_messages").insert([
-        {
-          name,
-          email,
-          message,
-          user_id: userProfile.id || null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      await FirestoreService.submitContactMessage({
+        name,
+        email,
+        message,
+        user_id: userProfile.id || null,
+      });
 
-      if (error) {
-        console.warn(
-          "Could not insert into contact_messages, falling back to mailto",
-          error,
-        );
-        window.location.href = `mailto:support@localeats.co.za?subject=Contact from ${name}&body=${encodeURIComponent(message + "\n\nFrom: " + email)}`;
-      } else {
-        showAlert(
-          "Success",
-          "Your message has been sent. We will get back to you soon!",
-        );
-        setMessage("");
-      }
+      showAlert(
+        "Success",
+        "Your message has been sent. We will get back to you soon!",
+      );
+      setMessage("");
     } catch (err) {
       console.error(err);
       window.location.href = `mailto:support@localeats.co.za?subject=Contact from ${name}&body=${encodeURIComponent(message + "\n\nFrom: " + email)}`;

@@ -30,6 +30,13 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
+- **[2026-08-22] Phase 8: Data Layer Alignment, Social Engine & Rider Separation**:
+  - Replaced dead Supabase stub call-sites (`profiles`, `reviews`, `contact_messages`, `rider_locations`) with real `FirestoreService` operations across `src/App.tsx`, `src/screens/auth/LoginScreen.tsx`, `src/lib/profileService.ts`, and `src/hooks/useDualSync.ts`.
+  - Built out real social & engagement data methods in `FirestoreService` (`addReview`, `getReviewsForShop`, `followShop`, `unfollowShop`, `getFollowedShops`, `submitContactMessage`).
+  - Removed embedded rider dashboard (`RiderDashboardScreen`) and associated navigation routes from the customer-facing client application.
+  - Decoupled offline cart persistence from remote database sync stubs so cart modifications remain purely local until checkout.
+  - Expanded `firestore.rules` with match blocks for `reviews`, `follows`, and `contact_messages` without modifying existing multi-app shared rules.
+
 - **[2026-08-21] Phase 7: Architectural Monolith Modularization (Auth & Onboarding Flow)**:
   - Extracted all auth and onboarding screens from the monolithic `src/App.tsx` into modular components under `src/screens/auth/`:
     - `SignUpScreen.tsx`

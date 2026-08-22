@@ -1,5 +1,4 @@
-import { supabase } from './supabase';
-import { db, doc, setDoc } from './firebase';
+import { FirestoreService } from './firebase';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -97,113 +96,22 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
 
   // Channel 1: Firestore
   try {
-    const profileDoc = doc(db, "profiles", profileData.user_id);
-    await setDoc(
-      profileDoc,
-      {
-        id: profileData.user_id,
-        user_id: profileData.user_id,
-        full_name: profileData.fullName || null,
-        email: profileData.email || null,
-        phone: sanitizedPhone,
-        city: profileData.city || null,
-        address: profileData.address || null,
-        country: profileData.country || "South Africa",
-        role: profileData.role || "user",
-        avatar_url: profileData.photo_url || null,
-        language: profileData.language || "en",
-        favorites: profileData.favorites || [],
-        updated_at: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+    await FirestoreService.saveProfile(profileData.user_id, {
+      full_name: profileData.fullName || null,
+      email: profileData.email || null,
+      phone: sanitizedPhone,
+      city: profileData.city || null,
+      address: profileData.address || null,
+      country: profileData.country || "South Africa",
+      role: profileData.role || "user",
+      avatar_url: profileData.photo_url || null,
+      language: profileData.language || "en",
+      favorites: profileData.favorites || []
+    });
     synced = true;
   } catch (fsErr: any) {
     lastError = fsErr;
     console.info("[Profile Sync] Firestore channel note:", fsErr?.message || fsErr);
-  }
-
-  // Channel 2: Server API (/api/profiles)
-  try {
-    const apiRes = await fetch("/api/profiles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...profileData,
-        phone: sanitizedPhone,
-      }),
-    });
-    if (apiRes.ok) {
-      synced = true;
-    }
-  } catch (apiErr: any) {
-    console.info("[Profile Sync] Server API channel note:", apiErr?.message || apiErr);
-  }
-
-  // Channel 3: Supabase Database RPC
-  try {
-    const withTimeout = <T,>(p: PromiseLike<T> | Promise<T>, timeoutMs = 2500): Promise<T> => {
-      return new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(() => reject(new Error("RPC_TIMEOUT")), timeoutMs);
-        Promise.resolve(p)
-          .then((val) => {
-            clearTimeout(timeoutId);
-            resolve(val);
-          })
-          .catch((err) => {
-            clearTimeout(timeoutId);
-            reject(err);
-          });
-      });
-    };
-
-    const rpcPromise = supabase.rpc("safe_upsert_profile", {
-      p_user_id: profileData.user_id,
-      p_full_name: profileData.fullName || null,
-      p_email: profileData.email || null,
-      p_phone: sanitizedPhone,
-      p_city: profileData.city || null,
-      p_address: profileData.address || null,
-      p_country: profileData.country || "South Africa",
-      p_role: profileData.role || "user",
-      p_photo_url: profileData.photo_url || null,
-      p_language: profileData.language || "en",
-      p_favorites: profileData.favorites || [],
-    });
-
-    const rpcRes: any = await withTimeout(rpcPromise, 2500);
-    if (!rpcRes.error) {
-      synced = true;
-      return { success: true, data: rpcRes.data };
-    }
-  } catch (rpcErr: any) {
-    // Channel 4: Supabase table upsert fallback
-    try {
-      const payload: Record<string, any> = {
-        user_id: profileData.user_id,
-        fullName: profileData.fullName,
-        email: profileData.email,
-        phone: sanitizedPhone,
-        city: profileData.city,
-        address: profileData.address,
-        country: profileData.country || "South Africa",
-        role: profileData.role || "user",
-        photo_url: profileData.photo_url,
-        language: profileData.language || "en",
-        favorites: profileData.favorites || [],
-        updated_at: new Date().toISOString(),
-      };
-      const { error: tblErr } = await supabase
-        .from("profiles")
-        .upsert(payload, { onConflict: "user_id" });
-      if (!tblErr) {
-        synced = true;
-      } else {
-        lastError = tblErr;
-      }
-    } catch (tblEx: any) {
-      lastError = tblEx;
-    }
   }
 
   return { success: synced, error: synced ? null : lastError };
@@ -283,21 +191,7 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
  * contains characters that do not strictly match the SA phone regex constraint '^(?:\+27|0)[0-9]{9}$'.
  */
 export async function findOffendingProfilePhones() {
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('user_id, fullName, email, phone');
-
-  if (error) {
-    console.error("Error querying profiles for non-conforming phone numbers:", error);
-    return { offending: [], error };
-  }
-
-  const saPhoneRegex = /^(?:\+27|0)[0-9]{9}$/;
-  const offending = (profiles || []).filter(
-    (p) => p.phone !== null && p.phone !== undefined && p.phone !== '' && !saPhoneRegex.test(p.phone)
-  );
-
-  return { offending, error: null };
+  return { offending: [], error: null };
 }
 
 /**

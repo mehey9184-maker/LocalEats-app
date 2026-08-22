@@ -33,6 +33,13 @@
 - **Order Identity Alignment**: Eliminated `user_id: null` in guest order payloads in favor of persistent anonymous Firebase UIDs (`user_id: anonymousUid`), restoring live order tracking and `onSnapshot` listeners without compromising security.
 - **Firestore Rules Hardening**: Closed anonymous public order document injection vectors by requiring `isAuthenticated()` and strict `user_id == request.auth.uid` validation on `/orders/{orderId}` creation.
 
+### Phase 8: Data Layer Alignment, Social Engine & Rider Separation
+- **Authoritative Firestore Data Layer**: Replaced dead Supabase stub call-sites across profile saves, shop reviews, support inquiries, and customer contact submissions with real `FirestoreService` operations.
+- **Social Features Engine**: Integrated live reviews and rating submissions, store follow/unfollow functionality, and contact form handling directly into Firestore (`reviews`, `follows`, `contact_messages` collections).
+- **Rider Module Removal**: Stripped the embedded `RiderDashboardScreen` module, routes, and navigation hooks from the client app to cleanly separate customer and rider application surfaces.
+- **Local-First Cart**: Decoupled pending cart state from remote database sync stubs, preserving offline shopping cart behavior purely in local storage until order placement.
+- **Security Rules Extension**: Added strict Firestore security rules for `reviews` (public read, author-scoped write), `follows` (authenticated owner-scoped), and `contact_messages` (authenticated creation only).
+
 ### Phase 7: Architectural Monolith Modularization (Auth & Onboarding Flow)
 - **Auth Flow Extraction**: Extracted the monolithic authentication screen declarations from `src/App.tsx` into modular screen components under `src/screens/auth/` (`SignUpScreen`, `VerifyScreen`, `SetupPasswordScreen`, `SuccessScreen`, `CompleteProfileScreen`, `ResetPasswordScreen`, `LoginScreen`, and `LoginSuccessScreen`).
 - **Clean Type Hierarchy**: Shared auth types (`NotificationState`, `SignUpData`) cleanly integrated into `src/types.ts`.

@@ -168,21 +168,6 @@ export function useMapboxCyclingTracker(
       // 1. Fetch updated Mapbox Cycling directions
       const route = await fetchMapboxCyclingRoute(newCoords, destination, mapboxAccessToken);
       setRouteInfo(route);
-
-      // 2. Sync to Supabase Rider Telemetry (if riderId is registered)
-      if (riderId) {
-        const { error: dbError } = await supabase.from("rider_locations").upsert({
-          rider_id: riderId,
-          latitude: newCoords.lat,
-          longitude: newCoords.lng,
-          updated_at: new Date().toISOString(),
-          bearing: 0, // optional telemetry
-          accuracy: 10 // GPS accuracy
-        });
-        if (dbError) {
-          console.warn("Telemetry database sync skipped or failed:", dbError.message);
-        }
-      }
     } catch (err: any) {
       console.warn("Notice updating Mapbox cycling route:", err?.message || err);
       setError(err.message || "Failed to sync cycling route");

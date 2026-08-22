@@ -56,25 +56,6 @@ export function useDualSyncOrders(
       console.info("[DualSync] Firestore fetch note:", fsErr);
     }
 
-    try {
-      let query = supabase.from("orders").select(safeColumns);
-      if (userId) {
-        query = query.eq("user_id", userId);
-      } else if (shopId) {
-        query = query.eq("shop_id", shopId);
-      }
-
-      const { data, error: fetchErr } = await query.order("created_at", { ascending: false });
-      if (!fetchErr && data) {
-        return (data as unknown as Order[]) || [];
-      }
-      if (fetchErr) {
-        console.info("[DualSync] Supabase query notice, falling back to server sync:", fetchErr.message || fetchErr);
-      }
-    } catch (supabaseError) {
-      console.info("[DualSync] Supabase notice, falling back to server sync:", supabaseError);
-    }
-
     // Tier 2 Fallback: Server API endpoint
     try {
       const url = userId ? `/api/orders?user_id=${userId}` : `/api/orders?shop_id=${shopId}`;
