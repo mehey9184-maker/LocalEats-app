@@ -12502,10 +12502,10 @@ function SystemStatusDrawer({
     setDbStatus("checking");
     const start = performance.now();
     try {
-      const { error } = await supabase.from("shops").select("id").limit(1);
+      const ok = await FirestoreService.healthCheck();
       const end = performance.now();
       setLatency(Math.round(end - start));
-      setDbStatus(error ? "error" : "ok");
+      setDbStatus(ok ? "ok" : "error");
     } catch {
       setDbStatus("error");
     } finally {

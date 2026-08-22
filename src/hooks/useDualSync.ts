@@ -3,7 +3,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "../lib/supabase";
 import { FirestoreService } from "../lib/firebase";
 import { DualSyncEngine, dualSyncEngine, SyncSource } from "../utils/dualSync";
 import { Order } from "../types";

@@ -146,6 +146,17 @@ export type { DocumentData, QueryConstraint, Unsubscribe, FirebaseUser };
  */
 
 export const FirestoreService = {
+  async healthCheck(): Promise<boolean> {
+    try {
+      const q = query(collection(db, "shops"), limit(1));
+      await getDocs(q);
+      return true;
+    } catch (e) {
+      console.warn("[FirestoreService] healthCheck notice:", e);
+      return false;
+    }
+  },
+
   async addReview(shopId: string, reviewData: any): Promise<void> {
     try {
       const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');

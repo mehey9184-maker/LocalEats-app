@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { WifiOff, CloudOff, RefreshCw, XCircle } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { FirestoreService } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function SystemStatusIndicator() {
@@ -24,7 +24,7 @@ export default function SystemStatusIndicator() {
   useEffect(() => {
     let isMounted = true;
     
-    const checkSupabase = async () => {
+    const checkDatabase = async () => {
       if (!isOnline) {
         if (isMounted) setSupabaseStatus('error');
         return;
@@ -32,24 +32,15 @@ export default function SystemStatusIndicator() {
       
       try {
         if (isMounted) setSupabaseStatus('checking');
-        const { error } = await supabase.from('shops').select('id').limit(1).maybeSingle();
-        if (error && ((error.message && error.message.includes('fetch')) || error.code === 'PGRST205')) {
-           // Allow PGRST205 (missing table) as technically reachable database
-           if (error.code === 'PGRST205') {
-               if (isMounted) setSupabaseStatus('ok');
-           } else {
-               if (isMounted) setSupabaseStatus('error');
-           }
-        } else {
-           if (isMounted) setSupabaseStatus('ok');
-        }
+        const ok = await FirestoreService.healthCheck();
+        if (isMounted) setSupabaseStatus(ok ? 'ok' : 'error');
       } catch (err) {
         if (isMounted) setSupabaseStatus('error');
       }
     };
 
-    checkSupabase();
-    const interval = setInterval(checkSupabase, 30000);
+    checkDatabase();
+    const interval = setInterval(checkDatabase, 30000);
     
     return () => {
       isMounted = false;

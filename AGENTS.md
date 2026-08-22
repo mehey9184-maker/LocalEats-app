@@ -33,6 +33,10 @@
 - **Order Identity Alignment**: Eliminated `user_id: null` in guest order payloads in favor of persistent anonymous Firebase UIDs (`user_id: anonymousUid`), restoring live order tracking and `onSnapshot` listeners without compromising security.
 - **Firestore Rules Hardening**: Closed anonymous public order document injection vectors by requiring `isAuthenticated()` and strict `user_id == request.auth.uid` validation on `/orders/{orderId}` creation.
 
+### Phase 9: Dead Code Cleanup & Live Firestore Health Checks
+- **Dead Code Pruning**: Removed unused `supabase` import from `src/hooks/useDualSync.ts`.
+- **Authoritative Database Health Check**: Replaced mock Supabase database health queries in `src/App.tsx` (diagnostics drawer) and `src/components/SystemStatusIndicator.tsx` with `FirestoreService.healthCheck()`, executing a live, lightweight query against the Firestore `shops` collection for accurate status detection while preserving all UI states, timings, and animations.
+
 ### Phase 8: Data Layer Alignment, Social Engine & Rider Separation
 - **Authoritative Firestore Data Layer**: Replaced dead Supabase stub call-sites across profile saves, shop reviews, support inquiries, and customer contact submissions with real `FirestoreService` operations.
 - **Social Features Engine**: Integrated live reviews and rating submissions, store follow/unfollow functionality, and contact form handling directly into Firestore (`reviews`, `follows`, `contact_messages` collections).
