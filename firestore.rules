@@ -1,55 +1,73 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
+    
     // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
-
+    
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-
+    
     function isShopOwner(shopId) {
       return isAuthenticated() && (
         get(/databases/$(database)/documents/shops/$(shopId)).data.owner_id == request.auth.uid ||
         get(/databases/$(database)/documents/shops/$(shopId)).data.user_id == request.auth.uid
       );
     }
-
-    // Default deny all unmatched collections
     
+    function isOrderParticipant(orderId) {
+      let order = get(/databases/$(database)/documents/orders/$(orderId)).data;
+      return isAuthenticated() && (
+        order.user_id == request.auth.uid ||
+        order.customer_id == request.auth.uid ||
+        order.rider_id == request.auth.uid ||
+        isShopOwner(order.shop_id)
+      );
+    }
+
     match /reviews/{reviewId} {
       allow read: if true;
       allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid;
       allow update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
     }
+    
     match /follows/{followId} {
-      allow read, write: if isAuthenticated() && (request.resource.data.user_id == request.auth.uid || resource.data.user_id == request.auth.uid);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (request.resource.data.user_id == request.auth.uid || resource.data.user_id == request.auth.uid);
     }
+    
     match /contact_messages/{messageId} {
       allow create: if isAuthenticated();
       allow read, update, delete: if false;
     }
+
+    match /app_errors/{errorId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+    match /app_error_logs/{logId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
 
     // 1. User Profiles Collection
     match /profiles/{userId} {
-      // Users can read any basic profile; write ONLY their own
       allow read: if isAuthenticated();
       allow create, update: if isOwner(userId);
       allow delete: if false;
     }
 
-    // 2. Shops / Stores / Merchants / Vendors (Publicly browseable, owner-writable)
+    // 2. Shops / Stores / Merchants / Vendors
     match /shops/{shopId} {
       allow read: if true;
       allow create: if isAuthenticated() && (
-        !('owner_id' in request.resource.data) ||
         request.resource.data.owner_id == request.auth.uid ||
         request.resource.data.user_id == request.auth.uid
       );
@@ -57,13 +75,12 @@ service cloud.firestore {
         resource.data.owner_id == request.auth.uid ||
         resource.data.user_id == request.auth.uid
       );
-
       match /{allChildren=**} {
         allow read: if true;
         allow write: if isAuthenticated();
       }
     }
-
+    
     match /stores/{storeId} {
       allow read: if true;
       allow write: if isAuthenticated();
@@ -72,7 +89,7 @@ service cloud.firestore {
         allow write: if isAuthenticated();
       }
     }
-
+    
     match /merchants/{merchantId} {
       allow read: if true;
       allow write: if isAuthenticated();
@@ -81,7 +98,7 @@ service cloud.firestore {
         allow write: if isAuthenticated();
       }
     }
-
+    
     match /vendors/{vendorId} {
       allow read: if true;
       allow write: if isAuthenticated();
@@ -91,90 +108,159 @@ service cloud.firestore {
       }
     }
 
-    // 3. Menu Items (Publicly browseable, authenticated shop management)
+    // 3. Menu Items
     match /menu_items/{itemId} {
       allow read: if true;
-      allow create: if isAuthenticated() && request.resource.data.shop_id is string;
-      allow update, delete: if isAuthenticated();
+      allow create: if isAuthenticated() && isShopOwner(request.resource.data.shop_id);
+      allow update: if isAuthenticated() && isShopOwner(resource.data.shop_id) && 
+                    (!('shop_id' in request.resource.data) || isShopOwner(request.resource.data.shop_id));
+      allow delete: if isAuthenticated() && isShopOwner(resource.data.shop_id);
     }
 
-    // 4. Orders Collection (Customer & Merchant isolated)
+    // Rider Profiles
+    match /rider_profiles/{riderId} {
+      allow read: if isAuthenticated(); 
+      allow create: if isAuthenticated() && request.auth.uid == riderId;
+      allow update: if isAuthenticated() && request.auth.uid == riderId &&
+                    !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                      'total_earnings', 'total_deliveries', 'active_points', 'rating', 'verification_status'
+                    ]);
+    }
+
+    // Rider Connections
+    match /rider_connections/{connectionId} {
+      allow read: if isAuthenticated();
+      allow create: if isShopOwner(request.resource.data.shop_id);
+      allow update: if isShopOwner(resource.data.shop_id) || 
+                    (isAuthenticated() && request.resource.data.rider_id == request.auth.uid && resource.data.status == 'pending' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rider_id', 'status', 'updated_at']));
+      allow delete: if isShopOwner(resource.data.shop_id);
+    }
+
+    // 4. Orders Collection
     match /orders/{orderId} {
-      // Read access requires ownership or assignment
-      allow get: if isAuthenticated() && (
+      allow get, list: if isAuthenticated() && (
         resource.data.get('user_id', '') == request.auth.uid ||
         resource.data.get('rider_id', '') == request.auth.uid ||
-        resource.data.get('customer_id', '') == request.auth.uid
+        resource.data.get('customer_id', '') == request.auth.uid ||
+        resource.data.get('delivery_status', '') == 'finding_rider' ||
+        isShopOwner(resource.data.get('shop_id', ''))
       );
 
-      // List queries are strictly scoped: customers only see their orders, riders see assigned orders
-      allow list: if isAuthenticated() && (
-        resource.data.get('user_id', '') == request.auth.uid ||
-        resource.data.get('rider_id', '') == request.auth.uid ||
-        resource.data.get('customer_id', '') == request.auth.uid
-      );
-
-      // Order creation: authenticated user must be author (user_id must match auth UID)
       allow create: if isAuthenticated() &&
         request.resource.data.get('shop_id', null) != null &&
         request.resource.data.get('user_id', '') == request.auth.uid;
 
-      // Order updates: customer status transitions
-      allow update: if (
-        // Customer canceling their own pending order, marking as completed, or converting to delivery
-        isAuthenticated() && resource.data.get('user_id', '') == request.auth.uid && (
-          // 1. Cancellation
+      allow update: if isAuthenticated() && (
+        // Customer updates
+        (resource.data.get('user_id', '') == request.auth.uid && (
           (
             request.resource.data.get('status', '') == 'cancelled' &&
             resource.data.get('status', '') == 'pending' &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'cancellation_reason', 'updated_at'])
           )
           ||
-          // 2. Mark as Completed
           (
             request.resource.data.get('status', '') == 'completed' &&
             (resource.data.get('status', '') == 'ready' || resource.data.get('status', '') == 'delivering') &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updated_at'])
           )
           ||
-          // 3. Convert to Delivery
           (
             request.resource.data.get('is_delivery', false) == true &&
             resource.data.get('is_delivery', false) != true &&
             request.resource.data.get('delivery_status', '') == 'finding_rider' &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_delivery', 'delivery_status', 'delivery_fee', 'updated_at'])
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_delivery', 'delivery_status', 'updated_at'])
           )
+        ))
+        ||
+        // Merchant updates
+        (isShopOwner(resource.data.get('shop_id', '')) && 
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['total_price', 'subtotal', 'delivery_fee', 'service_fee', 'payment_status', 'payment_method', 'user_id', 'customer_id', 'shop_id', 'created_at', 'items'])
+        )
+        ||
+        // Rider claiming order
+        (resource.data.get('delivery_status', '') == 'finding_rider' &&
+         request.resource.data.get('delivery_status', '') == 'accepted' &&
+         request.resource.data.get('rider_id', '') == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['delivery_status', 'rider_id', 'updated_at'])
+        )
+        ||
+        // Rider updating assigned order
+        (resource.data.get('rider_id', '') == request.auth.uid &&
+         request.resource.data.get('rider_id', '') == request.auth.uid &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['total_price', 'subtotal', 'delivery_fee', 'service_fee', 'payment_status', 'payment_method', 'user_id', 'customer_id', 'shop_id', 'created_at', 'items'])
         )
       );
-
-      // Deletions are forbidden to protect financial and order history
+      
       allow delete: if false;
     }
 
-    // 5. Rider Locations (Real-time telemetry for tracking maps)
+    // 5. Rider Locations
     match /rider_locations/{riderId} {
-      allow read: if true;
+      allow read: if isAuthenticated();
       allow write: if isAuthenticated() && (
         request.auth.uid == riderId ||
-        request.resource.data.rider_id == request.auth.uid ||
-        !('rider_id' in request.resource.data)
+        request.resource.data.rider_id == request.auth.uid
       );
     }
 
     // 6. Direct In-App Chat Messages
     match /messages/{messageId} {
-      allow read: if true;
-      allow create: if request.resource.data.order_id is string && (
-        request.resource.data.message is string || request.resource.data.text is string
-      );
-      allow update, delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid;
+      allow read: if isOrderParticipant(resource.data.order_id);
+      allow create: if isAuthenticated() && 
+                    request.resource.data.sender_id == request.auth.uid &&
+                    isOrderParticipant(request.resource.data.order_id) &&
+                    (request.resource.data.message is string || request.resource.data.text is string);
+      allow update: if isAuthenticated() && isOrderParticipant(resource.data.order_id) &&
+                    (
+                      resource.data.sender_id == request.auth.uid ||
+                      (resource.data.sender_id != request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at', 'updated_at']))
+                    );
+      allow delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid && isOrderParticipant(resource.data.order_id);
+    }
+    match /chat_messages/{messageId} {
+      allow read: if isOrderParticipant(resource.data.order_id);
+      allow create: if isAuthenticated() && 
+                    request.resource.data.sender_id == request.auth.uid &&
+                    isOrderParticipant(request.resource.data.order_id);
+      allow update: if isAuthenticated() && isOrderParticipant(resource.data.order_id) &&
+                    (
+                      resource.data.sender_id == request.auth.uid ||
+                      (resource.data.sender_id != request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at', 'updated_at']))
+                    );
+      allow delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid && isOrderParticipant(resource.data.order_id);
+    }
+    match /order_messages/{messageId} {
+      allow read: if isOrderParticipant(resource.data.order_id);
+      allow create: if isAuthenticated() && 
+                    request.resource.data.sender_id == request.auth.uid &&
+                    isOrderParticipant(request.resource.data.order_id);
+      allow update: if isAuthenticated() && isOrderParticipant(resource.data.order_id) &&
+                    (
+                      resource.data.sender_id == request.auth.uid ||
+                      (resource.data.sender_id != request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at', 'updated_at']))
+                    );
+      allow delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid && isOrderParticipant(resource.data.order_id);
+    }
+    match /rider_chat_messages/{messageId} {
+      allow read: if isOrderParticipant(resource.data.order_id);
+      allow create: if isAuthenticated() && 
+                    request.resource.data.sender_id == request.auth.uid &&
+                    isOrderParticipant(request.resource.data.order_id);
+      allow update: if isAuthenticated() && isOrderParticipant(resource.data.order_id) &&
+                    (
+                      resource.data.sender_id == request.auth.uid ||
+                      (resource.data.sender_id != request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at', 'updated_at']))
+                    );
+      allow delete: if isAuthenticated() && resource.data.sender_id == request.auth.uid && isOrderParticipant(resource.data.order_id);
     }
 
     // 7. Device Push Notification Tokens
     match /user_push_tokens/{tokenId} {
-      allow read: if isAuthenticated();
-      allow create, update: if request.resource.data.token is string;
-      allow delete: if isAuthenticated();
+      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid && request.resource.data.token is string;
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && request.resource.data.user_id == request.auth.uid && request.resource.data.token is string;
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
     }
   }
 }

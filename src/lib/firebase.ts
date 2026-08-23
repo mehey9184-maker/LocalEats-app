@@ -31,6 +31,7 @@ import {
   signInAnonymously
 } from "firebase/auth";
 import { getMessaging, getToken, onMessage, isSupported, Messaging } from "firebase/messaging";
+import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "firebase/functions";
 import { Shop, MenuItem } from "../types";
 import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
@@ -109,6 +110,65 @@ export function getFirebaseAuth(): Auth {
 
 export const auth: Auth = getFirebaseAuth();
 
+let functionsInstance: Functions | null = null;
+
+/**
+ * Returns the Firebase Functions instance
+ */
+export function getFirebaseFunctions(): Functions {
+  if (!functionsInstance) {
+    const app = getFirebaseApp();
+    functionsInstance = getFunctions(app);
+  }
+  return functionsInstance;
+}
+
+export const functions: Functions = getFirebaseFunctions();
+
+export interface CreateOrderItemInput {
+  menu_item_id: string;
+  quantity: number;
+  variant_id?: string;
+  notes?: string;
+}
+
+export interface CreateOrderRequestData {
+  idempotency_key: string;
+  shop_id: string | number;
+  items: CreateOrderItemInput[];
+  delivery_type: "delivery" | "collection";
+  delivery_schedule_mode: "standard" | "express";
+  delivery_coordinates?: {
+    lat: number;
+    lng: number;
+  };
+  promo_code?: string;
+  tip_amount: number;
+  payment_method: string;
+  customer_details: {
+    name: string;
+    phone: string;
+    email: string;
+    address: string;
+    city: string;
+    delivery_instructions?: string;
+  };
+}
+
+export interface CreateOrderResponse {
+  success: boolean;
+  order_id: string;
+  subtotal: number;
+  delivery_fee: number;
+  service_fee: number;
+  discount_amount: number;
+  tip_amount: number;
+  total_price: number;
+  status: string;
+  delivery_status: string;
+  message?: string;
+}
+
 /**
  * Ensures a valid Firebase Auth user exists (either active user or anonymous guest user).
  * Does not create duplicate anonymous sessions if already signed in.
@@ -122,7 +182,7 @@ export async function ensureAnonymousAuth(): Promise<FirebaseUser> {
   return credential.user;
 }
 
-// Re-export common Firestore utilities
+// Re-export common Firestore and Functions utilities
 export {
   signInAnonymously,
   collection,
@@ -137,9 +197,10 @@ export {
   orderBy,
   limit,
   onSnapshot,
-  serverTimestamp
+  serverTimestamp,
+  httpsCallable,
 };
-export type { DocumentData, QueryConstraint, Unsubscribe, FirebaseUser };
+export type { DocumentData, QueryConstraint, Unsubscribe, FirebaseUser, Functions, HttpsCallableResult };
 
 /**
  * Firestore Service Helpers for LocalEats
@@ -236,6 +297,15 @@ export const FirestoreService = {
   },
 
   // Orders
+  async createAuthoritativeOrder(requestData: CreateOrderRequestData): Promise<CreateOrderResponse> {
+    const createOrderFn = httpsCallable<CreateOrderRequestData, CreateOrderResponse>(
+      getFirebaseFunctions(),
+      "createOrder"
+    );
+    const result = await createOrderFn(requestData);
+    return result.data;
+  },
+
   async saveOrder(order: any): Promise<void> {
     if (!order || !order.id) return;
     const orderDoc = doc(db, "orders", String(order.id));

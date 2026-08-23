@@ -13,7 +13,7 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
-import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth } from "../lib/firebase";
+import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, CreateOrderRequestData, CreateOrderResponse } from "../lib/firebase";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
@@ -155,6 +155,7 @@ export function CheckoutScreen({
   const phoneInputRef = useRef<HTMLInputElement>(null);
   const addressSectionRef = useRef<HTMLDivElement>(null);
   const paymentMethodSectionRef = useRef<HTMLDivElement>(null);
+  const checkoutIdempotencyKeyRef = useRef<string | null>(null);
 
   const handleNextToStep2 = () => {
     setFormErrors({});
@@ -1335,7 +1336,7 @@ export function CheckoutScreen({
           throw new Error("Authentication failed: Missing secure user identity for order placement.");
         }
 
-        // Trigger FCM Web Push Token acquisition and sync to Supabase user_push_tokens
+        // Trigger FCM Web Push Token acquisition and sync to user_push_tokens
         if (activeUserId) {
           registerAndSyncPushToken(activeUserId).catch((err) => {
             console.warn("[FCM] Push token registration notice on checkout:", err);
@@ -1357,293 +1358,91 @@ export function CheckoutScreen({
           });
         };
 
-        // Secure Handshake: Automatically generate a random 4-digit numeric string (e.g., '4928') if delivery. Do NOT generate if collection.
-        const secureDeliveryPin = deliveryType === "delivery"
-          ? Math.floor(1000 + Math.random() * 9000).toString()
-          : undefined;
-
-        const orderData = cart.map((item, index) => {
-          const customizationsString =
-            item.selectedCustomizations
-              ?.map((c) => `${c.name} (+R${Number(c.price).toFixed(2)})`)
-              .join(", ") || "";
-          const customizationsTotal = (
-            item.selectedCustomizations || []
-          ).reduce((acc, c) => acc + Number(c.price), 0);
-          const itemRawPrice = Number(item.price) || 0;
-          const itemQty = Math.max(1, Number(item.quantity) || 1);
-          const unitOriginalPrice = itemRawPrice + customizationsTotal;
-          const originalPrice = itemQty > 5 ? unitOriginalPrice * 0.85 : unitOriginalPrice;
-          const unitFinalPrice = Number(Math.max(0, originalPrice - originalPrice * discountRatio).toFixed(2));
-          const finalItemPrice = Number((unitFinalPrice * itemQty).toFixed(2));
-
-          // Allocate delivery fee and additional service/tip fees to the first line item for multi-item cart pricing integrity
-          const itemDeliveryFee = deliveryType === "delivery" ? (index === 0 ? Number(activeDeliveryFee.toFixed(2)) : 0) : 0;
-          const otherFees = index === 0 ? Number((serviceFee + tipAmount).toFixed(2)) : 0;
-          const totalLineDeliveryFee = Number((itemDeliveryFee + otherFees).toFixed(2));
-          const itemTotalPrice = Number((finalItemPrice + totalLineDeliveryFee).toFixed(2));
-
-          const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
-          const orderId = generateValidUUID();
-
-          // Resolve shop_id to match valid database shop ID
-          const rawShopId = item.shopId;
-          const resolvedShopId =
-            typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
-              ? Number(rawShopId)
-              : rawShopId;
-
-          return {
-            id: orderId,
-            user_id: activeUserId,
-            is_guest: isGuestCheckout,
-            shop_id: resolvedShopId,
-            customer_name: finalCustomerName,
-            phone: finalCustomerPhone,
-            email: userProfile.email,
-            city: userProfile.city,
-            address:
-              deliveryType === "delivery"
-                ? deliveryAddressText
-                : userProfile.address,
-            country: userProfile.country,
-            product_name: item.name,
-            product_variant: customizationsString,
-            quantity: itemQty,
-            price: unitFinalPrice,
-            total_price: itemTotalPrice,
-            notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || "",
-            delivery_instructions: finalDeliveryInstructions,
-            status: "pending",
-            payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
-            is_delivery: deliveryType === "delivery",
-            order_type: deliveryType,
-            delivery_pin: deliveryType === "delivery" ? secureDeliveryPin : null,
-            delivery_fee: totalLineDeliveryFee,
-            delivery_status: (paymentMethod === "cash" || isCOAOrder) ? "none" : (deliveryType === "delivery" ? "finding_rider" : "none"),
-            latitude: currentLat,
-            longitude: currentLng,
-          };
-        });
-
-        // Explicit frontend validation step checking mandatory fields
-        for (const order of orderData) {
-          if (!order.id) {
-            throw new Error("Frontend Validation Error: Unique order 'id' is required.");
-          }
-          if (!order.shop_id && order.shop_id !== 0) {
-            throw new Error("Frontend Validation Error: 'shop_id' is mandatory.");
-          }
-          if (!order.status) {
-            throw new Error("Frontend Validation Error: Order 'status' is mandatory.");
-          }
+        // Reuse existing idempotency key on retries / timeouts
+        if (!checkoutIdempotencyKeyRef.current) {
+          checkoutIdempotencyKeyRef.current = generateValidUUID();
         }
+        const orderIdempotencyKey = checkoutIdempotencyKeyRef.current;
 
-        console.log("Submitting order with upgraded details:", orderData);
+        const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
 
-        // Sanitize and strip un-migrated or invalid fields from order payload to ensure Postgres schema compatibility
-        const cleanOrderData = orderData.map((d, index) => {
-          const itemPrice = Number(d.price) || 0;
-          const itemQty = Math.max(1, Number(d.quantity) || 1);
-          // Distribute fees only on the first line item to prevent multi-charging
-          const itemDeliveryFee = index === 0 && deliveryType === "delivery" ? Number(activeDeliveryFee.toFixed(2)) : 0;
-          const itemServiceFee = index === 0 ? Number((serviceFee + tipAmount).toFixed(2)) : 0;
-
-          const payload: Record<string, any> = {
-            id: d.id,
-            created_at: new Date().toISOString(),
-            user_id: d.user_id,
-            is_guest: Boolean(d.is_guest),
-            shop_id: d.shop_id,
-            customer_name: d.customer_name || "Valued Customer",
-            phone: d.phone || "",
-            email: d.email || "",
-            city: d.city || "Cape Town",
-            address: d.address || "Local Delivery",
-            country: d.country || "South Africa",
-            product_name: d.product_name,
-            product_variant: d.product_variant || "",
-            quantity: itemQty,
-            price: itemPrice,
-            items: [{
-              name: d.product_name,
-              price: itemPrice,
-              quantity: itemQty
-            }],
-            delivery_fee: itemDeliveryFee,
-            service_fee: itemServiceFee,
-            total_price: Number((itemPrice * itemQty + itemDeliveryFee + itemServiceFee).toFixed(2)),
-            notes: d.notes || "",
-            delivery_instructions: d.delivery_instructions || "",
-            status: d.status || "pending",
-            payment_method: d.payment_method || "cash",
-            is_delivery: Boolean(d.is_delivery),
-            lat: d.latitude || null,
-            lng: d.longitude || null,
-          };
-
-          if (d.order_type) {
-            payload.order_type = d.order_type;
-          }
-          if (d.delivery_pin) {
-            payload.delivery_pin = d.delivery_pin;
-          }
-          if (d.delivery_status) {
-            payload.delivery_status = d.delivery_status;
-          }
-
-          return payload;
-        });
-
-        // Non-blocking 8-second timeout guard for Supabase order insertion
-        const orderPromise = (async () => {
-          try {
-            const { data, error } = await supabase
-              .from("orders")
-              .insert(cleanOrderData)
-              .select("id, shop_id, status, created_at");
-            return { data, error };
-          } catch (err: any) {
-            return { data: null, error: err };
-          }
-        })();
-
-        let timeoutId: any;
-        const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) => {
-          timeoutId = setTimeout(() => resolve({ data: null, error: new Error("TIMEOUT") }), 8000);
-        });
-
-        let orderSaved = false;
-
-        try {
-          const res = await Promise.race([orderPromise, timeoutPromise]);
-          clearTimeout(timeoutId);
-          if (!res.error) {
-            orderSaved = true;
-          } else {
-            console.info("[Checkout] Supabase insert initial notice:", res.error.message || res.error);
-            const errorMsg = String(res.error.message || "").toLowerCase();
-            const isPermissionOrFunctionError =
-              errorMsg.includes("is_shop_owner") ||
-              errorMsg.includes("permission denied") ||
-              res.error.code === "42501" ||
-              res.error.code === "P0001" ||
-              errorMsg.includes("function") ||
-              errorMsg.includes("policy") ||
-              errorMsg.includes("row-level security");
-
-            // Check if order already reached database prior to timeout
-            let anyOrderAlreadyExists = false;
-            if (cleanOrderData[0]?.id) {
-              anyOrderAlreadyExists = await IdempotencyManager.checkOrderExists(cleanOrderData[0].id);
-            }
-
-            if (anyOrderAlreadyExists) {
-              console.log("[Idempotency] Order already reached database prior to timeout.");
-              orderSaved = true;
-            } else if (isPermissionOrFunctionError) {
-              console.info("[Checkout] Function/policy notice. Using server and local sync fallback.");
-            } else {
-              const fallbackShopId = cleanOrderData[0]?.shop_id; // Just use what we have, better to fail than corrupt data
-              
-              const minimalOrderData = cleanOrderData.map((d: any) => ({
-                id: d.id,
-                user_id: res.error?.code === "23503" ? null : d.user_id,
-                shop_id: d.shop_id || fallbackShopId,
-                customer_name: d.customer_name,
-                phone: d.phone,
-                email: d.email,
-                address: d.address,
-                product_name: d.product_name,
-                product_variant: d.product_variant,
-                quantity: d.quantity,
-                price: d.price,
-                items: d.items,
-                service_fee: d.service_fee || 0,
-                total_price: d.total_price,
-                delivery_fee: d.delivery_fee || 0,
-                notes: d.notes,
-                delivery_instructions: d.delivery_instructions,
-                status: d.status,
-                payment_method: d.payment_method,
-                is_delivery: d.is_delivery,
-                order_type: d.order_type || (d.is_delivery ? "delivery" : "collection"),
-                delivery_pin: d.delivery_pin || null,
-                lat: d.lat,
-                lng: d.lng,
-                city: d.city,
-              }));
-
-              try {
-                const retryPromise = (async () => {
-                  try {
-                    return await supabase
-                      .from("orders")
-                      .insert(minimalOrderData)
-                      .select("id, shop_id, status, created_at");
-                  } catch (err: any) {
-                    return { data: null, error: err };
-                  }
-                })();
-
-                let retryTimeoutId: any;
-                const retryTimeout = new Promise<{ data: any; error: any }>((resolve) => {
-                  retryTimeoutId = setTimeout(() => resolve({ data: null, error: new Error("RETRY_TIMEOUT") }), 5000);
-                });
-
-                const retryRes = await Promise.race([retryPromise, retryTimeout]);
-                clearTimeout(retryTimeoutId);
-                if (!retryRes.error) {
-                  orderSaved = true;
+        const requestPayload: CreateOrderRequestData = {
+          idempotency_key: orderIdempotencyKey,
+          shop_id: String(primaryShop?.id || cart[0]?.shopId || ""),
+          items: cart.map((item) => ({
+            menu_item_id: String(item.id),
+            quantity: Math.max(1, Number(item.quantity) || 1),
+            notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || undefined,
+            variant_id: undefined,
+          })),
+          delivery_type: deliveryType === "delivery" ? "delivery" : "collection",
+          delivery_schedule_mode: deliveryScheduleMode === "express" ? "express" : "standard",
+          delivery_coordinates:
+            deliveryType === "delivery" && currentLat && currentLng
+              ? {
+                  lat: Number(currentLat),
+                  lng: Number(currentLng),
                 }
-              } catch (retryException) {
-                console.info("[Checkout] Supabase minimal retry note:", retryException);
-              }
-            }
-          }
-        } catch (timeoutOrException) {
-          console.info("[Checkout] Non-blocking timeout guard triggered (>8s) or network notice. Seamlessly transitioning to local order guarantee with background sync.", timeoutOrException);
-        }
+              : undefined,
+          promo_code: appliedPromo?.code || undefined,
+          tip_amount: Number(tipAmount) || 0,
+          payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
+          customer_details: {
+            name: finalCustomerName,
+            phone: finalCustomerPhone,
+            email: userProfile?.email || "",
+            address: deliveryType === "delivery" ? (deliveryAddressText || "") : (userProfile?.address || "Local Delivery"),
+            city: userProfile?.city || "Cape Town",
+            delivery_instructions: finalDeliveryInstructions || undefined,
+          },
+        };
 
-        if (!orderSaved) {
-          try {
-            // Attempt to sync to server /api/orders endpoint as resilient fallback, awaiting response
-            const abortController = new AbortController();
-            const fetchTimeout = setTimeout(() => abortController.abort(), 8000);
-            
-            const response = await fetch("/api/orders", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orders: cleanOrderData }),
-              signal: abortController.signal
-            });
-            clearTimeout(fetchTimeout);
-            
-            if (response.ok) {
-              orderSaved = true;
-            } else {
-              throw new Error(`API returned ${response.status}`);
-            }
-          } catch (apiErr) {
-            console.info("[Checkout] /api/orders fallback notice:", apiErr);
-            throw new Error("Order submission failed: both primary database and fallback API were unreachable or rejected the order.");
-          }
-        }
+        console.log("[Checkout] Submitting authoritative order via Cloud Function:", requestPayload);
 
-        // Direct Firestore Real-time Persistence for live client and driver tracking
-        const fsResults = await Promise.allSettled(
-          cleanOrderData.map((ord) => FirestoreService.saveOrder(ord))
-        );
+        const orderResult = await FirestoreService.createAuthoritativeOrder(requestPayload);
 
-        const failedFs = fsResults.filter(res => res.status === "rejected");
-        if (failedFs.length > 0) {
-          console.error("[CHECKOUT] Firestore persistence failed...");
-          if (failedFs.length === cleanOrderData.length) {
-            throw new Error("Order submission failed: Could not persist to database.");
-          } else {
-            throw new Error("PARTIAL PERSISTENCE REQUIRES FUTURE TRANSACTION/ORDER-BATCH DESIGN");
-          }
-        }
+        // Reset idempotency key ref upon successful authoritative order creation
+        checkoutIdempotencyKeyRef.current = null;
+
+        // Build cached order record with authoritative pricing & statuses for local UI listeners
+        const cleanOrderData = [{
+          id: orderResult.order_id,
+          user_id: activeUserId,
+          is_guest: Boolean(isGuestCheckout),
+          shop_id: String(primaryShop?.id || cart[0]?.shopId || ""),
+          customer_name: finalCustomerName,
+          phone: finalCustomerPhone,
+          email: userProfile?.email || "",
+          city: userProfile?.city || "Cape Town",
+          address: deliveryType === "delivery" ? (deliveryAddressText || "") : (userProfile?.address || "Local Delivery"),
+          country: userProfile?.country || "South Africa",
+          product_name: cart.map((i) => i.name).join(", "),
+          product_variant: cart.map((i) => (i.selectedCustomizations || []).map((c) => c.name).join(", ")).filter(Boolean).join(" | "),
+          quantity: cart.reduce((acc, i) => acc + (Number(i.quantity) || 1), 0),
+          price: orderResult.subtotal,
+          total_price: orderResult.total_price,
+          delivery_fee: orderResult.delivery_fee,
+          service_fee: orderResult.service_fee,
+          discount_amount: orderResult.discount_amount,
+          tip_amount: orderResult.tip_amount,
+          notes: orderNotes || "",
+          delivery_instructions: finalDeliveryInstructions || "",
+          status: orderResult.status || "pending",
+          payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
+          is_delivery: deliveryType === "delivery",
+          order_type: deliveryType,
+          delivery_status: orderResult.delivery_status,
+          lat: currentLat,
+          lng: currentLng,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          items: cart.map((item) => ({
+            name: item.name,
+            price: Number(item.price) || 0,
+            quantity: Math.max(1, Number(item.quantity) || 1),
+            notes: item.specialInstructions || "",
+          })),
+        }];
 
         // Cache order in local storage for instant sync across all tracking and order history screens
         try {
@@ -1675,7 +1474,7 @@ export function CheckoutScreen({
         }
 
         // Pop COA confirmation on success
-        if (isCashTrustActive && paymentMethod === "cash") {
+        if (isCOAOrder) {
           showAlert(
             "Order Confirmed!",
             deliveryType === "delivery" 

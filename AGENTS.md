@@ -33,6 +33,11 @@
 - **Order Identity Alignment**: Eliminated `user_id: null` in guest order payloads in favor of persistent anonymous Firebase UIDs (`user_id: anonymousUid`), restoring live order tracking and `onSnapshot` listeners without compromising security.
 - **Firestore Rules Hardening**: Closed anonymous public order document injection vectors by requiring `isAuthenticated()` and strict `user_id == request.auth.uid` validation on `/orders/{orderId}` creation.
 
+### Phase 10: Authoritative Server-Side Order Creation
+- **Server-Side Pricing & Creation Function**: Implemented `createOrder` Firebase Callable Cloud Function in `functions/src/index.ts`. All financial calculations (subtotal, distance-based delivery fee, express fee, R2.50 service fee, promo discount calculation, tip, total) are strictly computed server-side using authoritative Firestore database records.
+- **Idempotency & Concurrency Protection**: Atomic transaction prevents duplicate order placement or key collisions across network retries.
+- **Client App Checkout Migration**: Migrated `src/screens/CheckoutScreen.tsx` to invoke `FirestoreService.createAuthoritativeOrder()` with untrusted user inputs (menu item IDs, quantities, address, coordinates, promo code, tip), reusing idempotency keys on retry/timeout without submitting client-calculated financials.
+
 ### Phase 9: Dead Code Cleanup & Live Firestore Health Checks
 - **Dead Code Pruning**: Removed unused `supabase` import from `src/hooks/useDualSync.ts`.
 - **Authoritative Database Health Check**: Replaced mock Supabase database health queries in `src/App.tsx` (diagnostics drawer) and `src/components/SystemStatusIndicator.tsx` with `FirestoreService.healthCheck()`, executing a live, lightweight query against the Firestore `shops` collection for accurate status detection while preserving all UI states, timings, and animations.
