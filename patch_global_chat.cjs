@@ -1,4 +1,7 @@
+const fs = require('fs');
+let code = fs.readFileSync('src/components/GlobalChatListener.tsx', 'utf8');
 
+code = `
 import React, { useEffect, useRef } from "react";
 import { Order } from "../types";
 import { toast } from "sonner";
@@ -70,3 +73,6 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
 
   return null;
 }
+`;
+
+fs.writeFileSync('src/components/GlobalChatListener.tsx', code);

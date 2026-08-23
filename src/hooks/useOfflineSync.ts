@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { supabase } from "../lib/supabase";
 import { FirestoreService } from "../lib/firebase";
 import localforage from "localforage";
 import { CartItem } from "../types";
@@ -81,14 +80,7 @@ export async function processPendingCancellationsQueue(): Promise<{ total: numbe
           console.warn("[processPendingCancellationsQueue] API sync error:", apiErr);
         }
 
-        // 3. Supabase sync
-        try {
-          await supabase
-            .from("orders")
-            .update(updatePayload)
-            .eq("id", item.orderId);
-          synced = true;
-        } catch (_) {}
+        // 3. (Supabase mock removed to prevent false success)
 
         if (synced) {
           successCount++;
@@ -246,14 +238,7 @@ export function useOfflineSync(cart?: CartItem[], session?: any) {
             console.warn("[useOfflineSync] API cancellation sync error:", apiErr);
           }
 
-          // 3. Supabase sync
-          try {
-            await supabase
-              .from("orders")
-              .update(updatePayload)
-              .eq("id", item.orderId);
-            synced = true;
-          } catch (_) {}
+          // 3. (Supabase mock removed to prevent false success)
 
           if (synced) {
             successCount++;

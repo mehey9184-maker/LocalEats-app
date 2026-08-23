@@ -6,7 +6,7 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
+  getDocs, writeBatch,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -357,6 +357,26 @@ export const FirestoreService = {
     });
   },
 
+  
+  async markMessagesAsRead(orderId: string, currentUserId: string): Promise<void> {
+    try {
+      const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)), where("is_read", "==", false));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      let count = 0;
+      snap.forEach((docSnap) => {
+        if (docSnap.data().sender_id !== currentUserId) {
+          batch.update(docSnap.ref, { is_read: true, read_at: new Date().toISOString() });
+          count++;
+        }
+      });
+      if (count > 0) {
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn("[FirestoreService] markMessagesAsRead error:", e);
+    }
+  },
   listenToOrderMessages(orderId: string, onUpdate: (messages: any[]) => void): Unsubscribe {
     const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)));
     return onSnapshot(q, (snapshot) => {
@@ -643,8 +663,14 @@ export const FirestoreService = {
   },
 
   listenToShops(onUpdate: (shops: Shop[]) => void): Unsubscribe {
-    const coll = collection(db, "shops");
-    return onSnapshot(coll, async () => {
+    const shopsColl = collection(db, "shops");
+    const menuColl = collection(db, "menu_items");
+    
+    let isFetching = false;
+    
+    const fetchAndNotify = async () => {
+      if (isFetching) return;
+      isFetching = true;
       try {
         const freshShops = await FirestoreService.getShops();
         if (freshShops && freshShops.length > 0) {
@@ -652,10 +678,23 @@ export const FirestoreService = {
         }
       } catch (err) {
         console.debug("[FirestoreService] listenToShops error:", err);
+      } finally {
+        isFetching = false;
       }
-    }, (err) => {
-      console.debug("[FirestoreService] listenToShops listener notice:", err?.message || err);
+    };
+
+    const unsubShops = onSnapshot(shopsColl, fetchAndNotify, (err) => {
+      console.debug("[FirestoreService] shops listener notice:", err?.message || err);
     });
+    
+    const unsubMenu = onSnapshot(menuColl, fetchAndNotify, (err) => {
+      console.debug("[FirestoreService] menu listener notice:", err?.message || err);
+    });
+
+    return () => {
+      unsubShops();
+      unsubMenu();
+    };
   },
 
   async seedDemoShopsIfEmpty(): Promise<boolean> {

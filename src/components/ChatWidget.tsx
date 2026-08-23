@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Send, MessageCircle, X, Loader2, Bike, CheckCheck, User } from "lucide-react";
-import { supabase, getFreshChannel } from "../lib/supabase";
+
 import { FirestoreService } from "../lib/firebase";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
@@ -104,95 +104,21 @@ export function ChatWidget({
       }
     }, 2000);
 
-    const fetchMessages = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("order_messages")
-          .select("id, order_id, sender_id, user_id, sender_type, sender_role, sender_name, message, message_text, content, text, is_read, read_at, created_at")
-          .eq("order_id", orderId)
-          .order("created_at", { ascending: true });
-
-        if (error) {
-          const errMsg = (error.message || "").toLowerCase();
-          if (!errMsg.includes("fetch") && !errMsg.includes("network")) {
-            console.warn("Notice fetching chat messages:", error.message || error);
-          }
-        } else if (isMounted) {
-          const list = data || [];
-          setMessages(list);
-
-          const unread = list.filter(
-            (m) => (!m.read_at && !m.is_read) && !isUserMessage(m)
-          ).length;
-          if (onUnreadCountChange) onUnreadCountChange(unread);
-        }
-      } catch (err: any) {
-        const errStr = (err?.message || String(err)).toLowerCase();
-        if (!errStr.includes("fetch") && !errStr.includes("network")) {
-          console.warn("Chat fetch notice:", err?.message || err);
-        }
-      } finally {
+    const unsubscribe = FirestoreService.listenToOrderMessages(orderId, (list) => {
+      if (isMounted) {
+        setMessages(list as ChatMessage[]);
         clearTimeout(timeoutId);
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
+        const unread = list.filter(
+          (m: ChatMessage) => (!m.read_at && !m.is_read) && !isUserMessage(m)
+        ).length;
+        if (onUnreadCountChange) onUnreadCountChange(unread);
       }
-    };
-
-    fetchMessages();
-
-    // Re-sync messages when network comes back online or tab regains focus
-    const handleReconnect = () => {
-      fetchMessages();
-    };
-
-    window.addEventListener("online", handleReconnect);
-    window.addEventListener("focus", handleReconnect);
-
-    // Subscribe to BOTH Postgres DB changes and WebSockets Broadcast channels ('chat_widget:123' & 'chat_widget_123')
-    const primaryChannel = getFreshChannel(`chat_widget:${orderId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "order_messages",
-          filter: `order_id=eq.${orderId}`,
-        },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            const newMsg = payload.new as ChatMessage;
-            appendMessage(newMsg);
-
-            if (!isUserMessage(newMsg)) {
-              toast(`Message from ${riderName}`, {
-                description: getMessageText(newMsg) || "New message",
-                icon: <MessageCircle className="w-4 h-4 text-orange-500" />,
-              });
-            }
-          } else if (payload.eventType === "UPDATE") {
-            const updatedMsg = payload.new as ChatMessage;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m))
-            );
-          }
-        }
-      )
-      .on("broadcast", { event: "*" }, (payload) => {
-        if (payload.payload) {
-          const bMsg = payload.payload as ChatMessage;
-          appendMessage(bMsg);
-        }
-      })
-      .subscribe();
-
-    channelRef.current = primaryChannel;
+    });
 
     return () => {
       isMounted = false;
-      window.removeEventListener("online", handleReconnect);
-      window.removeEventListener("focus", handleReconnect);
-      supabase.removeChannel(primaryChannel);
+      unsubscribe();
     };
   }, [orderId, userId, riderName, onUnreadCountChange]);
 
@@ -203,27 +129,11 @@ export function ChatWidget({
 
       const currentUserId = userId || "guest_user";
       const markAsRead = async () => {
-        try {
-          const nowIso = new Date().toISOString();
-          await supabase
-            .from("order_messages")
-            .update({ is_read: true })
-            .eq("order_id", orderId)
-            .eq("is_read", false)
-            .neq("sender_id", currentUserId);
-
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.sender_id !== currentUserId ? { ...m, is_read: true } : m
-            )
-          );
-          if (onUnreadCountChange) onUnreadCountChange(0);
-        } catch (err) {
-          console.warn("Notice marking messages as read:", err);
-        }
+        await FirestoreService.markMessagesAsRead(orderId, currentUserId);
+        if (onUnreadCountChange) onUnreadCountChange(0);
       };
-
       markAsRead();
+
     }
   }, [isOpen, messages.length, orderId, userId, onUnreadCountChange]);
 
@@ -235,111 +145,14 @@ export function ChatWidget({
     setNewMessage("");
     setIsSending(true);
 
-    const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-
-    let authUserId: string | null = null;
-    try {
-      const { data } = await supabase.auth.getUser();
-      if (data?.user?.id) authUserId = data.user.id;
-    } catch (e) {
-      // ignore
-    }
-
-    const effectiveSenderId = userId || authUserId || "guest_user";
-    const validUserId = isUuid(effectiveSenderId)
-      ? effectiveSenderId
-      : (authUserId && isUuid(authUserId) ? authUserId : "00000000-0000-0000-0000-000000000000");
-
+    const effectiveSenderId = userId || "guest_user";
     const effectiveOrderId = orderId;
 
-    let insertedData: ChatMessage | null = null;
-    let lastError: any = null;
-
     try {
-      // Sync to Firestore Realtime Messages
-      FirestoreService.sendMessage(effectiveOrderId, effectiveSenderId, "customer", messageText).catch((fsErr) => {
-        console.info("[Chat Firestore] Background sync note:", fsErr);
-      });
-
-      const payload: any = {
-        order_id: effectiveOrderId,
-        sender_id: effectiveSenderId,
-        sender_role: "customer",
-        message: messageText,
-        is_read: false,
-      };
-
-      const { data, error } = await supabase
-        .from("order_messages")
-        .insert(payload)
-        .select()
-        .maybeSingle();
-
-      if (!error && data) {
-        insertedData = data as ChatMessage;
-      } else {
-        lastError = error;
-        console.warn("Primary chat insert notice:", error?.message || error);
-        
-        // Fallback with minimal payload
-        const fbPayload: any = {
-          order_id: effectiveOrderId,
-          sender_id: effectiveSenderId,
-          sender_role: "customer",
-          message: messageText,
-        };
-
-        const { data: fbData, error: fbError } = await supabase
-          .from("order_messages")
-          .insert(fbPayload)
-          .select()
-          .maybeSingle();
-
-        if (!fbError && fbData) {
-          insertedData = fbData as ChatMessage;
-        }
-      }
-    } catch (err: any) {
-      lastError = err;
-    } finally {
-      // Always fallback to optimistic local message so chat experience never breaks
-      if (!insertedData) {
-        insertedData = {
-          id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-          order_id: effectiveOrderId,
-          sender_id: effectiveSenderId,
-          sender_role: "customer",
-          message: messageText,
-          is_read: false,
-          created_at: new Date().toISOString(),
-        };
-        if (lastError) {
-          console.warn("Notice: Chat message saved locally (remote sync fallback)", lastError?.message || lastError);
-        }
-      }
-
-      // Broadcast message on active channel to notify riders instantly across WebSockets
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "chat_message",
-          payload: insertedData,
-        }).catch(() => {});
-      }
-
-      setMessages((prev) => {
-        if (
-          prev.some(
-            (m) =>
-              m.id === insertedData!.id ||
-              (m.created_at === insertedData!.created_at && getMessageText(m) === messageText)
-          )
-        ) {
-          return prev;
-        }
-        return [...prev, insertedData!];
-      });
-
+      await FirestoreService.sendMessage(effectiveOrderId, effectiveSenderId, "customer", messageText);
+      setIsSending(false);
+    } catch (err) {
+      console.error("Failed to send message", err);
       setIsSending(false);
     }
   };

@@ -4146,7 +4146,6 @@ export default function App() {
                   isOnline={isOnline}
                   onSubscribeToPush={subscribeToPushNotifications}
                   onManualSync={handleManualSync}
-                  isSyncing={isSyncing}
                   stalenessThresholdMs={stalenessThresholdMs}
                   onUpdateStalenessThreshold={setStalenessThresholdMs}
                   heartbeatMetrics={heartbeatMetrics}
@@ -4154,30 +4153,6 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "admin-orders" && (
-                <AdminOrdersScreen
-                  shops={visibleShops}
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  runWithProcessing={runWithProcessing}
-                  isOnline={isOnline}
-                />
-              )}
-              {currentScreen === "shop-dashboard" && (
-                <ShopDashboardScreen
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  orderAcceptedModal={orderAcceptedModal}
-                  setOrderAcceptedModal={setOrderAcceptedModal}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  showPrompt={showPrompt}
-                  triggerHaptic={triggerHaptic}
-                  runWithProcessing={runWithProcessing}
-                  isOnline={isOnline}
-                />
-              )}
-
               {currentScreen === "profile" && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -4408,7 +4383,7 @@ export default function App() {
               );
               if (
                 !activeOrder ||
-                ["order-tracking", "checkout", "shop-dashboard", "admin-orders", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
+                ["order-tracking", "checkout", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
               ) return null;
               
               const activeOrderShop = shops.find((s) => s.id === activeOrder.shop_id);
