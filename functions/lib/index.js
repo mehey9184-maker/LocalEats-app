@@ -9,7 +9,7 @@ const https_1 = require("firebase-functions/v2/https");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_1.getFirestore)();
+const db = (0, firestore_1.getFirestore)("ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe");
 /**
  * Haversine formula to calculate great-circle distance between two GPS coordinates in kilometers.
  */

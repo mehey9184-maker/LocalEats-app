@@ -7,7 +7,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore("ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe");
 
 /**
  * Haversine formula to calculate great-circle distance between two GPS coordinates in kilometers.

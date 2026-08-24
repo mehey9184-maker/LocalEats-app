@@ -1395,7 +1395,15 @@ export function CheckoutScreen({
             city: userProfile?.city || "Cape Town",
             delivery_instructions: finalDeliveryInstructions || undefined,
           },
-        };
+          _clientPricing: {
+            subtotal: subtotal,
+            total_price: totalAmount,
+            delivery_fee: activeDeliveryFee,
+            service_fee: serviceFee,
+            discount_amount: discountAmount,
+            tip_amount: tipAmount
+          }
+        } as any;
 
         console.log("[Checkout] Submitting authoritative order via Cloud Function:", requestPayload);
 

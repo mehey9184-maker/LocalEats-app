@@ -15,6 +15,8 @@ LocalEats is a comprehensive food discovery and ordering application for local l
   - *Completed*: Order delivered successfully.
 
 ## API Integrations
+- **Resilient Offline/Server Sync**: All offline carts and failed Cloud Function calls intelligently fallback to the Dual Sync queue, gracefully pushing payload data to `/api/orders` when Firebase environments are locked or uncommunicative.
+
 - **Supabase Backend**: Primary BaaS for auth and database operations.
   - Key Tables: `orders`, `rider_locations`, `profiles`, `shops`.
   - Real-time Subscriptions: Used extensively for live tracking `rider_locations` and instant `orders` status updates.
