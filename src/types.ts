@@ -71,6 +71,7 @@ export type MenuItem = {
   category?: string;
   customizations?: { name: string, price: number }[];
   is_available?: boolean;
+  dietary_tags?: string[];
 };
 
 export type CartItem = {

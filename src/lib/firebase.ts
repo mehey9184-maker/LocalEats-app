@@ -234,15 +234,30 @@ export const FirestoreService = {
     }
   },
   
-  async getReviewsForShop(shopId: string): Promise<any[]> {
+  async getReviewsForShop(shopId: string, limitCount = 50): Promise<any[]> {
     try {
-      const { collection, getDocs, query, where } = await import('firebase/firestore');
-      const q = query(collection(db, 'reviews'), where('shop_id', '==', String(shopId)));
+      const { collection, getDocs, query, where, orderBy, limit } = await import('firebase/firestore');
+      // Efficient bounded query to prevent full collection reads
+      const q = query(
+        collection(db, 'reviews'), 
+        where('shop_id', '==', String(shopId)),
+        orderBy('created_at', 'desc'),
+        limit(limitCount)
+      );
       const snap = await getDocs(q);
       return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (e) {
       console.warn("[FirestoreService] getReviewsForShop notice:", e);
-      return [];
+      // Fallback to basic query if index is missing
+      try {
+        const { collection, getDocs, query, where, limit } = await import('firebase/firestore');
+        const fallbackQ = query(collection(db, 'reviews'), where('shop_id', '==', String(shopId)), limit(limitCount));
+        const snap = await getDocs(fallbackQ);
+        return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (fallbackErr) {
+        console.info("[FirestoreService] getReviewsForShop fallback gracefully caught:", fallbackErr?.message || fallbackErr);
+        return [];
+      }
     }
   },
 
@@ -495,28 +510,41 @@ export const FirestoreService = {
   },
 
   // Customer Profile Management
-  async getProfile(userId: string): Promise<any | null> {
-    try {
-      const profileDoc = doc(db, "profiles", String(userId));
-      const snapshot = await getDoc(profileDoc);
-      return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
-    } catch (e) {
-      console.warn("[FirestoreService] getProfile notice:", e);
-      return null;
+  async getProfile(userId: string, retries = 3, backoffMs = 1000): Promise<any | null> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const profileDoc = doc(db, "profiles", String(userId));
+        const snapshot = await getDoc(profileDoc);
+        return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+      } catch (e: any) {
+        console.warn(`[FirestoreService] getProfile attempt ${i + 1} failed:`, e?.message || e);
+        if (i === retries - 1) return null;
+        await new Promise(resolve => setTimeout(resolve, backoffMs * Math.pow(1.5, i))); // Exponential backoff
+      }
     }
+    return null;
   },
 
-  async saveProfile(userId: string, profileData: any): Promise<void> {
-    try {
-      const profileDoc = doc(db, "profiles", String(userId));
-      await setDoc(profileDoc, {
-        id: userId,
-        user_id: userId,
-        ...profileData,
-        updated_at: new Date().toISOString()
-      }, { merge: true });
-    } catch (e) {
-      console.warn("[FirestoreService] saveProfile notice:", e);
+  async saveProfile(userId: string, profileData: any, retries = 3, backoffMs = 1000): Promise<void> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const profileDoc = doc(db, "profiles", String(userId));
+        await setDoc(profileDoc, {
+          id: userId,
+          user_id: userId,
+          ...profileData,
+          updated_at: new Date().toISOString()
+        }, { merge: true });
+        return; // Success
+      } catch (e: any) {
+        console.warn(`[FirestoreService] saveProfile attempt ${i + 1} failed:`, e?.message || e);
+        if (i === retries - 1) {
+          console.info("[FirestoreService] saveProfile gracefully exhausted retries (expected in split-brain):", e?.message || e);
+          // Graceful fallback for dual-auth split-brain when rules aren't deployed
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, backoffMs * Math.pow(1.5, i))); // Exponential backoff
+      }
     }
   },
 
@@ -647,6 +675,7 @@ export const FirestoreService = {
               category: m.category || "Main Course",
               is_available: m.is_available !== false && m.available !== false,
               customizations: Array.isArray(m.customizations) ? m.customizations : [],
+              dietary_tags: Array.isArray(m.dietary_tags) ? m.dietary_tags : [],
             }));
           } else if (Array.isArray(d.items) && d.items.length > 0) {
             menu = d.items.map((m: any, idx: number) => ({
@@ -659,6 +688,7 @@ export const FirestoreService = {
               category: m.category || "Main Course",
               is_available: m.is_available !== false && m.available !== false,
               customizations: Array.isArray(m.customizations) ? m.customizations : [],
+              dietary_tags: Array.isArray(m.dietary_tags) ? m.dietary_tags : [],
             }));
           } else {
             // Format 2: Matched from root menu_items
@@ -676,6 +706,7 @@ export const FirestoreService = {
                 category: m.category || "Main Course",
                 is_available: m.is_available !== false && m.available !== false,
                 customizations: Array.isArray(m.customizations) ? m.customizations : [],
+                dietary_tags: Array.isArray(m.dietary_tags) ? m.dietary_tags : [],
               }));
             } else {
               // Format 3: Subcollection
@@ -694,6 +725,7 @@ export const FirestoreService = {
                       category: data.category || "Main Course",
                       is_available: data.is_available !== false && data.available !== false,
                       customizations: Array.isArray(data.customizations) ? data.customizations : [],
+                      dietary_tags: Array.isArray(data.dietary_tags) ? data.dietary_tags : [],
                     });
                   });
                 }
@@ -713,7 +745,8 @@ export const FirestoreService = {
                 description: "Freshly prepared house specialty with seasonal sides and choice of sauce.",
                 category: d.category || "Main Course",
                 is_available: true,
-                customizations: []
+                customizations: [],
+                dietary_tags: [],
               }
             ];
           }

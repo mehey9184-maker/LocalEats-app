@@ -328,6 +328,18 @@ export const MenuItemCard = memo(
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
               {item.description || "Freshly made township favourite prepared with local ingredients"}
             </p>
+            {item.dietary_tags && item.dietary_tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {item.dietary_tags.map((tag, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold tracking-tight bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/60"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between mt-2 pt-1">
