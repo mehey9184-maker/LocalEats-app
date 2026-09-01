@@ -3,7 +3,7 @@ import { Shop } from '../types';
 import { supabase } from '../lib/supabase';
 import { FirestoreService } from '../lib/firebase';
 import { DEFAULT_FALLBACK_SHOPS } from '../App-constants';
-import { safeLocalStorageGet, safeLocalStorageSet } from '../utils';
+import { safeLocalStorageGet, safeLocalStorageSet, mergeShopsCatalogs } from '../utils';
 import { getCachedBusinessResults, cacheBusinessResults } from '../lib/offlineCache';
 import { CircuitBreaker } from '../utils/circuitBreaker';
 
@@ -111,108 +111,112 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
 
         try {
           await CircuitBreaker.execute('fetchShopsAndMenu', async () => {
-            // Priority 1: Query shared Firestore database (merchant app instance)
-            let firestoreShops: Shop[] = [];
-            try {
-              firestoreShops = await FirestoreService.getShops();
-            } catch (e) {
-              console.debug('[FirestoreService] fetch error:', e);
-            }
+            // Concurrently fetch shops from both Firestore AND Supabase
+            const [firestoreRes, supabaseRes] = await Promise.allSettled([
+              FirestoreService.getShops().catch((e) => {
+                console.debug('[FirestoreService] fetch error:', e);
+                return [] as Shop[];
+              }),
+              (async () => {
+                let shopsData: any[] | null = null;
+                try {
+                  const res = await fetch("/api/v1/shops");
+                  if (!res.ok) throw new Error(`API returned ${res.status}`);
+                  const json = await res.json();
+                  if (json.success && json.shops) {
+                    shopsData = json.shops;
+                  } else {
+                    throw new Error(json.error || "Failed to fetch shops");
+                  }
+                } catch (shopsError) {
+                  throw shopsError;
+                }
 
-            if (firestoreShops && firestoreShops.length > 0) {
-              console.log('[Firestore] Loaded', firestoreShops.length, 'live shops from Firestore');
-              setShops(firestoreShops);
-              safeLocalStorageSet('cached_shops', JSON.stringify(firestoreShops));
-              cacheBusinessResults('all_shops', firestoreShops);
-              setIsOnline(true);
-              lastFetchedTimeRef.current = Date.now();
-              return firestoreShops;
-            }
+                let menuData: any[] = [];
 
-            // Priority 2: Query Supabase
-            const { data: shopsData, error: shopsError } = await supabase
-              .from('shops')
-              .select('id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude, longitude, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id, updated_at');
+                const formattedShops: Shop[] = (shopsData || [])
+                  .map((s) => {
+                    const shopHash = Math.abs(
+                      String(s.id)
+                        .split('')
+                        .reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)
+                    );
+                    return {
+                      id: String(s.id),
+                      name: s.name,
+                      logo: s.logo_url || DEFAULT_FALLBACK_SHOPS[0].logo,
+                      rating: Number(s.rating) || 4.5,
+                      cash_trust_enabled:
+                        s.cash_trust_enabled === true || s.cash_trust_enabled === 'true',
+                      allow_external_riders:
+                        s.allow_external_riders === true || s.allow_external_riders === 'true',
+                      auto_look_for_rider:
+                        s.auto_look_for_rider === true || s.auto_look_for_rider === 'true',
+                      reviewCount: 12 + (shopHash % 88),
+                      prepTime: '15-20 min',
+                      isOpen: true,
+                      description: s.description || 'Local Flavours',
+                      address: s.location || 'Local Eats',
+                      category: s.category || 'Kota',
+                      owner_id: s.owner_id,
+                      owner_email: (s as any).owner_email || (s as any).created_by,
+                      is_test: (s as any).is_test === true || (s as any).is_test_store === true,
+                      is_test_store: (s as any).is_test_store === true,
+                      is_private: (s as any).is_private === true,
+                      opening_time: s.opening_time,
+                      closing_time: s.closing_time,
+                      phone: s.phone || '+27 12 345 6789',
+                      latitude: s.latitude || -25.9964,
+                      longitude: s.longitude || 28.2268,
+                      updated_at: s.updated_at,
+                      is_active: s.is_active !== false,
+                      images: (s as any).images || [DEFAULT_FALLBACK_SHOPS[0].logo],
+                      menu: (menuData || [])
+                        .filter((m) => String(m.shop_id) === String(s.id))
+                        .map((m) => ({
+                          id: String(m.id),
+                          name: m.name,
+                          price: Number(m.price),
+                          displayPrice: `R${Number(m.price).toFixed(2)}`,
+                          image: m.image_url || DEFAULT_FALLBACK_SHOPS[0].menu[0]?.image,
+                          description: m.description || '',
+                          category: m.category || 'Main Course',
+                          is_available: m.is_available !== false,
+                          customizations: m.customizations || [],
+                        })),
+                    };
+                  });
+                return formattedShops;
+              })()
+            ]);
 
-            if (shopsError) throw shopsError;
+            const firestoreShops =
+              firestoreRes.status === 'fulfilled' && Array.isArray(firestoreRes.value)
+                ? firestoreRes.value
+                : [];
+            const supabaseShops =
+              supabaseRes.status === 'fulfilled' && Array.isArray(supabaseRes.value)
+                ? supabaseRes.value
+                : [];
 
-            const { data: menuData, error: menuError } = await supabase
-              .from('menu_items')
-              .select('id, shop_id, name, price, description, image_url, category, is_available, customizations');
-            if (menuError) throw menuError;
+            const unifiedShops = mergeShopsCatalogs(supabaseShops, firestoreShops);
 
-            if (shopsData && shopsData.length === 0) {
+            const apiFailed = supabaseRes.status === 'rejected' || (supabaseRes.status === 'fulfilled' && supabaseRes.value === null);
+            const firestoreFailed = firestoreRes.status === 'rejected';
+
+            if (apiFailed && firestoreFailed && !navigator.onLine) {
               setShops(DEFAULT_FALLBACK_SHOPS);
               safeLocalStorageSet('cached_shops', JSON.stringify(DEFAULT_FALLBACK_SHOPS));
-              setLoadingShops(false);
-              setIsSyncing(false);
-              lastFetchedTimeRef.current = Date.now();
-              return;
+              cacheBusinessResults('all_shops', DEFAULT_FALLBACK_SHOPS);
+            } else {
+              setShops(unifiedShops);
+              safeLocalStorageSet('cached_shops', JSON.stringify(unifiedShops));
+              cacheBusinessResults('all_shops', unifiedShops);
             }
 
-            const formattedShops: Shop[] = (shopsData || [])
-              .map((s) => {
-                const shopHash = Math.abs(
-                  String(s.id)
-                    .split('')
-                    .reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0)
-                );
-                return {
-                  id: String(s.id),
-                  name: s.name,
-                  logo: s.logo_url || DEFAULT_FALLBACK_SHOPS[0].logo,
-                  rating: Number(s.rating) || 4.5,
-                  cash_trust_enabled:
-                    s.cash_trust_enabled === true || s.cash_trust_enabled === 'true',
-                  allow_external_riders:
-                    s.allow_external_riders === true || s.allow_external_riders === 'true',
-                  auto_look_for_rider:
-                    s.auto_look_for_rider === true || s.auto_look_for_rider === 'true',
-                  reviewCount: 12 + (shopHash % 88),
-                  prepTime: '15-20 min',
-                  isOpen: true,
-                  description: s.description || 'Local Flavours',
-                  address: s.location || 'Local Eats',
-                  category: s.category || 'Kota',
-                  owner_id: s.owner_id,
-                  owner_email: (s as any).owner_email || (s as any).created_by,
-                  is_test: (s as any).is_test === true || (s as any).is_test_store === true,
-                  is_test_store: (s as any).is_test_store === true,
-                  is_private: (s as any).is_private === true,
-                  opening_time: s.opening_time,
-                  closing_time: s.closing_time,
-                  phone: s.phone || '+27 12 345 6789',
-                  latitude: s.latitude || -25.9964,
-                  longitude: s.longitude || 28.2268,
-                  updated_at: s.updated_at,
-                  is_active: s.is_active !== false,
-                  images: (s as any).images || [DEFAULT_FALLBACK_SHOPS[0].logo],
-                  menu: (menuData || [])
-                    .filter((m) => String(m.shop_id) === String(s.id))
-                    .map((m) => ({
-                      id: String(m.id),
-                      name: m.name,
-                      price: Number(m.price),
-                      displayPrice: `R${Number(m.price).toFixed(2)}`,
-                      image: m.image_url || DEFAULT_FALLBACK_SHOPS[0].menu[0]?.image,
-                      description: m.description || '',
-                      category: m.category || 'Main Course',
-                      is_available: m.is_available !== false,
-                      customizations: m.customizations || [],
-                    })),
-                };
-              })
-              .sort((a, b) => (b.rating || 0) - (a.rating || 0));
-
-            // SWR Phase 3: Refresh UI with the newly fetched data
-            console.log('[SWR Catalog] REVALIDATE: Seamlessly updating UI with fresh network data');
-            setShops(formattedShops);
-            safeLocalStorageSet('cached_shops', JSON.stringify(formattedShops));
-            cacheBusinessResults('all_shops', formattedShops);
-            
             setIsOnline(true);
             lastFetchedTimeRef.current = Date.now();
-            return formattedShops;
+            return unifiedShops;
           });
         } catch (err: any) {
           const errStr = (err?.message || String(err)).toLowerCase();
@@ -261,9 +265,12 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
       unsub = FirestoreService.listenToShops((liveShops) => {
         if (liveShops && liveShops.length > 0) {
           console.log('[Firestore] Live shop updates received:', liveShops.length);
-          setShops(liveShops);
-          safeLocalStorageSet('cached_shops', JSON.stringify(liveShops));
-          cacheBusinessResults('all_shops', liveShops);
+          setShops((prev) => {
+            const merged = mergeShopsCatalogs(prev, liveShops);
+            safeLocalStorageSet('cached_shops', JSON.stringify(merged));
+            cacheBusinessResults('all_shops', merged);
+            return merged;
+          });
           setLoadingShops(false);
         }
       });

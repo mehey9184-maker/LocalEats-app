@@ -516,7 +516,11 @@ export function OrderTrackingScreen({
             updated_at: new Date().toISOString(),
           };
 
-          FirestoreService.saveOrder({ id: item.orderId, ...updatePayload }).catch(() => {});
+          fetch(`/api/orders/${item.orderId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updatePayload),
+          }).catch(() => {});
 
           let { error } = await supabase
             .from("orders")
@@ -689,18 +693,31 @@ export function OrderTrackingScreen({
       (o) => o.status !== "completed" && o.status !== "cancelled"
     );
 
-    activeOrders.forEach((order) => {
-      // 1. Scoped Firestore order listener
-      const unsubOrder = FirestoreService.listenToOrder(order.id, (updated) => {
-        if (updated) {
-          setLocalOrders((prev) =>
-            prev.map((o) => (o.id === order.id ? { ...o, ...updated } : o))
-          );
-        }
+    // Set up Supabase realtime listener for orders
+    const orderIds = activeOrders.map(o => String(o.id));
+    if (orderIds.length > 0) {
+      const channel = supabase
+        .channel('realtime_active_orders')
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'orders' },
+          (payload) => {
+            if (payload.new && orderIds.includes(String(payload.new.id))) {
+              setLocalOrders((prev) =>
+                prev.map((o) => (String(o.id) === String(payload.new.id) ? { ...o, ...payload.new } : o))
+              );
+            }
+          }
+        )
+        .subscribe();
+        
+      unsubs.push(() => {
+        supabase.removeChannel(channel);
       });
-      unsubs.push(unsubOrder);
+    }
 
-      // 2. Scoped Firestore rider GPS location listener when live delivery is active
+    activeOrders.forEach((order) => {
+      // 1. Scoped Firestore rider GPS location listener when live delivery is active
       if (order.rider_id && isLiveDeliveryActive(order)) {
         const unsubRider = FirestoreService.listenToRiderLocation(order.rider_id, (loc) => {
           if (loc && (loc.latitude || loc.lat)) {
@@ -963,7 +980,11 @@ export function OrderTrackingScreen({
     
     try {
       // Sync to Firestore
-      FirestoreService.saveOrder({ id: orderId, status: "completed" }).catch(() => {});
+      fetch(`/api/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      }).catch(() => {});
 
       await supabase
         .from("orders")
@@ -1057,7 +1078,11 @@ export function OrderTrackingScreen({
 
       // Primary sync: Firestore Database
       try {
-        await FirestoreService.saveOrder({ id: orderId, ...updatePayload });
+        await fetch(`/api/orders/${orderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatePayload),
+        });
         syncedSuccessfully = true;
       } catch (firestoreErr) {
         console.warn("Firestore cancellation update:", firestoreErr);
@@ -1192,7 +1217,7 @@ export function OrderTrackingScreen({
   }, [combinedOrders]);
 
   return (
-    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl">
+    <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen flex flex-col max-w-md mx-auto relative shadow-xl pb-24">
       <header className="sticky top-0 z-50 glass-effect border-b border-primary/10 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md">
         <div className="px-4 py-4 flex items-center justify-between gap-2">
           <button

@@ -31,6 +31,9 @@ export type Order = {
   quantity: number;
   price: number;
   total_price?: number;
+  total_amount?: number;
+  total?: number;
+  items?: any[];
   notes: string;
   delivery_instructions?: string;
   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
@@ -135,17 +138,20 @@ export type Shop = {
 export type UserProfile = {
   id?: string;
   fullName: string;
+  name?: string;
   email: string;
   phone: string;
   city: string;
   address: string;
   country: string;
-  role: "user" | "admin" | "shop_owner" | "rider";
+  role: "user" | "admin" | "shop_owner" | "rider" | "merchant";
   photoURL?: string;
   latitude?: number;
   longitude?: number;
   language?: string;
   loyaltyPoints?: number;
+  is_admin?: boolean;
+  is_vendor?: boolean;
 };
 
 export type NotificationState = {

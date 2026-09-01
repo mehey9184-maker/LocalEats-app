@@ -133,6 +133,7 @@ export interface CreateOrderItemInput {
 }
 
 export interface CreateOrderRequestData {
+  user_id?: string;
   _clientPricing?: any;
   idempotency_key: string;
   shop_id: string | number;
@@ -315,41 +316,36 @@ export const FirestoreService = {
   // Orders
   async createAuthoritativeOrder(requestData: CreateOrderRequestData): Promise<CreateOrderResponse> {
     try {
-      const createOrderFn = httpsCallable<CreateOrderRequestData, CreateOrderResponse>(
-        getFirebaseFunctions(),
-        "createOrder"
-      );
-      const result = await createOrderFn(requestData);
-      return result.data;
-    } catch (e: any) {
-      console.warn("[FirestoreService] Cloud function failed, falling back to local creation:", e);
-      // Fallback for AI Studio when cloud functions are not deployed
-      const pricing = requestData._clientPricing || {
-        subtotal: 0,
-        total_price: 0,
-        delivery_fee: 0,
-        service_fee: 0,
-        discount_amount: 0,
-        tip_amount: requestData.tip_amount || 0
-      };
-      
-      const response: CreateOrderResponse = {
+      const { getApiAuthHeaders } = await import('./apiAuth');
+      const headers = await getApiAuthHeaders();
+      const response = await fetch('/api/orders', {
+
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers
+        },
+        body: JSON.stringify(requestData)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to create order");
+      }
+      return {
         success: true,
-        order_id: requestData.idempotency_key,
-        subtotal: pricing.subtotal,
-        delivery_fee: pricing.delivery_fee,
-        service_fee: pricing.service_fee,
-        discount_amount: pricing.discount_amount,
-        tip_amount: pricing.tip_amount,
-        total_price: pricing.total_price, 
-        status: "pending",
-        delivery_status: requestData.delivery_type === "delivery" && requestData.payment_method !== "cash" && requestData.payment_method !== "cash_on_arrival" ? "finding_rider" : "none"
+        order_id: data.order?.id || requestData.idempotency_key,
+        subtotal: data.order?.subtotal || 0,
+        delivery_fee: data.order?.delivery_fee || 0,
+        service_fee: data.order?.service_fee || 0,
+        discount_amount: data.order?.discount_amount || 0,
+        tip_amount: data.order?.tip_amount || 0,
+        total_price: data.order?.total_price || 0,
+        status: data.order?.status || 'pending',
+        delivery_status: data.order?.delivery_status || 'none',
       };
-      
-      // We don't save to firestore directly here since rules might block it.
-      // The UI's local sync mechanism will automatically pick up the returned data
-      // and push it to the resilient Express server `/api/orders` fallback!
-      return response;
+    } catch (e: any) {
+      console.error("[FirestoreService] createAuthoritativeOrder failed:", e);
+      throw e;
     }
   },
 
@@ -525,25 +521,40 @@ export const FirestoreService = {
     return null;
   },
 
-  async saveProfile(userId: string, profileData: any, retries = 3, backoffMs = 1000): Promise<void> {
+  async saveProfile(userId: string, profileData: any, retries = 1, backoffMs = 500): Promise<void> {
+    if (!userId) return;
     for (let i = 0; i < retries; i++) {
       try {
         const profileDoc = doc(db, "profiles", String(userId));
-        await setDoc(profileDoc, {
-          id: userId,
-          user_id: userId,
-          ...profileData,
-          updated_at: new Date().toISOString()
-        }, { merge: true });
+        
+        // Realistic 8s timeout for long-polling connection handshake without hanging
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout saving to Firestore mirror")), 8000)
+        );
+        
+        await Promise.race([
+          setDoc(profileDoc, {
+            id: userId,
+            user_id: userId,
+            ...profileData,
+            updated_at: new Date().toISOString()
+          }, { merge: true }),
+          timeoutPromise
+        ]);
+        
         return; // Success
       } catch (e: any) {
-        console.warn(`[FirestoreService] saveProfile attempt ${i + 1} failed:`, e?.message || e);
-        if (i === retries - 1) {
-          console.info("[FirestoreService] saveProfile gracefully exhausted retries (expected in split-brain):", e?.message || e);
-          // Graceful fallback for dual-auth split-brain when rules aren't deployed
+        // Fast exit for split-brain permission or timeout - Supabase/API is authoritative
+        if (e?.message?.includes("Missing or insufficient permissions") || e?.message?.includes("Timeout")) {
+          console.debug("[FirestoreService] Profile mirror notice (Supabase is authoritative):", e?.message || e);
           return;
         }
-        await new Promise(resolve => setTimeout(resolve, backoffMs * Math.pow(1.5, i))); // Exponential backoff
+        
+        if (i === retries - 1) {
+          console.debug("[FirestoreService] saveProfile mirror gracefully handled:", e?.message || e);
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
       }
     }
   },

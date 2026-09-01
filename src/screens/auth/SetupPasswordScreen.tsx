@@ -47,7 +47,8 @@ export function SetupPasswordScreen({
       return;
     }
 
-    await runWithProcessing(async () => {
+    setLoading(true);
+    try {
       const { data, error } = await supabase.auth.signUp({
         email: signupData.email,
         password,
@@ -59,7 +60,16 @@ export function SetupPasswordScreen({
           },
         },
       });
-      if (error) throw error;
+      if (error) {
+        if (error.message?.includes("email-already-in-use") || error.message?.includes("already registered")) {
+          setNotification({
+            message: "Account already exists! Please click Back and choose Sign In instead.",
+            type: "error",
+          });
+          return;
+        }
+        throw error;
+      }
 
       // Manually sync to profiles table in case trigger isn't set up
       if (data.user) {
@@ -80,7 +90,16 @@ export function SetupPasswordScreen({
           console.error("Profile creation error on signup:", profileError);
         }
       }
-    }, onNext);
+      
+      onNext();
+    } catch (e: any) {
+      setNotification({
+        message: e.message || "An error occurred during signup",
+        type: "error",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

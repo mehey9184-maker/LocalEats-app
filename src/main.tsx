@@ -1,6 +1,5 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
-import { Analytics } from '@vercel/analytics/react';
 import * as Sentry from '@sentry/react';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
@@ -193,7 +192,7 @@ if (typeof window !== "undefined") {
   }, true);
 }
 
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
   if (
     window.location.hostname.includes('run.app') ||
     window.location.hostname.includes('localhost') ||
@@ -218,7 +217,6 @@ createRoot(document.getElementById('root')!).render(
       <LanguageProvider>
         <App />
       </LanguageProvider>
-      <Analytics />
     </ErrorBoundary>
   </StrictMode>,
 );

@@ -1367,6 +1367,7 @@ export function CheckoutScreen({
         const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
 
         const requestPayload: CreateOrderRequestData = {
+          user_id: activeUserId,
           idempotency_key: orderIdempotencyKey,
           shop_id: String(primaryShop?.id || cart[0]?.shopId || ""),
           items: cart.map((item) => ({
@@ -1405,7 +1406,8 @@ export function CheckoutScreen({
           }
         } as any;
 
-        console.log("[Checkout] Submitting authoritative order via Cloud Function:", requestPayload);
+        console.log("[Checkout] Processing checkout for Shop ID:", requestPayload.shop_id);
+        console.log("[Checkout] Submitting authoritative order via API:", requestPayload);
 
         const orderResult = await FirestoreService.createAuthoritativeOrder(requestPayload);
 
