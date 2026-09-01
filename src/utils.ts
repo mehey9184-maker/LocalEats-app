@@ -4,6 +4,7 @@
  */
 
 import { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE } from './App-constants';
+import { Shop } from './types';
 export { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE };
 
 export const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
@@ -432,4 +433,125 @@ export const formatRand = (
   
   return `R ${val.toFixed(precision)}`;
 };
+
+/**
+ * Deterministically merges shop catalogs from Supabase, Firestore, and memory.
+ * Eliminates provider oscillation, flicker, and disappearing stores by keeping
+ * all valid shops from both backends in a unified catalog.
+ */
+export const mergeShopsCatalogs = (
+  primaryShops: Shop[] = [],
+  secondaryShops: Shop[] = []
+): Shop[] => {
+  const shopMap = new Map<string, Shop>();
+
+  const processShop = (shop: Shop) => {
+    if (!shop || !shop.id) return;
+    const sId = String(shop.id);
+    const normalizedName = (shop.name || "").trim().toLowerCase();
+
+    // Match by exact ID first, or by normalized non-empty name
+    let matchedKey: string | null = null;
+    if (shopMap.has(sId)) {
+      matchedKey = sId;
+    } else if (normalizedName.length > 0) {
+      for (const [k, s] of shopMap.entries()) {
+        if ((s.name || "").trim().toLowerCase() === normalizedName) {
+          matchedKey = k;
+          break;
+        }
+      }
+    }
+
+    if (matchedKey) {
+      const existing = shopMap.get(matchedKey)!;
+
+      // Prefer non-empty and richer menus
+      const existingMenuLen = existing.menu?.length || 0;
+      const incomingMenuLen = shop.menu?.length || 0;
+      const mergedMenu =
+        incomingMenuLen > existingMenuLen
+          ? shop.menu
+          : existingMenuLen > 0
+          ? existing.menu
+          : shop.menu || [];
+
+      // Prefer non-default coordinates
+      const isCustomCoord = (s: Shop) =>
+        s.latitude !== undefined &&
+        s.latitude !== null &&
+        s.latitude !== 0 &&
+        s.latitude !== -25.9964 &&
+        s.longitude !== undefined &&
+        s.longitude !== null &&
+        s.longitude !== 0 &&
+        s.longitude !== 28.2268;
+
+      const mergedLat = isCustomCoord(shop) ? shop.latitude : existing.latitude;
+      const mergedLng = isCustomCoord(shop) ? shop.longitude : existing.longitude;
+
+      const mergedShop: Shop = {
+        ...existing,
+        ...shop,
+        id: existing.id || shop.id,
+        name: shop.name || existing.name,
+        description: shop.description || existing.description,
+        address: shop.address || existing.address,
+        category: shop.category || existing.category,
+        rating: Math.max(Number(shop.rating || 0), Number(existing.rating || 0)) || 4.5,
+        reviewCount: Math.max(Number(shop.reviewCount || 0), Number(existing.reviewCount || 0)),
+        logo:
+          shop.logo && !shop.logo.includes("placeholder")
+            ? shop.logo
+            : existing.logo,
+        images:
+          Array.isArray(shop.images) && shop.images.length > (existing.images?.length || 0)
+            ? shop.images
+            : existing.images || [shop.logo],
+        latitude: mergedLat,
+        longitude: mergedLng,
+        isOpen: shop.isOpen !== undefined ? shop.isOpen : existing.isOpen,
+        is_active: shop.is_active !== undefined ? shop.is_active : existing.is_active,
+        menu: mergedMenu,
+        updated_at: shop.updated_at || existing.updated_at,
+        owner_id: shop.owner_id || existing.owner_id,
+        owner_email: (shop as any).owner_email || (existing as any).owner_email,
+        phone: shop.phone || existing.phone,
+        opening_time: shop.opening_time || existing.opening_time,
+        closing_time: shop.closing_time || existing.closing_time,
+        cash_trust_enabled:
+          shop.cash_trust_enabled !== undefined
+            ? shop.cash_trust_enabled
+            : existing.cash_trust_enabled,
+        allow_external_riders:
+          shop.allow_external_riders !== undefined
+            ? shop.allow_external_riders
+            : existing.allow_external_riders,
+        auto_look_for_rider:
+          shop.auto_look_for_rider !== undefined
+            ? shop.auto_look_for_rider
+            : existing.auto_look_for_rider,
+      };
+
+      shopMap.set(matchedKey, mergedShop);
+      if (matchedKey !== sId) {
+        shopMap.set(sId, mergedShop);
+      }
+    } else {
+      shopMap.set(sId, { ...shop });
+    }
+  };
+
+  (primaryShops || []).forEach(processShop);
+  (secondaryShops || []).forEach(processShop);
+
+  const uniqueShops = Array.from(new Set(shopMap.values()));
+
+  return uniqueShops.sort((a, b) => {
+    if (a.isOpen && !b.isOpen) return -1;
+    if (!a.isOpen && b.isOpen) return 1;
+    return (b.rating || 0) - (a.rating || 0);
+  });
+};
+
 

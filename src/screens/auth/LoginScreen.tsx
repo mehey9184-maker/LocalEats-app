@@ -25,6 +25,7 @@ import { LocalEatsLogo } from "../../components/LocalEatsLogo";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { UserProfile, NotificationState } from "../../types";
 import { FirestoreService } from "../../lib/firebase";
+import { upsertProfileWithRPC } from "../../lib/profileService";
 
 export interface LoginScreenProps {
   onLogin: () => void;
@@ -357,25 +358,18 @@ export function LoginScreen({
           setUserProfile(freshProfile);
         }
 
-        try {
-          await FirestoreService.saveProfile(authData.user.id, 
-            {
-              user_id: authData.user.id,
-              id: authData.user.id,
-              email: authData.user.email || identifier.trim(),
-              full_name: freshFullName,
-              fullName: freshFullName,
-              phone: userMeta.phone || "",
-              role: userMeta.role || "customer",
-              city: "Johannesburg",
-              country: "South Africa",
-              updated_at: new Date().toISOString(),
-            },
-            
-          );
-        } catch (profileErr) {
-          console.warn("[Profile Auto-Provision Notice]", profileErr);
-        }
+        // Authoritative sync to Supabase with background Firestore mirror
+        upsertProfileWithRPC({
+          user_id: authData.user.id,
+          email: authData.user.email || identifier.trim(),
+          fullName: freshFullName,
+          phone: userMeta.phone || "",
+          role: userMeta.role || "customer",
+          city: "Johannesburg",
+          country: "South Africa",
+        }).catch((profileErr) => {
+          console.debug("[Profile Auto-Provision Notice]", profileErr);
+        });
 
         if (fetchUserProfile) {
           fetchUserProfile(authData.user.id);

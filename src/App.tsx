@@ -277,6 +277,7 @@ import {
   cleanCacheStorage,
   DEFAULT_FALLBACK_SHOPS,
   MY_KOTA_TEST_STORE,
+  mergeShopsCatalogs,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -285,7 +286,12 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 // Static fallback cache loaded dynamically from ./utils
 
-import { AddressSearch, LocationPickerMap } from "./components/MapComponents";
+import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
+import { NotificationsScreen } from "./screens/NotificationsScreen";
+import { OrderRating } from "./screens/OrderRating";
+import { SettingsScreen } from "./screens/SettingsScreen";
+import { ContactScreen } from "./screens/ContactScreen";
+import { OrderHistoryScreen } from "./screens/OrderHistoryScreen";
 import {
   detectTownship,
   TOWNSHIPS,
@@ -299,8 +305,14 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import { InteractiveTour } from "./components/InteractiveTour";
 import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
 import { CookieConsentBanner } from "./components/CookieConsentBanner";
+import { BottomNavigation } from "./components/BottomNavigation";
+import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
+import { ShopFeedSkeleton } from "./components/ShopFeedSkeleton";
 import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
+import { CartDrawer } from "./components/CartDrawer";
+import { FloatingCartButton } from "./components/FloatingCartButton";
+import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
@@ -503,32 +515,8 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
-  const [isOrderBannerCollapsed, setIsOrderBannerCollapsed] = useState(false);
-  const [isScrollCollapsed, setIsScrollCollapsed] = useState(false);
-
-  useEffect(() => {
-    let lastScrollY = window.scrollY;
-    let ticking = false;
-
-    const handleScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentScrollY = window.scrollY;
-          if (currentScrollY > lastScrollY + 15 && currentScrollY > 60) {
-            setIsScrollCollapsed(true);
-          } else if (currentScrollY < lastScrollY - 10 || currentScrollY < 30) {
-            setIsScrollCollapsed(false);
-          }
-          lastScrollY = currentScrollY;
-          ticking = false;
-        });
-        ticking = true;
-      }
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
+  const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     return safeLocalStorageGet("userProfile", {
@@ -722,10 +710,14 @@ export default function App() {
       (currentUserId && String(currentUserId).toLowerCase().includes("teejey"));
 
     // Base collection of shops
-    let activeBaseShops = shops && shops.length > 0 ? [...shops] : [...DEFAULT_FALLBACK_SHOPS];
+    // We only fallback to DEFAULT_FALLBACK_SHOPS if shops is strictly null/undefined, not if it's []
+    let activeBaseShops = shops ? [...shops] : [];
 
     // If logged in as the test account (teejeyunam@gmail.com), ensure their My-Kota store is available for testing
-    if (isTeejeyAccount) {
+    // ONLY if the explicit test flag is set.
+    const isTestStoreEnabled = import.meta.env.VITE_ENABLE_TEST_STORE === "true";
+    
+    if (isTeejeyAccount && isTestStoreEnabled) {
       const alreadyHasMyKotaStore = activeBaseShops.some(
         (s) =>
           s.id === MY_KOTA_TEST_STORE.id ||
@@ -1018,6 +1010,11 @@ export default function App() {
     ordersRef.current = orders;
   }, [orders]);
 
+  const shopsRef = useRef<Shop[]>(shops);
+  useEffect(() => {
+    shopsRef.current = shops;
+  }, [shops]);
+
   // Audio state for notifications
   const notificationAudio = useRef<HTMLAudioElement | null>(null);
   const [audioInitialized, setAudioInitialized] = useState(false);
@@ -1221,7 +1218,7 @@ export default function App() {
       !force &&
       lastFetchedShopsTimeRef.current !== null &&
       now - lastFetchedShopsTimeRef.current < stalenessThresholdMs &&
-      shops.length > 0
+      shopsRef.current.length > 0
     ) {
       console.log(
         `[fetchShopsData] Using memoized shop data (${Math.round(
@@ -1285,277 +1282,165 @@ export default function App() {
 
     try {
       await CircuitBreaker.execute("fetchShopsAndMenu", async () => {
-      // 1. Fetch live shops from shared Firestore database (merchant app instance)
-      let firestoreShops: Shop[] = [];
-      try {
-        firestoreShops = await FirestoreService.getShops();
-      } catch (fErr) {
-        console.debug("[App:Firestore] Shop fetch notice:", fErr);
-      }
-
-      if (firestoreShops && firestoreShops.length > 0) {
-        console.log(`[App:Firestore] Successfully fetched ${firestoreShops.length} live shops from Firestore.`);
-        setShops(firestoreShops);
-        safeLocalStorageSet("cached_shops", JSON.stringify(firestoreShops));
-        await cacheBusinessResults("all_shops", firestoreShops).catch(() => {});
-        setLoadingShops(false);
-        setIsSyncing(false);
-        lastFetchedShopsTimeRef.current = Date.now();
-        return;
-      }
-
-      // 2. Fetch all shops from Supabase
-      const { data: shopsData, error: shopsError } = await supabase
-        .from("shops")
-        .select("id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude:lat, longitude:lng, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id, updated_at")
-        .limit(50);
-
-      if (shopsError) {
-        const isNetwork =
-          (shopsError.message &&
-            (shopsError.message.toLowerCase().includes("failed to fetch") ||
-             shopsError.message.toLowerCase().includes("schema cache") ||
-             shopsError.message.toLowerCase().includes("circuit breaker") ||
-             shopsError.message.toLowerCase().includes("retrying") ||
-             shopsError.message.toLowerCase().includes("pgrst"))) ||
-          (shopsError.details &&
-            shopsError.details.toLowerCase().includes("failed to fetch")) ||
-          shopsError.code === "PGRST301";
-        if (isNetwork) {
-          console.info(
-            "Database warm-up or transient notice fetching shops, using offline fallback:",
-            shopsError.message,
-          );
-        } else if (retries === 0) {
-          console.info("Shops fetch note:", shopsError.message || shopsError);
-        } else {
-          console.info("Shops fetch note (retrying):", shopsError.message);
-        }
-        const errObj = new Error(
-          shopsError.message || "Unknown Supabase error",
-        );
-        (errObj as any).code = shopsError.code;
-        (errObj as any).details = shopsError.details;
-        throw errObj;
-      }
-
-      console.log(`Total shops found: ${shopsData?.length || 0}`);
-
-      const { data: menuData, error: menuError } = await supabase
-        .from("menu_items")
-        .select("id, shop_id, name, price, description, image_url, category, is_available, customizations")
-        .limit(100);
-
-      if (menuError) {
-        const isNetwork =
-          (menuError.message &&
-            (menuError.message.toLowerCase().includes("failed to fetch") ||
-             menuError.message.toLowerCase().includes("schema cache") ||
-             menuError.message.toLowerCase().includes("circuit breaker") ||
-             menuError.message.toLowerCase().includes("retrying") ||
-             menuError.message.toLowerCase().includes("pgrst"))) ||
-          (menuError.details &&
-            menuError.details.toLowerCase().includes("failed to fetch")) ||
-          menuError.code === "PGRST301";
-
-        if (isNetwork) {
-          console.info(
-            "Database warm-up or transient notice fetching menu items, using offline fallback:",
-            menuError.message,
-          );
-        } else if (retries === 0) {
-          console.info("Menu items fetch note:", menuError.message || menuError);
-        } else {
-          console.info("Menu items fetch note (retrying):", menuError.message);
-        }
-
-        if (isNetwork) {
-          throw new Error("FAILED_TO_FETCH_MENU");
-        }
-        throw menuError;
-      }
-
-      // Sandboxed Zero-Downtime Auto-Seeding: If the database is connected but contains 0 shops,
-      // automatically seed with high quality default fallback shops and menu items!
-      if (!shopsData || shopsData.length === 0) {
-        if (retries > 0) {
-          console.log(
-            "Database 'shops' table exists but is empty. Auto-seeding default fallback shops and menu items...",
-          );
-
-          for (const fallbackShop of DEFAULT_FALLBACK_SHOPS) {
+        // Concurrently fetch shops from both Firestore AND Supabase
+        const [firestoreRes, supabaseRes] = await Promise.allSettled([
+          FirestoreService.getShops().catch((fErr) => {
+            console.debug("[App:Firestore] Shop fetch notice:", fErr);
+            return [] as Shop[];
+          }),
+          (async () => {
+            let shopsData: any[] | null = null;
+            let shopsError: any = null;
             try {
-              const { data: insertedShops, error: insertShopErr } =
-                await supabase
-                  .from("shops")
-                  .insert({
-                    name: fallbackShop.name,
-                    description: fallbackShop.description,
-                    location: fallbackShop.address,
-                    category: fallbackShop.category,
-                    rating: fallbackShop.rating,
-                    logo_url: fallbackShop.logo,
-                    opening_time: fallbackShop.opening_time,
-                    closing_time: fallbackShop.closing_time,
-                    phone: fallbackShop.phone,
-                    latitude: fallbackShop.latitude,
-                    longitude: fallbackShop.longitude,
-                    cash_trust_enabled: fallbackShop.cash_trust_enabled,
-                    owner_id: "system",
-                  })
-                  .select("id");
-
-              if (insertShopErr) {
-                console.warn(
-                  `Auto-seed: Could not insert shop ${fallbackShop.name}:`,
-                  insertShopErr,
-                );
-                continue;
+              const res = await fetch("/api/v1/shops");
+              if (!res.ok) {
+                throw new Error(`API returned ${res.status}`);
               }
-
-              const newShopId = insertedShops?.[0]?.id;
-              if (!newShopId) continue;
-
-              // Seed its menu items
-              for (const menuItem of fallbackShop.menu) {
-                const { error: insertMenuErr } = await supabase
-                  .from("menu_items")
-                  .insert({
-                    shop_id: newShopId,
-                    name: menuItem.name,
-                    price: menuItem.price,
-                    description: menuItem.description,
-                    image_url: menuItem.image,
-                    category: menuItem.category,
-                    is_available: menuItem.is_available !== false,
-                  });
-
-                if (insertMenuErr) {
-                  console.warn(
-                    `Auto-seed: Could not insert menu item ${menuItem.name} for shop ${fallbackShop.name}:`,
-                    insertMenuErr,
-                  );
-                }
+              const json = await res.json();
+              if (json.success && json.shops) {
+                shopsData = json.shops;
+              } else {
+                throw new Error(json.error || "Failed to fetch shops");
               }
-            } catch (seedErr) {
-              console.error(
-                `Failed auto-seeding shop ${fallbackShop.name}:`,
-                seedErr,
-              );
+            } catch (err: any) {
+              shopsError = err;
             }
-          }
 
-          // Re-fetch after a short pause to read from the newly-seeded tables
-          console.log(
-            "Auto-seeding completed. Re-fetching fresh seeded data...",
-          );
-          setTimeout(() => fetchShopsData(0), 100);
-          return;
-        } else {
-          console.warn(
-            "Auto-seeding failed or RLS is active. Rendering fallback shops layout locally.",
-          );
+            if (shopsError) {
+              const isNetwork =
+                (shopsError.message &&
+                  (shopsError.message.toLowerCase().includes("failed to fetch") ||
+                   shopsError.message.toLowerCase().includes("schema cache") ||
+                   shopsError.message.toLowerCase().includes("circuit breaker") ||
+                   shopsError.message.toLowerCase().includes("retrying") ||
+                   shopsError.message.toLowerCase().includes("pgrst"))) ||
+                (shopsError.details &&
+                  shopsError.details.toLowerCase().includes("failed to fetch")) ||
+                shopsError.code === "PGRST301";
+              if (isNetwork) {
+                console.info("Database warm-up or transient notice fetching API shops:", shopsError.message);
+              } else {
+                console.info("API shops fetch note:", shopsError.message || shopsError);
+              }
+              return [] as Shop[];
+            }
+
+            let menuData: any[] = [];
+
+            const formattedShops: Shop[] = (shopsData || []).map((s) => {
+              const shopHash = hashString(String(s.id));
+              const deterministicLat = -25.9964 + ((shopHash % 30) - 15) * 0.0018;
+              const deterministicLng = 28.2268 + (((shopHash >> 2) % 30) - 15) * 0.0018;
+
+              const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
+              const { isOpen } = getShopStatus({
+                opening_time: s.opening_time,
+                closing_time: s.closing_time,
+                is_active: isActive,
+              });
+
+              const correctSpelling = (str: string) => {
+                if (!str) return str;
+                return str
+                  .replace(/My-Keta/g, "My-Kota")
+                  .replace(/My-keta/g, "My-Kota")
+                  .replace(/my-keta/g, "my-kota")
+                  .replace(/My Keta/g, "My Kota")
+                  .replace(/Keta/g, "Kota")
+                  .replace(/keta/g, "kota");
+              };
+
+              return {
+                id: String(s.id),
+                name: correctSpelling(s.name),
+                logo: s.logo_url || DEFAULT_SHOP_LOGO,
+                rating: Number(s.rating) || 4.5,
+                cash_trust_enabled:
+                  s.cash_trust_enabled === true || s.cash_trust_enabled === "true",
+                allow_external_riders:
+                  s.allow_external_riders === true || s.allow_external_riders === "true",
+                auto_look_for_rider:
+                  s.auto_look_for_rider === true || s.auto_look_for_rider === "true",
+                reviewCount: 12 + (shopHash % 88),
+                prepTime: "15-20 min",
+                isOpen: isOpen,
+                description: correctSpelling(s.description || "Local Flavours"),
+                address: correctSpelling(s.location || "Local Eats"),
+                category: correctSpelling(s.category || "Kota"),
+                owner_id: s.owner_id,
+                opening_time: s.opening_time,
+                closing_time: s.closing_time,
+                phone: s.phone || "+27 12 345 6789",
+                latitude:
+                  s.latitude !== undefined && s.latitude !== null && s.latitude !== 0
+                    ? s.latitude
+                    : deterministicLat,
+                longitude:
+                  s.longitude !== undefined && s.longitude !== null && s.longitude !== 0
+                    ? s.longitude
+                    : deterministicLng,
+                updated_at: s.updated_at,
+                is_active: isActive,
+                images: (s as any).images || [
+                  DEFAULT_SHOP_LOGO,
+                  "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
+                  "https://images.unsplash.com/photo-1476224484581-5d996cc0750e?auto=format&fit=crop&q=80&w=600",
+                  "https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=600",
+                ],
+                menu: (menuData || [])
+                  .filter((m) => String(m.shop_id) === String(s.id))
+                  .map((m) => ({
+                    id: String(m.id),
+                    name: m.name,
+                    price: Number(m.price),
+                    displayPrice: `R${Number(m.price).toFixed(2)}`,
+                    image: m.image_url || DEFAULT_MENU_IMAGE,
+                    description: m.description || "",
+                    category: m.category || "Main Course",
+                    is_available: m.is_available !== false,
+                    customizations: m.customizations || [],
+                  })),
+              };
+            });
+
+            return formattedShops;
+          })()
+        ]);
+
+        const firestoreShops =
+          firestoreRes.status === "fulfilled" && Array.isArray(firestoreRes.value)
+            ? firestoreRes.value
+            : [];
+        const supabaseShops =
+          supabaseRes.status === "fulfilled" && Array.isArray(supabaseRes.value)
+            ? supabaseRes.value
+            : [];
+
+        // Unified Multi-Source Merge: Keep Supabase and Firestore shops unified without clobbering
+        const unifiedShops = mergeShopsCatalogs(supabaseShops, firestoreShops);
+
+        console.log(
+          `[ShopCatalog] Unified aggregation: ${supabaseShops.length} API shops + ${firestoreShops.length} Firestore shops = ${unifiedShops.length} total active shops.`
+        );
+
+        // A. If the network failed entirely, or if it's explicitly explicitly unavailable, we can fallback.
+        // But if the API successfully returned 0 shops, we should respect that 0 shops exist.
+        const apiFailed = supabaseRes.status === "rejected" || (supabaseRes.status === "fulfilled" && supabaseRes.value === null);
+        const firestoreFailed = firestoreRes.status === "rejected";
+
+        if (apiFailed && firestoreFailed && !navigator.onLine) {
+          logEmptyShopListDiagnostic("Backend network unavailable. Falling back to default offline shops.");
           setShops(DEFAULT_FALLBACK_SHOPS);
-          safeLocalStorageSet(
-            "cached_shops",
-            JSON.stringify(DEFAULT_FALLBACK_SHOPS),
-          );
-          setLoadingShops(false);
-          return;
+          safeLocalStorageSet("cached_shops", JSON.stringify(DEFAULT_FALLBACK_SHOPS));
+          cacheBusinessResults("all_shops", DEFAULT_FALLBACK_SHOPS).catch(() => {});
+        } else {
+          setShops(unifiedShops);
+          safeLocalStorageSet("cached_shops", JSON.stringify(unifiedShops));
+          cacheBusinessResults("all_shops", unifiedShops).catch(() => {});
         }
-      }
 
-      const formattedShops: Shop[] = (shopsData || [])
-        .map((s) => {
-          // Generate deterministic mock coordinates if missing for default area so shops are distributed across the area and never collide with user's spot
-          const shopHash = hashString(String(s.id));
-          const deterministicLat = -25.9964 + ((shopHash % 30) - 15) * 0.0018;
-          const deterministicLng = 28.2268 + (((shopHash >> 2) % 30) - 15) * 0.0018;
-
-          const now = new Date();
-          const currentHour = now.getHours();
-          const currentMinute = now.getMinutes();
-          const currentTimeStr = `${currentHour.toString().padStart(2, "0")}:${currentMinute.toString().padStart(2, "0")}`;
-
-          const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
-          const { isOpen } = getShopStatus({
-            opening_time: s.opening_time,
-            closing_time: s.closing_time,
-            is_active: isActive
-          });
-
-          let parsedUpdatedAt = s.updated_at;
-
-          const correctSpelling = (str: string) => {
-            if (!str) return str;
-            return str
-              .replace(/My-Keta/g, "My-Kota")
-              .replace(/My-keta/g, "My-Kota")
-              .replace(/my-keta/g, "my-kota")
-              .replace(/My Keta/g, "My Kota")
-              .replace(/Keta/g, "Kota")
-              .replace(/keta/g, "kota");
-          };
-
-          return {
-            id: String(s.id),
-            name: correctSpelling(s.name),
-            logo: s.logo_url || DEFAULT_SHOP_LOGO,
-            rating: Number(s.rating) || 4.5,
-            cash_trust_enabled:
-              s.cash_trust_enabled === true || s.cash_trust_enabled === "true",
-            allow_external_riders:
-              s.allow_external_riders === true ||
-              s.allow_external_riders === "true",
-            auto_look_for_rider:
-              s.auto_look_for_rider === true ||
-              s.auto_look_for_rider === "true",
-            reviewCount: 12 + (shopHash % 88), // Mock review count
-            prepTime: "15-20 min", // Mock prep time
-            isOpen: isOpen,
-            description: correctSpelling(s.description || "Local Flavours"),
-            address: correctSpelling(s.location || "Local Eats"),
-            category: correctSpelling(s.category || "Kota"),
-            owner_id: s.owner_id,
-            opening_time: s.opening_time,
-            closing_time: s.closing_time,
-            phone: s.phone || "+27 12 345 6789",
-            latitude: s.latitude !== undefined && s.latitude !== null && s.latitude !== 0 ? s.latitude : deterministicLat,
-            longitude: s.longitude !== undefined && s.longitude !== null && s.longitude !== 0 ? s.longitude : deterministicLng,
-            updated_at: parsedUpdatedAt,
-            is_active: isActive,
-            images: (s as any).images || [
-              DEFAULT_SHOP_LOGO,
-              "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-              "https://images.unsplash.com/photo-1476224484581-5d996cc0750e?auto=format&fit=crop&q=80&w=600",
-              "https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=600",
-            ],
-            menu: (menuData || [])
-              .filter((m) => String(m.shop_id) === String(s.id))
-              .map((m) => ({
-                id: String(m.id),
-                name: m.name,
-                price: Number(m.price),
-                displayPrice: `R${Number(m.price).toFixed(2)}`,
-                image: m.image_url || DEFAULT_MENU_IMAGE,
-                description: m.description || "",
-                category: m.category || "Main Course",
-                is_available: m.is_available !== false,
-                customizations: m.customizations || [],
-              })),
-          };
-        })
-        .sort((a, b) => (b.rating || 0) - (a.rating || 0)); // Smart Ranking: Best rated first
-
-      console.log(`Successfully fetched ${formattedShops.length} shops.`);
-      if (formattedShops.length === 0) {
-        logEmptyShopListDiagnostic("Backend returned 0 active non-abandoned shops matching visibility criteria.");
-      }
-      setShops(formattedShops);
-      safeLocalStorageSet("cached_shops", JSON.stringify(formattedShops)); // Instant-Load Caching
-      cacheBusinessResults("all_shops", formattedShops); // IndexedDB Offline Storage
-      setIsOnline(true);
-      lastFetchedShopsTimeRef.current = Date.now();
+        setIsOnline(true);
+        lastFetchedShopsTimeRef.current = Date.now();
       });
       setLoadingShops(false);
     } catch (err: any) {
@@ -1666,7 +1551,7 @@ export default function App() {
     } finally {
       setIsSyncing(false);
     }
-  }, [shops.length, stalenessThresholdMs]);
+  }, [stalenessThresholdMs]);
 
   const syncOfflineOrders = useCallback(async (retryCount = 0) => {
     const queue = safeLocalStorageGet("offline_orders_queue", []);
@@ -2043,26 +1928,27 @@ export default function App() {
 
       // 2. Primary attempt by user_id if not loaded from Firestore
       if (!data) {
-        const res = await supabase
-          .from("profiles")
-          .select("id, user_id, email, full_name, fullName, phone, avatar_url, photo_url, default_address, addresses, city, address, country, role, favorites, updated_at")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (res.error) {
-          // Secondary attempt by id
-          const altRes = await supabase
-            .from("profiles")
-            .select("id, user_id, email, full_name, fullName, phone, avatar_url, photo_url, default_address, addresses, city, address, country, role, favorites, updated_at")
-            .eq("id", userId)
-            .maybeSingle();
-          if (!altRes.error) {
-            data = altRes.data;
+        try {
+          const { getApiAuthHeaders } = await import("./lib/apiAuth");
+          const headers = await getApiAuthHeaders();
+          
+          const response = await fetch(`/api/profiles/${userId}`, {
+            headers: {
+              ...headers
+            }
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            if (result.profile) {
+              data = result.profile;
+            }
           } else {
-            error = res.error;
+            error = new Error(`Failed to fetch profile: ${response.status}`);
           }
-        } else {
-          data = res.data;
+        } catch (apiErr) {
+          console.warn("[Profile] API fetch error:", apiErr);
+          error = apiErr;
         }
       }
 
@@ -2117,22 +2003,17 @@ export default function App() {
               role: fallbackRole,
             }));
 
-            // Non-blocking upsert to ensure row exists in profiles table
-            Promise.resolve(
-              FirestoreService.saveProfile(userId, {
-                user_id: userId,
-                id: userId,
-                email: authUser.email,
-                full_name: fallbackName,
-                "fullName": fallbackName,
-                phone: fallbackPhone,
-                role: fallbackRole,
-                city: "Johannesburg",
-                country: "South Africa",
-                updated_at: new Date().toISOString(),
-              })
-            ).catch((e) => {
-              console.info("[Profile Auto-Upsert Notice]", e?.message || e);
+            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
+            upsertProfileWithRPC({
+              user_id: userId,
+              email: authUser.email,
+              fullName: fallbackName,
+              phone: fallbackPhone,
+              role: fallbackRole,
+              city: "Johannesburg",
+              country: "South Africa",
+            }).catch((e) => {
+              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
             });
           }
         } catch (authFetchErr) {
@@ -2396,6 +2277,18 @@ export default function App() {
 
     if (session?.user?.id) {
       const action = async () => {
+        // Sync user_metadata natively into Supabase Auth
+        const { error: authError } = await supabase.auth.updateUser({
+          data: {
+            full_name: updated.fullName,
+            fullName: updated.fullName,
+          }
+        });
+        
+        if (authError) {
+          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
+        }
+
         const { error } = await upsertProfileWithRPC({
           user_id: session.user.id,
           fullName: updated.fullName,
@@ -2740,7 +2633,7 @@ export default function App() {
 
             // 1. Core Order Status Updates (only if previous status was known and actually changed)
             if (oldStatus && newStatus && oldStatus !== newStatus) {
-              const shop = shops.find((s) => s.id === payload.new.shop_id);
+              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
               const title = `Store Update`;
               let message = `Your order from ${shop?.name || "the shop"} is now ${newStatus}.`;
 
@@ -2868,7 +2761,7 @@ export default function App() {
 
             // 2. Rider Delivery Status Updates (only if previous status was known and changed)
             if (oldDeliveryStatus && newDeliveryStatus && oldDeliveryStatus !== newDeliveryStatus) {
-              const shop = shops.find((s) => s.id === payload.new.shop_id);
+              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
               let deliveryMessage = ``;
 
               if (newDeliveryStatus === "rider_assigned") {
@@ -2914,7 +2807,7 @@ export default function App() {
 
             // 3. Fallback to Collection
             if (oldOrderType && newOrderType && oldOrderType === "delivery" && newOrderType === "collection" && oldOrderType !== newOrderType) {
-              const shop = shops.find((s) => s.id === payload.new.shop_id);
+              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
               const fallbackMsg = `üö® The shop ${shop?.name || ""} had to switch your order to COLLECTION as no riders are currently available. Please self-pickup!`;
               toast.error(fallbackMsg, {
                 duration: 15000,
@@ -2967,17 +2860,7 @@ export default function App() {
       try {
         let fetchedData: any[] | null = null;
         
-        // 1. Fetch from Shared Firestore Database (Merchant App)
-        try {
-          const fsOrders = await FirestoreService.getOrdersByUser(session.user.id);
-          if (fsOrders && fsOrders.length > 0) {
-            fetchedData = fsOrders;
-          }
-        } catch (fErr) {
-          console.debug("[DualSync] Firestore orders fetch notice:", fErr);
-        }
-
-        // 2. Fetch from Supabase as fallback
+        // Fetch from Supabase
         if (!fetchedData || fetchedData.length === 0) {
           try {
             const { data, error } = await supabase
@@ -3012,7 +2895,7 @@ export default function App() {
     fetchOrders();
 
     // Determine if user has active in-flight orders for adaptive polling speed
-    const hasActiveOrders = orders.some((o) =>
+    const hasActiveOrders = ordersRef.current.some((o) =>
       ["pending", "confirmed", "preparing", "ready"].includes(o.status) ||
       ["finding_rider", "rider_assigned", "picked_up"].includes(o.delivery_status || "")
     );
@@ -3032,13 +2915,13 @@ export default function App() {
       clearInterval(timer);
       window.removeEventListener("localeats_force_reconcile", handleReconcile);
     };
-  }, [session?.user?.id, shops, orders]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     // Initial fetch of shops & menu items
     fetchShopsData();
 
-    // Subscribe to changes in shops and menu_items
+    // Subscribe to changes in shops and menu_items in Supabase
     const shopsChannel = getFreshChannel("public:shops")
       .on(
         "postgres_changes",
@@ -3055,9 +2938,28 @@ export default function App() {
       )
       .subscribe();
 
+    // Subscribe to live shop updates in Firestore
+    let unsubFirestore: (() => void) | null = null;
+    try {
+      unsubFirestore = FirestoreService.listenToShops((liveFirestoreShops) => {
+        if (liveFirestoreShops && liveFirestoreShops.length > 0) {
+          console.log(`[App:Firestore] Live shop updates received: ${liveFirestoreShops.length}`);
+          setShops((prev) => {
+            const merged = mergeShopsCatalogs(prev, liveFirestoreShops);
+            safeLocalStorageSet("cached_shops", JSON.stringify(merged));
+            cacheBusinessResults("all_shops", merged).catch(() => {});
+            return merged;
+          });
+        }
+      });
+    } catch (fErr) {
+      console.debug("[App:Firestore] Live shops listener notice:", fErr);
+    }
+
     return () => {
       supabase.removeChannel(shopsChannel);
       supabase.removeChannel(menuChannel);
+      if (unsubFirestore) unsubFirestore();
     };
   }, [fetchShopsData]);
 
@@ -3076,13 +2978,32 @@ export default function App() {
       // Remove shopId from URL to prevent re-triggering on refresh if user navigates away
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [shops]); // Re-run when shops are loaded to ensure we have the shop data
+  }, []); // Run on mount
+
+  const initialFavoritesHydratedRef = useRef(false);
+  const prevFavoritesJsonRef = useRef<string>(JSON.stringify(favorites));
 
   useEffect(() => {
+    // Avoid duplicate profile writes on initial app hydration
+    if (!initialFavoritesHydratedRef.current) {
+      initialFavoritesHydratedRef.current = true;
+      prevFavoritesJsonRef.current = JSON.stringify(favorites);
+      return;
+    }
+
+    const currJson = JSON.stringify(favorites);
+    if (prevFavoritesJsonRef.current === currJson) {
+      return;
+    }
+    prevFavoritesJsonRef.current = currJson;
+
     // Sync favorites to profile if session exists
     if (session?.user?.id) {
-      FirestoreService.saveProfile(session.user.id, { favorites }).catch((err) => {
-        console.warn("Error syncing favorites to profile:", err);
+      upsertProfileWithRPC({
+        user_id: session.user.id,
+        favorites,
+      }).catch((err) => {
+        console.debug("[Favorites Sync Notice]", err);
       });
     }
   }, [favorites, session]);
@@ -3307,6 +3228,54 @@ export default function App() {
     );
   }, [showConfirm, triggerHaptic, setCart, setNotification]);
 
+  const updateCartQuantity = useCallback(
+    (
+      itemId: string,
+      shopId: string,
+      delta: number,
+      specialInstructions?: string,
+    ) => {
+      triggerHaptic(8);
+      setCart((prev) => {
+        return prev
+          .map((i) => {
+            const matchItem =
+              i.id === itemId &&
+              i.shopId === shopId &&
+              (specialInstructions === undefined || i.specialInstructions === specialInstructions);
+            if (matchItem) {
+              const nextQty = i.quantity + delta;
+              return nextQty > 0 ? { ...i, quantity: nextQty } : null;
+            }
+            return i;
+          })
+          .filter(Boolean) as CartItem[];
+      });
+    },
+    [triggerHaptic, setCart],
+  );
+
+  const removeItemFromCart = useCallback(
+    (
+      itemId: string,
+      shopId: string,
+      specialInstructions?: string,
+    ) => {
+      triggerHaptic(10);
+      setCart((prev) => {
+        return prev.filter(
+          (i) =>
+            !(
+              i.id === itemId &&
+              i.shopId === shopId &&
+              (specialInstructions === undefined || i.specialInstructions === specialInstructions)
+            ),
+        );
+      });
+    },
+    [triggerHaptic, setCart],
+  );
+
   useEffect(() => {
     localStorage.setItem("userProfile", JSON.stringify(userProfile));
 
@@ -3360,11 +3329,19 @@ export default function App() {
                 updated_at: new Date().toISOString(),
               };
               try {
-                const { error: fallbackError } = await supabase
-                  .from("profiles")
-                  .upsert(safePayload, { onConflict: "user_id" });
-                if (fallbackError) {
-                  console.warn("Notice syncing fallback profile to Supabase:", fallbackError.message || fallbackError);
+                const { getApiAuthHeaders } = await import("./lib/apiAuth");
+                const headers = await getApiAuthHeaders();
+                const response = await fetch('/api/profiles', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...headers
+                  },
+                  body: JSON.stringify(safePayload)
+                });
+                
+                if (!response.ok) {
+                  console.warn("Notice syncing fallback profile to Supabase:", await response.text());
                 } else {
                   console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
                 }
@@ -3820,6 +3797,8 @@ export default function App() {
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
+                  onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
+                  onOpenCart={() => setIsCartDrawerOpen(true)}
                 />
               )}
               {currentScreen === "notifications" && (
@@ -4268,63 +4247,55 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
 
-          {/* Global Floating Checkout Button (Peek-a-Boo Sticky Cart) */}
-          <AnimatePresence>
-            {cartCount > 0 &&
-              currentScreen !== "checkout" &&
-              currentScreen !== "order-success" && (
-                <motion.button
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={isCartBouncing ? {
-                    y: [0, -10, 4, -2, 0],
-                    opacity: 1,
-                    scale: [1, 1.02, 0.98, 1]
-                  } : {
-                    y: 0,
-                    opacity: 1,
-                    scale: 1
-                  }}
-                  transition={{
-                    duration: 0.5,
-                    ease: "easeOut"
-                  }}
-                  exit={{ y: 100, opacity: 0 }}
-                  onClick={() => {
-                    if (!session) {
-                      showAlert(
-                        "Login Required",
-                        "Please sign in or create an account to place your order.",
-                      );
-                      setPreviousScreen(currentScreen);
-                      setCurrentScreen("login");
-                      return;
-                    }
-                    setPreviousScreen(currentScreen);
-                    setCurrentScreen("checkout");
-                  }}
-                  className={`fixed bottom-20 left-4 right-4 z-[9999] bg-slate-900 dark:bg-orange-600 text-white p-4 rounded-2xl shadow-xl flex items-center justify-between active:scale-[0.98] transition-transform cursor-pointer group`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="relative bg-white/20 dark:bg-white/20 p-2 rounded-xl">
-                      <ShoppingBag className="w-5 h-5 text-white" />
-                      <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full shadow-md border-2 border-slate-900 dark:border-orange-600">
-                        {cartCount}
-                      </span>
-                    </div>
-                    <div className="text-left flex flex-col">
-                      <span className="text-xs font-bold text-white/80">View Cart</span>
-                      <span className="font-black text-sm tracking-tight">
-                        <AnimatedPrice value={cartTotal} />
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 bg-white/10 px-3 py-2 rounded-xl">
-                    <span className="text-xs font-bold uppercase tracking-wider">Checkout</span>
-                    <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </motion.button>
-              )}
-          </AnimatePresence>
+          {/* Interactive Floating Cart Button */}
+          <FloatingCartButton
+            cart={cart}
+            shops={shops}
+            currentScreen={currentScreen}
+            onOpenCart={() => setIsCartDrawerOpen(true)}
+            triggerHaptic={triggerHaptic}
+          />
+
+          {/* Slide-Over Cart Drawer */}
+          <CartDrawer
+            isOpen={isCartDrawerOpen}
+            onClose={() => setIsCartDrawerOpen(false)}
+            cart={cart}
+            shops={shops}
+            onUpdateQuantity={updateCartQuantity}
+            onRemoveItem={removeItemFromCart}
+            onClearCart={clearCart}
+            onProceedToCheckout={() => {
+              if (!session) {
+                showAlert(
+                  "Login Required",
+                  "Please sign in or create an account to place your order.",
+                );
+                setPreviousScreen(currentScreen);
+                setCurrentScreen("login");
+                return;
+              }
+              setPreviousScreen(currentScreen);
+              setCurrentScreen("checkout");
+            }}
+            triggerHaptic={triggerHaptic}
+          />
+
+          {/* Address Quick-Switcher Modal */}
+          <AddressSwitcherModal
+            isOpen={isAddressModalOpen}
+            onClose={() => setIsAddressModalOpen(false)}
+            userProfile={userProfile}
+            onSaveAddress={async (newAddress, coords) => {
+              await handleUpdateProfile({ address: newAddress }, true);
+              if (coords) {
+                setUserLocation(coords);
+              }
+            }}
+            onRequestLocation={requestLocation}
+            currentLocationCoords={userLocation}
+            triggerHaptic={triggerHaptic}
+          />
 
           <QRScannerModal
             isOpen={showQRScanner}
@@ -4377,132 +4348,39 @@ export default function App() {
               </Suspense>
             </div>
           )}
-          {/* Persistent Real-time Order Tracker Banner with Smart Collapse */}
-          <AnimatePresence>
-            {(() => {
-              const activeOrder = orders.find(
-                (o) => o && o.status && !["completed", "delivered", "cancelled"].includes((o.status || "").toLowerCase())
-              );
-              if (
-                !activeOrder ||
-                ["order-tracking", "checkout", "splash", "login", "signup", "setup-password", "reset-password"].includes(currentScreen)
-              ) return null;
-              
-              const activeOrderShop = shops.find((s) => s.id === activeOrder.shop_id);
-              const isCollapsed = isOrderBannerCollapsed || isScrollCollapsed;
-              
-              return isCollapsed ? (
-                /* Smart Collapsed Minimal Floating Pill Indicator */
-                <motion.div
-                  key="order-tracker-collapsed"
-                  initial={{ opacity: 0, y: 30, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 20, scale: 0.9 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 28 }}
-                  onClick={() => {
-                    setIsOrderBannerCollapsed(false);
-                    setIsScrollCollapsed(false);
-                  }}
-                  className="fixed bottom-20 left-3 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-1.5 rounded-full shadow-xl border border-slate-800/90 flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
-                >
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
-                  </span>
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold">
-                    <span className="text-orange-400 font-mono">#{activeOrder.id.slice(0, 4)}</span>
-                    <span className="text-slate-600">‚Ä¢</span>
-                    <span className="truncate max-w-[100px] text-slate-200">
-                      {activeOrder.status === "pending" && "Waiting..."}
-                      {activeOrder.status === "confirmed" && "Accepted"}
-                      {activeOrder.status === "preparing" && "Cooking"}
-                      {activeOrder.status === "ready" && "Ready! üî•"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 shadow-sm ml-0.5">
-                    <span>Track</span>
-                    <ChevronUp className="w-3 h-3" />
-                  </div>
-                </motion.div>
-              ) : (
-                /* Expanded Compact Row-Based Grid Banner */
-                <motion.div
-                  key="order-tracker-expanded"
-                  initial={{ opacity: 0, y: 40, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 30, scale: 0.95 }}
-                  transition={{ type: "spring", stiffness: 350, damping: 25 }}
-                  className="fixed bottom-20 left-3 right-3 md:left-auto md:right-4 md:w-80 z-40 bg-slate-900/95 dark:bg-slate-950/98 backdrop-blur-md text-white px-3 py-2 rounded-2xl shadow-xl border border-slate-800/80 flex flex-col gap-1.5 overflow-hidden"
-                >
-                  <div className="flex items-center justify-between gap-2 min-w-0">
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <div className="w-8 h-8 bg-gradient-to-tr from-orange-600 to-amber-500 rounded-xl flex items-center justify-center font-black text-xs shrink-0 text-white shadow-sm">
-                        {activeOrderShop?.name?.slice(0, 2).toUpperCase() || "üçî"}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="relative flex h-1.5 w-1.5 shrink-0">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500"></span>
-                          </span>
-                          <h4 className="text-xs font-bold text-white truncate">{activeOrderShop?.name || "Kitchen"}</h4>
-                          <span className="text-[9px] font-mono text-orange-400 font-bold opacity-90 shrink-0 bg-orange-500/10 px-2 py-1 rounded border border-orange-500/20">
-                            #{activeOrder.id.slice(0, 4)}
-                          </span>
-                        </div>
-                        <p className="text-[10px] font-medium text-orange-400 truncate flex items-center gap-1 leading-none mt-1">
-                          <Clock className="w-3 h-3 animate-spin shrink-0" />
-                          {activeOrder.status === "pending" && "Waiting confirmation..."}
-                          {activeOrder.status === "confirmed" && "Order Accepted"}
-                          {activeOrder.status === "preparing" && "Chef Cooking"}
-                          {activeOrder.status === "ready" && "Ready for Pickup! üî•"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => {
-                          setCurrentScreen("order-tracking");
-                        }}
-                        className="bg-orange-500 hover:bg-orange-600 active:scale-95 text-white text-[10px] font-black px-2.5 py-1.5 rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1"
-                      >
-                        <span>Track</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-
-                      <button
-                        onClick={() => setIsOrderBannerCollapsed(true)}
-                        className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
-                        title="Collapse order tracker"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Thin Integrated Progress Line */}
-                  <div className="w-full bg-slate-800/80 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-gradient-to-r from-orange-500 to-amber-400 h-full rounded-full transition-all duration-700 ease-out"
-                      style={{
-                        width:
-                          activeOrder.status === "pending" ? "20%" :
-                          activeOrder.status === "confirmed" ? "45%" :
-                          activeOrder.status === "preparing" ? "75%" :
-                          activeOrder.status === "ready" ? "100%" : "0%"
-                      }}
-                    />
-                  </div>
-                </motion.div>
-              );
-            })()}
-          </AnimatePresence>
+          {/* Global Floating Real-time Order Mini Tracker */}
+          <ActiveOrderMiniTracker
+            orders={orders}
+            shops={shops}
+            currentScreen={currentScreen}
+            onOpenTracking={(_orderId) => {
+              setPreviousScreen(currentScreen);
+              setCurrentScreen("order-tracking");
+            }}
+            triggerHaptic={triggerHaptic}
+          />
 
           <Suspense fallback={null}>
             <PopiaLegalDrawer />
             <CookieConsentBanner />
           </Suspense>
+
+          {/* Persistent Standardized Bottom Navigation Bar */}
+          <BottomNavigation
+            currentScreen={currentScreen}
+            onNavigate={(targetScreen) => {
+              setPreviousScreen(currentScreen);
+              setCurrentScreen(targetScreen);
+            }}
+            activeOrdersCount={
+              orders.filter((o) => {
+                const s = (o.status || "").toLowerCase();
+                return s !== "completed" && s !== "cancelled" && s !== "delivered";
+              }).length
+            }
+            triggerHaptic={triggerHaptic}
+            isOnline={isOnline}
+          />
         </div>
       </AnimatePresence>
     </div>
@@ -4635,6 +4513,8 @@ function HomeScreen({
   changeToDelivery,
   dataSaverEnabled,
   isSyncing = false,
+  onOpenAddressSwitcher,
+  onOpenCart,
 }: {
   userProfile: UserProfile;
   session: Session | null;
@@ -4678,6 +4558,8 @@ function HomeScreen({
   changeToDelivery: (orderId: string) => void;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
+  onOpenAddressSwitcher?: () => void;
+  onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
   const currentTownship = useMemo(() => {
@@ -4750,12 +4632,27 @@ function HomeScreen({
     return () => observer.disconnect();
   }, []);
 
+  const [showFilters, setShowFilters] = useState(true);
+  const lastScrollYRef = useRef(0);
+
   useEffect(() => {
     let ticking = false;
     const handleScroll = () => {
       if (!ticking) {
         window.requestAnimationFrame(() => {
-          setIsScrolled(window.scrollY > 20);
+          const currentY = window.scrollY;
+          setIsScrolled(currentY > 15);
+
+          if (currentY <= 30) {
+            setShowFilters(true);
+          } else if (currentY > lastScrollYRef.current + 8) {
+            // Scrolling down -> slide filters up into top bar for clear view
+            setShowFilters(false);
+          } else if (currentY < lastScrollYRef.current - 12) {
+            // Scrolling up -> reveal filters
+            setShowFilters(true);
+          }
+          lastScrollYRef.current = currentY;
           ticking = false;
         });
         ticking = true;
@@ -4763,6 +4660,31 @@ function HomeScreen({
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Touch swipe support for smooth mobile interaction
+  useEffect(() => {
+    let touchStartY = 0;
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartY = e.touches[0].clientY;
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      const currentTouchY = e.touches[0].clientY;
+      const diff = touchStartY - currentTouchY;
+      if (window.scrollY > 30) {
+        if (diff > 15) {
+          setShowFilters(false);
+        } else if (diff < -15) {
+          setShowFilters(true);
+        }
+      }
+    };
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchmove", handleTouchMove);
+    };
   }, []);
 
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
@@ -4913,6 +4835,18 @@ function HomeScreen({
     return Array.from(new Set([...base, ...types, ...cuisines] as string[]));
   }, [shops]);
 
+  const filterChipsList = useMemo(() => [
+    { id: "all", label: "All üçΩÔ∏è", type: "category" as const, value: "All" },
+    { id: "favorites", label: "Favorites ‚ù§Ô∏è", type: "category" as const, value: "Favorites" },
+    { id: "nearby", label: "Nearby üìç", type: "category" as const, value: "Nearby" },
+    { id: "kota", label: "Kota üçû", type: "category" as const, value: "Kota" },
+    { id: "braai", label: "Braai üî•", type: "category" as const, value: "Braai" },
+    { id: "open_now", label: "Open Now", type: "quickFilter" as const, value: "Open Now", icon: Activity },
+    { id: "top_rated", label: "Top Rated", type: "quickFilter" as const, value: "Top Rated", icon: Star },
+    { id: "fastest", label: "Fastest", type: "quickFilter" as const, value: "Fastest", icon: Zap },
+    { id: "halal", label: "Halal", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck },
+  ], []);
+
   // Pre-calculate search index map for lightning-fast search matches on low-end devices
   const shopSearchIndex = useMemo(() => {
     const indexMap: Record<string, string> = {};
@@ -4939,6 +4873,16 @@ function HomeScreen({
         matchesCategory = favorites.includes(shop.id);
       } else if (selectedCategory === "Nearby") {
         matchesCategory = true; // We'll sort these
+      } else if (selectedCategory === "Kota") {
+        matchesCategory =
+          shop.category?.toLowerCase() === "kota" ||
+          shop.cuisine_type?.toLowerCase().includes("kota") ||
+          shopText.includes("kota");
+      } else if (selectedCategory === "Braai") {
+        matchesCategory =
+          shop.category?.toLowerCase() === "braai" ||
+          shop.cuisine_type?.toLowerCase().includes("braai") ||
+          shopText.includes("braai");
       } else {
         matchesCategory =
           shop.category === selectedCategory ||
@@ -5168,17 +5112,39 @@ function HomeScreen({
           Update Available!
         </button>
       )}
-      {/* TopBar */}
-      <header ref={headerRef} className={`fixed top-4 left-4 right-4 max-w-screen-xl mx-auto z-50 transition-all duration-300 pt-[env(safe-area-inset-top)] ${isScrolled ? 'top-2' : ''}`}>
-        <div className={`px-4 sm:px-6 flex items-center justify-between gap-2 min-h-[52px] sm:min-h-[60px] relative bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-full shadow-xl border border-slate-200/60 dark:border-slate-700/60 transition-all duration-300 ${isScrolled ? 'shadow-md bg-white/90 dark:bg-slate-900/90' : 'shadow-xl'}`}>
+      {/* TopBar - Anchored flush to the top edge with zero rounded outer borders */}
+      <header
+        ref={headerRef}
+        id="home-sticky-header"
+        className={`fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b transition-all duration-200 rounded-none w-full pt-[env(safe-area-inset-top,0px)] ${
+          isScrolled
+            ? "border-slate-200/90 dark:border-slate-800 shadow-xs"
+            : "border-slate-100 dark:border-slate-850"
+        }`}
+      >
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
           
-          {/* Logo & Status Badge */}
-          <div className={`flex items-center gap-2 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <LocalEatsLogo width={110} height={28} className="shrink-0 scale-100 origin-left" />
-            <div className="hidden xs:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 text-[10px] font-bold text-slate-500 dark:text-slate-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>v{APP_VERSION.split(" ")[0]}</span>
-            </div>
+          {/* Logo & Address Quick-Switcher */}
+          <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <LocalEatsLogo width={105} height={26} className="shrink-0 scale-100 origin-left" />
+            
+            {onOpenAddressSwitcher && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (triggerHaptic) triggerHaptic(8);
+                  onOpenAddressSwitcher();
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800/90 hover:bg-orange-50 dark:hover:bg-orange-950/40 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-all cursor-pointer max-w-[120px] xs:max-w-[160px] sm:max-w-[220px] truncate group"
+                title="Change delivery address"
+              >
+                <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 group-hover:scale-110 transition-transform" />
+                <span className="text-[11px] sm:text-xs font-bold truncate">
+                  {userProfile.address ? userProfile.address.split(",")[0] : "Set Address"}
+                </span>
+                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+              </button>
+            )}
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
@@ -5691,61 +5657,55 @@ function HomeScreen({
           )}
         </AnimatePresence>
 
-        {/* Sticky Sub-Header with Category Filters (only on home screen) */}
+        {/* Sliding Unified Filter Chips Bar: [All üçΩÔ∏è, Favorites ‚ù§Ô∏è, Nearby üìç, Kota üçû, Braai üî•, Open Now, Top Rated, Fastest, Halal] */}
         {currentScreen === "home" && (
-          <div className="max-w-screen-xl mx-auto px-3 sm:px-4 pb-2 pt-1 border-t border-slate-100 dark:border-slate-850 flex flex-col gap-1.5 overflow-hidden">
-            {/* Quick Categories Horizontal Scroll */}
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
-              {categories.map((cat) => {
-                const isSelected = selectedCategory === cat;
-                return (
-                  <motion.button
-                    key={cat}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => {
-                      setSelectedCategory(cat);
-                      triggerHaptic(5);
-                    }}
-                    className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-[11px] font-black tracking-tight transition-all whitespace-nowrap cursor-pointer border shrink-0 ${
-                      isSelected 
-                        ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs" 
-                        : "bg-slate-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400 border-transparent hover:bg-slate-200 dark:hover:bg-slate-700"
-                    }`}
-                  >
-                    {getCategorySlang(cat, language)}
-                  </motion.button>
-                );
-              })}
-            </div>
+          <AnimatePresence initial={false}>
+            {showFilters && (
+              <motion.div
+                key="home-filter-chips-bar"
+                initial={{ height: 0, opacity: 0, y: -6 }}
+                animate={{ height: "auto", opacity: 1, y: 0 }}
+                exit={{ height: 0, opacity: 0, y: -6 }}
+                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+              >
+                <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
+                    {filterChipsList.map((chip) => {
+                      const isSelected =
+                        chip.type === "category"
+                          ? selectedCategory === chip.value && selectedQuickFilter === null
+                          : selectedQuickFilter === chip.value;
 
-            {/* Quick Filters - Top Rated, Fastest, Open Now, Halal */}
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
-              {["Open Now", "Top Rated", "Fastest", "Halal"].map((filter) => {
-                const isSelected = selectedQuickFilter === filter;
-                return (
-                  <motion.button
-                    key={filter}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => {
-                      setSelectedQuickFilter(isSelected ? null : filter);
-                      triggerHaptic(3);
-                    }}
-                    className={`px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9.5px] sm:text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1 shrink-0 ${
-                      isSelected 
-                        ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-700/50" 
-                        : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
-                    }`}
-                  >
-                    {filter === "Open Now" && <Activity className="w-3 h-3" />}
-                    {filter === "Top Rated" && <Star className="w-3 h-3" />}
-                    {filter === "Fastest" && <Zap className="w-3 h-3" />}
-                    {filter === "Halal" && <ShieldCheck className="w-3 h-3" />}
-                    {filter}
-                  </motion.button>
-                );
-              })}
-            </div>
-          </div>
+                      return (
+                        <motion.button
+                          key={chip.id}
+                          whileTap={{ scale: 0.94 }}
+                          onClick={() => {
+                            triggerHaptic(4);
+                            if (chip.type === "category") {
+                              setSelectedCategory(chip.value);
+                              setSelectedQuickFilter(null);
+                            } else {
+                              setSelectedQuickFilter((prev) => (prev === chip.value ? null : chip.value));
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1.5 shrink-0 select-none ${
+                            isSelected
+                              ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs"
+                              : "bg-slate-100/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-700"
+                          }`}
+                        >
+                          {chip.icon && <chip.icon className="w-3.5 h-3.5" />}
+                          <span>{chip.label}</span>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
       </header>
 
@@ -5944,20 +5904,14 @@ function HomeScreen({
             </div>
           </div>
 
-          {loadingShops && (
-            <div className="mx-1 mb-4 bg-orange-50/70 dark:bg-orange-950/20 border border-orange-100/70 dark:border-orange-900/40 py-3 px-4 rounded-2xl flex items-center justify-between gap-3 text-orange-850 dark:text-orange-400 text-xs font-semibold animate-pulse">
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-orange-600 animate-spin" />
-                <span>
-                  Refreshing stores...
-                </span>
-              </div>
-            </div>
+          {loadingShops && shops.length === 0 ? (
+            <ShopFeedSkeleton count={6} />
+          ) : (
+            renderedShopList
           )}
-          {renderedShopList}
         </section>
 
-        {sortedShops.length === 0 && (
+        {sortedShops.length === 0 && !loadingShops && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -5986,6 +5940,28 @@ function HomeScreen({
                 ? `No merchants matching "${searchQuery}". Try a different keyword.`
                 : `No kitchens currently open in "${selectedCategory}".`}
             </p>
+
+            {/* Quick popular suggestion tags when search yields 0 results */}
+            {searchQuery && (
+              <div className="mt-4 flex flex-wrap justify-center gap-1.5 max-w-xs">
+                {["Kota üçû", "Braai üî•", "Chips üçü", "Burgers üçî"].map((tag) => {
+                  const clean = tag.split(" ")[0];
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(clean);
+                        triggerHaptic(4);
+                      }}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-orange-950/50 dark:hover:text-orange-400 transition cursor-pointer border border-slate-200/60 dark:border-slate-700/60"
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="mt-6 flex flex-col sm:flex-row items-center gap-3 w-full max-w-xs">
               {shops.length === 0 ? (
@@ -6033,122 +6009,6 @@ function HomeScreen({
           </motion.section>
         )}
       </main>
-
-      {/* Sleek Glassmorphic Bottom Navigation Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 px-3 sm:px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/70 via-transparent to-transparent dark:from-slate-950/70 pointer-events-none flex flex-col items-center justify-end">
-        {/* Subtle Background Syncing Indicator */}
-        <AnimatePresence>
-          {isSyncing && (
-            <motion.div
-              initial={{ opacity: 0, y: 8, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.95 }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center justify-center gap-1.5 mb-2 px-3 py-1 bg-gradient-to-r from-orange-500/95 to-amber-500/95 text-white text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg backdrop-blur-md border border-white/20 pointer-events-auto select-none"
-            >
-              <RefreshCw className="w-3 h-3 animate-spin text-white" />
-              <span>Syncing...</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        <nav className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-[24px] sm:rounded-[28px] border border-slate-200/60 dark:border-slate-800/80 px-2 py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto">
-          {/* Home Button */}
-          <button
-            onClick={() => {
-              triggerHaptic();
-              setCurrentScreen("home");
-            }}
-            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
-              currentScreen === "home"
-                ? "text-orange-600 dark:text-orange-500"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-            }`}
-          >
-            <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
-              currentScreen === "home" ? "bg-orange-50 dark:bg-orange-950/50" : ""
-            }`}>
-              <Home className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
-              {t("home")}
-            </span>
-          </button>
-
-          {/* Discover Button */}
-          <button
-            id="tour-nav-discover"
-            onClick={() => {
-              triggerHaptic();
-              onDiscover();
-            }}
-            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
-              currentScreen === "discover"
-                ? "text-orange-600 dark:text-orange-500"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-            }`}
-          >
-            <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
-              currentScreen === "discover" ? "bg-orange-50 dark:bg-orange-950/50" : ""
-            }`}>
-              <Store className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
-              {t("discover")}
-            </span>
-          </button>
-
-          {/* Explore Map Button */}
-          <button
-            onClick={() => {
-              triggerHaptic();
-              onExplore();
-            }}
-            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
-              currentScreen === "explore"
-                ? "text-orange-600 dark:text-orange-500"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-            }`}
-          >
-            <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
-              currentScreen === "explore" ? "bg-orange-50 dark:bg-orange-950/50" : ""
-            }`}>
-              <MapIcon className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
-              {t("map")}
-            </span>
-          </button>
-
-          {/* Active/History Orders Button */}
-          <button
-            onClick={() => {
-              triggerHaptic();
-              if (activeOrders.length > 0) {
-                setCurrentScreen("order-tracking");
-              } else {
-                onOrderHistory();
-              }
-            }}
-            className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
-              currentScreen === "order-tracking" || currentScreen === "order-history"
-                ? "text-orange-600 dark:text-orange-500"
-                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-            }`}
-          >
-            <div className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 relative ${
-              currentScreen === "order-tracking" || currentScreen === "order-history" ? "bg-orange-50 dark:bg-orange-950/50" : ""
-            }`}>
-              <ClipboardList className="w-5 h-5" />
-              {activeOrders.length > 0 && (
-                <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white dark:border-slate-900 animate-pulse"></span>
-              )}
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider mt-0.5">
-              {t("orders")}
-            </span>
-          </button>
-        </nav>
-      </div>
     </div>
   );
 }
@@ -7632,37 +7492,6 @@ function DiscoverScreen({
           </div>
         </section>
       </main>
-
-      <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none pb-[env(safe-area-inset-bottom)]">
-        <nav className="mx-auto w-full max-w-md md:max-w-xl rounded-t-[2rem] bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-[0_-8px_32px_rgba(45,47,49,0.06)] pointer-events-auto">
-          <div className="flex justify-around items-center px-6 pb-8 pt-4">
-            <button
-              onClick={onHome}
-              className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer"
-            >
-              <Home className="w-6 h-6 mb-1" />
-              <span className="font-sans text-[11px] font-semibold tracking-wide">
-                {t("home")}
-              </span>
-            </button>
-            <button className="flex flex-col items-center justify-center text-[#FF6B00] dark:text-[#ff7a2f] bg-[#FF6B00]/10 rounded-full px-5 py-2 transition-transform duration-150 active:scale-96 cursor-pointer">
-              <Store className="w-6 h-6 mb-1" />
-              <span className="font-sans text-[11px] font-semibold tracking-wide">
-                {t("discover")}
-              </span>
-            </button>
-            <button
-              onClick={onExplore}
-              className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 px-5 py-2 hover:text-[#FF6B00] transition-colors cursor-pointer"
-            >
-              <MapIcon className="w-6 h-6 mb-1" />
-              <span className="font-sans text-[11px] font-semibold tracking-wide">
-                {t("map")}
-              </span>
-            </button>
-          </div>
-        </nav>
-      </div>
     </div>
   );
 }
@@ -9290,13 +9119,6 @@ function StoreInfoScreen({
   const isScrollingRef = useRef(false);
   const [showTrustTooltip, setShowTrustTooltip] = useState(false);
 
-  useEffect(() => {
-    setIsMenuLoading(true);
-    const timer = setTimeout(() => {
-      setIsMenuLoading(false);
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [shop.id, priceSort]);
 
   const handleShareMenu = async () => {
     const shareUrl = `${window.location.origin}${window.location.pathname}?shopId=${shop.id}`;
@@ -9378,10 +9200,54 @@ function StoreInfoScreen({
     };
   };
 
+
+  const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
+
+  useEffect(() => {
+    if (!shop?.id) return;
+    let isMounted = true;
+    const fetchMenu = async () => {
+      setIsMenuLoading(true);
+      try {
+        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && isMounted) {
+            // Remap keys if necessary to match MenuItem interface
+            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
+              id: String(m.id),
+              name: m.name,
+              price: Number(m.price),
+              displayPrice: `R${Number(m.price).toFixed(2)}`,
+              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
+              description: m.description || "",
+              category: m.category || "Main Course",
+              is_available: m.is_available !== false,
+              customizations: m.customizations || [],
+            }));
+            setApiMenu(formattedMenu);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch shop menu from API:", err);
+      } finally {
+        if (isMounted) setIsMenuLoading(false);
+      }
+    };
+    fetchMenu();
+    return () => { isMounted = false; };
+  }, [shop?.id]);
+
   const storeStatus = getStoreStatus();
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    if (apiMenu !== null) {
+      if (apiMenu.length > 0) return apiMenu;
+      // If API succeeded but returned 0 items, respect it, don't fall back to fakes
+      return [];
+    }
+
     if (shop && shop.menu && shop.menu.length > 0) return shop.menu;
 
     // Fallback dishes based on shop category
@@ -11868,6 +11734,12 @@ function ExploreScreen({
                 className={`p-2 rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? "bg-red-50 dark:bg-red-500/10 text-red-500" : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500"}`}
               >
                 <Heart
-                  className={`w-5 h-5 ${favorites.includes(axúÏXmo€6˛û_qD,Kv^∞ev∫¨h±iRÿÌÄ≠(ZY¢,-)PT◊’ﬂëílRv≤th?HÄÿ‘ôw<ﬁ=˜®@$∑d≥|êÑ=xVî§©îú*,8À™>V‡ûÄÒ7vÁ•åöÚ±&∑¶»¸ΩVÍÿbÙyö7ìµ›É…9>Œ„‰1€tˇ™ébê˙EqÂgdb-ù®LS»ÑsÛÖ√∏Oƒ9Ò<àŸ-·g[Ÿ) πŒ2NÅàQ·ÃYBæré øCúï4$°sóB˚![:È™âHuñ2^XÜ7› ˝ôê%®ç¿+BÀNòvÉ7v3&çån∂<v/hí˘ÇºÊ§ 4 ıúM¿{øTÆSpÇÛBt∏§Å,À≈Ñ ‰2pÖ´E	˛é≈uµ◊@uiSÒõ‹»Ô)ÒC®Œ¿ß´¨qAND…)ÿµËÖûç,°NÏ ™L«Ç˚+LÑ>øë©(RÙÀ˘3ëœùëgµÓ⁄¡©uñ:äh*«<a≥¡r«ÉOŒ–k”Ud•‰P5+ú wN8,|‘±∂±m¿∏Ö_Ω€Jw wFˇá^w?°§≈äÑüe$ÙÇs∂º$ë0qz1˛+C[ZzÖÌ¬cu#J¡π≈n◊‹πëﬁ±7!÷K¥o‘‹à≥2Bµ∂0êü?õP§Ñ.Dì…<…#∂â|«˘&%j‹Ä√ì≈;Ù§Î€c7◊*9I7nNÕ¸‹∂iS‰€¨;π›≤ö¨)“IµK<Â6UT£πº˛òÔ%DŸèhâÀ“xá˜Å’Û—ÁCùï6S	ŒqGﬁ!2Ìœ∆Gz»8z"ëí
-≥}¥cf7*Ïß-¶ï®v¯∏%H‹üLâ2=g·™2±&ïùﬁ>Í⁄LÍ–’ÜåfDàÑ.∂<TÑøÊ#¢≥–ÃøUœól¡JÒƒGﬂµ˛_Tt˙pîj4T{⁄u§cx8dÿ¬Z>újë“∑Œ—\ó¢ªÁGÄ¯9¡~Âa1[^§Ñã>$≈5MJû`¸˝¿∏…1º˝" Î—1àx«˛K∆°(ÛúIÄêÃORÑ¯¢˛ö≤¿O±ø+ÿ‘i|¸|^Ûêﬂì{“’§L
-;ùûí)|F—@ø/Ä™$CìÂØ—˜’ ë_=˙ ù^c~Eƒ√m^≥∏ÍÔ‘¯ø{<5MıyèG÷æ&œ»nùïG˜dµxe~â≠û¯@QeÃûπ=∂iCÄë¥Œﬂ0·ßg0Öf-!ü?‰<	»∑Î◊ ¶æ<—ëCrBCM…-ﬁyUõF˚§ΩY9œío◊®’’.?‰ù‹,˚J§âh’>Í∞Ø¨F’ds©é;&+y £º:QéIÊI]ΩÅYøˆG˝£˛qˇ‰Ω¬3bÉwq‹rî≤ú∞Á≤R«V©˜¡≤z]Î‡v<ìÎîÑƒÀµ—Ì+À|›≥KKΩ}XŸK¨5™˝ó…∆Îóëz˝¢.Øp≈ñÊ¬˜aqJÍø¬PÆ!`XÖ\;V–É™_ÄóDuò»˛LÍ†9ê„QDa◊—]´%qﬁ† Bæ ±kc}%[Ò7cô›S∫UﬁiøæW¬ÂO”›wy ∏\˘-ˆáo8û<Ñ7›‚%´Ô±}h@´◊ÕóπûD`Î&{ç¿u{‹$¿–sµ™|≥‹`´	U≥#”ü˚ˆı/   ˇˇ †¨!e
+                  className={`w-5 h-5 ${favorites.includes(activeShop.id) ? "text-red-500 fill-current" : ""}`} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

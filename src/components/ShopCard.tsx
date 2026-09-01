@@ -100,10 +100,14 @@ export const ShopCard = memo(
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        className="flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 w-full h-full active:scale-[0.98] transform"
+        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 w-full h-full active:scale-[0.98] transform ${
+          !status.isOpen ? "opacity-80" : ""
+        }`}
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
-        <div className="aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
+        <div className={`aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0 ${
+          !status.isOpen ? "grayscale-[0.35]" : ""
+        }`}>
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
               <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">

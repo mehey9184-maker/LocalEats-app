@@ -28,6 +28,32 @@ export interface ProfileUpsertData {
 const activeRetryTimers: Map<string, any> = new Map();
 
 /**
+ * Determines whether an error is a permanent schema/type or data constraint error
+ * that must NOT be queued or retried.
+ */
+export function isPermanentSyncError(error: any): boolean {
+  if (!error) return false;
+  const msg = String(error?.message || error || "");
+  const code = String(error?.code || "");
+  
+  return (
+    code === "22P02" || // Invalid input syntax (e.g. invalid UUID)
+    code === "42703" || // Undefined column
+    code === "42804" || // Datatype mismatch
+    code === "23502" || // Not-null violation
+    code === "PGRST204" || // Column not found in PostgREST schema cache
+    code === "PGRST205" || // Table not found
+    msg.includes("22P02") ||
+    msg.includes("invalid input syntax for type uuid") ||
+    msg.includes("Could not find the") ||
+    msg.includes("schema cache") ||
+    msg.includes("column") && msg.includes("does not exist") ||
+    msg.includes("Forbidden") ||
+    msg.includes("ID mismatch")
+  );
+}
+
+/**
  * Calculates exponential backoff delay with jitter
  * delay = min(maxDelay, baseDelay * 2^attempt + jitter)
  */
@@ -38,7 +64,8 @@ function calculateBackoffDelay(attempt: number, baseDelay = 1000, maxDelay = 300
 }
 
 /**
- * Schedules a background retry for a profile using exponential backoff
+ * Schedules a background retry for a profile using exponential backoff.
+ * If the last error was a permanent schema/type failure, retries are skipped.
  */
 export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAttempt = 0) {
   if (typeof window === "undefined" || !profileData.user_id) return;
@@ -66,12 +93,22 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
         console.log(`[Profile Retry] Background sync succeeded for user ${userId}`);
         clearProfileFromQueue(userId);
       } else {
+        if (isPermanentSyncError(result.error)) {
+          console.error(`[Profile Retry] Permanent schema/type error for user ${userId}. Evicting from retry queue:`, result.error?.message || result.error);
+          clearProfileFromQueue(userId);
+          return;
+        }
         incrementProfileRetry(userId, result.error?.message || "Sync failed");
         if (currentAttempt < 5) {
           scheduleProfileRetry(profileData, currentAttempt + 1);
         }
       }
     } catch (err: any) {
+      if (isPermanentSyncError(err)) {
+        console.error(`[Profile Retry] Permanent schema/type error for user ${userId}. Evicting from retry queue:`, err?.message || err);
+        clearProfileFromQueue(userId);
+        return;
+      }
       incrementProfileRetry(userId, err?.message || "Exception during retry");
       if (currentAttempt < 5) {
         scheduleProfileRetry(profileData, currentAttempt + 1);
@@ -94,25 +131,64 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
   let synced = false;
   let lastError: any = null;
 
-  // Channel 1: Firestore
+  // Channel 1: Supabase (Authoritative primary persistent database via Express API)
   try {
-    await FirestoreService.saveProfile(profileData.user_id, {
-      full_name: profileData.fullName || null,
-      email: profileData.email || null,
+    const { getApiAuthHeaders } = await import('./apiAuth');
+    const headers = await getApiAuthHeaders();
+    
+    const safePayload = {
+      user_id: profileData.user_id,
+      fullName: profileData.fullName,
+      email: profileData.email,
       phone: sanitizedPhone,
-      city: profileData.city || null,
-      address: profileData.address || null,
-      country: profileData.country || "South Africa",
       role: profileData.role || "user",
-      avatar_url: profileData.photo_url || null,
+      city: profileData.city || "",
+      address: profileData.address || "",
+      country: profileData.country || "South Africa",
+      photo_url: profileData.photo_url || "",
       language: profileData.language || "en",
-      favorites: profileData.favorites || []
+      favorites: profileData.favorites || [],
+      updated_at: new Date().toISOString(),
+    };
+    
+    const response = await fetch('/api/profiles', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers
+      },
+      body: JSON.stringify(safePayload)
     });
-    synced = true;
-  } catch (fsErr: any) {
-    lastError = fsErr;
-    console.info("[Profile Sync] Firestore channel note:", fsErr?.message || fsErr);
+    
+    const result = await response.json();
+          
+    if (!response.ok || !result.success) {
+      console.warn("[Profile Sync] Supabase API sync notice:", result.error || "Failed");
+      lastError = new Error(result.error || "Failed");
+    } else {
+      synced = true;
+      lastError = null; // Clear any previous error if Supabase succeeds
+    }
+  } catch (sbErr: any) {
+    console.warn("[Profile Sync] Exception syncing to Supabase API:", sbErr?.message || sbErr);
+    lastError = sbErr;
   }
+
+  // Channel 2: Firestore (Non-blocking secondary mirror for compatibility)
+  FirestoreService.saveProfile(profileData.user_id, {
+    full_name: profileData.fullName || null,
+    email: profileData.email || null,
+    phone: sanitizedPhone,
+    city: profileData.city || null,
+    address: profileData.address || null,
+    country: profileData.country || "South Africa",
+    role: profileData.role || "user",
+    avatar_url: profileData.photo_url || null,
+    language: profileData.language || "en",
+    favorites: profileData.favorites || []
+  }).catch((fsErr: any) => {
+    console.debug("[Profile Sync] Firestore mirror notice:", fsErr?.message || fsErr);
+  });
 
   return { success: synced, error: synced ? null : lastError };
 }
@@ -172,6 +248,11 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
       clearProfileFromQueue(profileData.user_id);
       return { data: result.data || { success: true }, error: null };
     } else {
+      if (isPermanentSyncError(result.error)) {
+        console.error("[Profile Service] Permanent schema/type error. Evicting from queue and cancelling retry:", result.error?.message || result.error);
+        clearProfileFromQueue(profileData.user_id);
+        return { data: null, error: result.error };
+      }
       // Direct sync did not succeed; initiate exponential backoff retry in background
       console.warn("[Profile Service] Database offline or unreachable. Scheduling exponential backoff retry...");
       queueProfileSync(profileData, result.error?.message || "Sync failed");
@@ -179,6 +260,11 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
       return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
     }
   } catch (err: any) {
+    if (isPermanentSyncError(err)) {
+      console.error("[Profile Service] Permanent schema/type error. Evicting from queue and cancelling retry:", err?.message || err);
+      clearProfileFromQueue(profileData.user_id);
+      return { data: null, error: err };
+    }
     console.info("[Profile Service] Exception during profile sync:", err?.message || err);
     queueProfileSync(profileData, err?.message || "Sync exception");
     scheduleProfileRetry(profileData, 0);
@@ -215,11 +301,21 @@ export async function processOfflineProfileQueue() {
         console.log(`[Offline Profile Sync] Successfully synced queued profile for ${userId}`);
         clearProfileFromQueue(userId);
       } else {
+        if (isPermanentSyncError(res.error)) {
+          console.error(`[Offline Profile Sync] Permanent schema/type error for user ${userId}. Evicting from queue:`, res.error?.message || res.error);
+          clearProfileFromQueue(userId);
+          continue;
+        }
         incrementProfileRetry(userId, res.error?.message || "Sync failed");
         // Schedule next retry with exponential backoff
         scheduleProfileRetry(profileData, item.retryCount || 0);
       }
     } catch (e: any) {
+      if (isPermanentSyncError(e)) {
+        console.error(`[Offline Profile Sync] Permanent schema/type error for user ${userId}. Evicting from queue:`, e?.message || e);
+        clearProfileFromQueue(userId);
+        continue;
+      }
       incrementProfileRetry(userId, e?.message || "Exception");
       console.warn("Failed to sync queued profile:", e);
       scheduleProfileRetry(profileData, item.retryCount || 0);

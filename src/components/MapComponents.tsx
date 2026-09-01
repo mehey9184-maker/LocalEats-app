@@ -107,7 +107,7 @@ const mapStyleAttributions = {
   dark: '&copy; <a href="https://carto.com/attributions">CARTO</a> contributors'
 };
 
-function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
+export function RecenterMap({ coords }: { coords: { lat: number, lng: number } }) {
   const map = useMap();
   const lat = coords?.lat;
   const lng = coords?.lng;
