@@ -15,11 +15,11 @@ LocalEats is a comprehensive food discovery and ordering application for local l
   - *Completed*: Order delivered successfully.
 
 ## API Integrations
-- **Resilient Offline/Server Sync**: All offline carts and failed Cloud Function calls intelligently fallback to the Dual Sync queue, gracefully pushing payload data to `/api/orders` when Firebase environments are locked or uncommunicative.
-
-- **Supabase Backend**: Primary BaaS for auth and database operations.
-  - Key Tables: `orders`, `rider_locations`, `profiles`, `shops`.
-  - Real-time Subscriptions: Used extensively for live tracking `rider_locations` and instant `orders` status updates.
+- **Fail-closed order submission**: Carts may remain cached locally, but orders and cancellations require a confirmed response from the authenticated LocalEats API. Failed requests are not converted into successful local orders and order mutations are not replayed from offline queues.
+- **Portable Firebase identity**: Firebase Authentication supplies the customer identity token. Business screens call an adapter so the identity provider can be changed later without restoring client-side order authority.
+- **LocalEats API + Supabase/Postgres**: The Vercel-hosted API is the authorization, validation, pricing, and state-transition gate for commerce records stored in Supabase. Frontends do not receive service-role credentials.
+  - Key commerce tables include `orders`, `shops`, `menu_items`, `rider_profiles`, and `rider_connections`.
+  - Existing Firebase/Firestore messaging, push, and tracking paths remain transitional and require separate privacy/rules review.
 - **Leaflet / react-leaflet**: Core mapping engine handling all geospatial visualizations.
 
 ## Standardized Map Pin System Logic
@@ -31,6 +31,19 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
+
+- **[2026-09-05] Order-integrity safety branch (local only; not deployed)**:
+  - Replaced checkout's fabricated/offline order success with a fail-closed call to the authenticated LocalEats API. A database or API failure now leaves the order unsent and visible as a real error.
+  - Removed `_clientPricing` and stopped the browser from authoritatively supplying item prices, totals, service fees, delivery fees, discounts, or delivery status.
+  - Order creation now sends customer intent only. The API validates the shop, menu ownership, menu availability, quantities, delivery radius, and allowed payment method, then calculates the authoritative total before inserting into Supabase.
+  - Preserved UUID idempotency so a retry returns the original order and a changed payload using the same key is rejected.
+  - Stopped background/offline queues from replaying order writes. Offline cart storage remains local, but placing or cancelling an order requires server confirmation.
+  - Customer order refresh and pending-order cancellation now use the central API instead of direct browser database mutations. Pickup-to-delivery conversion is disabled until the server can reprice it safely.
+  - Delivery orders start at `pending` with no rider search. The merchant starts `finding_rider` only after marking the food ready.
+  - Delivery confirmation uses a server-issued four-digit PIN or LocalEats QR token. The customer UI displays the issued proof; it no longer fabricates a PIN from the order ID.
+  - This branch depends on an unapplied Supabase migration, a server-only delivery-proof secret, Firebase UID-to-rider mapping, and staging verification. It is **not production-ready** and nothing was committed, pushed, merged, deployed, or changed in production during this phase.
+
+> Historical warning: earlier releases described offline order replay as resilient behavior. That design is no longer approved. Offline carts may be cached, but an order must never appear successful until the authoritative API and Supabase confirm it.
 
 - **[2026-08-26] Phase 12: Menu Item Dietary Tags Badges**:
   - Enhanced `FirestoreService.getShops()` mapping logic inside `src/lib/firebase.ts` to map `dietary_tags` across Format 1 (embedded menu array), Format 2 (matched from root `menu_items`), Format 3 (subcollection), and default items.

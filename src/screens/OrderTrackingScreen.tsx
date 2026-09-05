@@ -499,59 +499,9 @@ export function OrderTrackingScreen({
 
   // Background processor for pending cancellations queued while offline
   const processPendingCancellations = async () => {
-    if (typeof navigator !== "undefined" && !navigator.onLine) return;
-    try {
-      const stored = safeLocalStorageGet("pending_cancellation", []);
-      if (!Array.isArray(stored) || stored.length === 0) return;
-
-      const remaining: any[] = [];
-      let successCount = 0;
-
-      for (const item of stored) {
-        if (!item?.orderId) continue;
-        try {
-          const updatePayload: any = {
-            status: "cancelled",
-            cancellation_reason: item.cancelReason || "Cancelled by customer",
-            updated_at: new Date().toISOString(),
-          };
-
-          fetch(`/api/orders/${item.orderId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(updatePayload),
-          }).catch(() => {});
-
-          let { error } = await supabase
-            .from("orders")
-            .update(updatePayload)
-            .eq("id", item.orderId);
-
-          if (error && error.message?.includes("cancellation_reason")) {
-            delete updatePayload.cancellation_reason;
-            const retry = await supabase
-              .from("orders")
-              .update(updatePayload)
-              .eq("id", item.orderId);
-            error = retry.error;
-          }
-
-          if (error) {
-            remaining.push(item);
-          } else {
-            successCount++;
-          }
-        } catch {
-          remaining.push(item);
-        }
-      }
-
-      safeLocalStorageSet("pending_cancellation", remaining);
-      if (successCount > 0) {
-        toast.success(`Synced ${successCount} queued order cancellation${successCount > 1 ? "s" : ""}!`);
-      }
-    } catch (e) {
-      console.warn("Failed syncing pending cancellations:", e);
+    const stored = safeLocalStorageGet("pending_cancellation", []);
+    if (Array.isArray(stored) && stored.length > 0) {
+      console.warn("Legacy offline cancellations were preserved for review and not replayed.");
     }
   };
 
@@ -653,7 +603,7 @@ export function OrderTrackingScreen({
   };
 
   useEffect(() => {
-    setLocalOrders((prev) => DualSyncEngine.reconcileEntities(prev, orders));
+    setLocalOrders(orders.filter((order) => !order.is_offline_queued));
   }, [orders]);
 
   useEffect(() => {
@@ -926,38 +876,7 @@ export function OrderTrackingScreen({
     setIsRefreshing(true);
     triggerHaptic?.(10);
     try {
-      const activeIds = orders.map((o) => o.user_id).filter(Boolean);
-      const userId =
-        activeIds[0] || (await supabase.auth.getUser()).data.user?.id;
-      if (!userId) {
-        setIsRefreshing(false);
-        return;
-      }
-
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng, delivery_pin, order_type";
-
-      let fetchedData: any[] | null = null;
-      try {
-        const { data, error } = await supabase
-          .from("orders")
-          .select(safeColumns)
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false });
-
-        if (!error && data) {
-          fetchedData = data;
-        }
-      } catch (_) {}
-
-      if (!fetchedData) {
-        try {
-          const res = await fetch(`/api/orders?user_id=${userId}`);
-          if (res.ok) {
-            const json = await res.json();
-            if (Array.isArray(json.orders)) fetchedData = json.orders;
-          }
-        } catch (_) {}
-      }
+      const fetchedData = await FirestoreService.getAuthoritativeOrders();
 
       if (fetchedData && fetchedData.length > 0) {
         setLocalOrders(fetchedData as any);
@@ -979,20 +898,13 @@ export function OrderTrackingScreen({
     triggerHaptic?.([20, 30, 20]);
     
     try {
-      // Sync to Firestore
-      fetch(`/api/orders/${orderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "completed" }),
-      }).catch(() => {});
-
-      await supabase
-        .from("orders")
-        .update({ status: "completed" })
-        .eq("id", orderId);
-        
-      setLocalOrders((prev) => 
-        prev.map((o) => o.id === orderId ? { ...o, status: "completed" } : o)
+      const confirmedOrder = await FirestoreService.getAuthoritativeOrder(orderId);
+      if (!confirmedOrder || (confirmedOrder.status !== "delivered" && confirmedOrder.delivery_status !== "delivered")) {
+        toast.error("The server has not confirmed this delivery yet.");
+        return;
+      }
+      setLocalOrders((prev) =>
+        prev.map((order) => order.id === orderId ? confirmedOrder as Order : order),
       );
 
       // Trigger rating/review component by setting local storage which App.tsx picks up,
@@ -1015,143 +927,22 @@ export function OrderTrackingScreen({
     }
   };
 
-  const executeCancellation = async (orderId: string, reason: string) => {
+  const executeCancellation = async (orderId: string, _reason: string) => {
     setIsCancelling(true);
     triggerHaptic?.(15);
-
-    // 1. Network connectivity check: If offline, queue in pending_cancellation local storage bucket
     const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
     if (isOffline) {
-      try {
-        const currentQueue = safeLocalStorageGet("pending_cancellation", []);
-        const updatedQueue = currentQueue.filter((item: any) => item?.orderId !== orderId);
-        updatedQueue.push({
-          orderId,
-          cancelReason: reason || "Cancelled by customer",
-          timestamp: Date.now(),
-        });
-        safeLocalStorageSet("pending_cancellation", updatedQueue);
-
-        // Update local state
-        setLocalOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId
-              ? { ...o, status: "cancelled", cancellation_reason: reason }
-              : o
-          )
-        );
-
-        // Update cached_orders
-        const cached = safeLocalStorageGet("cached_orders", []);
-        if (Array.isArray(cached) && cached.length > 0) {
-          safeLocalStorageSet(
-            "cached_orders",
-            cached.map((o: any) =>
-              o.id === orderId
-                ? { ...o, status: "cancelled", cancellation_reason: reason }
-                : o
-            )
-          );
-        }
-
-        toast.info("Offline: Order cancellation queued and will sync automatically when back online.");
-        setCancellationModal({ isOpen: false, orderId: null });
-        setCancellationErrorModal(null);
-        setCancelReason("");
-      } catch (err: any) {
-        console.error("Offline queueing failed:", err);
-      } finally {
-        setIsCancelling(false);
-      }
+      toast.error("Connect to the internet to cancel. The order was not changed.");
+      setIsCancelling(false);
       return;
     }
 
-    // 2. Online cancellation attempt
     try {
-      const updatePayload: any = {
-        status: "cancelled",
-        cancellation_reason: reason || "Cancelled by customer",
-        updated_at: new Date().toISOString(),
-      };
-
-      let syncedSuccessfully = false;
-
-      // Primary sync: Firestore Database
-      try {
-        await fetch(`/api/orders/${orderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updatePayload),
-        });
-        syncedSuccessfully = true;
-      } catch (firestoreErr) {
-        console.warn("Firestore cancellation update:", firestoreErr);
-      }
-
-      // Secondary sync: Express API backend
-      try {
-        const res = await fetch(`/api/orders/${orderId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updatePayload),
-        });
-        if (res.ok) {
-          syncedSuccessfully = true;
-        }
-      } catch (apiErr) {
-        console.warn("API cancellation update:", apiErr);
-      }
-
-      // Tertiary sync: Supabase
-      try {
-        const { error } = await supabase
-          .from("orders")
-          .update(updatePayload)
-          .eq("id", orderId);
-
-        if (!error) {
-          syncedSuccessfully = true;
-        }
-      } catch (supaErr) {
-        console.warn("Supabase cancellation update:", supaErr);
-      }
-
-      // If network was completely unavailable and nothing synced
-      if (!syncedSuccessfully && typeof navigator !== "undefined" && !navigator.onLine) {
-        throw new Error("Network connection issue prevented cancellation. Please check your signal and retry, or queue it for automatic background sync.");
-      }
-
-      toast.success("Order cancelled successfully");
+      const confirmedOrder = await FirestoreService.cancelAuthoritativeOrder(orderId);
+      toast.success("The server confirmed your order cancellation.");
       setLocalOrders((prev) =>
-        prev.map((o) =>
-          o.id === orderId
-            ? { ...o, status: "cancelled", cancellation_reason: reason }
-            : o
-        )
+        prev.map((order) => order.id === orderId ? confirmedOrder as Order : order),
       );
-
-      // Clean up cached orders
-      const cached = safeLocalStorageGet("cached_orders", []);
-      if (Array.isArray(cached) && cached.length > 0) {
-        safeLocalStorageSet(
-          "cached_orders",
-          cached.map((o: any) =>
-            o.id === orderId
-              ? { ...o, status: "cancelled", cancellation_reason: reason }
-              : o
-          )
-        );
-      }
-
-      // Remove from pending_cancellation if present
-      const currentPending = safeLocalStorageGet("pending_cancellation", []);
-      if (Array.isArray(currentPending)) {
-        safeLocalStorageSet(
-          "pending_cancellation",
-          currentPending.filter((item: any) => item?.orderId !== orderId)
-        );
-      }
-
       setCancellationModal({ isOpen: false, orderId: null });
       setCancellationErrorModal(null);
       setCancelReason("");
@@ -1167,10 +958,10 @@ export function OrderTrackingScreen({
       setCancellationErrorModal({
         isOpen: true,
         orderId,
-        cancelReason: reason || "Cancelled by customer",
+        cancelReason: _reason || "Cancelled by customer",
         isNetworkIssue: Boolean(isNetworkIssue),
         errorMessage: isNetworkIssue
-          ? "Network connection issue prevented cancellation. Please check your signal and retry, or queue it for automatic background sync."
+          ? "Network connection issue prevented cancellation. The order was not changed; reconnect and try again."
           : (err.message || "Failed to cancel order."),
       });
     } finally {
@@ -1184,21 +975,10 @@ export function OrderTrackingScreen({
     await executeCancellation(orderId, cancelReason);
   };
 
-  const combinedOrders = useMemo(() => {
-    const merged = [...localOrders];
-    offlineOrders.forEach((offOrder) => {
-      const existsInDb = merged.some(
-        (o) => o.id === offOrder.id || (o.product_name === offOrder.product_name && o.created_at === offOrder.created_at)
-      );
-      if (!existsInDb) {
-        merged.push({
-          ...offOrder,
-          is_offline_queued: true
-        });
-      }
-    });
-    return merged;
-  }, [localOrders, offlineOrders]);
+  const combinedOrders = useMemo(
+    () => localOrders.filter((order) => !order.is_offline_queued),
+    [localOrders],
+  );
 
   const activeOrders = combinedOrders.filter(
     (o) => {
@@ -1524,7 +1304,11 @@ export function OrderTrackingScreen({
                 )}
 
                 {/* Secure Handshake Delivery PIN & QR Code Display */}
-                {Boolean(order.is_delivery || order.order_type === "delivery") && (
+                {Boolean(
+                  (order.is_delivery || order.delivery_type === "delivery" || order.order_type === "delivery") &&
+                  order.delivery_confirmation?.pin &&
+                  order.delivery_confirmation?.qr_token
+                ) && (
                   <div className="space-y-2">
                     {isLiveDeliveryActive(order) && (
                       <div className="flex items-center gap-2 p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-xs font-bold text-emerald-800 dark:text-emerald-300 animate-pulse">
@@ -1535,24 +1319,8 @@ export function OrderTrackingScreen({
                       </div>
                     )}
                     <SecureDeliveryHandshakeCard
-                      pin={
-                        order.delivery_pin ||
-                        (order.id
-                          ? String(
-                              Math.abs(
-                                order.id
-                                  .split("")
-                                  .reduce(
-                                    (acc: number, c: string) =>
-                                      acc + c.charCodeAt(0),
-                                    0,
-                                  ) * 31,
-                              ) %
-                                9000 +
-                                1000,
-                            )
-                          : "4928")
-                      }
+                      pin={order.delivery_confirmation!.pin}
+                      qrToken={order.delivery_confirmation!.qr_token}
                       orderId={order.id}
                       triggerHaptic={triggerHaptic}
                     />

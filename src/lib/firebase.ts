@@ -134,7 +134,6 @@ export interface CreateOrderItemInput {
 
 export interface CreateOrderRequestData {
   user_id?: string;
-  _clientPricing?: any;
   idempotency_key: string;
   shop_id: string | number;
   items: CreateOrderItemInput[];
@@ -168,6 +167,10 @@ export interface CreateOrderResponse {
   total_price: number;
   status: string;
   delivery_status: string;
+  delivery_confirmation?: {
+    pin: string;
+    qr_token: string;
+  };
   message?: string;
 }
 
@@ -318,7 +321,11 @@ export const FirestoreService = {
     try {
       const { getApiAuthHeaders } = await import('./apiAuth');
       const headers = await getApiAuthHeaders();
-      const response = await fetch('/api/orders', {
+      const apiUrl = import.meta.env.VITE_LOCALEATS_API_URL?.replace(/\/$/, '');
+      if (!apiUrl) {
+        throw new Error('LocalEats order service is not configured. No order was placed.');
+      }
+      const response = await fetch(`${apiUrl}/api/v1/orders`, {
 
         method: 'POST',
         headers: {
@@ -327,26 +334,99 @@ export const FirestoreService = {
         },
         body: JSON.stringify(requestData)
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create order");
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('LocalEats order service returned an invalid response. No order was placed.');
       }
+      const data: unknown = await response.json();
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('LocalEats order service returned an invalid response. No order was placed.');
+      }
+      const payload = data as Record<string, any>;
+      if (!response.ok) {
+        throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to create order. No order was placed.');
+      }
+      const order = payload.order;
+      if (!payload.success || !order || typeof order !== 'object' || typeof order.id !== 'string' || !order.id) {
+        throw new Error('The database did not confirm an order ID. No order was placed.');
+      }
+      const money = (value: unknown, field: string): number => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          throw new Error(`The order service returned an invalid ${field}. No order was placed.`);
+        }
+        return parsed;
+      };
+      const rawConfirmation = payload.delivery_confirmation;
+      const deliveryConfirmation = rawConfirmation &&
+        typeof rawConfirmation === 'object' &&
+        typeof rawConfirmation.pin === 'string' &&
+        /^\d{4}$/.test(rawConfirmation.pin) &&
+        typeof rawConfirmation.qr_token === 'string' &&
+        /^le_[0-9a-f]{64}$/.test(rawConfirmation.qr_token)
+          ? { pin: rawConfirmation.pin, qr_token: rawConfirmation.qr_token }
+          : undefined;
       return {
         success: true,
-        order_id: data.order?.id || requestData.idempotency_key,
-        subtotal: data.order?.subtotal || 0,
-        delivery_fee: data.order?.delivery_fee || 0,
-        service_fee: data.order?.service_fee || 0,
-        discount_amount: data.order?.discount_amount || 0,
-        tip_amount: data.order?.tip_amount || 0,
-        total_price: data.order?.total_price || 0,
-        status: data.order?.status || 'pending',
-        delivery_status: data.order?.delivery_status || 'none',
+        order_id: order.id,
+        subtotal: money(order.price, 'subtotal'),
+        delivery_fee: money(order.delivery_fee, 'delivery fee'),
+        service_fee: money(order.service_fee, 'service fee'),
+        discount_amount: money(order.discount_amount, 'discount'),
+        tip_amount: money(order.tip_amount, 'tip'),
+        total_price: money(order.total_price, 'total'),
+        status: typeof order.status === 'string' ? order.status : 'pending',
+        delivery_status: typeof order.delivery_status === 'string' ? order.delivery_status : 'none',
+        delivery_confirmation: deliveryConfirmation,
       };
     } catch (e: any) {
       console.error("[FirestoreService] createAuthoritativeOrder failed:", e);
       throw e;
     }
+  },
+
+  async getAuthoritativeOrders(): Promise<any[]> {
+    const { getApiAuthHeaders } = await import('./apiAuth');
+    const headers = await getApiAuthHeaders();
+    const apiUrl = import.meta.env.VITE_LOCALEATS_API_URL?.replace(/\/$/, '');
+    if (!apiUrl) throw new Error('LocalEats order service is not configured.');
+    const response = await fetch(`${apiUrl}/api/v1/orders`, { headers });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success || !Array.isArray(payload.orders)) {
+      throw new Error(typeof payload?.error === 'string' ? payload.error : 'Orders could not be loaded.');
+    }
+    return payload.orders;
+  },
+
+  async getAuthoritativeOrder(orderId: string): Promise<any | null> {
+    const { getApiAuthHeaders } = await import('./apiAuth');
+    const headers = await getApiAuthHeaders();
+    const apiUrl = import.meta.env.VITE_LOCALEATS_API_URL?.replace(/\/$/, '');
+    if (!apiUrl) throw new Error('LocalEats order service is not configured.');
+    const response = await fetch(`${apiUrl}/api/v1/orders/${encodeURIComponent(orderId)}`, { headers });
+    if (response.status === 404) return null;
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success || !payload.order) {
+      throw new Error(typeof payload?.error === 'string' ? payload.error : 'Order could not be loaded.');
+    }
+    return payload.order;
+  },
+
+  async cancelAuthoritativeOrder(orderId: string): Promise<any> {
+    const { getApiAuthHeaders } = await import('./apiAuth');
+    const headers = await getApiAuthHeaders();
+    const apiUrl = import.meta.env.VITE_LOCALEATS_API_URL?.replace(/\/$/, '');
+    if (!apiUrl) throw new Error('LocalEats order service is not configured.');
+    const response = await fetch(`${apiUrl}/api/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({}),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.success || !payload.order) {
+      throw new Error(typeof payload?.error === 'string' ? payload.error : 'Order cancellation was not confirmed.');
+    }
+    return payload.order;
   },
 
   async saveOrder(order: any): Promise<void> {

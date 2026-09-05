@@ -1152,128 +1152,11 @@ export function CheckoutScreen({
     }
 
     if (!isOnline) {
-      // Calculate proportional discount per item to persist exact client payments into database
-      const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
-
-      const orderData = cart.map((item, index) => {
-        const customizationsString =
-          item.selectedCustomizations
-            ?.map((c) => `${c.name} (+R${Number(c.price).toFixed(2)})`)
-            .join(", ") || "";
-        const customizationsTotal = (
-          item.selectedCustomizations || []
-        ).reduce((acc, c) => acc + Number(c.price), 0);
-        const itemRawPrice = Number(item.price) || 0;
-        const itemQty = Math.max(1, Number(item.quantity) || 1);
-        const unitOriginalPrice = itemRawPrice + customizationsTotal;
-        const originalPrice = itemQty > 5 ? unitOriginalPrice * 0.85 : unitOriginalPrice;
-        const unitFinalPrice = Number(Math.max(0, originalPrice - originalPrice * discountRatio).toFixed(2));
-        const finalItemPrice = Number((unitFinalPrice * itemQty).toFixed(2));
-
-        // Allocate delivery fee and additional service/tip fees to the first line item for multi-item cart pricing integrity
-        const itemDeliveryFee = deliveryType === "delivery" ? (index === 0 ? Number(activeDeliveryFee.toFixed(2)) : 0) : 0;
-        const otherFees = index === 0 ? Number((serviceFee + tipAmount).toFixed(2)) : 0;
-        const totalLineDeliveryFee = Number((itemDeliveryFee + otherFees).toFixed(2));
-        const itemTotalPrice = Number((finalItemPrice + totalLineDeliveryFee).toFixed(2));
-
-        const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
-
-        return {
-          user_id: session?.user?.id,
-          shop_id: item.shopId,
-          customer_name: finalCustomerName,
-          phone: finalCustomerPhone,
-          email: userProfile.email,
-          city: userProfile.city,
-          address:
-            deliveryType === "delivery"
-              ? deliveryAddressText
-              : userProfile.address,
-          country: userProfile.country,
-          product_name: item.name,
-          product_variant: customizationsString,
-          quantity: itemQty,
-          price: unitFinalPrice,
-          total_price: itemTotalPrice,
-          notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || "",
-          delivery_instructions: finalDeliveryInstructions,
-          status: "queued_for_sync",
-          payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
-          is_delivery: deliveryType === "delivery",
-          order_type: deliveryType,
-          delivery_fee: totalLineDeliveryFee,
-          delivery_status: (isCOAOrder || paymentMethod === "cash") ? "none" : (deliveryType === "delivery" ? "finding_rider" : "none"),
-          latitude: currentLat,
-          longitude: currentLng,
-        };
-      });
-
-      const newOfflineOrders = orderData.map((d: any) => ({
-        ...d,
-        id: "offline_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        is_offline_queued: true,
-      }));
-
-      // Cache locally
-      const cached = safeLocalStorageGet("cached_orders", []);
-      safeLocalStorageSet(
-        "cached_orders",
-        JSON.stringify([...newOfflineOrders, ...cached]),
-      );
-
-      // Add to sync queue
-      const queue = safeLocalStorageGet("offline_orders_queue", []);
-      safeLocalStorageSet(
-        "offline_orders_queue",
-        JSON.stringify([...queue, ...newOfflineOrders]),
-      );
-
-      // Mark promo code as used offline
-      if (appliedPromo) {
-        const usedLocalKey = session?.user?.id
-          ? `used_promo_codes_${session.user.id}`
-          : `used_promo_codes_guest`;
-        const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-        if (!usedLocal.includes(appliedPromo.code)) {
-          usedLocal.push(appliedPromo.code);
-          safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
-        }
-      }
-
       setLoading(false);
-      audioHelper.play("placed");
-      if ("vibrate" in navigator) {
-        navigator.vibrate([100, 50, 100]);
-      }
-      showAlert(
-        "Order Queued for Sync",
-        "Your order was placed offline and has been queued for sync! It will automatically submit to the kitchen once your connectivity is restored. 🍔",
-      );
-
-      // Save the last delivery instructions for future use so the user doesn't have to keep typing it
-      if (deliveryInstructions.trim()) {
-        localStorage.setItem("localeats_last_instructions", deliveryInstructions.trim());
-      }
-      if (orderNotes.trim()) {
-        localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
-      }
-      if (deliveryAddressText && deliveryAddressText.trim()) {
-        try {
-          const cached = localStorage.getItem("localeats_saved_addresses");
-          let currentSaved: string[] = cached ? JSON.parse(cached) : [];
-          const trimmed = deliveryAddressText.trim();
-          if (!currentSaved.includes(trimmed)) {
-            currentSaved.push(trimmed);
-            localStorage.setItem("localeats_saved_addresses", JSON.stringify(currentSaved));
-          }
-        } catch (e) {}
-      }
-      
-      setCart([]);
-      safeLocalStorageSet("cart", JSON.stringify([]));
-      onConfirm();
+      setNotification({
+        message: "You need an internet connection to place this order. Your cart is still saved.",
+        type: "error",
+      });
       return;
     }
 
@@ -1313,9 +1196,6 @@ export function CheckoutScreen({
             }
           } catch (e) {}
         }
-
-        // Calculate proportional discount per item to persist exact client payments into database
-        const discountRatio = subtotal > 0 ? discountAmount / subtotal : 0;
 
         // Resolve authenticated user ID or obtain secure Anonymous Firebase UID for guest checkout
         let activeUserId: string | null = session?.user?.id && typeof session.user.id === "string" && session.user.id.length > 5 ? session.user.id : null;
@@ -1396,18 +1276,9 @@ export function CheckoutScreen({
             city: userProfile?.city || "Cape Town",
             delivery_instructions: finalDeliveryInstructions || undefined,
           },
-          _clientPricing: {
-            subtotal: subtotal,
-            total_price: totalAmount,
-            delivery_fee: activeDeliveryFee,
-            service_fee: serviceFee,
-            discount_amount: discountAmount,
-            tip_amount: tipAmount
-          }
-        } as any;
+        };
 
         console.log("[Checkout] Processing checkout for Shop ID:", requestPayload.shop_id);
-        console.log("[Checkout] Submitting authoritative order via API:", requestPayload);
 
         const orderResult = await FirestoreService.createAuthoritativeOrder(requestPayload);
 
@@ -1442,6 +1313,7 @@ export function CheckoutScreen({
           is_delivery: deliveryType === "delivery",
           order_type: deliveryType,
           delivery_status: orderResult.delivery_status,
+          delivery_confirmation: orderResult.delivery_confirmation,
           lat: currentLat,
           lng: currentLng,
           created_at: new Date().toISOString(),
@@ -1468,14 +1340,6 @@ export function CheckoutScreen({
           safeLocalStorageSet(
             "admin_cached_orders",
             JSON.stringify([...cleanOrderData, ...adminArr]),
-          );
-
-          // Queue for background dual sync
-          const queue = safeLocalStorageGet("offline_orders_queue", []);
-          const queueArr = Array.isArray(queue) ? queue : [];
-          safeLocalStorageSet(
-            "offline_orders_queue",
-            JSON.stringify([...queueArr, ...cleanOrderData]),
           );
 
           window.dispatchEvent(new Event("local-orders-synced"));
@@ -3902,4 +3766,3 @@ export function CheckoutScreen({
     </main>
   );
 }
-

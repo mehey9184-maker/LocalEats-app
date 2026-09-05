@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 interface SecureDeliveryHandshakeProps {
   pin: string;
+  qrToken: string;
   orderId?: string;
   className?: string;
   triggerHaptic?: (pattern?: any) => void;
@@ -12,6 +13,7 @@ interface SecureDeliveryHandshakeProps {
 
 export function SecureDeliveryHandshakeCard({
   pin,
+  qrToken,
   orderId,
   className = "",
   triggerHaptic,
@@ -20,9 +22,9 @@ export function SecureDeliveryHandshakeCard({
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!pin) return;
+    if (!qrToken) return;
     let isMounted = true;
-    QRCode.toDataURL(String(pin), {
+    QRCode.toDataURL(qrToken, {
       width: 256,
       margin: 2,
       color: {
@@ -40,7 +42,7 @@ export function SecureDeliveryHandshakeCard({
     return () => {
       isMounted = false;
     };
-  }, [pin]);
+  }, [qrToken]);
 
   const handleCopy = () => {
     if (!pin) return;
@@ -53,7 +55,7 @@ export function SecureDeliveryHandshakeCard({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (!pin) return null;
+  if (!pin || !qrToken) return null;
 
   // Split PIN into individual digits for clear, elevated numeral presentation
   const digits = String(pin).split("");
@@ -138,7 +140,7 @@ export function SecureDeliveryHandshakeCard({
           >
             <img
               src={qrUrl}
-              alt={`Delivery PIN QR Code: ${pin}`}
+              alt="LocalEats delivery confirmation QR code"
               className="w-36 h-36 sm:w-40 sm:h-40 object-contain rounded-lg"
             />
             <span className="text-[10px] font-mono font-black text-slate-900 tracking-widest mt-2 bg-slate-100 px-2.5 py-0.5 rounded-full">

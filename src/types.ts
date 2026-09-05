@@ -36,13 +36,18 @@ export type Order = {
   items?: any[];
   notes: string;
   delivery_instructions?: string;
-  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'ready_for_pickup' | 'collected' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
+  delivery_type?: 'delivery' | 'collection';
   order_type?: 'delivery' | 'collection' | string;
   delivery_pin?: string;
+  delivery_confirmation?: {
+    pin: string;
+    qr_token: string;
+  };
   delivery_fee?: number;
   rider_id?: string;
-  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivered' | 'cancelled' | 'delivery' | 'collection' | 'ready' | 'pending' | 'preparing' | 'confirmed' | 'completed';
+  delivery_status?: 'none' | 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivering' | 'delivered' | 'cancelled' | 'delivery' | 'collection' | 'ready' | 'pending' | 'preparing' | 'confirmed' | 'completed';
   created_at: string;
   status_history?: StatusHistoryItem[];
   owner_message?: string;
@@ -166,4 +171,3 @@ export type SignUpData = {
   phone: string;
   fullName: string;
 };
-

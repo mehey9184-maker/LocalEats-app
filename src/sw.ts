@@ -17,7 +17,8 @@ const CACHE_NAME_API = "localeats-api-v2";
 // Broadcast Channel to communicate with the React hooks instantly
 const broadcastChannel = new BroadcastChannel("localeats-sync-channel");
 
-// Instantiate workbox-background-sync Queue to implement strict 15-minute Cart Validity constraint
+// Instantiate workbox-background-sync Queue for cart mutations only. Order writes
+// must be confirmed synchronously by the authoritative API and are never replayed.
 const bgSyncQueue = new Queue("localeats-outbox-sync", {
   maxRetentionTime: 15, // 15 minutes validity
   onSync: async () => {
@@ -40,6 +41,16 @@ async function rehydrateAndReplayOutbox() {
 
   let entry;
   while ((entry = await bgSyncQueue.shiftRequest())) {
+    const queuedUrl = new URL(entry.request.url);
+    if (queuedUrl.pathname.includes("/rest/v1/orders") || queuedUrl.pathname.includes("/api/v1/orders")) {
+      console.warn("[Service Worker Sync] Blocked a legacy queued order mutation. The order was not changed.");
+      broadcastChannel.postMessage({
+        type: "SYNC_FAILURE",
+        message: "A legacy offline order action was blocked. Refresh the order and try again online.",
+        timestamp: Date.now(),
+      });
+      continue;
+    }
     const timestamp = entry.timestamp || now;
     if (now - timestamp > FIFTEEN_MINUTES_MS) {
       console.warn("[Service Worker Sync] WARNING: Order/cart request expired after exceeding the 15-minute validity limit. Discarding request and broadcasting failure to React UI.");
@@ -128,10 +139,9 @@ sw.addEventListener("fetch", (event: any) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // 1. Intercept offline outbox writes (POST, PUT, PATCH, DELETE for active_carts & orders)
+  // 1. Intercept offline cart writes. Orders are deliberately excluded.
   const isOutboxTarget =
     (url.pathname.includes("/rest/v1/active_carts") || 
-     url.pathname.includes("/rest/v1/orders") ||
      url.pathname.includes("/rest/v1/guest_carts")) &&
     ["POST", "PUT", "PATCH", "DELETE"].includes(request.method);
 

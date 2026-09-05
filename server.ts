@@ -60,8 +60,6 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// In-memory store for synced orders as resilient fallback
-const serverOrders: any[] = [];
 const serverProfiles: Record<string, any> = {};
 
 // Authentication Middleware with authoritative Firebase Admin ID token verification
@@ -313,326 +311,54 @@ app.get("/api/v1/shops/:shopId/menu", async (req, res) => {
   }
 });
 
-app.post("/api/orders", authenticateJWT, async (req, res) => {
+const getAuthoritativeOrderApiUrl = (): string | null => {
+  const configured = process.env.LOCALEATS_API_URL || process.env.VITE_LOCALEATS_API_URL;
+  return configured ? configured.replace(/\/$/, "") : null;
+};
+
+const proxyAuthoritativeOrderRequest = async (req: express.Request, res: express.Response) => {
+  const apiUrl = getAuthoritativeOrderApiUrl();
+  if (!apiUrl) {
+    return res.status(503).json({
+      success: false,
+      error: "Authoritative LocalEats order service is not configured. No order was placed or changed.",
+    });
+  }
+
+  const suffix = req.params.id ? `/${req.params.id}` : "";
+  const targetUrl = `${apiUrl}/api/v1/orders${suffix}`;
   try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Backend Supabase connection not configured." });
-    }
-
-    const { 
-      items, 
-      shop_id, 
-      // user_id is ignored from req.body
-      delivery_type, 
-      delivery_coordinates,
-      delivery_address,
-      promo_code,
-      tip_amount,
-      idempotency_key,
-      _clientPricing,
-      customer_details,
-      payment_method
-    } = req.body;
-    
-    const auth_user_id = (req as any).user.id;
-
-    console.log("[API /orders] Request received for shop:", shop_id, "with clientPricing:", !!_clientPricing);
-
-    if (!idempotency_key) return res.status(400).json({ error: "idempotency_key is required." });
-    if (!shop_id) return res.status(400).json({ error: "shop_id is required." });
-    if (!items || !items.length) return res.status(400).json({ error: "Order must contain items." });
-
-    const { data: shopData, error: shopError } = await supabaseAdmin
-      .from('shops')
-      .select('*')
-      .eq('id', shop_id)
-      .single();
-
-    const isMissingData = (shopError || !shopData);
-    console.log("[API /orders] isMissingData?", isMissingData, "shopError:", shopError);
-
-    let calculatedSubtotal = 0;
-    let calculatedDeliveryFee = 0;
-    let calculatedServiceFee = 0;
-    let calculatedTotal = 0;
-    let productName = "";
-    let quantity = 0;
-
-    // MIGRATION BRIDGE
-    if (isMissingData && _clientPricing) {
-      console.log(`[Migration Fallback] Shop ${shop_id} not in Supabase yet. Using client pricing.`);
-      calculatedSubtotal = _clientPricing.subtotal || 0;
-      calculatedDeliveryFee = _clientPricing.delivery_fee || 0;
-      calculatedServiceFee = _clientPricing.service_fee || 0;
-      calculatedTotal = _clientPricing.total_price || 0;
-      productName = items.map((i: any) => `Migration Item ${i.menu_item_id}`).join(", ");
-      quantity = items.reduce((acc: number, i: any) => acc + Math.max(1, Number(i.quantity) || 1), 0);
-    } else {
-      if (isMissingData && !_clientPricing) {
-        console.error("[API /orders] Missing shop data AND missing _clientPricing!");
-        return res.status(404).json({ error: `Shop '${shop_id}' not found.` });
-      }
-      if (shopData.is_active === false) {
-        return res.status(400).json({ error: "Shop is currently inactive." });
-      }
-
-      const itemIds = items.map((i: any) => i.menu_item_id);
-      const { data: dbItems } = await supabaseAdmin.from('menu_items').select('*').in('id', itemIds);
-
-      const productNames = [];
-      for (const reqItem of items) {
-        const dbItem = dbItems?.find((i: any) => i.id === reqItem.menu_item_id);
-        if (!dbItem) {
-          return res.status(404).json({ error: `Menu item '${reqItem.menu_item_id}' not found.` });
-        }
-        const authoritativePrice = Number(dbItem.price || 0);
-        const qty = Math.max(1, Number(reqItem.quantity) || 1);
-        calculatedSubtotal += (authoritativePrice * qty);
-        quantity += qty;
-        productNames.push(dbItem.name);
-      }
-      productName = productNames.join(", ");
-      
-      calculatedServiceFee = calculatedSubtotal > 0 ? 2.5 : 0.0;
-      calculatedDeliveryFee = (delivery_type === "delivery") ? 10.0 : 0.0;
-      calculatedTotal = calculatedSubtotal + calculatedDeliveryFee + calculatedServiceFee + (Number(tip_amount)||0);
-    }
-
-    // Ensure atomic insert by checking idempotency_key manually if table doesn't have unique constraint,
-    // though the best is a DB constraint. For safety:
-    const { data: existingOrder } = await supabaseAdmin.from('orders').select('id').eq('idempotency_key', idempotency_key).single();
-    if (existingOrder) {
-       return res.json({ success: true, order: existingOrder, message: "Order already exists" });
-    }
-
-    const insertPayload = {
-      user_id: auth_user_id,
-      shop_id: String(shop_id),
-      status: 'pending',
-      delivery_status: (delivery_type === "delivery") ? 'finding_rider' : 'none',
-      product_name: productName,
-      quantity,
-      price: calculatedSubtotal,
-      total_price: calculatedTotal,
-      delivery_fee: calculatedDeliveryFee,
-      idempotency_key
-    };
-    
-    console.log("[API /orders] Inserting Payload:", insertPayload);
-    const { data: newOrder, error: insertError } = await supabaseAdmin
-      .from('orders')
-      .insert(insertPayload)
-      .select()
-      .single();
-
-    if (insertError) {
-      if (insertError.code === 'PGRST204') {
-         // Schema error, fallback to memory
-         const newOrder = { id: Date.now().toString(), ...insertPayload, created_at: new Date().toISOString() };
-         serverOrders.unshift(newOrder);
-         return res.json({ success: true, order: newOrder, fallback: true });
-      } else if (insertError.code === 'PGRST116' || insertError.code === '23505' /* Unique violation */) {
-         // might be a duplicate race condition
-      } else if (insertError.message && insertError.message.includes('idempotency_key')) {
-         // fallback if column doesn't exist
-         delete insertPayload.idempotency_key;
-         const { data: fallbackOrder, error: fallbackError } = await supabaseAdmin.from('orders').insert(insertPayload).select().single();
-         if (fallbackError) {
-           console.error("Order Insert Error (Fallback):", fallbackError);
-           // Fallback to in-memory if supabase fails due to schema issues
-           const newOrder = { id: Date.now().toString(), ...insertPayload, created_at: new Date().toISOString() };
-           serverOrders.unshift(newOrder);
-           return res.json({ success: true, order: newOrder, fallback: true });
-         }
-         return res.json({ success: true, order: fallbackOrder });
-      } else {
-         console.error("Order Insert Error:", insertError);
-         return res.status(500).json({ error: "Failed to persist order to database. " + (insertError.message || JSON.stringify(insertError)) });
-      }
-    }
-
-    return res.json({ 
-       success: true, 
-       order: newOrder || existingOrder
-     });
-  } catch (err: any) {
-    console.error("Create Order Error:", err);
-    return res.status(500).json({ error: "Internal Server Error processing order." });
+    const upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
+      },
+      ...(req.method === "GET" || req.method === "HEAD" ? {} : { body: JSON.stringify(req.body ?? {}) }),
+    });
+    const responseBody = await upstream.text();
+    res.status(upstream.status);
+    res.type(upstream.headers.get("content-type") || "application/json");
+    return res.send(responseBody);
+  } catch (error) {
+    console.error("Authoritative order API proxy failed:", error instanceof Error ? error.message : "unknown error");
+    return res.status(503).json({
+      success: false,
+      error: "Authoritative LocalEats order service is unavailable. No order was placed or changed.",
+    });
   }
-});
+};
 
-// API Endpoint to accept an order (Merchant Order Handshake Integration)
-app.post("/api/v1/orders/:id/accept", authenticateJWT, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { prepTimeMinutes, merchantNotes, customEstimatedDelivery } = req.body;
-    const auth_user_id = (req as any).user.id;
-    
-    if (!supabaseAdmin) {
-      return res.status(500).json({ error: "Server database connection is not configured." });
-    }
+app.post("/api/orders", authenticateJWT, proxyAuthoritativeOrderRequest);
+app.get("/api/orders", authenticateJWT, proxyAuthoritativeOrderRequest);
+app.get("/api/orders/:id", authenticateJWT, proxyAuthoritativeOrderRequest);
+app.patch("/api/orders/:id", authenticateJWT, (_req, res) =>
+  res.status(405).json({
+    success: false,
+    error: "Generic order updates are disabled. Use an authorized order transition endpoint.",
+  }),
+);
 
-    let { data: order, error: orderError } = await supabaseAdmin.from('orders').select('shop_id').eq('id', id).single();
-    if (orderError && orderError.code === "PGRST116") { orderError = null; order = null; }
-    let shopId = order?.shop_id;
-    if (orderError || !order) {
-      const memOrder = serverOrders.find(o => o.id === id);
-      if (!memOrder) return res.status(404).json({ error: "Order not found" });
-      shopId = memOrder.shop_id;
-    }
-
-    const { data: shop, error: shopError } = await supabaseAdmin.from('shops').select('owner_id').eq('id', shopId).single();
-    if (shopError || !shop || shop.owner_id !== auth_user_id) {
-       return res.status(403).json({ error: "Unauthorized. You do not own this shop." });
-    }
-
-    const updates: Record<string, any> = {
-      status: 'preparing',
-      updated_at: new Date().toISOString()
-    };
-    
-    if (prepTimeMinutes !== undefined) updates.prep_time_minutes = prepTimeMinutes;
-    if (merchantNotes !== undefined) updates.merchant_notes = merchantNotes;
-    if (customEstimatedDelivery !== undefined) updates.estimated_delivery_time = customEstimatedDelivery;
-    updates.accepted_at = new Date().toISOString();
-
-    const { data: updatedOrder, error: updateError } = await supabaseAdmin
-      .from('orders')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (updateError) {
-      if (updateError.code === 'PGRST204' || updateError.message.includes('Could not find')) {
-         console.warn("[API /orders/accept] Missing extended columns, falling back to basic update:", updateError.message);
-         const { data: fallbackOrder, error: fallbackError } = await supabaseAdmin
-          .from('orders')
-          .update({ 
-            status: 'preparing',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', id)
-          .select()
-          .single();
-          
-         if (fallbackError) {
-            console.error("Order Accept Fallback Error:", fallbackError);
-            return res.status(500).json({ error: "Failed to accept order (fallback).", details: fallbackError.message });
-         }
-         return res.json({ success: true, order: fallbackOrder });
-      }
-
-      console.error("Order Accept Update Error:", updateError);
-      return res.status(500).json({ error: "Failed to accept order.", details: updateError.message });
-    }
-
-    return res.json({ success: true, order: updatedOrder });
-  } catch (err) {
-    console.error("Order Accept Catch Error:", err);
-    return res.status(500).json({ error: "Internal server error accepting order." });
-  }
-});
-app.patch("/api/orders/:id", authenticateJWT, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-    const auth_user_id = (req as any).user.id;
-    
-    // Explicit allowed-field policy
-    const forbiddenFields = [
-      'total_price', 'subtotal', 'delivery_fee', 'service_fee', 
-      'discount_amount', 'user_id', 'shop_id', 'customer_id', 'rider_id'
-    ];
-    for (const field of forbiddenFields) {
-      delete updates[field];
-    }
-    
-    if (supabaseAdmin) {
-       let { data: order, error: orderError } = await supabaseAdmin.from('orders').select('user_id, shop_id').eq('id', id).single();
-       if (orderError && orderError.code === "PGRST116") { orderError = null; order = null; } // allow fallback
-       if (orderError || !order) {
-           const memOrder = serverOrders.find(o => o.id === id);
-           if (!memOrder) return res.status(404).json({ error: "Order not found" });
-           if (memOrder.user_id !== auth_user_id) return res.status(403).json({ error: "Unauthorized" });
-       }
-
-       let isAuthorized = false;
-       const resolvedOrder = order || serverOrders.find(o => o.id === id);
-       if (resolvedOrder?.user_id === auth_user_id) {
-          isAuthorized = true;
-       } else {
-          const { data: shop } = await supabaseAdmin.from('shops').select('owner_id').eq('id', order.shop_id).single();
-          if (shop && shop.owner_id === auth_user_id) {
-             isAuthorized = true;
-          }
-       }
-
-       if (!isAuthorized) {
-          return res.status(403).json({ error: "Unauthorized. You cannot modify this order." });
-       }
-
-       const { data, error } = await supabaseAdmin
-         .from('orders')
-         .update({
-           ...updates,
-           updated_at: new Date().toISOString()
-         })
-         .eq('id', id)
-         .select()
-         .single();
-         
-       if (!error && data) {
-         return res.json({ success: true, order: data });
-       } else {
-         console.error("Native PATCH error:", error);
-       }
-    }
-    
-    // Fallback to in-memory if supabase fails or isn't configured
-    const existingIdx = serverOrders.findIndex((o) => o.id === id);
-    if (existingIdx >= 0) {
-      serverOrders[existingIdx] = {
-        ...serverOrders[existingIdx],
-        ...updates,
-        updated_at: new Date().toISOString(),
-      };
-      return res.json({ success: true, order: serverOrders[existingIdx] });
-    }
-    const newOrder = {
-      id,
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-    serverOrders.unshift(newOrder);
-    return res.json({ success: true, order: newOrder });
-  } catch (err: any) {
-    console.error("Order update error:", err);
-    return res.status(500).json({ error: err.message || "Failed to update order" });
-  }
-});
-// API Endpoint to fetch orders for user or shop
-app.get("/api/orders", authenticateJWT, async (req, res) => {
-  const { shop_id } = req.query;
-  const auth_user_id = (req as any).user.id;
-
-  let filtered = [...serverOrders];
-
-  if (shop_id) {
-    // Merchant request
-    if (!supabaseAdmin) return res.status(500).json({ error: "DB not configured" });
-    const { data: shop, error: shopError } = await supabaseAdmin.from('shops').select('owner_id').eq('id', shop_id).single();
-    if (shopError || !shop || shop.owner_id !== auth_user_id) {
-       return res.status(403).json({ error: "Unauthorized. You do not own this shop." });
-    }
-    filtered = filtered.filter((o) => String(o.shop_id) === String(shop_id));
-  } else {
-    // Customer request
-    filtered = filtered.filter((o) => String(o.user_id) === String(auth_user_id));
-  }
-
-  return res.json({ orders: filtered });
-});
 // API Endpoint for AI Powered Shop Chat Assistant
 app.post("/api/shop-chat", async (req, res) => {
   try {
