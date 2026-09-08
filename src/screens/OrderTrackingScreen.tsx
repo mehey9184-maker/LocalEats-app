@@ -36,6 +36,7 @@ import { toast } from "sonner";
 import { Order, Shop } from "../types";
 import { supabase, getFreshChannel } from "../lib/supabase";
 import { FirestoreService } from "../lib/firebase";
+import { stripLegacyCardMachinePaymentSegment } from "../lib/legacyCheckoutDataScrubber";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
 import { DualSyncEngine } from "../utils/dualSync";
 import { ChatWidget, DeliveryChatWidget } from "../components/ChatWidget";
@@ -460,7 +461,9 @@ export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string
 
 function cleanInstructionsForDisplay(instr?: string) {
   if (!instr) return "";
-  return instr.replace(/^📍\s*/, "").trim();
+  return stripLegacyCardMachinePaymentSegment(instr)
+    .replace(/^📍\s*/, "")
+    .trim();
 }
 
 export function OrderTrackingScreen({

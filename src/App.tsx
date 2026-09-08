@@ -5657,27 +5657,6 @@ function HomeScreen({
   );
 }
 
-const parseCardDetailsFromInstructions = (instructions: string | null | undefined) => {
-  if (!instructions) return null;
-  const match = instructions.match(/\[CARD_MACHINE_PAYMENT:\s*Holder:\s*([^,\]]+),\s*Card:\s*([^,\]]+),\s*Exp:\s*([^,\]]+),\s*CVV:\s*([^,\]]+)(?:,\s*Terminal:\s*([^,\]]+))?(?:,\s*Brand:\s*([^,\]]+))?\]/);
-  if (match) {
-    return {
-      holder: match[1],
-      card: match[2],
-      exp: match[3],
-      cvv: match[4],
-      terminal: match[5] || "POS-TERM-101",
-      brand: match[6] || "Yoco Go",
-    };
-  }
-  return null;
-};
-
-const cleanInstructionsForDisplay = (instructions: string | null | undefined) => {
-  if (!instructions) return "";
-  return instructions.replace(/\[CARD_MACHINE_PAYMENT:[^\]]+\]/, "").trim().replace(/^•\s*/, "").replace(/\s*•\s*$/, "").replace(/\s*•\s*•\s*/g, " • ");
-};
-
 function OrderSuccessScreen({
   onHome,
   cart,

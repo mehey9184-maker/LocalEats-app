@@ -32,6 +32,13 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
+- **[2026-09-07] Architecture Review Task 1C-A: Customer Checkout Safety**:
+  - Restricted pilot payment intent to Cash at Shop and Card at Shop for collection, and Cash on Arrival for delivery. Card at Shop means payment on the merchant's physical terminal; LocalEats does not collect card credentials.
+  - Removed card credential fields, saved-card state/storage, simulated terminal metadata, checkout promo authority, express/scheduled delivery, monetary tipping, client quantity discounts, direct checkout reads from `public.orders`, and the ignored client `user_id` assertion.
+  - Added a narrowly scoped startup scrub for `localeats_saved_cards`, known order caches/queues, the existing request-queue IndexedDB store, and legacy `[CARD_MACHINE_PAYMENT: ...]` instruction segments.
+  - Kept client distance/fee displays as estimates only. Final serviceability and all order pricing remain controlled by the authenticated LocalEats API; no client totals or `_clientPricing` enter order creation.
+  - Paid customizations now fail closed before placement until authoritative customization pricing exists. The request always sends standard scheduling and `tip_amount: 0`.
+
 - **[2026-09-05] Order-integrity safety branch (local only; not deployed)**:
   - Replaced checkout's fabricated/offline order success with a fail-closed call to the authenticated LocalEats API. A database or API failure now leaves the order unsent and visible as a real error.
   - Removed `_clientPricing` and stopped the browser from authoritatively supplying item prices, totals, service fees, delivery fees, discounts, or delivery status.

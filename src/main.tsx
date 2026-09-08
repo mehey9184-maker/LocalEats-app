@@ -4,7 +4,10 @@ import * as Sentry from '@sentry/react';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { LanguageProvider } from './contexts/LanguageContext';
+import { runLegacyCheckoutDataScrub } from './lib/legacyCheckoutDataScrubber';
 import './index.css';
+
+runLegacyCheckoutDataScrub();
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({

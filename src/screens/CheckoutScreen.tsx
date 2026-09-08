@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, ChevronDown, ChevronUp, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff, Check, Zap, Calendar
+  MapPin, Clock, CreditCard, ChevronRight, ChevronDown, ChevronUp, X, User, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Info, ShieldCheck, Banknote, ShoppingBasket, Lock, Sparkles, Bike, Loader2, Target, QrCode, Trash2, ArrowLeft, Utensils, Percent, WifiOff, Check, Zap
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
 import { upsertProfileWithRPC } from "../lib/profileService";
 import { Shop, CartItem, Screen, UserProfile } from "../types";
 import { IdempotencyManager } from "../utils/idempotency";
@@ -14,12 +13,17 @@ import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
 import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, CreateOrderRequestData, CreateOrderResponse } from "../lib/firebase";
+import {
+  containsPotentialCardCredential,
+  hasUnsupportedPaidCustomizations,
+  normalizeCheckoutPaymentMethod,
+  stripLegacyCardMachinePaymentSegment,
+} from "../lib/legacyCheckoutDataScrubber";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
 import { audioHelper } from "../lib/audioHelper";
 import { detectTownship } from "../lib/townshipHelper";
-import { Tag } from "lucide-react";
 
 const LOCAL_LANDMARKS = [
   { id: "LM01", name: "Community Hall", lat: -26.2, lng: 28.0 },
@@ -29,40 +33,6 @@ const LOCAL_LANDMARKS = [
   { id: "LM05", name: "Shopping Complex", lat: -26.24, lng: 28.04 },
   { id: "LM06", name: "Sports Ground", lat: -26.25, lng: 28.05 },
 ];
-
-const LOCAL_PROMO_DB: Record<
-  string,
-  {
-    code: string;
-    type: "percent" | "fixed" | "delivery_free";
-    value: number;
-    expiry_date: string;
-    is_active: boolean;
-  }
-> = {
-  LOCALEATS10: {
-    code: "LOCALEATS10",
-    type: "percent",
-    value: 10,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  },
-  FIRSTTREAT: {
-    code: "FIRSTTREAT",
-    type: "fixed",
-    value: 20,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  },
-  FREEDELIVERY: {
-    code: "FREEDELIVERY",
-    type: "delivery_free",
-    value: 0,
-    expiry_date: "2027-12-31T23:59:59Z",
-    is_active: true,
-  }
-};
-
 
 export function CheckoutScreen({
   userProfile,
@@ -135,18 +105,6 @@ export function CheckoutScreen({
     }
   });
 
-  const isCardMachineIntegrationEnabled = useMemo(() => {
-    const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
-    const pShop = shops.find((s) => s.id === primaryShopId) || shops[0];
-    if (!pShop) return false;
-    return (
-      localStorage.getItem("localeats_card_machine_enabled_" + pShop.id) === "true" ||
-      (pShop as any).card_machine_enabled === true ||
-      (pShop as any).card_machine_enabled === "true"
-    );
-  }, [shops, cart]);
-
-  const [cardHolder, setCardHolder] = useState(userProfile?.fullName || "");
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isCartSummaryExpanded, setIsCartSummaryExpanded] = useState(false);
@@ -201,11 +159,6 @@ export function CheckoutScreen({
     triggerHaptic(10);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  const [tipPercentage, setTipPercentage] = useState<number | "custom">(0);
-  const [customTipInput, setCustomTipInput] = useState<string>("");
-  const [deliveryScheduleMode, setDeliveryScheduleMode] = useState<"asap" | "express" | "scheduled">("asap");
-  const [scheduledTimeChoice, setScheduledTimeChoice] = useState<string>("12:30 PM");
-
   const [isCheckoutBannerCollapsed, setIsCheckoutBannerCollapsed] = useState(false);
   const [isCheckoutScrollCollapsed, setIsCheckoutScrollCollapsed] = useState(false);
 
@@ -232,72 +185,6 @@ export function CheckoutScreen({
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
-
-  const [savedCards, setSavedCards] = useState<Array<{ id: string; cardHolder: string; cardNumber: string; expiry: string; cardType: string }>>(() => {
-    try {
-      const cached = localStorage.getItem("localeats_saved_cards");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (_) {}
-    return [
-      { id: "c1", cardHolder: userProfile?.fullName || "LOCAL CUSTOMER", cardNumber: "•••• •••• •••• 4242", expiry: "08/28", cardType: "Visa" },
-      { id: "c2", cardHolder: userProfile?.fullName || "LOCAL CUSTOMER", cardNumber: "•••• •••• •••• 8819", expiry: "12/29", cardType: "Mastercard" },
-    ];
-  });
-  const [selectedSavedCardId, setSelectedSavedCardId] = useState<string>("c1");
-  const [saveCardForFuture, setSaveCardForFuture] = useState<boolean>(true);
-
-  useEffect(() => {
-    if (selectedSavedCardId && selectedSavedCardId !== "new") {
-      const found = savedCards.find((c) => c.id === selectedSavedCardId);
-      if (found) {
-        setCardHolder(found.cardHolder);
-        setCardNumber(found.cardNumber);
-        setCardExpiry(found.expiry);
-        setCardCvv("•••");
-      }
-    } else if (selectedSavedCardId === "new") {
-      setCardHolder(userProfile?.fullName || "");
-      setCardNumber("");
-      setCardExpiry("");
-      setCardCvv("");
-    }
-  }, [selectedSavedCardId]);
-
-  const [userOrderCount, setUserOrderCount] = useState<number>(() => {
-    try {
-      const cached = localStorage.getItem("cached_orders");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed)) return parsed.length;
-      }
-    } catch (_) {}
-    return 0;
-  });
-
-  useEffect(() => {
-    const fetchUserOrderCount = async () => {
-      if (!session?.user?.id) return;
-      try {
-        const { data, error, count } = await supabase
-          .from("orders")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", session.user.id);
-        if (!error && typeof count === "number") {
-          setUserOrderCount(count);
-        }
-      } catch (e) {
-        console.warn("Failed to fetch exact order count", e);
-      }
-    };
-    fetchUserOrderCount();
-  }, [session]);
-
   // Helper to safely get cached profile only if it belongs to the active user
   const getValidCachedProfile = () => {
     const cached = safeLocalStorageGet("userProfile", null);
@@ -343,9 +230,6 @@ export function CheckoutScreen({
     if (!customerPhone.trim() && resolvedPhone) {
       setCustomerPhone(resolvedPhone);
     }
-    if (!cardHolder.trim() && resolvedName) {
-      setCardHolder(resolvedName);
-    }
   }, [userProfile]);
 
   // Cash change options
@@ -353,18 +237,6 @@ export function CheckoutScreen({
     "no_change" | "R50" | "R100" | "R200" | "custom"
   >("no_change");
   const [customChangeAmount, setCustomChangeAmount] = useState("");
-
-  // Promo Code States
-  const [promoCodeInput, setPromoCodeInput] = useState("");
-  const [appliedPromo, setAppliedPromo] = useState<{
-    code: string;
-    type: "percent" | "fixed" | "delivery_free";
-    value: number;
-  } | null>(null);
-  const [promoError, setPromoError] = useState("");
-  const [promoStatus, setPromoStatus] = useState<
-    "idle" | "checking" | "valid" | "already_used" | "expired" | "invalid"
-  >("idle");
 
   // Landmark Selection States
   const [selectedLandmark, setSelectedLandmark] = useState("");
@@ -491,30 +363,6 @@ export function CheckoutScreen({
     }
   }, [userLocation, deliveryType, deliveryCoordinates]);
 
-  const [hasInHouseRiderOnline, setHasInHouseRiderOnline] = useState(false);
-
-  useEffect(() => {
-    const checkInHouseRiders = async () => {
-      if (!primaryShop?.id) return;
-      try {
-        const { data, error } = await (supabase as any)
-          .from("rider_profiles")
-          .select("id")
-          .eq("is_online", true);
-
-        if (!error && data && data.length > 0) {
-          setHasInHouseRiderOnline(true);
-        } else {
-          setHasInHouseRiderOnline(false);
-        }
-      } catch (err) {
-        console.info("Notice querying rider status:", err);
-        setHasInHouseRiderOnline(false);
-      }
-    };
-    checkInHouseRiders();
-  }, [primaryShop?.id]);
-
   useEffect(() => {
     if (deliveryCoordinates && primaryShop.latitude && primaryShop.longitude) {
       const [lng, lat] = deliveryCoordinates.coordinates;
@@ -526,13 +374,13 @@ export function CheckoutScreen({
       );
       setDistance(dist);
 
-      // Distance Warnings & Dynamic Pricing
+      // Local map estimate only. The authoritative API decides serviceability and price.
       if (dist > ZONE_B_LIMIT) {
-        toast.error(`Delivery Unavailable at this Location — Distance (${dist.toFixed(1)} km) exceeds shop limit (${ZONE_B_LIMIT.toFixed(1)} km)`, {
+        toast.info(`Local distance estimate: ${dist.toFixed(1)} km. The secure order service will confirm whether delivery is available.`, {
           duration: 5000,
           position: "top-center",
         });
-        setDeliveryFee(0); // Effectively disabled
+        setDeliveryFee(ZONE_B_FEE);
       } else if (dist > ZONE_A_LIMIT) {
         toast.warning("Entering +R5 Delivery Zone", {
           description: "A small distance surcharge applies to this delivery.",
@@ -603,205 +451,19 @@ export function CheckoutScreen({
     safeLocalStorageSet("cart", JSON.stringify(newCart));
   };
 
-  // Promo Code Validation
-  const handleApplyPromo = async (overrideCode?: string) => {
-    setPromoError("");
-    setPromoStatus("checking");
-    const rawCode = overrideCode || promoCodeInput;
-    const code = rawCode.trim().toUpperCase();
-    if (!code) {
-      setPromoStatus("idle");
-      return;
-    }
-
-    if (overrideCode) {
-      setPromoCodeInput(code);
-    }
-
-    // 1. Check local storage first
-    const usedLocalKey = session?.user?.id
-      ? `used_promo_codes_${session.user.id}`
-      : `used_promo_codes_guest`;
-    const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-    if (usedLocal.includes(code)) {
-      setPromoError(
-        `You have already redeemed the promo code "${code}" previously!`,
-      );
-      setPromoStatus("already_used");
-      setAppliedPromo(null);
-      return;
-    }
-
-    // 2. Query DB / Local fallback configurations
-    let dbCodeInfo = null;
-    let fallbackToLocal = false;
-
-    if (isOnline) {
-      try {
-        const { data, error } = await supabase
-          .from("promo_codes")
-          .select("id, code, discount_type, discount_value, min_order_amount, max_discount_amount, is_active")
-          .eq("code", code)
-          .single();
-
-        if (error) {
-          fallbackToLocal = true;
-        } else if (data) {
-          dbCodeInfo = data;
-        } else {
-          fallbackToLocal = true;
-        }
-      } catch (err) {
-        console.warn(
-          "Exception checking promo_codes table, falling back to local:",
-          err,
-        );
-        fallbackToLocal = true;
-      }
-    } else {
-      fallbackToLocal = true;
-    }
-
-    if (fallbackToLocal) {
-      dbCodeInfo = LOCAL_PROMO_DB[code] || null;
-    }
-
-    if (!dbCodeInfo) {
-      setPromoError("Invalid coupon code. Try LOCALEATS10 or FIRSTTREAT!");
-      setPromoStatus("invalid");
-      setAppliedPromo(null);
-      return;
-    }
-
-    // Checking 'expired'
-    const expiry = dbCodeInfo.expiry_date
-      ? new Date(dbCodeInfo.expiry_date)
-      : null;
-    const now = new Date();
-    if (expiry && now > expiry) {
-      setPromoError(
-        `The promo code "${code}" expired on ${expiry.toLocaleDateString()}!`,
-      );
-      setPromoStatus("expired");
-      setAppliedPromo(null);
-      return;
-    }
-
-    // 3. Server-side check: Check if the promo code has already been used by the current user ID in 'orders' table
-    if (session?.user?.id && isOnline) {
-      try {
-        const { data: existingOrders, error } = await supabase
-          .from("orders")
-          .select("delivery_instructions")
-          .eq("user_id", session.user.id);
-
-        if (existingOrders && !error) {
-          const hasUsed = existingOrders.some(
-            (o) =>
-              o.delivery_instructions &&
-              o.delivery_instructions.includes(`[PROMO:${code}]`),
-          );
-          if (hasUsed) {
-            // Sync back to local storage
-            const updatedLocal = Array.from(new Set([...usedLocal, code]));
-            safeLocalStorageSet(usedLocalKey, JSON.stringify(updatedLocal));
-            setPromoError(
-              `Our database shows you have already redeemed "${code}" on a previous order!`,
-            );
-            setPromoStatus("already_used");
-            setAppliedPromo(null);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("Error checking order history coupon logs:", err);
-      }
-    }
-
-    // Valid check
-    if (code === "BICYCLE5" && deliveryType !== "delivery") {
-      setPromoError("This voucher code is only valid for Delivery orders!");
-      setPromoStatus("invalid");
-      setAppliedPromo(null);
-      return;
-    }
-
-    // Calculate dynamic discount to preview success in toast
-    let tempDiscount = 0;
-    if (dbCodeInfo.type === "percent") {
-      tempDiscount = (subtotal * dbCodeInfo.value) / 100;
-    } else if (dbCodeInfo.type === "fixed") {
-      tempDiscount = Math.min(subtotal, dbCodeInfo.value);
-    } else if (dbCodeInfo.type === "delivery_free") {
-      tempDiscount = Math.min(deliveryFee, dbCodeInfo.value);
-    }
-
-    setAppliedPromo({ code, type: dbCodeInfo.type, value: dbCodeInfo.value });
-    setPromoStatus("valid");
-    toast.success(
-      `Coupon Applied successfully! Saved R${tempDiscount.toFixed(2)}`,
-    );
-  };
-
-  const removePromo = () => {
-    setAppliedPromo(null);
-    setPromoStatus("idle");
-    setPromoCodeInput("");
-    toast.info("Promo code removed");
-  };
-
-  // Pricing calculations
-  const subtotal = cart.reduce((sum, item) => {
-    const customizationsTotal = (item.selectedCustomizations || []).reduce(
-      (acc, c) => acc + Number(c.price),
-      0,
-    );
-    const itemTotal = (item.price + customizationsTotal) * item.quantity;
-    const finalItemTotal = item.quantity > 5 ? itemTotal * 0.85 : itemTotal;
-    return sum + finalItemTotal;
-  }, 0);
-
-  // Dynamic promo discounts
-  let discountAmount = 0;
-  if (appliedPromo) {
-    if (appliedPromo.type === "percent") {
-      discountAmount = (subtotal * appliedPromo.value) / 100;
-    } else if (appliedPromo.type === "fixed") {
-      discountAmount = Math.min(subtotal, appliedPromo.value);
-    } else if (appliedPromo.type === "delivery_free") {
-      discountAmount = Math.min(deliveryFee, appliedPromo.value);
-    }
-  }
-
-  const expressFee = (deliveryType === "delivery" && deliveryScheduleMode === "express") ? 10.0 : 0;
+  // Display-only estimate until Task 1C-B supplies an authoritative quote.
+  const subtotal = cart.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0,
+  );
   const baseDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
-  const activeDeliveryFee = baseDeliveryFee + expressFee;
   const serviceFee = subtotal > 0 ? 2.50 : 0;
-
-  const tipAmount = useMemo(() => {
-    if (tipPercentage === "custom") {
-      return parseFloat(customTipInput) || 0;
-    }
-    return (subtotal * tipPercentage) / 100;
-  }, [tipPercentage, customTipInput, subtotal]);
-
   const totalAmount = Math.max(
     0,
-    subtotal - discountAmount + activeDeliveryFee + serviceFee + tipAmount,
+    subtotal + baseDeliveryFee + serviceFee,
   );
-  const totalSavings = discountAmount;
-
-  // Psychological Price Anchoring Calculations:
-  // 1. Estimated standard franchise / third-party aggregator retail value (anchoring against ~22% higher market benchmark)
-  const estimatedRetailSubtotal = subtotal > 0 ? subtotal * 1.22 : 0;
-  const directKitchenSavings = Math.max(0, estimatedRetailSubtotal - subtotal);
-  const totalCombinedSavings = directKitchenSavings + discountAmount;
-
-  // 2. Relative percentage of add-ons against subtotal to make costs feel minor & justifiable
-  const expressFeePercent = subtotal > 0 ? Math.max(1, Math.round((expressFee / subtotal) * 100)) : 5;
   const deliveryFeePercent = subtotal > 0 ? Math.max(1, Math.round((deliveryFee / subtotal) * 100)) : 3;
   const serviceFeePercent = subtotal > 0 ? ((serviceFee / subtotal) * 100).toFixed(1) : "1.5";
-  const tipFeePercent = subtotal > 0 ? Math.max(1, Math.round((tipAmount / subtotal) * 100)) : 0;
 
   // 3. Goal Gradient Endowed Progress:
   // Never start at 0%! Step 1 (Selecting food items into cart) is pre-credited so user starts at 25% or higher
@@ -813,12 +475,11 @@ export function CheckoutScreen({
     } else if (currentStep === 2) {
       base = 70;
       if (paymentMethod) base += 10;
-      if (tipPercentage !== 0) base += 5;
     } else if (currentStep === 3) {
       base = 100;
     }
     return Math.min(100, Math.max(25, base));
-  }, [currentStep, customerName, customerPhone, deliveryType, deliveryAddressText, isLocationConfirmed, paymentMethod, tipPercentage]);
+  }, [currentStep, customerName, customerPhone, deliveryType, deliveryAddressText, isLocationConfirmed, paymentMethod]);
 
   const { tenderAmount, changeNeeded } = useMemo(() => {
     if (paymentMethod !== "cash") return { tenderAmount: totalAmount, changeNeeded: 0 };
@@ -834,36 +495,11 @@ export function CheckoutScreen({
     return { tenderAmount: tender, changeNeeded: change };
   }, [paymentMethod, cashChangeOption, customChangeAmount, totalAmount]);
 
-  const isCashTrustActive = primaryShop
-    ? localStorage.getItem("localeats_cash_trust_" + primaryShop.id) ===
-        "true" ||
-      (primaryShop as any).cash_trust_enabled === true ||
-      (primaryShop as any).cash_trust_enabled === "true" ||
-      (primaryShop as any).localeats_cash_trust === true ||
-      (primaryShop as any).localeats_cash_trust === "true"
-    : false;
-  const isCoaEligible =
-    isCashTrustActive && (userOrderCount === 0 || totalAmount < 350);
-  const isCoaDisabled =
-    isCashTrustActive && userOrderCount > 0 && totalAmount >= 350;
-
-  useEffect(() => {
-    if (isCashTrustActive && userOrderCount === 0 && !isCoaDisabled) {
-      setPaymentMethod("cash");
-    }
-  }, [userOrderCount, isCashTrustActive, isCoaDisabled]);
-
   useEffect(() => {
     if (deliveryType === "delivery") {
       setPaymentMethod("cash");
     }
   }, [deliveryType]);
-
-  useEffect(() => {
-    if (isCoaDisabled && paymentMethod === "cash" && deliveryType !== "delivery") {
-      setPaymentMethod("card_machine");
-    }
-  }, [isCoaDisabled, paymentMethod, deliveryType]);
 
   const handleConfirm = async () => {
     if (loading) return;
@@ -894,6 +530,27 @@ export function CheckoutScreen({
       toast.error("Invalid Cart Data", {
         description: "Some items in your cart are missing shop information. Please clear your cart and try again."
       });
+      return;
+    }
+
+    if (hasUnsupportedPaidCustomizations(cart)) {
+      showAlert(
+        "Paid Add-ons Temporarily Unavailable",
+        "Secure checkout cannot verify paid add-on prices yet. Please remove paid add-ons before placing this order. Free preparation choices can remain.",
+      );
+      return;
+    }
+
+    const checkoutFreeText = [
+      deliveryInstructions,
+      orderNotes,
+      ...cart.map((item) => item.specialInstructions || ""),
+    ];
+    if (checkoutFreeText.some(containsPotentialCardCredential)) {
+      showAlert(
+        "Remove Card Details",
+        "For your security, do not enter card numbers, CVV/CVC, card expiry dates, or a card PIN in checkout notes. LocalEats never needs those details.",
+      );
       return;
     }
 
@@ -974,13 +631,6 @@ export function CheckoutScreen({
         return;
       }
       
-      if (distance !== null && distance > ZONE_B_LIMIT) {
-        showAlert(
-          "Outside Range",
-          `Sorry, this store is ${distance.toFixed(1)}km away. Our delivery range is capped at ${ZONE_B_LIMIT}km.`,
-        );
-        return;
-      }
     }
 
     const status = getShopStatus(primaryShop);
@@ -991,65 +641,17 @@ export function CheckoutScreen({
         "Shop Closed",
         `${primaryShop.name} is currently closed. Your order will be attended to when they open at ${status.nextOpeningTime || "their next opening hour"}. Do you want to proceed?`,
         () => {
-          processCheckout(isClosed);
+          processCheckout();
         },
       );
       return;
     }
-    processCheckout(false);
+    processCheckout();
   };
 
-  const processCheckout = async (isClosed: boolean) => {
+  const processCheckout = async () => {
     setLoading(true);
     triggerHaptic?.([200, 100, 200]);
-
-    // Double check promo code eligibility before submitting order
-    if (appliedPromo) {
-      const code = appliedPromo.code;
-      const usedLocalKey = session?.user?.id
-        ? `used_promo_codes_${session.user.id}`
-        : `used_promo_codes_guest`;
-      const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-      if (usedLocal.includes(code)) {
-        setLoading(false);
-        showAlert(
-          "Coupon Already Redeemed",
-          `You have already redeemed the promo code "${code}". It is restricted to one use per customer.`,
-        );
-        setAppliedPromo(null);
-        return;
-      }
-
-      if (session?.user?.id && isOnline) {
-        try {
-          const { data: existingOrders, error } = await supabase
-            .from("orders")
-            .select("delivery_instructions")
-            .eq("user_id", session.user.id);
-
-          if (existingOrders && !error) {
-            const hasUsed = existingOrders.some(
-              (o) =>
-                o.delivery_instructions &&
-                o.delivery_instructions.includes(`[PROMO:${code}]`),
-            );
-            if (hasUsed) {
-              const updatedLocal = Array.from(new Set([...usedLocal, code]));
-              safeLocalStorageSet(usedLocalKey, JSON.stringify(updatedLocal));
-              setLoading(false);
-              showAlert(
-                "Coupon Already Redeemed",
-                `Our records show you have already redeemed "${code}". Each promo code is restricted to one use per customer.`,
-              );
-              setAppliedPromo(null);
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn("DB double check coupon error:", err);
-        }
-      }
-    }
 
     const cachedProfile = getValidCachedProfile();
     const finalCustomerName =
@@ -1110,45 +712,29 @@ export function CheckoutScreen({
       return;
     }
 
-    // Validation Gate: Enforce Card Details for Credit/Debit Card payments
-    if (paymentMethod === "card_machine") {
-      if (!cardHolder.trim() || cardNumber.replace(/\s/g, "").length < 16 || cardExpiry.length < 5 || cardCvv.length < 3) {
-        setLoading(false);
-        setNotification({
-          message: "Please enter complete, valid credit card credentials to securely authenticate card payment.",
-          type: "error",
-        });
-        return;
-      }
-    }
+    const normalizedPaymentMethod = normalizeCheckoutPaymentMethod(
+      deliveryType,
+      paymentMethod,
+    );
+    const sanitizedOrderNotes = stripLegacyCardMachinePaymentSegment(
+      orderNotes.trim(),
+    );
 
-    // Append cash change details into instructions beautifully for rider dispatcher
-    let finalDeliveryInstructions = "";
-    if (paymentMethod === "cash") {
+    // Preserve ordinary instructions while removing any legacy card-payment segment.
+    let finalDeliveryInstructions = stripLegacyCardMachinePaymentSegment(
+      deliveryInstructions.trim(),
+    );
+    if (
+      normalizedPaymentMethod === "cash" ||
+      normalizedPaymentMethod === "cash_on_arrival"
+    ) {
       const changeStr =
         cashChangeOption === "no_change"
           ? "No change needed"
           : cashChangeOption === "custom"
             ? `Needs change for R${customChangeAmount}`
             : `Needs change for ${cashChangeOption}`;
-      finalDeliveryInstructions = `[CASH CHANGE REQUEST: ${changeStr}]`;
-    } else if (paymentMethod === "card_machine") {
-      const cleanNum = cardNumber.replace(/\s/g, "");
-      const maskedCard = `${cleanNum.slice(0, 4)} ${cleanNum.slice(4, 6)}•• •••• ${cleanNum.slice(-4)}`;
-      const terminalIdVal = localStorage.getItem("localeats_card_machine_terminal_id_" + primaryShop.id) || "POS-TERM-101";
-      const brandVal = localStorage.getItem("localeats_card_machine_brand_" + primaryShop.id) || "Yoco Go";
-      
-      finalDeliveryInstructions = `[CARD_MACHINE_PAYMENT: Holder: ${cardHolder.trim()}, Card: ${maskedCard}, Exp: ${cardExpiry}, CVV: ${cardCvv}, Terminal: ${terminalIdVal}, Brand: ${brandVal}]`;
-    }
-
-    // Append promo code tagging into delivery instructions for backend once-per-client tracking
-    if (appliedPromo) {
-      finalDeliveryInstructions = `${finalDeliveryInstructions ? finalDeliveryInstructions + " • " : ""}[PROMO:${appliedPromo.code}]`;
-    }
-
-    // Append tipping tag to finalDeliveryInstructions
-    if (tipAmount > 0) {
-      finalDeliveryInstructions = `${finalDeliveryInstructions ? finalDeliveryInstructions + " • " : ""}[TIP: R${tipAmount.toFixed(2)}]`;
+      finalDeliveryInstructions = `${finalDeliveryInstructions ? `${finalDeliveryInstructions} • ` : ""}[CASH CHANGE REQUEST: ${changeStr}]`;
     }
 
     if (!isOnline) {
@@ -1170,31 +756,13 @@ export function CheckoutScreen({
     try {
       // Save the last delivery instructions and order notes for future use
       if (deliveryInstructions.trim()) {
-        localStorage.setItem("localeats_last_instructions", deliveryInstructions.trim());
+        localStorage.setItem(
+          "localeats_last_instructions",
+          stripLegacyCardMachinePaymentSegment(deliveryInstructions.trim()),
+        );
       }
-        if (orderNotes.trim()) {
-          localStorage.setItem("localeats_last_order_notes", orderNotes.trim());
-        }
-
-        // Save new card details securely for future 1-tap checkout if requested
-        if (paymentMethod === "card_machine" && selectedSavedCardId === "new" && saveCardForFuture && cardNumber.trim()) {
-          try {
-            const rawDigits = cardNumber.replace(/\D/g, "");
-            if (rawDigits.length >= 12) {
-              const last4 = rawDigits.slice(-4);
-              const cardType = rawDigits.startsWith("4") ? "Visa" : "Mastercard";
-              const newCardObj = {
-                id: "c_" + Date.now(),
-                cardHolder: cardHolder.trim() || userProfile?.fullName || "LOCAL CUSTOMER",
-                cardNumber: `•••• •••• •••• ${last4}`,
-                expiry: cardExpiry || "12/28",
-                cardType,
-              };
-              const updatedSavedCards = [...savedCards, newCardObj];
-              setSavedCards(updatedSavedCards);
-              localStorage.setItem("localeats_saved_cards", JSON.stringify(updatedSavedCards));
-            }
-          } catch (e) {}
+        if (sanitizedOrderNotes) {
+          localStorage.setItem("localeats_last_order_notes", sanitizedOrderNotes);
         }
 
         // Resolve authenticated user ID or obtain secure Anonymous Firebase UID for guest checkout
@@ -1244,20 +812,20 @@ export function CheckoutScreen({
         }
         const orderIdempotencyKey = checkoutIdempotencyKeyRef.current;
 
-        const isCOAOrder = isCashTrustActive && paymentMethod === "cash";
-
         const requestPayload: CreateOrderRequestData = {
-          user_id: activeUserId,
           idempotency_key: orderIdempotencyKey,
           shop_id: String(primaryShop?.id || cart[0]?.shopId || ""),
           items: cart.map((item) => ({
             menu_item_id: String(item.id),
             quantity: Math.max(1, Number(item.quantity) || 1),
-            notes: [item.specialInstructions, orderNotes].filter(Boolean).join(" • ") || undefined,
+            notes: [
+              stripLegacyCardMachinePaymentSegment(item.specialInstructions || ""),
+              sanitizedOrderNotes,
+            ].filter(Boolean).join(" • ") || undefined,
             variant_id: undefined,
           })),
           delivery_type: deliveryType === "delivery" ? "delivery" : "collection",
-          delivery_schedule_mode: deliveryScheduleMode === "express" ? "express" : "standard",
+          delivery_schedule_mode: "standard",
           delivery_coordinates:
             deliveryType === "delivery" && currentLat && currentLng
               ? {
@@ -1265,9 +833,8 @@ export function CheckoutScreen({
                   lng: Number(currentLng),
                 }
               : undefined,
-          promo_code: appliedPromo?.code || undefined,
-          tip_amount: Number(tipAmount) || 0,
-          payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
+          tip_amount: 0,
+          payment_method: normalizedPaymentMethod,
           customer_details: {
             name: finalCustomerName,
             phone: finalCustomerPhone,
@@ -1306,10 +873,10 @@ export function CheckoutScreen({
           service_fee: orderResult.service_fee,
           discount_amount: orderResult.discount_amount,
           tip_amount: orderResult.tip_amount,
-          notes: orderNotes || "",
+          notes: sanitizedOrderNotes,
           delivery_instructions: finalDeliveryInstructions || "",
           status: orderResult.status || "pending",
-          payment_method: isCOAOrder ? "cash_on_arrival" : paymentMethod,
+          payment_method: normalizedPaymentMethod,
           is_delivery: deliveryType === "delivery",
           order_type: deliveryType,
           delivery_status: orderResult.delivery_status,
@@ -1322,7 +889,9 @@ export function CheckoutScreen({
             name: item.name,
             price: Number(item.price) || 0,
             quantity: Math.max(1, Number(item.quantity) || 1),
-            notes: item.specialInstructions || "",
+            notes: stripLegacyCardMachinePaymentSegment(
+              item.specialInstructions || "",
+            ),
           })),
         }];
 
@@ -1347,26 +916,21 @@ export function CheckoutScreen({
           console.warn("Storage sync notice on checkout:", storageErr);
         }
 
-        // Pop COA confirmation on success
-        if (isCOAOrder) {
+        if (normalizedPaymentMethod === "cash_on_arrival") {
           showAlert(
             "Order Confirmed!",
-            deliveryType === "delivery" 
-              ? "Your Cash on Delivery order is confirmed! The restaurant will deliver directly. Please have cash ready upon arrival."
-              : "Your Cash on Pickup order is confirmed! Please pay at the counter when you arrive.",
+            "Your delivery order is confirmed. An approved rider can be assigned after the shop prepares it. Please have cash ready on arrival.",
           );
-        }
-
-        // Mark promo as used on success
-        if (appliedPromo) {
-          const usedLocalKey = session?.user?.id
-            ? `used_promo_codes_${session.user.id}`
-            : `used_promo_codes_guest`;
-          const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-          if (!usedLocal.includes(appliedPromo.code)) {
-            usedLocal.push(appliedPromo.code);
-            safeLocalStorageSet(usedLocalKey, JSON.stringify(usedLocal));
-          }
+        } else if (normalizedPaymentMethod === "card_machine") {
+          showAlert(
+            "Order Confirmed!",
+            "Your collection order is confirmed. Pay on the shop's physical card machine when you collect.",
+          );
+        } else {
+          showAlert(
+            "Order Confirmed!",
+            "Your collection order is confirmed. Pay cash at the shop when you collect.",
+          );
         }
 
         // Psychsound - play ascending major triad for immediate relief and confidence booster
@@ -1618,15 +1182,10 @@ export function CheckoutScreen({
                 </div>
                 <div>
                   <h3 className="text-sm font-black uppercase tracking-widest text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <span>Cart Summary Preview</span>
-                    {directKitchenSavings > 0 && (
-                      <span className="text-[9px] font-black uppercase bg-emerald-500 text-white px-2 py-0.2 rounded-full">
-                        Save ~R {directKitchenSavings.toFixed(0)}
-                      </span>
-                    )}
+                    <span>Cart Summary</span>
                   </h3>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
-                    {cart.reduce((s, c) => s + c.quantity, 0)} Items • Direct Kitchen Pricing
+                    {cart.reduce((s, c) => s + c.quantity, 0)} Items • Estimated subtotal
                   </p>
                 </div>
               </div>
@@ -1635,11 +1194,6 @@ export function CheckoutScreen({
                   <span className="text-xs bg-orange-600 text-white px-3 py-1 rounded-full font-black tracking-tight block">
                     <AnimatedPrice value={subtotal} />
                   </span>
-                  {estimatedRetailSubtotal > subtotal && (
-                    <span className="text-[9px] text-slate-400 line-through font-mono font-bold block mt-0.5">
-                      Retail ~R {estimatedRetailSubtotal.toFixed(2)}
-                    </span>
-                  )}
                 </div>
                 <ChevronRight
                   className={`w-5 h-5 text-slate-400 dark:text-slate-500 transition-transform duration-300 ${
@@ -1651,29 +1205,6 @@ export function CheckoutScreen({
 
             {isCartSummaryExpanded && (
               <div className="p-4 space-y-4 animate-in fade-in duration-300">
-                {/* Price Anchoring Advantage Banner */}
-                {directKitchenSavings > 0 && (
-                  <div className="bg-gradient-to-r from-emerald-500/10 via-amber-500/10 to-orange-500/10 border border-emerald-500/20 p-3 rounded-2xl flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-emerald-500/20 rounded-xl text-emerald-600 dark:text-emerald-400 shrink-0">
-                        <Percent className="w-3.5 h-3.5" />
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-black uppercase tracking-tight text-slate-800 dark:text-slate-200">
-                          Direct Local Pricing Advantage
-                        </p>
-                        <p className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">
-                          You pay R {subtotal.toFixed(2)} vs ~R {estimatedRetailSubtotal.toFixed(2)} standard franchise / app retail benchmark.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-[9px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full">
-                        Save 18%-22%
-                      </span>
-                    </div>
-                  </div>
-                )}
                 <div className="divide-y divide-slate-100 dark:divide-slate-800/40 max-h-[350px] overflow-y-auto pr-1 space-y-3">
                   {cart.length === 0 && (
                     <div className="py-12 flex flex-col items-center justify-center text-center">
@@ -1691,13 +1222,7 @@ export function CheckoutScreen({
                     </div>
                   )}
                   {cart.map((item, idx) => {
-                    const customizationsTotal = (item.selectedCustomizations || []).reduce(
-                      (acc, c) => acc + Number(c.price),
-                      0,
-                    );
-                    const itemUnitPrice = item.price + customizationsTotal;
-                    const itemTotal = itemUnitPrice * item.quantity;
-                    const finalItemTotal = item.quantity > 5 ? itemTotal * 0.85 : itemTotal;
+                    const itemTotal = item.price * item.quantity;
 
                     return (
                       <div
@@ -1728,20 +1253,9 @@ export function CheckoutScreen({
                                 </p>
                               ) : null}
                               <div className="flex flex-col gap-0.5 mt-1">
-                                {item.quantity > 5 ? (
-                                  <>
-                                    <p className="text-primary font-black text-xs leading-none">
-                                      R {finalItemTotal.toFixed(2)}
-                                    </p>
-                                    <p className="text-[10px] whitespace-nowrap text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
-                                      15% Bulk Discount Applied! (Was R {itemTotal.toFixed(2)})
-                                    </p>
-                                  </>
-                                ) : (
-                                  <p className="text-primary font-black text-xs leading-none">
-                                    R {finalItemTotal.toFixed(2)}
-                                  </p>
-                                )}
+                                <p className="text-primary font-black text-xs leading-none">
+                                  R {itemTotal.toFixed(2)}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -1825,14 +1339,14 @@ export function CheckoutScreen({
                 <div
                   className={`px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest ${
                     distance > ZONE_B_LIMIT
-                      ? "bg-red-100 text-red-700 border-red-200 animate-pulse"
+                      ? "bg-blue-100 text-blue-700 border-blue-200"
                       : distance > ZONE_A_LIMIT
                         ? "bg-amber-100 text-amber-700 border-amber-200"
                         : "bg-green-100 text-green-700 border-green-200"
                   }`}
                 >
                   {distance.toFixed(1)}km away{" "}
-                  {distance > ZONE_B_LIMIT && "• Out of Range"}
+                  {distance > ZONE_B_LIMIT && "• Estimate only"}
                 </div>
               )}
             </div>
@@ -1887,11 +1401,6 @@ export function CheckoutScreen({
                 </div>
                 <div className="relative">
                   <Navigation className="w-5 h-5 shrink-0 rotate-45" />
-                  {distance !== null && distance > ZONE_B_LIMIT && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] whitespace-nowrap font-black px-1 rounded-full animate-bounce">
-                      !
-                    </span>
-                  )}
                 </div>
                 <div className="text-center">
                   <p className="text-xs font-black leading-none mb-1">
@@ -1899,8 +1408,8 @@ export function CheckoutScreen({
                   </p>
                   <p className="text-[9px] font-bold text-orange-600 dark:text-orange-400">
                     {distance !== null && distance > ZONE_A_LIMIT
-                      ? `Zone B: +R10.00`
-                      : `Zone A: +R5.00`}
+                      ? `Est. Zone B: +R10.00`
+                      : `Est. Zone A: +R5.00`}
                   </p>
                   <p className="text-[10px] whitespace-nowrap text-slate-400 font-medium mt-0.5">
                     vs R35 standard car courier
@@ -1984,123 +1493,6 @@ export function CheckoutScreen({
                   {deliveryAddressText ? "Change" : "Set Spot"}
                 </button>
               </div>
-
-              {/* SECTION: Delivery Timing & Speed (Anchored Pricing & Percentage Framing) */}
-              {deliveryType === "delivery" && (
-                <div className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-orange-500" />
-                      Delivery Speed & Timing
-                    </h3>
-                    <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400">
-                      {deliveryScheduleMode === "express"
-                        ? "Priority Express (+R10.00)"
-                        : deliveryScheduleMode === "scheduled"
-                          ? `Scheduled: ${scheduledTimeChoice}`
-                          : "Standard (~25-35 min)"}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDeliveryScheduleMode("asap");
-                        triggerHaptic(5);
-                      }}
-                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                        deliveryScheduleMode === "asap"
-                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
-                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1">
-                        <Zap className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-                        <span className="text-[11px] font-black">Standard</span>
-                      </div>
-                      <p className="text-[9px] text-slate-500 mt-1 font-medium">~25-35 mins</p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDeliveryScheduleMode("express");
-                        triggerHaptic(5);
-                      }}
-                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-                        deliveryScheduleMode === "express"
-                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
-                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <div className="flex items-center gap-1">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                          <span className="text-[11px] font-black">Express</span>
-                        </div>
-                        <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
-                          {expressFeePercent}% of meal
-                        </span>
-                      </div>
-                      <p className="text-[9px] text-slate-500 mt-1 font-medium">
-                        +R10 <span className="line-through opacity-60 text-[10px] whitespace-nowrap">R30</span> • ~15-20m
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDeliveryScheduleMode("scheduled");
-                        triggerHaptic(5);
-                      }}
-                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                        deliveryScheduleMode === "scheduled"
-                          ? "bg-orange-500/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold shadow-sm"
-                          : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                        <span className="text-[11px] font-black">Schedule</span>
-                      </div>
-                      <p className="text-[9px] text-slate-500 mt-1 font-medium">Pick time</p>
-                    </button>
-                  </div>
-
-                  {deliveryScheduleMode === "express" && (
-                    <div className="p-2.5 bg-amber-500/10 dark:bg-amber-500/5 rounded-2xl border border-amber-500/20 flex items-center justify-between text-[10px] animate-in fade-in duration-200">
-                      <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-300 font-bold">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        <span>Priority Dispatch (+R10.00)</span>
-                      </div>
-                      <span className="text-[9px] font-black bg-amber-500/20 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full">
-                        Only ~{expressFeePercent}% of order (vs R30 standard priority)
-                      </span>
-                    </div>
-                  )}
-
-                  {deliveryScheduleMode === "scheduled" && (
-                    <div className="flex items-center gap-2 pt-1 animate-in fade-in duration-200">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase shrink-0">Dropoff Time:</span>
-                      <select
-                        value={scheduledTimeChoice}
-                        onChange={(e) => setScheduledTimeChoice(e.target.value)}
-                        className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 outline-none focus:border-orange-500"
-                      >
-                        <option value="12:30 PM">12:30 PM Today</option>
-                        <option value="01:00 PM">01:00 PM Today</option>
-                        <option value="01:30 PM">01:30 PM Today</option>
-                        <option value="02:00 PM">02:00 PM Today</option>
-                        <option value="05:30 PM">05:30 PM Evening</option>
-                        <option value="06:00 PM">06:00 PM Evening</option>
-                        <option value="06:30 PM">06:30 PM Evening</option>
-                        <option value="07:00 PM">07:00 PM Evening</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Kitchen Notes Text Area */}
               <div className="mt-2">
@@ -2192,40 +1584,40 @@ export function CheckoutScreen({
                     <span
                       className={`px-2 py-0.5 rounded text-[10px] whitespace-nowrap font-black uppercase tracking-wider ${
                         distance > ZONE_B_LIMIT
-                          ? "bg-red-100 text-red-700"
+                          ? "bg-blue-100 text-blue-700"
                           : distance > ZONE_A_LIMIT
                             ? "bg-amber-100 text-amber-700"
                             : "bg-green-100 text-green-700"
                       }`}
                     >
                       {distance > ZONE_B_LIMIT
-                        ? "Limit Exceeded"
+                        ? "Estimate only"
                         : distance > ZONE_A_LIMIT
-                          ? "Zone B"
-                          : "Zone A"}
+                          ? "Est. Zone B"
+                          : "Est. Zone A"}
                     </span>
                   )}
                 </div>
 
                 {distance !== null && distance > ZONE_B_LIMIT && (
-                  <div className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-200 dark:border-rose-900/60 p-4 rounded-2xl flex flex-col gap-3 shadow-sm animate-in fade-in duration-200">
+                  <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 p-4 rounded-2xl flex flex-col gap-3 shadow-sm animate-in fade-in duration-200">
                     <div className="flex items-start gap-3">
-                      <div className="p-2 bg-rose-100 dark:bg-rose-900/40 rounded-xl text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
-                        <AlertTriangle className="w-5 h-5" />
+                      <div className="p-2 bg-blue-100 dark:bg-blue-900/40 rounded-xl text-blue-600 dark:text-blue-400 shrink-0 mt-0.5">
+                        <Info className="w-5 h-5" />
                       </div>
                       <div className="space-y-1">
-                        <h4 className="text-xs font-black text-rose-900 dark:text-rose-100 uppercase tracking-wide">
-                          Delivery Unavailable at this Location — Distance ({distance.toFixed(1)} km) exceeds shop limit ({ZONE_B_LIMIT.toFixed(1)} km)
+                        <h4 className="text-xs font-black text-blue-900 dark:text-blue-100 uppercase tracking-wide">
+                          Local distance estimate: {distance.toFixed(1)} km
                         </h4>
-                        <p className="text-xs text-rose-700 dark:text-rose-300 font-semibold leading-relaxed">
-                          Your location is outside this shop's home delivery radius. We automatically offer Store Pickup as a zero-fee alternative.
+                        <p className="text-xs text-blue-700 dark:text-blue-300 font-semibold leading-relaxed">
+                          This map estimate is beyond the displayed {ZONE_B_LIMIT.toFixed(1)} km radius. You may still place the order; the secure order service makes the final availability and pricing decision.
                         </p>
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-rose-800 dark:text-rose-300">
-                        Collect your fresh meal at the counter with no delivery fees!
+                    <div className="pt-2 border-t border-blue-200/60 dark:border-blue-900/40 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-blue-800 dark:text-blue-300">
+                        Prefer certainty? Collection remains available as an alternative.
                       </span>
                       <button
                         type="button"
@@ -2472,53 +1864,24 @@ export function CheckoutScreen({
 
                       {item.selectedCustomizations &&
                       item.selectedCustomizations.length > 0 ? (
-                        <p className="text-[9px] text-slate-400 leading-tight italic truncate mb-1">
-                          +{" "}
-                          {item.selectedCustomizations
-                            .map((c) => c.name)
-                            .join(", ")}
-                        </p>
+                        <>
+                          <p className="text-[9px] text-slate-400 leading-tight italic truncate mb-1">
+                            +{" "}
+                            {item.selectedCustomizations
+                              .map((c) => c.name)
+                              .join(", ")}
+                          </p>
+                          {hasUnsupportedPaidCustomizations([item]) && (
+                            <p className="text-[10px] text-rose-600 dark:text-rose-400 font-bold leading-tight mb-1">
+                              Remove paid add-ons before secure checkout.
+                            </p>
+                          )}
+                        </>
                       ) : null}
 
-                      {item.quantity > 5 ? (
-                        <div className="flex flex-col gap-1">
-                          <p className="text-primary font-black text-xs leading-none">
-                            R{" "}
-                            {(
-                              (item.price +
-                                (item.selectedCustomizations || []).reduce(
-                                  (acc, c) => acc + Number(c.price),
-                                  0,
-                                )) *
-                              item.quantity *
-                              0.85
-                            ).toFixed(2)}
-                          </p>
-                          <p className="text-[10px] whitespace-nowrap text-emerald-650 dark:text-emerald-400 font-black uppercase tracking-wider leading-none">
-                            15% Bulk Discount Applied! (Was R{" "}
-                            {(
-                              (item.price +
-                                (item.selectedCustomizations || []).reduce(
-                                  (acc, c) => acc + Number(c.price),
-                                  0,
-                                )) *
-                              item.quantity
-                            ).toFixed(2)})
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-primary font-black text-xs leading-none">
-                          R{" "}
-                          {(
-                            (item.price +
-                              (item.selectedCustomizations || []).reduce(
-                                (acc, c) => acc + Number(c.price),
-                                0,
-                              )) *
-                            item.quantity
-                          ).toFixed(2)}
-                        </p>
-                      )}
+                      <p className="text-primary font-black text-xs leading-none">
+                        R {(item.price * item.quantity).toFixed(2)}
+                      </p>
                     </div>
 
                     {/* Quantity Modifier Chips */}
@@ -2571,260 +1934,51 @@ export function CheckoutScreen({
             </div>
           </section>
 
-          {/* SECTION 5: Vouchers & Coupon codes */}
-          <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-              <Tag className="w-4 h-4 text-orange-500" />
-              Promo Vouchers
-            </h3>
-
-            {!appliedPromo ? (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={promoCodeInput}
-                    onChange={(e) => {
-                      setPromoCodeInput(e.target.value);
-                      if (promoStatus !== "idle") setPromoStatus("idle");
-                    }}
-                    placeholder="Enter Coupon Code (e.g. FIRSTTREAT)"
-                    className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl px-3 py-2.5 text-xs font-mono font-bold focus:ring-1 focus:ring-orange-500 outline-none transition-all dark:text-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleApplyPromo()}
-                    className="bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 text-white font-black text-xs px-4 rounded-2xl active:scale-95 transition-all uppercase tracking-wider cursor-pointer"
-                  >
-                    Apply
-                  </button>
-                </div>
-
-                {/* DB status indicators */}
-                {promoStatus === "checking" && (
-                  <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 text-xs font-bold bg-blue-50 dark:bg-blue-950/25 p-3 rounded-2xl border border-blue-100 dark:border-blue-900/30 animate-pulse">
-                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                    <span>
-                      Validating "{promoCodeInput.toUpperCase()}" with
-                      Database...
-                    </span>
-                  </div>
-                )}
-
-                {promoStatus === "already_used" && (
-                  <div className="flex flex-col gap-1 bg-amber-50 dark:bg-amber-950/20 border border-amber-100/50 p-3 rounded-2xl text-amber-800 dark:text-amber-400">
-                    <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                      <span className="font-extrabold text-[10px] uppercase tracking-wider">
-                        🔒 Database Verified - Already Redeemed
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold ml-6">
-                      {promoError} Limit of 1 use per customer.
-                    </p>
-                  </div>
-                )}
-
-                {promoStatus === "expired" && (
-                  <div className="flex flex-col gap-1 bg-rose-50 dark:bg-rose-950/20 border border-rose-100/50 p-3 rounded-2xl text-rose-800 dark:text-rose-400">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                      <span className="font-extrabold text-[10px] uppercase tracking-wider">
-                        ⌛ Database Verified - Campaign Expired
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold ml-6">
-                      {promoError} This campaign has closed.
-                    </p>
-                  </div>
-                )}
-
-                {promoStatus === "invalid" && (
-                  <div className="flex flex-col gap-1 bg-rose-50 dark:bg-rose-950/20 border border-rose-100/50 p-3 rounded-2xl text-rose-800 dark:text-rose-400">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                      <span className="font-extrabold text-[10px] uppercase tracking-wider">
-                        ✕ Database Checked - Code Invalid
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold ml-6">
-                      {promoError} Please check spelling and retry.
-                    </p>
-                  </div>
-                )}
-
-                {/* Popular Promo suggestions as clickable chips */}
-                <div className="space-y-1.5 pt-1">
-                  <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest pl-1">
-                    Voucher campaigns in DB:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleApplyPromo("LOCALEATS10")}
-                      className="px-2.5 py-1 bg-orange-50 hover:bg-orange-100 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 border border-orange-100 dark:border-orange-900/10 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-                    >
-                      <Gift className="w-3 h-3" />
-                      LOCALEATS10 (Active)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleApplyPromo("FIRSTTREAT")}
-                      className="px-2.5 py-1 bg-orange-50 hover:bg-orange-100 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 border border-orange-100 dark:border-orange-900/10 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-                    >
-                      <Gift className="w-3 h-3" />
-                      FIRSTTREAT (Active)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleApplyPromo("EXPIRED20")}
-                      className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950/20 text-slate-600 dark:text-slate-400 border border-slate-100 dark:border-slate-900/10 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-                    >
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      EXPIRED20 (Expired)
-                    </button>
-                    {deliveryType === "delivery" && (
-                      <button
-                        type="button"
-                        onClick={() => handleApplyPromo("BICYCLE5")}
-                        className="px-2.5 py-1 bg-orange-50 hover:bg-orange-100 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 border border-orange-100 dark:border-orange-900/10 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-                      >
-                        <Bike className="w-3 h-3" />
-                        BICYCLE5 (Delivery)
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-150 p-3.5 rounded-2xl flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="size-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-600">
-                    <Sparkles className="w-4 h-4 animate-pulse" />
-                  </div>
-                  <div>
-                    <h5 className="font-extrabold text-[10px] text-emerald-800 dark:text-emerald-400 uppercase tracking-widest">
-                      ✔ VOUCHER APPLIED
-                    </h5>
-                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-tight">
-                      Code "{appliedPromo.code}" saved R
-                      {discountAmount.toFixed(2)}!
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={removePromo}
-                  className="text-slate-400 hover:text-red-500 font-black text-[10px] uppercase tracking-wider underline decoration-2 underline-offset-4 decoration-slate-300 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* SECTION 6: Payment Method & Cash change Chip Request */}
+          {/* SECTION 6: Pilot payment method */}
           <section ref={paymentMethodSectionRef} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-4">
             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
               <CreditCard className="w-4 h-4 text-orange-500" />
-              Settlement Method
+              Payment Method
             </h3>
-
-            {isCashTrustActive && (
-              <div
-                id="checkout-coa-trust-banner"
-                className="bg-green-500/10 dark:bg-green-500/15 text-green-700 dark:text-green-400 border border-green-500/20 p-3.5 rounded-2xl flex items-center gap-3 shadow-inner"
-              >
-                <span className="text-lg shrink-0">💵</span>
-                <p className="text-xs font-black tracking-tight leading-snug">
-                  Local COD Supported! Pay cash right at your door with complete
-                  peace of mind.
-                </p>
-              </div>
-            )}
 
             <div className="flex flex-col gap-2.5">
               <label
-                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${
-                  isCoaDisabled
-                    ? "opacity-50 cursor-not-allowed border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20"
-                    : paymentMethod === "cash"
-                      ? "border-orange-500 bg-orange-500/5 dark:bg-orange-500/10"
-                      : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50"
-                }`}
-                onClick={(e) => {
-                  if (isCoaDisabled) {
-                    e.preventDefault();
-                    toast.info(
-                      "COA is restricted to first-time shoppers or orders under R350.",
-                    );
-                  }
-                }}
+                className={`flex items-center justify-between p-3.5 rounded-2xl border-2 cursor-pointer transition-all ${paymentMethod === "cash" ? "border-orange-500 bg-orange-500/5 dark:bg-orange-500/10" : "border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900/50"}`}
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div
-                    className={`size-9 rounded-full flex items-center justify-center shrink-0 ${
-                      isCoaDisabled
-                        ? "bg-slate-200 dark:bg-slate-800 text-slate-400"
-                        : paymentMethod === "cash"
-                          ? "bg-orange-600 text-white"
-                          : "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                    }`}
+                    className={`size-9 rounded-full flex items-center justify-center shrink-0 ${paymentMethod === "cash" ? "bg-orange-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}
                   >
-                    {isCoaDisabled ? (
-                      <Shield className="w-4 h-4 text-slate-400" />
-                    ) : (
-                      <Banknote className="w-4 h-4" />
-                    )}
+                    <Banknote className="w-4 h-4" />
                   </div>
                   <div className="text-left flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight">
-                        {isCashTrustActive
-                          ? "Cash on Arrival (COA)"
-                          : deliveryType === "collection"
-                            ? "Pay Cash at Counter"
-                            : "Cash on Delivery (COD)"}
+                        {deliveryType === "collection"
+                          ? "Cash at Shop"
+                          : "Cash on Arrival"}
                       </p>
-                      {isCashTrustActive && userOrderCount === 0 && (
-                        <span className="bg-emerald-600 text-white text-[10px] whitespace-nowrap font-black px-2 py-1 rounded uppercase tracking-wider animate-pulse shrink-0">
-                          Recommended
-                        </span>
-                      )}
                     </div>
                     <p className="text-slate-400 text-[10px] font-bold tracking-tight">
-                      {isCoaDisabled
-                        ? "COA limit of R350 exceeded for returning users."
-                        : deliveryType === "collection"
-                          ? "Pay cash directly to the shop assistant at the counter when you retrieve your order."
-                          : isCashTrustActive
-                            ? "Pay safely with cash or mobile wallet when rider arrives at your door."
-                            : "Pay cash directly to the delivery rider at your door."}
+                      {deliveryType === "collection"
+                        ? "Pay cash directly at the shop when you collect your order."
+                        : "Pay cash to the approved rider when your order arrives."}
                     </p>
                   </div>
                 </div>
                 <div
-                  className={`size-5 rounded-full border-2 flex items-center justify-center shrink-0 ${isCoaDisabled ? "border-slate-200 bg-slate-100 dark:border-slate-800" : paymentMethod === "cash" ? "border-orange-500" : "border-slate-300"}`}
+                  className={`size-5 rounded-full border-2 flex items-center justify-center shrink-0 ${paymentMethod === "cash" ? "border-orange-500" : "border-slate-300"}`}
                 >
-                  {isCoaDisabled ? (
-                    <span className="text-[10px]">🔒</span>
-                  ) : (
-                    paymentMethod === "cash" && (
-                      <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
-                    )
+                  {paymentMethod === "cash" && (
+                    <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
                   )}
                 </div>
                 <input
                   type="radio"
                   name="payment"
                   value="cash"
-                  disabled={isCoaDisabled}
                   checked={paymentMethod === "cash"}
-                  onChange={() => {
-                    if (!isCoaDisabled) {
-                      setPaymentMethod("cash");
-                    }
-                  }}
+                  onChange={() => setPaymentMethod("cash")}
                   className="hidden"
                 />
               </label>
@@ -2841,14 +1995,10 @@ export function CheckoutScreen({
                     </div>
                     <div className="text-left">
                       <p className="text-slate-950 dark:text-white text-sm font-black uppercase tracking-tight">
-                        {isCardMachineIntegrationEnabled 
-                          ? "Direct Card Terminal Sync" 
-                          : "Pay by Card on Arrival (Swipe at Counter)"}
+                        Card at Shop
                       </p>
                       <p className="text-slate-400 text-[10px] font-bold tracking-tight">
-                        {isCardMachineIntegrationEnabled 
-                          ? "Sync payment with shop's connected card terminal machine" 
-                          : "Simply swipe or tap your credit/debit card on the shop's terminal machine when you arrive to fetch your food."}
+                        Pay on the merchant's physical card terminal when you collect.
                       </p>
                     </div>
                   </div>
@@ -2872,335 +2022,19 @@ export function CheckoutScreen({
             </div>
 
             {paymentMethod === "card_machine" && deliveryType === "collection" && (
-              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4 animate-in slide-in-from-top-2 duration-300">
-                <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
-                  <CreditCard className="w-3.5 h-3.5 text-primary" />
-                  {isCardMachineIntegrationEnabled ? "Enter Direct Terminal Payment Card Details" : "Enter Credit / Debit Card Payment Details"}
-                </p>
-
-                {/* SAVED CARDS SELECTOR COMPONENT */}
-                {savedCards.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-                        <CreditCard className="w-3.5 h-3.5 text-orange-500" />
-                        Select Saved Card for 1-Tap Checkout
-                      </label>
-                      <span className="text-[9px] font-black uppercase text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                        Saved Cards ({savedCards.length})
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {savedCards.map((c) => {
-                        const isSelected = selectedSavedCardId === c.id;
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedSavedCardId(c.id);
-                              triggerHaptic(10);
-                            }}
-                            className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center justify-between ${
-                              isSelected
-                                ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-slate-900 dark:text-white shadow-sm"
-                                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-orange-300"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className={`p-2 rounded-xl text-xs font-black ${isSelected ? "bg-orange-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>
-                                💳
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-xs font-extrabold font-mono tracking-wider truncate">
-                                  {c.cardNumber}
-                                </p>
-                                <p className="text-[9px] font-bold text-slate-400 uppercase truncate">
-                                  {c.cardType} • Exp: {c.expiry}
-                                </p>
-                              </div>
-                            </div>
-                            {isSelected && (
-                              <span className="text-[9px] font-black uppercase bg-emerald-500 text-white px-2 py-0.5 rounded-full shrink-0">
-                                1-Tap Ready
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-
-                      {/* Option to add custom new card */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedSavedCardId("new");
-                          triggerHaptic(10);
-                        }}
-                        className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center gap-2.5 ${
-                          selectedSavedCardId === "new"
-                            ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-slate-900 dark:text-white shadow-sm"
-                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:border-orange-300"
-                        }`}
-                      >
-                        <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-black">
-                          <Plus className="w-4 h-4 text-orange-500" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-extrabold uppercase">
-                            Use New Card...
-                          </p>
-                          <p className="text-[9px] font-medium text-slate-400">
-                            Enter details manually
-                          </p>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* VISUAL CREDIT CARD COMPONENT */}
-                <div className="relative h-44 w-full bg-gradient-to-br from-[#1e293b] via-[#334155] to-[#0f172a] rounded-2xl p-5 text-white shadow-xl overflow-hidden flex flex-col justify-between border border-white/10">
-                  {/* Card Background Patterns */}
-                  <div className="absolute right-0 top-0 size-32 bg-primary/10 rounded-full blur-2xl font-sans" />
-                  <div className="absolute left-10 bottom-0 size-24 bg-blue-500/10 rounded-full blur-xl font-sans" />
-
-                  {/* Top Bar: Chip & Brand */}
-                  <div className="flex justify-between items-start">
-                    <div className="flex flex-col gap-1">
-                      {/* Gold Chip Card Logo */}
-                      <div className="w-10 h-7 bg-gradient-to-tr from-yellow-300 to-yellow-500 rounded-md border border-yellow-200/50 flex flex-col justify-around p-1 shadow-inner relative overflow-hidden">
-                        <div className="h-full w-full opacity-40 flex flex-col justify-between">
-                          <div className="flex justify-between"><div className="border border-black flex-1"></div><div className="border border-black flex-1"></div></div>
-                          <div className="flex justify-between"><div className="border border-black flex-1"></div><div className="border border-black flex-1"></div></div>
-                        </div>
-                      </div>
-                      <p className="text-[10px] whitespace-nowrap text-slate-300 uppercase tracking-widest font-black leading-none mt-1">Smart Chip</p>
-                    </div>
-                    {/* Visual Brand Name */}
-                    <div className="text-right">
-                      <p className="font-extrabold text-xs uppercase tracking-widest bg-gradient-to-r from-orange-400 to-pink-500 bg-clip-text text-transparent mb-0.5">LOCAL CARDSECURE</p>
-                      <p className="text-[7px] text-slate-400 font-bold uppercase tracking-wider">Direct Terminal Sync</p>
-                    </div>
-                  </div>
-
-                  {/* Card Number display */}
-                  <div className="my-1">
-                    <p className="font-mono text-base md:text-lg tracking-widest text-[#f8fafc] font-semibold text-center drop-shadow-md">
-                      {cardNumber || "••••  ••••  ••••  ••••"}
-                    </p>
-                  </div>
-
-                  {/* Bottom details: Holder & Expiry */}
-                  <div className="flex justify-between items-end">
-                    <div className="text-left">
-                      <p className="text-[7px] text-slate-400 font-extrabold uppercase tracking-wider leading-none mb-0.5">Cardholder Name</p>
-                      <p className="font-sans text-xs font-black uppercase tracking-wider text-slate-100 cut-text max-w-[180px]">
-                        {cardHolder || "NAME SURNAME"}
-                      </p>
-                    </div>
-                    <div className="flex gap-4">
-                      <div className="text-center">
-                        <p className="text-[7px] text-slate-400 font-extrabold uppercase tracking-wider leading-none mb-0.5">Expires</p>
-                        <p className="font-mono text-xs font-bold text-slate-100">
-                          {cardExpiry || "MM/YY"}
-                        </p>
-                      </div>
-                      <div className="text-center font-sans">
-                        <p className="text-[7px] text-slate-400 font-extrabold uppercase tracking-wider leading-none mb-0.5">CVV</p>
-                        <p className="font-mono text-xs font-bold text-slate-100">
-                          {cardCvv ? "•••" : "000"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* FORM FIELDS WITH RESPONSIVE BEHAVIOR */}
-                <div className="space-y-3.5">
-                  <div>
-                    <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 ml-1">
-                      Cardholder Name
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 mt-1 text-xs font-bold text-slate-800 dark:text-slate-200"
-                      placeholder="e.g. John Doe"
-                      value={cardHolder}
-                      onChange={(e) => setCardHolder(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 font-sans">
-                    <div>
-                      <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 ml-1">
-                        Card Number
-                      </label>
-                      <input
-                        type="text"
-                        maxLength={19}
-                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 mt-1 text-xs font-mono font-bold text-slate-800 dark:text-slate-200"
-                        placeholder="e.g. 5231 4452 8890 1204"
-                        value={cardNumber}
-                        onChange={(e) => {
-                          const val = e.target.value.replace(/\D/g, "");
-                          const formatted = val
-                            .replace(/(\d{4})+(?=\d)/g, "$1 ")
-                            .slice(0, 19);
-                          setCardNumber(formatted);
-                        }}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 ml-1">
-                          Expiry Date
-                        </label>
-                        <input
-                          type="text"
-                          maxLength={5}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 mt-1 text-xs font-mono font-bold text-slate-800 dark:text-slate-200 text-center"
-                          placeholder="MM/YY"
-                          value={cardExpiry}
-                          onChange={(e) => {
-                            let val = e.target.value.replace(/\D/g, "");
-                            if (val.length > 2) {
-                              val = val.slice(0, 2) + "/" + val.slice(2, 4);
-                            }
-                            setCardExpiry(val);
-                          }}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[9px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 ml-1">
-                          CVV Code
-                        </label>
-                        <input
-                          type="text"
-                          maxLength={3}
-                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 mt-1 text-xs font-mono font-bold text-slate-800 dark:text-slate-200 text-center"
-                          placeholder="***"
-                          value={cardCvv}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, "").slice(0, 3);
-                            setCardCvv(val);
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {selectedSavedCardId === "new" && (
-                    <div className="pt-1">
-                      <label className="flex items-center gap-2 cursor-pointer p-2 bg-orange-500/10 rounded-xl border border-orange-500/20">
-                        <input
-                          type="checkbox"
-                          checked={saveCardForFuture}
-                          onChange={(e) => setSaveCardForFuture(e.target.checked)}
-                          className="h-4 w-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 accent-orange-600 cursor-pointer"
-                        />
-                        <span className="text-xs font-extrabold text-orange-900 dark:text-orange-300">
-                          Save card details securely for 1-Tap future checkouts
-                        </span>
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl border border-indigo-100/50 dark:border-indigo-800/30 flex items-start gap-2">
-                  <span className="text-[11px] leading-none">🔒</span>
-                  <p className="text-[9px] text-indigo-700 dark:text-indigo-400 font-semibold font-sans leading-snug">
-                    Terminal Charge Authorized: By submitting, your payment details are secured on the local point-of-sale queue. The merchant will capture R {totalAmount.toFixed(2)} directly on the connected card machine ({localStorage.getItem("localeats_card_machine_brand_" + primaryShop.id) || "Yoco Terminal"}).
+              <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 rounded-2xl border border-emerald-200 dark:border-emerald-900/40 flex items-start gap-3">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-black text-emerald-900 dark:text-emerald-300">
+                    Pay at the shop
+                  </p>
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-relaxed mt-1">
+                    Pay on the shop&apos;s physical card machine when you collect. LocalEats will never ask for your card number or CVV.
                   </p>
                 </div>
               </div>
             )}
-
-
-            
           </section>
-
-          {/* SECTION 6.5: Support Rider with Optional Tip */}
-          {deliveryType === "delivery" && (
-            <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-                <Coins className="w-4 h-4 text-orange-500" />
-                Rider Tip
-              </h3>
-              <p className="text-[10px] text-slate-500 font-medium">
-                Optional tip to show appreciation for the rider's efforts. 100% of tips go directly to the rider.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: "No Tip", val: 0 },
-                  { label: "5%", val: 5 },
-                  { label: "10%", val: 10 },
-                  { label: "15%", val: 15 },
-                  { label: "Custom", val: "custom" },
-                ].map((item) => (
-                  <button
-                  type="button"
-                  key={item.label}
-                  onClick={() => {
-                    if (typeof item.val === "number") {
-                      setTipPercentage(item.val);
-                    } else {
-                      setTipPercentage("custom");
-                    }
-                  }}
-                  className={`px-3 py-2 rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 border ${
-                    (item.val === "custom" && tipPercentage === "custom") || (typeof item.val === "number" && tipPercentage === item.val)
-                      ? "bg-orange-600 text-white border-orange-600 shadow-sm"
-                      : "bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-900"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-
-            {tipPercentage === "custom" && (
-              <div className="flex items-center gap-2 animate-in zoom-in-95 duration-200">
-                <span className="text-xs font-black text-slate-400 font-mono pl-1">
-                  Custom Tip:
-                </span>
-                <div className="flex-1 relative flex items-center">
-                  <span className="absolute left-3 text-xs font-black text-slate-500 font-mono">
-                    R
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={customTipInput}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (parseFloat(val) >= 0 || val === "") {
-                        setCustomTipInput(val);
-                      }
-                    }}
-                    placeholder="Enter custom amount (e.g., 20)"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-8 pr-4 py-2.5 text-xs font-bold outline-none focus:border-orange-500"
-                  />
-                </div>
-              </div>
-            )}
-
-            {tipAmount > 0 && (
-              <div className="p-3 bg-orange-50/55 dark:bg-orange-950/20 border border-orange-100/40 dark:border-orange-900/20 rounded-2xl flex justify-between items-center text-xs animate-in slide-in-from-top-2 duration-200">
-                <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
-                  <span>Appreciated Tip:</span>
-                </span>
-                <span className="font-black text-orange-600 dark:text-orange-400 font-mono text-sm">
-                  + R {tipAmount.toFixed(2)}
-                </span>
-              </div>
-            )}
-          </section>
-          )}
 
           {/* STEP 2 NAVIGATION BUTTONS */}
           <div className="pt-2 flex items-center justify-between gap-3">
@@ -3261,7 +2095,11 @@ export function CheckoutScreen({
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
                   <CreditCard className="w-4 h-4 text-orange-500 shrink-0" />
                   <span className="capitalize">
-                    {paymentMethod === "cash" ? "Cash on Arrival" : paymentMethod === "card_machine" ? "Pay by Card on Arrival" : paymentMethod}
+                    {deliveryType === "delivery"
+                      ? "Cash on Arrival"
+                      : paymentMethod === "card_machine"
+                        ? "Card at Shop"
+                        : "Cash at Shop"}
                   </span>
                 </div>
                 <button
@@ -3308,7 +2146,7 @@ export function CheckoutScreen({
               {/* Items Breakdown */}
               <div className="flex flex-col gap-2 pb-2 border-b border-dashed border-slate-800 max-h-[220px] sm:max-h-[280px] overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-slate-800">
                 {cart.map((item, idx) => {
-                  const itemTotal = (item.price + (item.selectedCustomizations?.reduce((s, c) => s + c.price, 0) || 0)) * item.quantity;
+                  const itemTotal = item.price * item.quantity;
                   return (
                     <div key={idx} className="flex justify-between items-start text-slate-300">
                       <div className="flex flex-col gap-0.5">
@@ -3328,7 +2166,7 @@ export function CheckoutScreen({
               </div>
               
               <div className="flex justify-between items-center text-slate-400 pt-1">
-                <span className="uppercase tracking-wider">Subtotal</span>
+                <span className="uppercase tracking-wider">Estimated Subtotal</span>
                 <span className="font-mono">R {subtotal.toFixed(2)}</span>
               </div>
 
@@ -3337,45 +2175,20 @@ export function CheckoutScreen({
                   <Percent className="w-3 h-3 text-orange-500/80" />
                   Tax / VAT (15% Included)
                 </span>
-                <span className="font-mono">R {((subtotal - discountAmount) * 15 / 115).toFixed(2)}</span>
+                <span className="font-mono">R {(subtotal * 15 / 115).toFixed(2)}</span>
               </div>
-
-              {appliedPromo && (
-                <div className="flex justify-between items-center text-emerald-400 bg-emerald-950/40 p-3 rounded-2xl border border-emerald-500/30 animate-pulse">
-                  <span className="uppercase tracking-wider flex items-center gap-1.5 font-extrabold text-[10px]">
-                    <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Promo Applied: "{appliedPromo.code}"</span>
-                  </span>
-                  <span className="font-mono text-xs flex items-center gap-1.5 font-black">
-                    <span className="text-[10px] whitespace-nowrap bg-emerald-500 text-slate-950 font-black uppercase tracking-wider px-2 py-1 rounded-full select-none">
-                      Coupon Saved
-                    </span>
-                    <span>- R {discountAmount.toFixed(2)}</span>
-                  </span>
-                </div>
-              )}
 
               {deliveryType === "delivery" && (
                 <div className="flex justify-between items-center text-orange-400">
                   <span className="uppercase tracking-wider flex items-center gap-1">
                     <Bike className="w-3.5 h-3.5" />
-                    Delivery Fee (
+                    Estimated Delivery Fee (
                     {distance !== null && distance > ZONE_A_LIMIT
                       ? "Zone B"
                       : "Zone A"}
                     )
                   </span>
                   <span className="font-mono">R {deliveryFee.toFixed(2)}</span>
-                </div>
-              )}
-
-              {expressFee > 0 && (
-                <div className="flex justify-between items-center text-amber-400">
-                  <span className="uppercase tracking-wider flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    Priority Express Dispatch
-                  </span>
-                  <span className="font-mono">R {expressFee.toFixed(2)}</span>
                 </div>
               )}
 
@@ -3387,29 +2200,9 @@ export function CheckoutScreen({
                 <span className="font-mono">R {serviceFee.toFixed(2)}</span>
               </div>
 
-              {tipAmount > 0 && (
-                <div className="flex justify-between items-center text-amber-400">
-                  <span className="uppercase tracking-wider flex items-center gap-1">
-                    <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
-                    Support Merchant Tip
-                  </span>
-                  <span className="font-mono">R {tipAmount.toFixed(2)}</span>
-                </div>
-              )}
-
-              {totalSavings > 0 && (
-                <div className="bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-2xl flex items-center justify-between text-emerald-400 text-xs font-bold my-1">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                    Total Savings Applied
-                  </span>
-                  <span className="font-mono font-black text-sm text-emerald-400">- R {totalSavings.toFixed(2)}</span>
-                </div>
-              )}
-
               <div className="border-t border-dashed border-slate-800 pt-3 flex justify-between items-center text-slate-100">
                 <span className="text-sm font-black uppercase tracking-widest">
-                  Grand Total Amount
+                  Estimated Total
                 </span>
                 <span className="text-2xl font-black font-mono text-orange-500">
                   <AnimatedPrice value={totalAmount} />
@@ -3418,7 +2211,7 @@ export function CheckoutScreen({
             </div>
 
             <div className="border-t border-dashed border-slate-800 pt-2.5 text-[9px] text-center text-slate-500 font-black uppercase tracking-widest">
-              💼 Thank you for supporting local cooks!
+              Final availability and pricing are confirmed securely when you place the order.
             </div>
           </section>
 
@@ -3430,16 +2223,10 @@ export function CheckoutScreen({
               onClick={handleConfirm}
               disabled={
                 loading ||
-                cart.length === 0 ||
-                (deliveryType === "delivery" &&
-                  distance !== null &&
-                  distance > ZONE_B_LIMIT)
+                cart.length === 0
               }
               className={`relative overflow-hidden w-full py-4 rounded-2xl font-black shadow-xl uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:scale-100 cursor-pointer ${
-                loading ||
-                (deliveryType === "delivery" &&
-                  distance !== null &&
-                  distance > ZONE_B_LIMIT)
+                loading
                   ? "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed border-none shadow-none"
                   : "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-600/30 font-extrabold text-sm"
               }`}
@@ -3453,13 +2240,7 @@ export function CheckoutScreen({
               )}
 
               <ShoppingBag className="w-5 h-5 shrink-0" />
-              <span>
-                {deliveryType === "delivery" &&
-                distance !== null &&
-                distance > ZONE_B_LIMIT
-                  ? "Out of Delivery Range"
-                  : `Confirm & Pay R ${totalAmount.toFixed(2)}`}
-              </span>
+              <span>Place Order • Est. R {totalAmount.toFixed(2)}</span>
             </button>
             <button
               type="button"
@@ -3505,7 +2286,7 @@ export function CheckoutScreen({
           <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <div className="flex flex-col min-w-0">
               <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-widest text-slate-400">
-                Total (Step {currentStep}/3)
+                Estimate (Step {currentStep}/3)
               </span>
               <span className="text-base font-black font-mono text-orange-400 leading-none mt-0.5">
                 R {totalAmount.toFixed(2)}
@@ -3541,16 +2322,10 @@ export function CheckoutScreen({
                   onClick={handleConfirm}
                   disabled={
                     loading ||
-                    cart.length === 0 ||
-                    (deliveryType === "delivery" &&
-                      distance !== null &&
-                      distance > ZONE_B_LIMIT)
+                    cart.length === 0
                   }
                   className={`relative overflow-hidden py-2 px-3.5 rounded-xl font-black text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed ${
-                    loading ||
-                    (deliveryType === "delivery" &&
-                      distance !== null &&
-                      distance > ZONE_B_LIMIT)
+                    loading
                       ? "bg-slate-800 text-slate-500 cursor-not-allowed"
                       : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20"
                   }`}

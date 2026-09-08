@@ -21,6 +21,13 @@
 
 ## Phase & Fix History
 
+### Architecture Review Task 1C-A: Customer Checkout Safety
+- **Pilot Payment Contract**: Collection supports Cash at Shop (`cash`) and Card at Shop (`card_machine`), where payment occurs only on the merchant's physical terminal. Delivery supports Cash on Arrival (`cash_on_arrival`) only.
+- **No Card Credentials**: Removed card-number, expiry, CVV/CVC, cardholder, saved-card, terminal-brand, and simulated terminal authorization state/UI from checkout. Checkout notes reject likely card credentials before submission.
+- **Legacy Browser Cleanup**: Added a versioned startup scrub for the known saved-card key, order caches, legacy order/request queues, and the existing request-queue IndexedDB store. It removes known card fields and legacy `[CARD_MACHINE_PAYMENT: ...]` instruction segments without wiping cart, profile, auth, or preferences.
+- **Authoritative Order Intent**: Removed checkout promo, express, scheduled delivery, monetary tipping, quantity discounts, direct `orders` reads, client identity assertions, and client radius blocking. Requests remain online-only through `FirestoreService.createAuthoritativeOrder()`, always use standard scheduling and zero tip, and never send client-calculated pricing.
+- **Paid Customizations**: Paid add-ons fail closed until the API has an authoritative customization-pricing contract; zero-cost descriptive choices remain visible.
+
 ### Phase 12: Menu Item Dietary Tags Badges
 - **Dietary Tags Data Mapping**: Expanded `FirestoreService.getShops()` menu item mapping across all branches (Format 1 embedded array, Format 2 root `menu_items` query, Format 3 subcollections, and fallback items) to safely extract `dietary_tags` arrays (`Array.isArray(...) ? ... : []`).
 - **Typing Integrity**: Added optional `dietary_tags?: string[]` to the shared `MenuItem` interface in `src/types.ts`.

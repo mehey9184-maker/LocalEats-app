@@ -133,19 +133,17 @@ export interface CreateOrderItemInput {
 }
 
 export interface CreateOrderRequestData {
-  user_id?: string;
   idempotency_key: string;
   shop_id: string | number;
   items: CreateOrderItemInput[];
   delivery_type: "delivery" | "collection";
-  delivery_schedule_mode: "standard" | "express";
+  delivery_schedule_mode: "standard";
   delivery_coordinates?: {
     lat: number;
     lng: number;
   };
-  promo_code?: string;
   tip_amount: number;
-  payment_method: string;
+  payment_method: "cash" | "card_machine" | "cash_on_arrival";
   customer_details: {
     name: string;
     phone: string;
