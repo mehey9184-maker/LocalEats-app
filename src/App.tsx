@@ -4,9 +4,9 @@
  */
 
 // removed CheckoutScreen import
+import { CatalogApi, loadCatalog, displayCatalog, AUTHORITATIVE_CATALOG_CACHE_KEY, hasCoordinates, validLatitude, validLongitude, catalogDistance, compareShopDistance, isNearbyShop } from "./services/CatalogApi";
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
 import { DiagnosticTool } from "./components/DiagnosticTool";
-import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
 import { uploadClientAvatar } from "./lib/avatar";
@@ -257,7 +257,6 @@ import { useOfflineSync } from "./hooks/useOfflineSync";
 import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
 import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
 import {
-  hashString,
   handleSupabaseError,
   calculateDistance,
   getShopStatus,
@@ -265,7 +264,6 @@ import {
   SUPPORTED_CITIES,
   APP_VERSION,
   DEFAULT_COORDS,
-  DEFAULT_MENU_IMAGE,
   DEFAULT_SHOP_LOGO,
   formatSAPhone,
   validateSAPhone,
@@ -274,9 +272,6 @@ import {
   safeLocalStorageSet,
   pruneLargeKeys,
   cleanCacheStorage,
-  DEFAULT_FALLBACK_SHOPS,
-  MY_KOTA_TEST_STORE,
-  mergeShopsCatalogs,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -321,7 +316,6 @@ StatsSkeleton,
 } from "./components/FacebookSkeleton";
 import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
-import { cacheBusinessResults, getCachedBusinessResults } from "./lib/offlineCache";
 
 import { ShopCard, MenuItemSkeleton, MenuItemCard } from "./components/ShopCard";
 import { getAvatarUrl, getCroppedImg, searchAddress, compressImage, uploadAvatar } from "./utils/imageUtils";
@@ -678,69 +672,8 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const [shops, setShops] = useState<Shop[]>(() => {
-    const cached = safeLocalStorageGet("cached_shops", []);
-    const correctSpelling = (str: string) => {
-      if (!str) return str;
-      return str
-        .replace(/My-Keta/g, "My-Kota")
-        .replace(/My-keta/g, "My-Kota")
-        .replace(/my-keta/g, "my-kota")
-        .replace(/My Keta/g, "My Kota")
-        .replace(/Keta/g, "Kota")
-        .replace(/keta/g, "kota");
-    };
-    return cached.map((s: any) => ({
-      ...s,
-      name: correctSpelling(s.name),
-      description: correctSpelling(s.description),
-      address: correctSpelling(s.address),
-      category: correctSpelling(s.category),
-    }));
-  });
-
-  const visibleShops = useMemo(() => {
-    const currentUserId = userProfile?.id || session?.user?.id;
-    const currentEmail = (userProfile?.email || session?.user?.email || "").toLowerCase().trim();
-    const isTeejeyAccount =
-      currentEmail === "teejeyunam@gmail.com" ||
-      currentEmail.includes("teejeyunam") ||
-      (currentUserId && String(currentUserId).toLowerCase().includes("teejey"));
-
-    // Base collection of shops
-    // We only fallback to DEFAULT_FALLBACK_SHOPS if shops is strictly null/undefined, not if it's []
-    let activeBaseShops = shops ? [...shops] : [];
-
-    // If logged in as the test account (teejeyunam@gmail.com), ensure their My-Kota store is available for testing
-    // ONLY if the explicit test flag is set.
-    const isTestStoreEnabled = import.meta.env.VITE_ENABLE_TEST_STORE === "true";
-    
-    if (isTeejeyAccount && isTestStoreEnabled) {
-      const alreadyHasMyKotaStore = activeBaseShops.some(
-        (s) =>
-          s.id === MY_KOTA_TEST_STORE.id ||
-          s.owner_id === "teejeyunam@gmail.com" ||
-          (s as any).owner_email === "teejeyunam@gmail.com" ||
-          (s.name || "").toLowerCase().includes("my-kota") ||
-          (s.name || "").toLowerCase().includes("my-keta")
-      );
-      if (!alreadyHasMyKotaStore) {
-        activeBaseShops = [MY_KOTA_TEST_STORE, ...activeBaseShops];
-      }
-    }
-
-    const filtered = activeBaseShops.filter((s) => {
-      const nameLower = (s.name || "").toLowerCase();
-      const descLower = (s.description || "").toLowerCase();
-      const ownerEmail = ((s as any).owner_email || (s as any).created_by || "").toLowerCase().trim();
-      const ownerIdStr = String(s.owner_id || "").toLowerCase().trim();
-
-      // Allow all shops to be visible, regardless of name or ownership
-      return true;
-    });
-
-    return filtered;
-  }, [shops, userProfile, session]);
+  const [shops, setShops] = useState<Shop[]>([]);
+  const visibleShops = shops;
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -1210,346 +1143,30 @@ export default function App() {
   const lastFetchedShopsTimeRef = useRef<number | null>(null);
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
-  const fetchShopsData = useCallback(async (retries = 3, force = false) => {
-    const now = Date.now();
-    if (
-      !force &&
-      lastFetchedShopsTimeRef.current !== null &&
-      now - lastFetchedShopsTimeRef.current < stalenessThresholdMs &&
-      shopsRef.current.length > 0
-    ) {
-      console.log(
-        `[fetchShopsData] Using memoized shop data (${Math.round(
-          (now - lastFetchedShopsTimeRef.current) / 1000
-        )}s old, threshold ${stalenessThresholdMs / 1000}s). Skipping redundant network request.`
-      );
-      return;
-    }
-
+  const catalogRequestVersion = useRef(0);
+  const fetchShopsData = useCallback(async (_retries = 3, _force = false) => {
+    const version = ++catalogRequestVersion.current;
     setLoadingShops(true);
     setIsSyncing(true);
     setFetchError(null);
-
-    // Initial cold start cache inspection: check if shops are stored in IndexedDB or localStorage
-    let hasCachedShops = false;
     try {
-      const idbCached = await getCachedBusinessResults("all_shops");
-      const localCached = safeLocalStorageGet("cached_shops", null);
-      const cached = idbCached || (Array.isArray(localCached) && localCached.length > 0 ? localCached : null);
-
-      if (cached && Array.isArray(cached) && cached.length > 0) {
-        hasCachedShops = true;
-        const hydratedCached = cached.map((s: Shop) => {
-          if (!s.menu || s.menu.length === 0) {
-            const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
-              (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
-            ) || DEFAULT_FALLBACK_SHOPS[0];
-            return {
-              ...s,
-              menu: matchedFallback.menu || []
-            };
-          }
-          return s;
-        });
-        setShops(hydratedCached);
-        // Hydrate from cache immediately to minimize wait time
-        setLoadingShops(false);
-
-        if (!navigator.onLine) {
-          setIsSyncing(false);
-          lastFetchedShopsTimeRef.current = Date.now();
-          return;
-        }
-      }
-    } catch (e) {
-      console.warn("Retrieving shops from IndexedDB/localStorage during cold start failed:", e);
-    }
-
-    // Explicit cold start UX: If no shops are cached in localStorage or IndexedDB, enforce explicit loading skeleton state
-    if (!hasCachedShops && shops.length === 0) {
-      setLoadingShops(true);
-    }
-
-    if (!navigator.onLine && !hasCachedShops) {
-      // Offline on cold start with no cache: fallback to default shops
-      setShops(DEFAULT_FALLBACK_SHOPS);
-      setLoadingShops(false);
-      setIsSyncing(false);
-      return;
-    }
-
-    try {
-      await CircuitBreaker.execute("fetchShopsAndMenu", async () => {
-        // Concurrently fetch shops from both Firestore AND Supabase
-        const [firestoreRes, supabaseRes] = await Promise.allSettled([
-          FirestoreService.getShops().catch((fErr) => {
-            console.debug("[App:Firestore] Shop fetch notice:", fErr);
-            return [] as Shop[];
-          }),
-          (async () => {
-            let shopsData: any[] | null = null;
-            let shopsError: any = null;
-            try {
-              const res = await fetch("/api/v1/shops");
-              if (!res.ok) {
-                throw new Error(`API returned ${res.status}`);
-              }
-              const json = await res.json();
-              if (json.success && json.shops) {
-                shopsData = json.shops;
-              } else {
-                throw new Error(json.error || "Failed to fetch shops");
-              }
-            } catch (err: any) {
-              shopsError = err;
-            }
-
-            if (shopsError) {
-              const isNetwork =
-                (shopsError.message &&
-                  (shopsError.message.toLowerCase().includes("failed to fetch") ||
-                   shopsError.message.toLowerCase().includes("schema cache") ||
-                   shopsError.message.toLowerCase().includes("circuit breaker") ||
-                   shopsError.message.toLowerCase().includes("retrying") ||
-                   shopsError.message.toLowerCase().includes("pgrst"))) ||
-                (shopsError.details &&
-                  shopsError.details.toLowerCase().includes("failed to fetch")) ||
-                shopsError.code === "PGRST301";
-              if (isNetwork) {
-                console.info("Database warm-up or transient notice fetching API shops:", shopsError.message);
-              } else {
-                console.info("API shops fetch note:", shopsError.message || shopsError);
-              }
-              return [] as Shop[];
-            }
-
-            let menuData: any[] = [];
-
-            const formattedShops: Shop[] = (shopsData || []).map((s) => {
-              const shopHash = hashString(String(s.id));
-              const deterministicLat = -25.9964 + ((shopHash % 30) - 15) * 0.0018;
-              const deterministicLng = 28.2268 + (((shopHash >> 2) % 30) - 15) * 0.0018;
-
-              const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
-              const { isOpen } = getShopStatus({
-                opening_time: s.opening_time,
-                closing_time: s.closing_time,
-                is_active: isActive,
-              });
-
-              const correctSpelling = (str: string) => {
-                if (!str) return str;
-                return str
-                  .replace(/My-Keta/g, "My-Kota")
-                  .replace(/My-keta/g, "My-Kota")
-                  .replace(/my-keta/g, "my-kota")
-                  .replace(/My Keta/g, "My Kota")
-                  .replace(/Keta/g, "Kota")
-                  .replace(/keta/g, "kota");
-              };
-
-              return {
-                id: String(s.id),
-                name: correctSpelling(s.name),
-                logo: s.logo_url || DEFAULT_SHOP_LOGO,
-                rating: Number(s.rating) || 4.5,
-                cash_trust_enabled:
-                  s.cash_trust_enabled === true || s.cash_trust_enabled === "true",
-                allow_external_riders:
-                  s.allow_external_riders === true || s.allow_external_riders === "true",
-                auto_look_for_rider:
-                  s.auto_look_for_rider === true || s.auto_look_for_rider === "true",
-                reviewCount: 12 + (shopHash % 88),
-                prepTime: "15-20 min",
-                isOpen: isOpen,
-                description: correctSpelling(s.description || "Local Flavours"),
-                address: correctSpelling(s.location || "Local Eats"),
-                category: correctSpelling(s.category || "Kota"),
-                owner_id: s.owner_id,
-                opening_time: s.opening_time,
-                closing_time: s.closing_time,
-                phone: s.phone || "+27 12 345 6789",
-                latitude:
-                  s.latitude !== undefined && s.latitude !== null && s.latitude !== 0
-                    ? s.latitude
-                    : deterministicLat,
-                longitude:
-                  s.longitude !== undefined && s.longitude !== null && s.longitude !== 0
-                    ? s.longitude
-                    : deterministicLng,
-                updated_at: s.updated_at,
-                is_active: isActive,
-                images: (s as any).images || [
-                  DEFAULT_SHOP_LOGO,
-                  "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-                  "https://images.unsplash.com/photo-1476224484581-5d996cc0750e?auto=format&fit=crop&q=80&w=600",
-                  "https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=600",
-                ],
-                menu: (menuData || [])
-                  .filter((m) => String(m.shop_id) === String(s.id))
-                  .map((m) => ({
-                    id: String(m.id),
-                    name: m.name,
-                    price: Number(m.price),
-                    displayPrice: `R${Number(m.price).toFixed(2)}`,
-                    image: m.image_url || DEFAULT_MENU_IMAGE,
-                    description: m.description || "",
-                    category: m.category || "Main Course",
-                    is_available: m.is_available !== false,
-                    customizations: m.customizations || [],
-                  })),
-              };
-            });
-
-            return formattedShops;
-          })()
-        ]);
-
-        const firestoreShops =
-          firestoreRes.status === "fulfilled" && Array.isArray(firestoreRes.value)
-            ? firestoreRes.value
-            : [];
-        const supabaseShops =
-          supabaseRes.status === "fulfilled" && Array.isArray(supabaseRes.value)
-            ? supabaseRes.value
-            : [];
-
-        // Unified Multi-Source Merge: Keep Supabase and Firestore shops unified without clobbering
-        const unifiedShops = mergeShopsCatalogs(supabaseShops, firestoreShops);
-
-        console.log(
-          `[ShopCatalog] Unified aggregation: ${supabaseShops.length} API shops + ${firestoreShops.length} Firestore shops = ${unifiedShops.length} total active shops.`
-        );
-
-        // A. If the network failed entirely, or if it's explicitly explicitly unavailable, we can fallback.
-        // But if the API successfully returned 0 shops, we should respect that 0 shops exist.
-        const apiFailed = supabaseRes.status === "rejected" || (supabaseRes.status === "fulfilled" && supabaseRes.value === null);
-        const firestoreFailed = firestoreRes.status === "rejected";
-
-        if (apiFailed && firestoreFailed && !navigator.onLine) {
-          logEmptyShopListDiagnostic("Backend network unavailable. Falling back to default offline shops.");
-          setShops(DEFAULT_FALLBACK_SHOPS);
-          safeLocalStorageSet("cached_shops", JSON.stringify(DEFAULT_FALLBACK_SHOPS));
-          cacheBusinessResults("all_shops", DEFAULT_FALLBACK_SHOPS).catch(() => {});
-        } else {
-          setShops(unifiedShops);
-          safeLocalStorageSet("cached_shops", JSON.stringify(unifiedShops));
-          cacheBusinessResults("all_shops", unifiedShops).catch(() => {});
-        }
-
-        setIsOnline(true);
-        lastFetchedShopsTimeRef.current = Date.now();
-      });
-      setLoadingShops(false);
-    } catch (err: any) {
-      const errStr = (err?.message || String(err)).toLowerCase();
-      const isNetworkError =
-        errStr.includes("failed to fetch") ||
-        errStr.includes("network error") ||
-        errStr.includes("load failed") ||
-        errStr.includes("upstream connect error") ||
-        errStr.includes("connection timeout") ||
-        errStr.includes("disconnect/reset") ||
-        errStr.includes("timeout") ||
-        errStr.includes("schema cache") ||
-        errStr.includes("circuit breaker") ||
-        err?.name === "TypeError" ||
-        err?.message === "FAILED_TO_FETCH_MENU" ||
-        (err.message && err.message.toLowerCase().includes("network"));
-
-      if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
-        }
-      }
-
-      if (isNetworkError && typeof navigator !== "undefined" && !navigator.onLine) {
-        setIsOnline(false);
-      }
-
-      // Only log errors that are not network-related, or log them only on final failure
-      if (!isNetworkError || retries === 0) {
-        if (err?.message === "FAILED_TO_FETCH_MENU" || isNetworkError) {
-          console.info(
-            "Network connectivity or transient database note: falling back to offline content gracefully.",
-            err?.message || err,
-          );
-        } else {
-          console.info("Notice fetching shops:", err?.message || err);
-        }
-      }
-
-      let errorMessage = err.message || "Failed to connect to the server";
-
-      if (isNetworkError || err.message === "FAILED_TO_FETCH_MENU") {
-        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
-        errorMessage = isOffline
-          ? "Offline Mode: Showing cached stores and menus."
-          : "Server Notice: We're having trouble reaching the store backend. Using offline cached data while reconnecting.";
-      } else if (err.status === 401 || err.status === 403) {
-        errorMessage =
-          "Please Sign In: We need you to log in again to keep your information secure.";
-      } else if (err.status === 404) {
-        errorMessage =
-          "Not Found: We couldn't find the store or items you were looking for.";
-      } else if (err.code === "PGRST301") {
-        errorMessage =
-          "Session Expired: Your security token has timed out. A quick refresh should fix it!";
-      }
-
-      if (retries > 0) {
-        // Fast-fail over for known network connection errors to prevent agonizing loading screens
-        const nextRetries = isNetworkError ? 0 : retries - 1;
-        const delay = isNetworkError ? 500 : 2500;
-        console.info(
-          `Retrying fetchShopsData... (${nextRetries} retries left). Delay: ${delay}ms`,
-        );
-        setTimeout(() => fetchShopsData(nextRetries), delay);
-      } else {
-        // Sandboxed Zero-Downtime Guarantee: fallback to local cache if available when database fails
-        const cached = safeLocalStorageGet("cached_shops", null);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          console.info(
-            "Rendering cached shops data under Zero-Downtime Guarantee rules",
-          );
-          const hydratedCached = cached.map((s: Shop) => {
-            if (!s.menu || s.menu.length === 0) {
-              const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
-                (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
-              ) || DEFAULT_FALLBACK_SHOPS[0];
-              return {
-                ...s,
-                menu: matchedFallback.menu || []
-              };
-            }
-            return s;
-          });
-          setShops(hydratedCached);
-          setLoadingShops(false);
-          toast.info(
-            "You are offline. Showing your saved shops. 👍",
-            { id: "database-offline-toast", duration: 4000 },
-          );
-        } else {
-          console.log(
-            "Database fetch failed and no cache found - Landing on premium offline fallback content",
-          );
-          setShops(DEFAULT_FALLBACK_SHOPS);
-          safeLocalStorageSet(
-            "cached_shops",
-            JSON.stringify(DEFAULT_FALLBACK_SHOPS),
-          );
-          setLoadingShops(false);
-          toast.info(
-            "You are offline. Showing cached menus. Ready to explore! 🍟",
-            { id: "database-offline-toast", duration: 4000 },
-          );
-        }
-      }
+      const snapshot = await loadCatalog(CatalogApi);
+      if (version !== catalogRequestVersion.current) return;
+      setShops(displayCatalog(snapshot));
+      // Only successful API snapshots are cached. Legacy mixed caches are never restored.
+      try { localStorage.setItem(AUTHORITATIVE_CATALOG_CACHE_KEY, JSON.stringify(snapshot)); } catch { /* display cache is optional */ }
+      lastFetchedShopsTimeRef.current = Date.now();
+    } catch (error) {
+      if (version !== catalogRequestVersion.current) return;
+      setShops([]);
+      setFetchError(error instanceof Error ? error.message : "Catalog unavailable. Please reconnect and retry.");
     } finally {
-      setIsSyncing(false);
+      if (version === catalogRequestVersion.current) {
+        setLoadingShops(false);
+        setIsSyncing(false);
+      }
     }
-  }, [stalenessThresholdMs]);
+  }, []);
 
   const syncOfflineOrders = useCallback(async () => {
     const legacyQueue = safeLocalStorageGet("offline_orders_queue", []);
@@ -2568,48 +2185,18 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    // Initial fetch of shops & menu items
-    fetchShopsData();
-
-    // Subscribe to changes in shops and menu_items in Supabase
-    const shopsChannel = getFreshChannel("public:shops")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "shops" },
-        () => fetchShopsData(),
-      )
-      .subscribe();
-
-    const menuChannel = getFreshChannel("public:menu_items")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "menu_items" },
-        () => fetchShopsData(),
-      )
-      .subscribe();
-
-    // Subscribe to live shop updates in Firestore
-    let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = FirestoreService.listenToShops((liveFirestoreShops) => {
-        if (liveFirestoreShops && liveFirestoreShops.length > 0) {
-          console.log(`[App:Firestore] Live shop updates received: ${liveFirestoreShops.length}`);
-          setShops((prev) => {
-            const merged = mergeShopsCatalogs(prev, liveFirestoreShops);
-            safeLocalStorageSet("cached_shops", JSON.stringify(merged));
-            cacheBusinessResults("all_shops", merged).catch(() => {});
-            return merged;
-          });
-        }
-      });
-    } catch (fErr) {
-      console.debug("[App:Firestore] Live shops listener notice:", fErr);
-    }
-
+    void fetchShopsData();
+    const refresh = () => {
+      const last = lastFetchedShopsTimeRef.current;
+      if (last !== null && Date.now() - last < 60000) return;
+      void fetchShopsData();
+    };
+    window.addEventListener("online", refresh);
+    window.addEventListener("focus", refresh);
     return () => {
-      supabase.removeChannel(shopsChannel);
-      supabase.removeChannel(menuChannel);
-      if (unsubFirestore) unsubFirestore();
+      ++catalogRequestVersion.current;
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("focus", refresh);
     };
   }, [fetchShopsData]);
 
@@ -2727,13 +2314,13 @@ export default function App() {
         },
         (error) => {
           // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
-          console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(DEFAULT_COORDS);
+          console.info("Customer location unavailable:", error.message);
+          setUserLocation(null);
         },
         { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
       );
     } else {
-      setUserLocation(DEFAULT_COORDS);
+      setUserLocation(null);
     }
   }, []);
 
@@ -2747,6 +2334,13 @@ export default function App() {
     ) => {
       if (!shopId || shopId === "null" || shopId === "undefined") {
         toast.error("Cannot add item to cart: Shop information is missing.");
+        return;
+      }
+
+      const currentShop = shops.find((shop) => shop.id === shopId);
+      const currentItem = currentShop?.menu.find((row) => row.id === item.id);
+      if (!currentShop || !getShopStatus(currentShop).isOpen || currentItem?.is_available !== true) {
+        toast.error("This shop or item is not currently accepting orders.");
         return;
       }
 
@@ -3628,19 +3222,13 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && (
+              {currentScreen === "store-info" && visibleShops.some((shop) => shop.id === selectedStoreId) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={
-                    visibleShops && visibleShops.length > 0
-                      ? visibleShops.find(
-                           (s) => String(s.id) === String(selectedStoreId),
-                        ) || visibleShops[0]
-                      : DEFAULT_FALLBACK_SHOPS[0]
-                  }
+                  shop={visibleShops.find((shop) => shop.id === selectedStoreId)!}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -4072,10 +3660,10 @@ const HorizontalShopCard = ({
         <div className="absolute bottom-3 right-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-xl flex items-center gap-1 shadow-sm border border-white/20">
           <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
           <span className="text-xs font-black text-slate-900 dark:text-white">
-            {shop.rating}
+            {shop.rating ?? "New"}
           </span>
           <span className="text-[9px] text-slate-500">
-            ({shop.reviewCount || 0})
+            {shop.reviewCount != null ? `(${shop.reviewCount})` : null}
           </span>
         </div>
       </div>
@@ -4110,7 +3698,7 @@ const HorizontalShopCard = ({
           <div className="flex items-center gap-1">
             <Clock className="w-3 h-3 text-orange-500" />
             <span className="text-[10px] font-bold text-orange-600">
-              {shop.prepTime || "15-20 min"}
+              {shop.prepTime || "ETA unavailable"}
             </span>
           </div>
         </div>
@@ -4544,9 +4132,9 @@ function HomeScreen({
         matchesQuickFilter = shopText.includes("halal") || shopText.includes("halaal");
       }
 
-      return matchesSearch && matchesCategory && matchesQuickFilter;
+      return matchesSearch && matchesCategory && matchesQuickFilter && isNearbyShop(shop, userLocation);
     });
-  }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter, userLocation]);
 
   const sortedShops = useMemo(() => {
     const getMinPrepTime = (shop: Shop): number => {
@@ -4579,25 +4167,8 @@ function HomeScreen({
 
       // Default 'recommended' sort (Distance -> Special -> Rating)
       if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
+        const byDistance = compareShopDistance(a, b, userLocation);
+        if (byDistance !== 0) return byDistance;
       }
 
       // Prioritize "Local Eats Special"
@@ -4655,23 +4226,17 @@ function HomeScreen({
             m.id === entry.variantId,
         );
 
-        const menuItem: MenuItem = originalMenuItem || {
-          id: entry.variantId || entry.name,
-          name: entry.name,
-          price: entry.price,
-          displayPrice: `R ${entry.price.toFixed(2)}`,
-          image: shop?.logo || DEFAULT_SHOP_LOGO,
-          description: "Delicious local favorite",
-          customizations: entry.customizations,
-        };
+        if (!originalMenuItem || !shop || !getShopStatus(shop).isOpen || originalMenuItem.is_available !== true) return null;
+        const menuItem = originalMenuItem;
 
         return {
           menuItem,
           shopId: entry.shopId,
-          shopName: shop?.name || "Local Kitchen",
+          shopName: shop.name,
           count: entry.count,
         };
       })
+      .filter(Boolean)
       .slice(0, 10);
   }, [orders, shops]);
 
@@ -6159,7 +5724,7 @@ function DiscoverScreen({
               price: item.price,
               image: item.image,
               description: item.description || `${item.name} from ${shop.name}`,
-              badge: shop.rating >= 4.5 ? "Top Rated" : "Fresh",
+              badge: shop.rating != null && shop.rating >= 4.5 ? "Top Rated" : shop.rating == null ? "Unrated" : "Menu",
             });
           }
         });
@@ -6188,24 +5753,11 @@ function DiscoverScreen({
         matchesCategory = shop.category === selectedCategory;
       }
 
-      const matchesRating = shop.rating >= minRating;
+      const matchesRating = (minRating === 0 || (typeof shop.rating === "number" && shop.rating >= minRating));
       const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
 
       // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
+      const matchesDistance = isNearbyShop(shop, userLocation, maxDistance);
 
       return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
     });
@@ -6231,56 +5783,26 @@ function DiscoverScreen({
 
       // 2. Distance Sort (Nearby Priority)
       if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) {
-          return distA - distB;
-        }
+        const byDistance = compareShopDistance(a, b, userLocation);
+        if (byDistance !== 0) return byDistance;
       }
       
       // 3. Rating Sort
-      return b.rating - a.rating;
+      return (b.rating ?? -1) - (a.rating ?? -1);
     }
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
-      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
-      return distA - distB;
+      return compareShopDistance(a, b, userLocation);
     }
 
     if (sortPriority === "rating") {
-      return b.rating - a.rating;
+      return (b.rating ?? -1) - (a.rating ?? -1);
     }
 
     if (sortPriority === "speed") {
-      const speedA = parseInt(a.delivery_eta || "20") || 20;
-      const speedB = parseInt(b.delivery_eta || "20") || 20;
-      return speedA - speedB;
+      const speedA = parseInt(a.delivery_eta || "") || Infinity;
+      const speedB = parseInt(b.delivery_eta || "") || Infinity;
+      return speedA === speedB ? 0 : speedA - speedB;
     }
 
     return 0;
@@ -6813,19 +6335,19 @@ function DiscoverScreen({
                     <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
                       <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
                       <span className="text-xs font-black text-slate-900 dark:text-white">
-                        {shop.rating.toFixed(1)}
+                        {(typeof shop.rating === "number" && Number.isFinite(shop.rating) ? shop.rating.toFixed(1) : "New")}
                       </span>
                     </div>
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
                       <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Speed: {shop.delivery_eta || "20m"}
+                        Speed: {shop.delivery_eta || "ETA unavailable"}
                       </div>
                       {(() => {
-                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
+                        const sLat = shop.latitude;
+                        const sLng = shop.longitude;
+                        const distanceVal = catalogDistance(shop, userLocation);
                         return distanceVal !== null ? (
                           <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
                             <Navigation className="w-2.5 h-2.5" />
@@ -6996,20 +6518,12 @@ function DiscoverScreen({
                 )}
 
                 {sortedShops.map((shop) => {
+                  if (!hasCoordinates(shop)) return null;
                   const sLat =
-                    shop.latitude ||
-                    -25.9964 + (hashString(shop.id) % 10) * 0.005;
+                    shop.latitude;
                   const sLng =
-                    shop.longitude ||
-                    28.2268 + (hashString(shop.id) % 10) * 0.005;
-                  const dist = userLocation
-                    ? calculateDistance(
-                        sLat,
-                        sLng,
-                        userLocation.lat,
-                        userLocation.lng,
-                      )
-                    : null;
+                    shop.longitude;
+                  const dist = catalogDistance(shop, userLocation);
                   const status = getShopStatus(shop);
 
                   return (
@@ -7028,7 +6542,7 @@ function DiscoverScreen({
                           </p>
                           <div className="flex items-center justify-between text-[10px] mb-2.5 border-t pt-1.5 border-slate-100 dark:border-slate-800">
                             <span className="font-bold text-amber-500">
-                              ★ {shop.rating}
+                              ★ {shop.rating ?? "New"}
                             </span>
                             {dist !== null && (
                               <span className="text-slate-500 font-semibold">
@@ -8587,31 +8101,10 @@ function RestaurantSchema({ shop }: { shop: Shop }) {
     address: {
       "@type": "PostalAddress",
       streetAddress: shop.address,
-      addressLocality: "Local",
-      addressRegion: "Gauteng",
-      addressCountry: "ZA",
     },
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: shop.rating,
-      reviewCount: shop.reviewCount || 120,
-    },
-    openingHoursSpecification: [
-      {
-        "@type": "OpeningHoursSpecification",
-        dayOfWeek: [
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-          "Sunday",
-        ],
-        opens: shop.opening_time || "08:00",
-        closes: shop.closing_time || "20:00",
-      },
-    ],
+    ...(shop.rating != null && shop.reviewCount != null ? {
+      aggregateRating: { "@type": "AggregateRating", ratingValue: shop.rating, reviewCount: shop.reviewCount },
+    } : {}),
   };
 
   return <script type="application/ld+json">{JSON.stringify(schema)}</script>;
@@ -8738,7 +8231,7 @@ function StoreInfoScreen({
   const [isShopChatOpen, setIsShopChatOpen] = useState(false);
   const [priceSort, setPriceSort] = useState<"default" | "low-to-high" | "high-to-low">("default");
   const [copiedMenuLink, setCopiedMenuLink] = useState(false);
-  const [isMenuLoading, setIsMenuLoading] = useState(true);
+  const isMenuLoading = false;
   const isScrollingRef = useRef(false);
   const [showTrustTooltip, setShowTrustTooltip] = useState(false);
 
@@ -8814,155 +8307,18 @@ function StoreInfoScreen({
   // Determine if the store is open or closed based on shop status
   const getStoreStatus = () => {
     const status = getShopStatus(shop);
-    const hoursText = shop.opening_time && shop.closing_time ? `${shop.opening_time} - ${shop.closing_time}` : "08:00 - 20:00";
+    const hoursText = shop.opening_time && shop.closing_time ? `${shop.opening_time} - ${shop.closing_time}` : "Hours unavailable";
     return {
       isOpen: status.isOpen,
       text: status.isOpen ? "Open" : "Closed",
       hours: hoursText,
-      closingText: status.isOpen ? `Closes at ${shop.closing_time || "20:00"}` : `Opens at ${shop.opening_time || "08:00"}`,
+      closingText: status.isOpen && shop.closing_time ? `Closes at ${shop.closing_time}` : shop.opening_time ? `Opens at ${shop.opening_time}` : "Hours unavailable",
     };
   };
 
 
-  const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
-
-  useEffect(() => {
-    if (!shop?.id) return;
-    let isMounted = true;
-    const fetchMenu = async () => {
-      setIsMenuLoading(true);
-      try {
-        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && isMounted) {
-            // Remap keys if necessary to match MenuItem interface
-            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
-              id: String(m.id),
-              name: m.name,
-              price: Number(m.price),
-              displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-              description: m.description || "",
-              category: m.category || "Main Course",
-              is_available: m.is_available !== false,
-              customizations: m.customizations || [],
-            }));
-            setApiMenu(formattedMenu);
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to fetch shop menu from API:", err);
-      } finally {
-        if (isMounted) setIsMenuLoading(false);
-      }
-    };
-    fetchMenu();
-    return () => { isMounted = false; };
-  }, [shop?.id]);
-
   const storeStatus = getStoreStatus();
-
-  // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
-  const shopMenu = useMemo(() => {
-    if (apiMenu !== null) {
-      if (apiMenu.length > 0) return apiMenu;
-      // If API succeeded but returned 0 items, respect it, don't fall back to fakes
-      return [];
-    }
-
-    if (shop && shop.menu && shop.menu.length > 0) return shop.menu;
-
-    // Fallback dishes based on shop category
-    const isKota = shop && (shop.category || "").toLowerCase().includes("kota");
-    const shopId = shop ? shop.id : "default";
-    if (isKota) {
-      return [
-        {
-          id: `fallback-custom-item-${shopId}-1`,
-          name: "Classic Single Kota",
-          price: 35.0,
-          displayPrice: "R35.00",
-          image:
-            "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Fresh quarter loaf sandwich filled with golden hot chips, polony, and special sauce.",
-          category: "Kotas",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-2`,
-          name: "Special Double Cheese Kota",
-          price: 55.0,
-          displayPrice: "R55.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Quarter loaf packed with double chips, double cheese, polony, egg, Russian, and sauces.",
-          category: "Kotas",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-3`,
-          name: "Russian & Chips Portion",
-          price: 40.0,
-          displayPrice: "R40.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Golden sliced potato chips with grilled Russian sausages and seasoning.",
-          category: "Sides",
-          is_available: true,
-          customizations: [],
-        },
-      ];
-    } else {
-      // Braai / BBQ / Grill fallback
-      return [
-        {
-          id: `fallback-custom-item-${shopId}-4`,
-          name: "Chuck Beef Plate (Quarter kg)",
-          price: 85.0,
-          displayPrice: "R85.00",
-          image:
-            "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Flame-grilled super juicy chuck beef served with pap, chakalaka, and spicy BBQ sauce.",
-          category: "Plates",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-5`,
-          name: "Boerewors Roll Deluxe",
-          price: 45.0,
-          displayPrice: "R45.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Traditional local beef sausage grilled to perfection in a fresh roll with caramelized onions.",
-          category: "Wraps & Rolls",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-6`,
-          name: "Flame-Grilled Chicken (Quarter)",
-          price: 65.0,
-          displayPrice: "R65.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Flame-grilled chicken basted in mild peri-peri or sweet lemon & herb sauce.",
-          category: "Plates",
-          is_available: true,
-          customizations: [],
-        },
-      ];
-    }
-  }, [shop]);
+  const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
     let items = shopMenu.filter((item) =>
@@ -9324,7 +8680,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {shop.delivery_eta || "30-45 mins"}
+                {shop.delivery_eta || "ETA unavailable"}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -9706,13 +9062,13 @@ function StoreInfoScreen({
               <div className="flex flex-col sm:flex-row items-center gap-6 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm">
                 <div className="text-center sm:border-r border-slate-200 dark:border-slate-800/80 sm:pr-8 shrink-0">
                   <p className="text-5xl font-black text-slate-900 dark:text-white">
-                    {shop.rating}
+                    {shop.rating ?? "New"}
                   </p>
                   <div className="flex text-orange-500 justify-center mt-1.5">
                     {[...Array(5)].map((_, i) => (
                       <Star
                         key={i}
-                        className={`w-3.5 h-3.5 ${i < Math.floor(shop.rating) ? "fill-current" : ""}`}
+                        className={`w-3.5 h-3.5 ${i < Math.floor(shop.rating ?? 0) ? "fill-current" : ""}`}
                       />
                     ))}
                   </div>
@@ -10307,24 +9663,11 @@ function ExploreScreen({
         matchesCategory = shop.category === selectedCategory;
       }
 
-      const matchesRating = shop.rating >= minRating;
+      const matchesRating = (minRating === 0 || (typeof shop.rating === "number" && shop.rating >= minRating));
       const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
 
       // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
+      const matchesDistance = isNearbyShop(shop, userLocation, maxDistance);
 
       return (
         matchesSearch &&
@@ -10343,23 +9686,7 @@ function ExploreScreen({
     if (!statusA.isOpen && statusB.isOpen) return 1;
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
+      return compareShopDistance(a, b, userLocation);
     }
 
     if (sortPriority === "name") {
@@ -10367,12 +9694,12 @@ function ExploreScreen({
     }
 
     // Default: Sort by rating
-    return b.rating - a.rating;
+    return (b.rating ?? -1) - (a.rating ?? -1);
   });
 
   const activeShop = shops.find((s) => s.id === selectedShopId);
   const mapCenter: [number, number] =
-    activeShop && activeShop.latitude && activeShop.longitude
+    activeShop && hasCoordinates(activeShop)
       ? [activeShop.latitude, activeShop.longitude]
       : userLocation
         ? [userLocation.lat, userLocation.lng]
@@ -10675,21 +10002,8 @@ function ExploreScreen({
                 favorites={favorites}
                 onQuickReorder={(item) => {
                   const shop = shops.find((s) => s.id === item.shop_id);
-                  if (item.product_name && item.price && addToCart) {
-                    addToCart({
-                    id: item.product_name.toLowerCase().replace(/\s+/g, '-'),
-                    name: item.product_name,
-                    price: item.price,
-                    quantity: item.quantity || 1,
-                    shopId: item.shop_id || (shop ? shop.id : '1'),
-                    image: shop ? (shop.logo_url || shop.logo) : DEFAULT_SHOP_LOGO,
-                  });
-                  toast.success(`Reordered ${item.product_name}!`, {
-                    description: "Item added to cart for 1-tap checkout.",
-                  });
-                } else if (shop) {
-                  onStoreInfo(shop.id);
-                }
+                  // Historical order names/prices cannot manufacture a current menu ID.
+                  if (shop) onStoreInfo(shop.id);
               }}
               onSelectShop={(shop) => {
                 onStoreInfo(shop.id);
@@ -10749,19 +10063,10 @@ function ExploreScreen({
 
                 // Get coordinates and compute accurate distance
                 const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
+                  shop.latitude;
                 const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                  shop.longitude;
+                const distanceVal = catalogDistance(shop, userLocation);
 
                 return (
                   <div
@@ -10835,8 +10140,8 @@ function ExploreScreen({
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-bold mt-2.5 mb-2">
                           <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
                             <Star className="w-3 h-3 fill-current text-amber-500" />
-                            <span>{shop.rating.toFixed(1)}</span>
-                            <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
+                            <span>{(typeof shop.rating === "number" && Number.isFinite(shop.rating) ? shop.rating.toFixed(1) : "New")}</span>
+                            <span className="text-[10px] font-medium opacity-80">{shop.reviewCount != null ? `(${shop.reviewCount})` : null}</span>
                           </div>
                         </div>
                       </div>
@@ -11323,28 +10628,19 @@ function ExploreScreen({
                   <div className="flex items-center mt-1">
                     <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
                     <span className="text-sm font-bold ml-1 dark:text-white">
-                      {activeShop.rating}
+                      {activeShop.rating ?? "New"}
                     </span>
                     <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">
-                      (120+ reviews)
+                      Review count unavailable
                     </span>
-                    {userLocation && (
+                    {catalogDistance(activeShop, userLocation) !== null && (
                       <>
                         <span className="text-gray-300 dark:text-slate-700 mx-2">
                           •
                         </span>
                         <span className="text-xs text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-wide">
                           📍{" "}
-                          {calculateDistance(
-                            activeShop.latitude ||
-                              -25.9964 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            activeShop.longitude ||
-                              28.2268 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            userLocation.lat,
-                            userLocation.lng,
-                          ).toFixed(1)}{" "}
+                          {catalogDistance(activeShop, userLocation)!.toFixed(1)}{" "}
                           km away
                         </span>
                       </>

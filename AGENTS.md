@@ -14,12 +14,17 @@
   - **Open Store**: Vibrant Orange Pin with storefront emblem and verified active badge (`createShopMapIcon(true)`).
   - **Closed Store**: Muted slate gray pin with offline status (`createShopMapIcon(false)`).
   - **Live Couriers**: Indigo Pin with dynamic vehicle badges and live proximity markers.
-- **Map Behavior**: Shops missing coordinates use a deterministic scattering algorithm to avoid stacking on a single pixel. User location pin is strictly enforced to always render on top (`z-index: 2000`).
+- **Map Behavior**: Customer shop markers require valid authoritative coordinates; missing coordinates are never scattered or replaced. User location pin is strictly enforced to always render on top (`z-index: 2000`).
 - **Data/Backend**: Uses Supabase for realtime tracking (e.g., `rider_locations`, `orders` tables) and data fetching.
 - **Smart Dispatch**: Riders are dynamically assigned based on proximity to the shop using the `calculateDistance` utility.
 - **Order Tracking Phases**: Order tracking UI is split into strict phases: Live Delivery, Ready, Rider Approach, Cooking, Completed, and Pending.
 
 ## Phase & Fix History
+
+### Customer Catalog Authority 01
+- Customer shop/menu browsing uses the public Catalog-01 API only. Menu reads are bounded to three concurrent requests; failures clear catalog state and empty successes remain empty.
+- Preserve authoritative IDs/prices/availability and inactive shops. Unknown coordinates/facts are not fabricated. Nearby filtering uses at most 4 km; closed shops cannot enter the cart. Legacy same-origin catalog routes proxy the API.
+- New authoritative cache snapshots are write-only display cache in this implementation; old mixed catalog caches are not authority. Checkout safety, order authority, live systems, dependencies and Git state are outside this local implementation.
 
 ### Architecture Review Task 1C-A: Customer Checkout Safety
 - **Pilot Payment Contract**: Collection supports Cash at Shop (`cash`) and Card at Shop (`card_machine`), where payment occurs only on the merchant's physical terminal. Delivery supports Cash on Arrival (`cash_on_arrival`) only.

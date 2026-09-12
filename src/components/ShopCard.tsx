@@ -15,7 +15,6 @@ import { BlurUpImage } from "./BlurUpImage";
 import {
   getShopStatus,
   isShopAway,
-  DEFAULT_MENU_IMAGE,
   formatRand,
 } from "../utils";
 
@@ -37,45 +36,21 @@ export const ShopCard = memo(
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
-      if (!s.menu || s.menu.length === 0) return "R";
+      if (!s.menu || s.menu.length === 0) return "";
       const avg = s.menu.reduce((acc, item) => acc + (item.price || 0), 0) / s.menu.length;
       if (avg < 45) return "R";
       if (avg < 80) return "RR";
       return "RRR";
     };
 
-    // Stable distance calculation or fallback
-    const getShopDistance = (s: Shop) => {
-      if (s.distance !== undefined && s.distance !== null) {
-        return `${s.distance.toFixed(1)} km`;
-      }
-      const num = s.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const km = 0.4 + (num % 18) * 0.1;
-      return `${km.toFixed(1)} km`;
-    };
-
-    // Appetizing food cover photo based on category or menu items
-    const getShopHeroImage = (s: Shop) => {
-      if (s.images && s.images.length > 0 && !s.images[0].includes("unsplash.com/photo-1546069901-ba9599a7e63c")) {
-        return s.images[0];
-      }
-      if (s.menu && s.menu.length > 0 && s.menu[0].image) {
-        return s.menu[0].image;
-      }
-      const cat = (s.category || "").toLowerCase();
-      if (cat.includes("kota") || cat.includes("spatlo")) {
-        return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600";
-      }
-      if (cat.includes("braai") || cat.includes("shisa") || cat.includes("meat")) {
-        return "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600";
-      }
-      return "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600";
-    };
+    const getShopDistance = (s: Shop) => Number.isFinite(s.distance)
+      ? `${s.distance.toFixed(1)} km` : "Distance unavailable";
+    const getShopHeroImage = (s: Shop) => s.logo_url || s.logo || s.menu?.find(item => item.image)?.image || "/logo.png";
 
     const heroImage = getShopHeroImage(shop);
     const priceTier = getPriceTier(shop);
     const distanceStr = getShopDistance(shop);
-    const etaStr = shop.delivery_eta || "20-35 min";
+    const etaStr = shop.delivery_eta || "ETA unavailable";
 
     return (
       <motion.div
@@ -188,16 +163,16 @@ export const ShopCard = memo(
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-bold">
             <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
               <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span className="font-black">{shop.rating || "4.8"}</span>
+              <span className="font-black">{shop.rating ?? "New"}</span>
               <span className="text-[10px] font-semibold opacity-75">
-                ({shop.reviewCount || 24})
+                {shop.reviewCount != null ? `(${shop.reviewCount})` : null}
               </span>
             </div>
 
             <span className="text-slate-300 dark:text-slate-700">•</span>
 
             <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 truncate">
-              {shop.address || "Local Kitchen"}
+              {shop.address || "Location unavailable"}
             </span>
           </div>
 
@@ -209,7 +184,7 @@ export const ShopCard = memo(
             )}
             {!status.isOpen && (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                Opens {status.nextOpeningTime || "Soon"}
+                {shop.is_active === false ? "Offline — not accepting orders" : status.nextOpeningTime ? `Opens ${status.nextOpeningTime}` : "Not accepting orders"}
               </span>
             )}
           </div>
@@ -309,7 +284,7 @@ export const MenuItemCard = memo(
         {/* Food Thumbnail with high-contrast ratio */}
         <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-xs relative bg-slate-100 dark:bg-slate-800">
           <BlurUpImage
-            src={item.image || DEFAULT_MENU_IMAGE}
+            src={item.image || "/logo.png"}
             alt={item.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
@@ -330,7 +305,7 @@ export const MenuItemCard = memo(
               </h4>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
-              {item.description || "Freshly made township favourite prepared with local ingredients"}
+              {item.description || "No description provided"}
             </p>
             {item.dietary_tags && item.dietary_tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
@@ -353,6 +328,7 @@ export const MenuItemCard = memo(
 
             <button
               type="button"
+              disabled={isUnavailable}
               className={`h-9 px-3.5 rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
                 isUnavailable
                   ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"

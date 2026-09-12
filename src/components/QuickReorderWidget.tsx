@@ -89,7 +89,7 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
                     Top Cravings
                   </span>
                 </h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Re-order your most frequently purchased meals in 1 tap</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">View the current menu before ordering again</p>
               </div>
             </div>
           </div>
@@ -107,14 +107,14 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <div className="min-w-0 flex-1">
                         <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 truncate uppercase tracking-wider">
-                          {matchingShop?.name || 'Local Joint'}
+                          {matchingShop?.name || 'Shop unavailable'}
                         </p>
                         <h4 className="text-xs font-black text-slate-900 dark:text-white truncate group-hover:text-orange-600 transition-colors">
                           {item.product_name}
                         </h4>
                       </div>
                       <span className="text-xs font-black text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md shrink-0">
-                        {formatRand(item.price || 0)}
+                        Previously {formatRand(item.price || 0)}
                       </span>
                     </div>
 
@@ -127,6 +127,7 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
                   </div>
 
                   <button
+                    disabled={!matchingShop}
                     onClick={() => onQuickReorder({
                       product_name: item.product_name,
                       price: item.price,
@@ -136,7 +137,7 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
                     className="w-full mt-2.5 py-2 px-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-xs cursor-pointer"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reorder in 1 Tap</span>
+                    <span>{matchingShop ? 'View Current Menu' : 'Shop Unavailable'}</span>
                   </button>
                 </div>
               );

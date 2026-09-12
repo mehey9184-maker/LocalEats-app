@@ -1,3 +1,4 @@
+import { CatalogApi } from "../services/CatalogApi";
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { FirestoreService } from '../lib/firebase';
@@ -47,13 +48,13 @@ export function DiagnosticTool() {
           addLog(`❌ Firestore Profile Fetch Failed: ${fsErr?.message || fsErr}`);
         }
 
-        // 4. Try fetching Firestore Shops
-        addLog(`⏳ Attempting Firestore Shops Fetch (Path: /shops)`);
+        // 4. Try fetching Catalog API Shops
+        addLog(`⏳ Attempting Catalog API Shops Fetch (Path: /api/v1/catalog/shops)`);
         try {
-          const shops = await FirestoreService.getShops();
-          addLog(`✅ Firestore Shops Fetch Success. Found: ${shops?.length || 0} shops`);
+          const shops = await CatalogApi.getShops();
+          addLog(`✅ Catalog API Shops Fetch Success. Found: ${shops?.length || 0} shops`);
         } catch (shopErr: any) {
-          addLog(`❌ Firestore Shops Fetch Failed: ${shopErr?.message || shopErr}`);
+          addLog(`❌ Catalog API Shops Fetch Failed: ${shopErr?.message || shopErr}`);
         }
 
       } else {

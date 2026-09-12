@@ -70,6 +70,7 @@ export type PendingReview = {
 
 export type MenuItem = {
   id: string;
+  shop_id?: string;
   name: string;
   price: number;
   displayPrice: string;
@@ -107,7 +108,7 @@ export type Shop = {
   name: string;
   logo: string;
   logo_url?: string;
-  rating: number;
+  rating: number | null;
   description: string;
   address: string;
   menu: MenuItem[];

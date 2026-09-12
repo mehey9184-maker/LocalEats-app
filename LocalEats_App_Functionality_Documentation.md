@@ -27,10 +27,21 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 - **Open Kitchens / Vendors**: Vibrant Orange Pin with storefront emblem and verified active badge (`createShopMapIcon(true)`).
 - **Closed Kitchens**: Muted slate gray pin with offline status (`createShopMapIcon(false)`).
 - **Live Couriers & Drivers**: Dedicated Indigo Pin with dynamic vehicle badges (bicycle, motorcycle, car, or scooter) and live proximity markers.
-- **Coordinate Collision Safety**: Shops missing explicit GPS coordinates utilize a deterministic hashing and scattering algorithm (based on their shop ID) to distribute them gracefully and prevent marker stacking on a single default pixel.
+- **Shop Coordinate Safety**: Only valid authoritative shop coordinates are used. Missing coordinates produce no shop marker or distance; zero is valid. A default map viewport is presentation-only.
 
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
+
+### Customer Catalog Authority 01 (local implementation; not deployed)
+- Customer shop/menu authority is the public Catalog-01 API, configured by `VITE_LOCALEATS_API_URL`; Supabase remains authoritative storage behind that API. No Customer browser Firestore or direct Supabase catalog reads populate the catalog.
+- Legacy same-origin shop/menu routes are read-only proxies to Catalog-01, preserve upstream JSON/status, and return 503 when unavailable. Profiles and order endpoints are unchanged.
+- The client validates response shapes, parent IDs, finite non-negative prices, and booleans, retaining exact menu IDs, prices, and availability. Menu hydration uses at most three concurrent requests; any failure clears the displayed catalog with an explicit error.
+- Approved inactive shops remain in the base catalog but show closed/offline status. Current shop/item availability is checked before adding to cart; historical quick-reorder entries open the current menu rather than fabricate an ID or price.
+- No fallback/demo shops, generated menu rows, ID-derived coordinates, invented ratings/reviews/ETA, or category stock imagery enter the current catalog. Unknown business facts are omitted or honestly labelled.
+- Nearby views use valid coordinates and at most 4 km (or a smaller selected radius). Missing shop coordinates are excluded when proximity is active; unavailable user location never manufactures a distance. Rider proximity logic is unchanged.
+- `localeats_authoritative_catalog_v1` stores successful API snapshots for optional display caching only, including empty snapshots. This implementation does not restore it on failure; old mixed caches are never read as authority. Empty API results remain empty.
+- Remaining legacy matches are classified: `App-constants.ts` fixtures and `utils.ts` merge helper have no active catalog callers; old cache keys in `utils.ts` are cleanup-only. Firestore DB-health probes, Supabase network-heartbeat probes, reviews/follows/profile/chat and unused legacy Firestore write helpers are not catalog loaders and remain outside this repair. Map viewport defaults and Rider telemetry are not shop coordinates.
+- No migration, live database change, dependency change, deployment, commit, or push. Checkout safety files and server order authority remain unchanged. Focused tests use fake requests and source regressions only.
 
 - **[2026-09-07] Architecture Review Task 1C-A: Customer Checkout Safety**:
   - Restricted pilot payment intent to Cash at Shop and Card at Shop for collection, and Cash on Arrival for delivery. Card at Shop means payment on the merchant's physical terminal; LocalEats does not collect card credentials.

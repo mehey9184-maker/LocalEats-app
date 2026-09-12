@@ -258,58 +258,25 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 }
 
-app.get("/api/v1/shops", async (req, res) => {
+const proxyCatalog = async (path: string, res: express.Response) => {
+  const configured = process.env.LOCALEATS_API_URL || process.env.VITE_LOCALEATS_API_URL;
+  if (!configured?.trim()) return res.status(503).json({ success: false, error: "Catalog service unavailable." });
   try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ success: false, error: "Backend Supabase connection not configured." });
-    }
-
-    const { data: shops, error } = await supabaseAdmin
-      .from("shops")
-      .select("id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude, longitude, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id")
-      .eq("is_active", true);
-
-    if (error) {
-      console.error("[LocalEats API] Error fetching shops:", error);
-      return res.status(500).json({ success: false, error: "Failed to fetch shops" });
-    }
-
-    return res.status(200).json({ success: true, shops: shops || [] });
-  } catch (error) {
-    console.error("[LocalEats API] Exception fetching shops:", error);
-    return res.status(500).json({ success: false, error: "Internal server error" });
+    const upstream = await fetch(configured.trim().replace(/\/+$/, "") + "/api/v1/catalog" + path, {
+      method: "GET", headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000),
+    });
+    if (!upstream.headers.get("content-type")?.includes("application/json")) throw new Error("Invalid upstream response");
+    const data = await upstream.json();
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid upstream JSON");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(upstream.status).json(data);
+  } catch {
+    return res.status(503).json({ success: false, error: "Catalog service unavailable." });
   }
-});
-
-
-app.get("/api/v1/shops/:shopId/menu", async (req, res) => {
-  try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ success: false, error: "Backend Supabase connection not configured." });
-    }
-
-    const { shopId } = req.params;
-    if (!shopId) {
-      return res.status(400).json({ success: false, error: "Shop ID is required" });
-    }
-
-    const { data: items, error } = await supabaseAdmin
-      .from("menu_items")
-      .select("id, shop_id, name, price, description, image_url, category, is_available, customizations")
-      .eq("shop_id", shopId)
-      .eq("is_available", true);
-
-    if (error) {
-      console.error("[LocalEats API] Error fetching menu items:", error);
-      return res.status(500).json({ success: false, error: "Failed to fetch menu items" });
-    }
-
-    return res.status(200).json({ success: true, items: items || [] });
-  } catch (error) {
-    console.error("[LocalEats API] Exception fetching menu items:", error);
-    return res.status(500).json({ success: false, error: "Internal server error" });
-  }
-});
+};
+app.get("/api/v1/shops", (_req, res) => proxyCatalog("/shops", res));
+app.get("/api/v1/shops/:shopId/menu", (req, res) =>
+  proxyCatalog("/shops/" + encodeURIComponent(req.params.shopId) + "/menu", res));
 
 const getAuthoritativeOrderApiUrl = (): string | null => {
   const configured = process.env.LOCALEATS_API_URL || process.env.VITE_LOCALEATS_API_URL;
@@ -377,12 +344,12 @@ app.post("/api/shop-chat", async (req, res) => {
     // Build context-rich prompt with menu items and prices
     const menuSummary = Array.isArray(shop?.items) && shop.items.length > 0
       ? shop.items.map((i: any) => `- ${i.name} (R${i.price}): ${i.description || "Freshly cooked local item"} [Category: ${i.category || "Main"}, Popular: ${i.isPopular ? "Yes" : "No"}]`).join("\n")
-      : "Kota, Dagwood, Slap Chips, Fresh Juices, Braai Combos, and Local Specials.";
+      : "No menu information provided. Do not invent menu items.";
 
     const systemInstruction = `You are the friendly, AI-powered Kitchen Desk Assistant for "${shop?.name || "LocalEats Shop"}", an authentic South African eatery.
-Shop Address: ${shop?.address || "Township / Local Center"}
-Current Prep Time: ${shop?.delivery_eta || "20-30 mins"}
-Customer Rating: ${shop?.rating || "4.8 ⭐"}
+Shop Address: ${shop?.address || "Location unavailable"}
+Current Prep Time: ${shop?.delivery_eta || "ETA unavailable"}
+Customer Rating: ${shop?.rating ?? "Unrated"}
 
 Menu Items & Prices:
 ${menuSummary}

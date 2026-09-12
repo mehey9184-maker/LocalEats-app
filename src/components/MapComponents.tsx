@@ -1,3 +1,4 @@
+import { hasCoordinates, catalogDistance, validLatitude, validLongitude } from "../services/CatalogApi";
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useMap, useMapEvents, MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
@@ -321,7 +322,7 @@ export const MemoizedShopMarker = React.memo(
     shop: {
       id: string;
       name: string;
-      rating: number;
+      rating: number | null;
       latitude?: number;
       longitude?: number;
     };
@@ -330,12 +331,13 @@ export const MemoizedShopMarker = React.memo(
     onSelectShop: (id: string) => void;
   }) {
     const shopIcon = useMemo(() => createShopMapIcon(isOpen), [isOpen]);
+    if (!hasCoordinates(shop)) return null;
 
     return (
       <Marker
         position={[
-          shop.latitude || -25.9964,
-          shop.longitude || 28.2268,
+          shop.latitude,
+          shop.longitude,
         ]}
         icon={shopIcon}
         eventHandlers={{
@@ -359,7 +361,7 @@ export const MemoizedShopMarker = React.memo(
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-1">
                 <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                <span className="text-xs font-black">{shop.rating}</span>
+                <span className="text-xs font-black">{shop.rating ?? "New"}</span>
               </div>
               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
                 isOpen
@@ -390,6 +392,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
   initialCoords?: { lat: number, lng: number },
   shopCoords?: { lat: number, lng: number }
 }) {
+  if (shopCoords && (!validLatitude(shopCoords.lat) || !validLongitude(shopCoords.lng))) shopCoords = undefined;
   const [query, setQuery] = useState(initialAddress || '');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -655,7 +658,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
     onSelect({ address: res.display_name, lat, lng });
   };
 
-  const currentDistance = markerPos && shopCoords ? calculateDistance(markerPos.lat, markerPos.lng, shopCoords.lat, shopCoords.lng) : null;
+  const currentDistance = shopCoords ? catalogDistance({ latitude: shopCoords.lat, longitude: shopCoords.lng }, markerPos) : null;
 
   function DraggableMarker() {
     const markerRef = useRef<any>(null);
@@ -951,6 +954,7 @@ export function AddressSearch({ onSelect, initialAddress, initialCoords, shopCoo
 }
 
 export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coords: { lat: number, lng: number }, onCoordsChange: (c: { lat: number, lng: number }) => void, shopCoords?: { lat: number, lng: number } }) {
+  if (shopCoords && (!validLatitude(shopCoords.lat) || !validLongitude(shopCoords.lng))) shopCoords = undefined;
   const [mapStyle, setMapStyle] = useState<'street' | 'satellite' | 'dark'>('street');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
@@ -1061,9 +1065,7 @@ export function LocationPickerMap({ coords, onCoordsChange, shopCoords }: { coor
     }
   };
 
-  const currentDistance = shopCoords 
-    ? calculateDistance(coords.lat, coords.lng, shopCoords.lat, shopCoords.lng) 
-    : null;
+  const currentDistance = shopCoords ? catalogDistance({ latitude: shopCoords.lat, longitude: shopCoords.lng }, coords) : null;
 
   function DraggableMarker() {
     const markerRef = useRef<any>(null);
