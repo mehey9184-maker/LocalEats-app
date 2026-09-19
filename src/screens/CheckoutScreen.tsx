@@ -12,7 +12,15 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
-import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, CreateOrderRequestData, CreateOrderResponse } from "../lib/firebase";
+import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, CreateOrderResponse } from "../lib/firebase";
+import type { AuthoritativeOrderQuote, QuoteOrderRequestData } from "../lib/firebase";
+import {
+  OrderApiError,
+  createOrderRequestFromQuote,
+  fingerprintOrderIntent,
+  freezeOrderIntent,
+  retainQuoteConsentForIntent,
+} from "../lib/orderQuoteConsent";
 import {
   containsPotentialCardCredential,
   hasUnsupportedPaidCustomizations,
@@ -33,6 +41,27 @@ const LOCAL_LANDMARKS = [
   { id: "LM05", name: "Shopping Complex", lat: -26.24, lng: 28.04 },
   { id: "LM06", name: "Sports Ground", lat: -26.25, lng: 28.05 },
 ];
+
+const generateCheckoutIdempotencyKey = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      // Fall through for non-secure browser contexts.
+    }
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const random = Math.random() * 16 | 0;
+    const value = character === "x" ? random : (random & 0x3 | 0x8);
+    return value.toString(16);
+  });
+};
+
+interface QuotedCheckoutIntent {
+  request: QuoteOrderRequestData;
+  quote: AuthoritativeOrderQuote;
+  fingerprint: string;
+}
 
 export function CheckoutScreen({
   userProfile,
@@ -83,6 +112,8 @@ export function CheckoutScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [checkoutAction, setCheckoutAction] = useState<"quote" | "create" | null>(null);
+  const [quotedCheckout, setQuotedCheckout] = useState<QuotedCheckoutIntent | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
     "cash",
   );
@@ -451,7 +482,7 @@ export function CheckoutScreen({
     safeLocalStorageSet("cart", JSON.stringify(newCart));
   };
 
-  // Display-only estimate until Task 1C-B supplies an authoritative quote.
+  // Display-only estimate shown before the authoritative server quote is requested.
   const subtotal = cart.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0,
@@ -494,6 +525,91 @@ export function CheckoutScreen({
     const change = Math.max(0, tender - totalAmount);
     return { tenderAmount: tender, changeNeeded: change };
   }, [paymentMethod, cashChangeOption, customChangeAmount, totalAmount]);
+
+  const buildCurrentOrderIntent = (idempotencyKey: string): QuoteOrderRequestData => {
+    const cachedProfile = getValidCachedProfile();
+    const finalCustomerName =
+      customerName.trim() ||
+      userProfile?.fullName ||
+      (userProfile as any)?.name ||
+      cachedProfile?.fullName ||
+      cachedProfile?.name ||
+      (userProfile?.email ? userProfile.email.split("@")[0] : "") ||
+      "Valued Customer";
+    const finalCustomerPhone =
+      customerPhone.trim() || userProfile?.phone || cachedProfile?.phone || "";
+    const normalizedPaymentMethod = normalizeCheckoutPaymentMethod(
+      deliveryType,
+      paymentMethod,
+    );
+    const sanitizedOrderNotes = stripLegacyCardMachinePaymentSegment(orderNotes.trim());
+    let finalDeliveryInstructions = stripLegacyCardMachinePaymentSegment(
+      deliveryInstructions.trim(),
+    );
+    if (normalizedPaymentMethod === "cash" || normalizedPaymentMethod === "cash_on_arrival") {
+      const changeRequest =
+        cashChangeOption === "no_change"
+          ? "No change needed"
+          : cashChangeOption === "custom"
+            ? `Needs change for R${customChangeAmount}`
+            : `Needs change for ${cashChangeOption}`;
+      finalDeliveryInstructions = `${finalDeliveryInstructions ? `${finalDeliveryInstructions} • ` : ""}[CASH CHANGE REQUEST: ${changeRequest}]`;
+    }
+
+    const lat = deliveryCoordinates?.coordinates[1];
+    const lng = deliveryCoordinates?.coordinates[0];
+    const hasFiniteDeliveryCoordinates =
+      deliveryType === "delivery" &&
+      typeof lat === "number" && Number.isFinite(lat) &&
+      typeof lng === "number" && Number.isFinite(lng);
+
+    return {
+      idempotency_key: idempotencyKey,
+      shop_id: String(primaryShop?.id ?? cart[0]?.shopId ?? ""),
+      items: cart.map((item) => ({
+        menu_item_id: String(item.id),
+        quantity: Math.max(1, Number(item.quantity) || 1),
+        notes: [
+          stripLegacyCardMachinePaymentSegment(item.specialInstructions || ""),
+          sanitizedOrderNotes,
+        ].filter(Boolean).join(" • ") || undefined,
+        variant_id: undefined,
+      })),
+      delivery_type: deliveryType,
+      delivery_schedule_mode: "standard",
+      delivery_coordinates: hasFiniteDeliveryCoordinates
+        ? { lat, lng }
+        : undefined,
+      tip_amount: 0,
+      payment_method: normalizedPaymentMethod,
+      customer_details: {
+        name: finalCustomerName,
+        phone: finalCustomerPhone,
+        email: userProfile?.email || "",
+        address: deliveryType === "delivery"
+          ? deliveryAddressText || ""
+          : userProfile?.address || "Local Delivery",
+        city: userProfile?.city || "Cape Town",
+        delivery_instructions: finalDeliveryInstructions || undefined,
+      },
+    };
+  };
+
+  const currentIntentFingerprint = quotedCheckout
+    ? fingerprintOrderIntent(buildCurrentOrderIntent(quotedCheckout.request.idempotency_key))
+    : null;
+  const currentQuotedCheckout = retainQuoteConsentForIntent(
+    quotedCheckout,
+    currentIntentFingerprint,
+  );
+  const isQuotedIntentCurrent = currentQuotedCheckout !== null;
+  const currentAuthoritativeQuote = currentQuotedCheckout?.quote ?? null;
+
+  useEffect(() => {
+    if (quotedCheckout && !currentQuotedCheckout) {
+      setQuotedCheckout(null);
+    }
+  }, [quotedCheckout, currentQuotedCheckout]);
 
   useEffect(() => {
     if (deliveryType === "delivery") {
@@ -641,16 +757,17 @@ export function CheckoutScreen({
         "Shop Closed",
         `${primaryShop.name} is currently closed. Your order will be attended to when they open at ${status.nextOpeningTime || "their next opening hour"}. Do you want to proceed?`,
         () => {
-          processCheckout();
+          processCheckout(currentAuthoritativeQuote ? "create" : "quote");
         },
       );
       return;
     }
-    processCheckout();
+    processCheckout(currentAuthoritativeQuote ? "create" : "quote");
   };
 
-  const processCheckout = async () => {
+  const processCheckout = async (action: "quote" | "create") => {
     setLoading(true);
+    setCheckoutAction(action);
     triggerHaptic?.([200, 100, 200]);
 
     const cachedProfile = getValidCachedProfile();
@@ -669,29 +786,6 @@ export function CheckoutScreen({
       cachedProfile?.phone ||
       "";
 
-    // Save profile background sync if requested
-    if (saveToProfile && session?.user?.id) {
-      try {
-        await upsertProfileWithRPC({
-          user_id: session.user.id,
-          fullName: finalCustomerName,
-          phone: toDBPhone(finalCustomerPhone),
-          ...(deliveryType === "delivery"
-            ? {
-                address: deliveryAddressText,
-                latitude: deliveryCoordinates?.coordinates[1],
-                longitude: deliveryCoordinates?.coordinates[0],
-              }
-            : {}),
-        });
-      } catch (err) {
-        console.warn(
-          "Could not save recipient details back to userProfile database schema:",
-          err,
-        );
-      }
-    }
-
     let currentLat =
       deliveryType === "delivery" ? deliveryCoordinates?.coordinates[1] : null;
     let currentLng =
@@ -701,7 +795,11 @@ export function CheckoutScreen({
     if (
       isOnline &&
       deliveryType === "delivery" &&
-      (!currentLat || !currentLng || !isLocationConfirmed)
+      (typeof currentLat !== "number" ||
+        !Number.isFinite(currentLat) ||
+        typeof currentLng !== "number" ||
+        !Number.isFinite(currentLng) ||
+        !isLocationConfirmed)
     ) {
       setLoading(false);
       setNotification({
@@ -754,6 +852,65 @@ export function CheckoutScreen({
     }
 
     try {
+      if (!checkoutIdempotencyKeyRef.current) {
+        checkoutIdempotencyKeyRef.current = generateCheckoutIdempotencyKey();
+      }
+      const orderIdempotencyKey = checkoutIdempotencyKeyRef.current;
+      const currentRequest = buildCurrentOrderIntent(orderIdempotencyKey);
+
+      if (action === "quote") {
+        // A fresh quote request permanently discards any prior consent, even if this request fails.
+        setQuotedCheckout(null);
+        const quote = await FirestoreService.quoteAuthoritativeOrder(currentRequest);
+        const frozenRequest = freezeOrderIntent(currentRequest);
+        setQuotedCheckout({
+          request: frozenRequest,
+          quote,
+          fingerprint: fingerprintOrderIntent(frozenRequest),
+        });
+        IdempotencyManager.releaseLock(checkoutIdempotencyKey);
+        setNotification({
+          message: `Final total confirmed: R${quote.total_price.toFixed(2)}. Review it, then place your order.`,
+          type: "success",
+        });
+        return;
+      }
+
+      const reviewedCheckout = quotedCheckout;
+      if (!reviewedCheckout ||
+        fingerprintOrderIntent(currentRequest) !== reviewedCheckout.fingerprint) {
+        setQuotedCheckout(null);
+        IdempotencyManager.releaseLock(checkoutIdempotencyKey);
+        showAlert(
+          "Review Updated Total",
+          "Your order details changed. Please review a fresh final total before placing the order.",
+        );
+        return;
+      }
+
+      // Profile and notification side effects remain part of actual placement, never quoting.
+      if (saveToProfile && session?.user?.id) {
+        try {
+          await upsertProfileWithRPC({
+            user_id: session.user.id,
+            fullName: finalCustomerName,
+            phone: toDBPhone(finalCustomerPhone),
+            ...(deliveryType === "delivery"
+              ? {
+                  address: deliveryAddressText,
+                  latitude: deliveryCoordinates?.coordinates[1],
+                  longitude: deliveryCoordinates?.coordinates[0],
+                }
+              : {}),
+          });
+        } catch (err) {
+          console.warn(
+            "Could not save recipient details back to userProfile database schema:",
+            err,
+          );
+        }
+      }
+
       // Save the last delivery instructions and order notes for future use
       if (deliveryInstructions.trim()) {
         localStorage.setItem(
@@ -791,59 +948,10 @@ export function CheckoutScreen({
           });
         }
 
-        const generateValidUUID = () => {
-          if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-            try {
-              return crypto.randomUUID();
-            } catch (e) {
-              // Ignore crypto.randomUUID error in non-secure context
-            }
-          }
-          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-          });
-        };
-
-        // Reuse existing idempotency key on retries / timeouts
-        if (!checkoutIdempotencyKeyRef.current) {
-          checkoutIdempotencyKeyRef.current = generateValidUUID();
-        }
-        const orderIdempotencyKey = checkoutIdempotencyKeyRef.current;
-
-        const requestPayload: CreateOrderRequestData = {
-          idempotency_key: orderIdempotencyKey,
-          shop_id: String(primaryShop?.id || cart[0]?.shopId || ""),
-          items: cart.map((item) => ({
-            menu_item_id: String(item.id),
-            quantity: Math.max(1, Number(item.quantity) || 1),
-            notes: [
-              stripLegacyCardMachinePaymentSegment(item.specialInstructions || ""),
-              sanitizedOrderNotes,
-            ].filter(Boolean).join(" • ") || undefined,
-            variant_id: undefined,
-          })),
-          delivery_type: deliveryType === "delivery" ? "delivery" : "collection",
-          delivery_schedule_mode: "standard",
-          delivery_coordinates:
-            deliveryType === "delivery" && currentLat && currentLng
-              ? {
-                  lat: Number(currentLat),
-                  lng: Number(currentLng),
-                }
-              : undefined,
-          tip_amount: 0,
-          payment_method: normalizedPaymentMethod,
-          customer_details: {
-            name: finalCustomerName,
-            phone: finalCustomerPhone,
-            email: userProfile?.email || "",
-            address: deliveryType === "delivery" ? (deliveryAddressText || "") : (userProfile?.address || "Local Delivery"),
-            city: userProfile?.city || "Cape Town",
-            delivery_instructions: finalDeliveryInstructions || undefined,
-          },
-        };
+        const requestPayload = createOrderRequestFromQuote(
+          reviewedCheckout.request,
+          reviewedCheckout.quote,
+        );
 
         console.log("[Checkout] Processing checkout for Shop ID:", requestPayload.shop_id);
 
@@ -941,13 +1049,26 @@ export function CheckoutScreen({
     } catch (err: any) {
       console.error("Checkout notice:", err);
       IdempotencyManager.releaseLock(checkoutIdempotencyKey);
-      
+
+      if (err instanceof OrderApiError &&
+        (err.code === "PRICE_CHANGED" || err.code === "PRICE_CONSENT_REQUIRED")) {
+        setQuotedCheckout(null);
+        showAlert(
+          "Review Updated Total",
+          err.code === "PRICE_CHANGED"
+            ? "The authoritative total changed. No order was placed. Please review the new total and confirm again."
+            : "Price consent could not be confirmed. No order was placed. Please review the final total again.",
+        );
+        return;
+      }
+
       showAlert(
-        "Checkout Failed",
+        action === "quote" ? "Final Total Unavailable" : "Checkout Failed",
         err?.message || "An error occurred while communicating with the kitchen. Please try again."
       );
     } finally {
       setLoading(false);
+      setCheckoutAction(null);
     }
   };
 
@@ -2211,9 +2332,37 @@ export function CheckoutScreen({
             </div>
 
             <div className="border-t border-dashed border-slate-800 pt-2.5 text-[9px] text-center text-slate-500 font-black uppercase tracking-widest">
-              Final availability and pricing are confirmed securely when you place the order.
+              Final availability and pricing are confirmed securely when you review the final total.
             </div>
           </section>
+
+          {quotedCheckout && !isQuotedIntentCurrent && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
+              Your checkout details changed. Review a fresh final total before placing the order.
+            </div>
+          )}
+
+          {currentAuthoritativeQuote && (
+            <section className="rounded-3xl border-2 border-emerald-500 bg-emerald-50 p-5 shadow-lg dark:bg-emerald-950/20">
+              <div className="mb-4 flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                <h4 className="text-sm font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
+                  Authoritative server total
+                </h4>
+              </div>
+              <div className="space-y-2 text-sm font-bold text-slate-700 dark:text-slate-200">
+                <div className="flex justify-between"><span>Subtotal</span><span>R {currentAuthoritativeQuote.subtotal.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Delivery fee</span><span>R {currentAuthoritativeQuote.delivery_fee.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Service fee</span><span>R {currentAuthoritativeQuote.service_fee.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Discount</span><span>- R {currentAuthoritativeQuote.discount_amount.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span>Tip</span><span>R {currentAuthoritativeQuote.tip_amount.toFixed(2)}</span></div>
+                <div className="mt-3 flex items-center justify-between border-t-2 border-emerald-300 pt-3 text-emerald-950 dark:border-emerald-800 dark:text-emerald-100">
+                  <span className="font-black uppercase tracking-widest">Final total</span>
+                  <span className="text-2xl font-black">R {currentAuthoritativeQuote.total_price.toFixed(2)}</span>
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* PINNED BOTTOM CHECKOUT BUTTON STACK */}
           <div className="sticky bottom-0 z-30 -mx-4 -mb-6 mt-6 px-4 py-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 shadow-[0_-8px_20px_rgba(0,0,0,0.06)] dark:shadow-[0_-8px_20px_rgba(0,0,0,0.4)] max-w-2xl w-[calc(100%+2rem)] rounded-b-3xl">
@@ -2235,12 +2384,16 @@ export function CheckoutScreen({
               {loading && (
                 <div className="absolute inset-0 bg-orange-700/95 dark:bg-orange-800/95 flex items-center justify-center gap-2 text-white font-bold text-xs uppercase tracking-wider backdrop-blur-xs z-10 select-none pointer-events-none">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Processing Order...</span>
+                  <span>{checkoutAction === "quote" ? "Confirming Final Total..." : "Placing Order..."}</span>
                 </div>
               )}
 
               <ShoppingBag className="w-5 h-5 shrink-0" />
-              <span>Place Order • Est. R {totalAmount.toFixed(2)}</span>
+              <span>
+                {currentAuthoritativeQuote
+                  ? `Place order for R${currentAuthoritativeQuote.total_price.toFixed(2)}`
+                  : "Review final total"}
+              </span>
             </button>
             <button
               type="button"
@@ -2272,7 +2425,9 @@ export function CheckoutScreen({
           className="fixed bottom-3 right-3 z-[80] md:hidden bg-slate-900/95 backdrop-blur-md text-white border border-slate-700/80 px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
         >
           <span className="text-xs font-black font-mono text-orange-400">
-            R {totalAmount.toFixed(2)}
+            {currentAuthoritativeQuote ? "Final " : "Est. "}R {(
+              currentAuthoritativeQuote?.total_price ?? totalAmount
+            ).toFixed(2)}
           </span>
           <span className="text-slate-600 text-[10px]">•</span>
           <div className="bg-orange-600 hover:bg-orange-500 text-white font-extrabold text-[10px] uppercase px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -2286,10 +2441,10 @@ export function CheckoutScreen({
           <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
             <div className="flex flex-col min-w-0">
               <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-widest text-slate-400">
-                Estimate (Step {currentStep}/3)
+                {currentAuthoritativeQuote ? "Final server total" : "Estimate"} (Step {currentStep}/3)
               </span>
               <span className="text-base font-black font-mono text-orange-400 leading-none mt-0.5">
-                R {totalAmount.toFixed(2)}
+                R {(currentAuthoritativeQuote?.total_price ?? totalAmount).toFixed(2)}
               </span>
             </div>
 
@@ -2333,12 +2488,16 @@ export function CheckoutScreen({
                   {loading ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Processing...</span>
+                      <span>{checkoutAction === "quote" ? "Reviewing..." : "Placing..."}</span>
                     </>
                   ) : (
                     <>
                       <ShoppingBag className="w-3.5 h-3.5" />
-                      <span>Confirm</span>
+                      <span>
+                        {currentAuthoritativeQuote
+                          ? `Place R${currentAuthoritativeQuote.total_price.toFixed(2)}`
+                          : "Review total"}
+                      </span>
                     </>
                   )}
                 </button>

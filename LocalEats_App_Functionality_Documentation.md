@@ -32,6 +32,13 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
+### LR1-F-B Customer Authoritative Quote and Price Consent (local implementation; not deployed)
+- Final checkout is now explicitly two-stage: the customer first requests an authenticated, read-only quote from `POST /api/v1/orders/quote`, reviews the server-calculated breakdown, and then separately consents through a button containing that exact authoritative total.
+- Quote requests carry order intent only and never include `accepted_total_price`. Creation uses the exact frozen quoted request plus `accepted_total_price` copied from the accepted quote; client estimates and breakdowns remain display-only and are never sent as pricing authority.
+- A deterministic serialization of every request field guards consent. Changes to the cart, notes, fulfilment mode, coordinates, address/instructions, payment method, customer details, city, or shop make the quote stale and require a fresh review while preserving the same idempotency key.
+- Quote parsing fails closed on non-JSON/error responses, malformed envelopes, invalid money, invalid or contradictory fulfilment/payment modes, and preserves API error codes. `PRICE_CHANGED` and `PRICE_CONSENT_REQUIRED` clear consent without creating, caching, confirming, or automatically resubmitting an order.
+- Numeric zero remains a valid coordinate. Profile sync, push registration, local order caching, success UI, and idempotency-key reset remain restricted to confirmed authoritative order creation, not quote review.
+
 ### Customer Catalog Authority 01 (local implementation; not deployed)
 - Customer shop/menu authority is the public Catalog-01 API, configured by `VITE_LOCALEATS_API_URL`; Supabase remains authoritative storage behind that API. No Customer browser Firestore or direct Supabase catalog reads populate the catalog.
 - Legacy same-origin shop/menu routes are read-only proxies to Catalog-01, preserve upstream JSON/status, and return 503 when unavailable. Profiles and order endpoints are unchanged.

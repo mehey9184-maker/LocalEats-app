@@ -33,6 +33,22 @@ import {
 import { getMessaging, getToken, onMessage, isSupported, Messaging } from "firebase/messaging";
 import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "firebase/functions";
 import firebaseConfigJson from "../../firebase-applet-config.json";
+import {
+  OrderApiError,
+  requestAuthoritativeOrderQuote,
+} from "./orderQuoteConsent";
+import type {
+  AuthoritativeOrderQuote,
+  CreateOrderRequestData,
+  QuoteOrderRequestData,
+} from "./orderQuoteConsent";
+
+export type {
+  AuthoritativeOrderQuote,
+  CreateOrderItemInput,
+  CreateOrderRequestData,
+  QuoteOrderRequestData,
+} from "./orderQuoteConsent";
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey || "",
@@ -122,35 +138,6 @@ export function getFirebaseFunctions(): Functions {
 }
 
 export const functions: Functions = getFirebaseFunctions();
-
-export interface CreateOrderItemInput {
-  menu_item_id: string;
-  quantity: number;
-  variant_id?: string;
-  notes?: string;
-}
-
-export interface CreateOrderRequestData {
-  idempotency_key: string;
-  shop_id: string | number;
-  items: CreateOrderItemInput[];
-  delivery_type: "delivery" | "collection";
-  delivery_schedule_mode: "standard";
-  delivery_coordinates?: {
-    lat: number;
-    lng: number;
-  };
-  tip_amount: number;
-  payment_method: "cash" | "card_machine" | "cash_on_arrival";
-  customer_details: {
-    name: string;
-    phone: string;
-    email: string;
-    address: string;
-    city: string;
-    delivery_instructions?: string;
-  };
-}
 
 export interface CreateOrderResponse {
   success: boolean;
@@ -313,6 +300,16 @@ export const FirestoreService = {
   },
 
   // Orders
+  async quoteAuthoritativeOrder(requestData: QuoteOrderRequestData): Promise<AuthoritativeOrderQuote> {
+    const { getApiAuthHeaders } = await import('./apiAuth');
+    const headers = await getApiAuthHeaders();
+    const apiUrl = import.meta.env.VITE_LOCALEATS_API_URL;
+    if (!apiUrl) {
+      throw new OrderApiError('LocalEats order service is not configured. No quote was created.');
+    }
+    return requestAuthoritativeOrderQuote(requestData, apiUrl, headers);
+  },
+
   async createAuthoritativeOrder(requestData: CreateOrderRequestData): Promise<CreateOrderResponse> {
     try {
       const { getApiAuthHeaders } = await import('./apiAuth');
@@ -340,7 +337,11 @@ export const FirestoreService = {
       }
       const payload = data as Record<string, any>;
       if (!response.ok) {
-        throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to create order. No order was placed.');
+        throw new OrderApiError(
+          typeof payload.error === 'string' ? payload.error : 'Failed to create order. No order was placed.',
+          typeof payload.code === 'string' ? payload.code : undefined,
+          response.status,
+        );
       }
       const order = payload.order;
       if (!payload.success || !order || typeof order !== 'object' || typeof order.id !== 'string' || !order.id) {
