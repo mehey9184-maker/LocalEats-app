@@ -1,0 +1,263 @@
+LOCAL EATS RELIABILITY PLAN
+CHAT, ORDERING, BACKEND AND FRONTEND
+Audit baseline: 2026-10-21
+Status: Planning brief only. This file does not authorise a production migration or a wholesale rewrite.
+
+REPOSITORIES IN SCOPE
+1. Customer app: https://github.com/mehey9184-maker/LocalEats-app
+2. Merchant dashboard and API: https://github.com/mehey9184-maker/LocalEats-Dashboard.2
+
+PRIMARY GOAL
+Make LocalEats dependable, understandable and maintainable for years. Do this through clear ownership of data, secure permissions, small changes, repeatable tests, safe migrations, operational visibility and current documentation. No one can guarantee software will never break for five years; the goal is to make failures uncommon, detectable, recoverable and non-destructive.
+
+The product rule is: protect customer trust first. An order must not silently disappear, duplicate, change price unexpectedly or appear confirmed when it is only queued. A message must not be shown as delivered to a shop unless it actually reached the intended system. A security failure must deny access rather than expose another customer's data.
+
+AUDIT LIMITATIONS
+This is a static review of the committed default branches and visible repository files. It did not run either app, query production Supabase, verify deployed Firebase rules, inspect Vercel deployment settings, or test a live customer/merchant session. Confirm deployed configuration and the active production request paths before making code or database changes. Findings below are evidence to validate, not a statement that every listed issue is active in production.
+
+DO NOT
+- Do not copy proprietary code from WhatsApp, Uber Eats, DoorDash or other closed-source apps.
+- Do not replace the entire stack, redesign the UI, migrate databases, change authentication providers, or introduce microservices just to imitate a famous app.
+- Do not run destructive SQL, drop columns, reset tables, deploy new Firebase rules, or modify production data during an audit-only session.
+- Do not use client-provided totals as authoritative order pricing.
+- Do not return fake success when an order, chat message, payment update or database write failed.
+- Do not put Supabase service-role keys, Firebase Admin credentials, AI provider secrets, payment credentials or real customer/card data in source files, test fixtures, commits, AI prompts or logs.
+- Do not use production writes as tests. Use a staging project or emulators for destructive/security tests.
+
+P0 — IMMEDIATE TRUST AND SECURITY REVIEW
+
+P0.1 — Remove and investigate card security-code handling
+File: LocalEats-app/src/screens/CheckoutScreen.tsx
+Evidence: around the card-machine checkout logic near lines 1115–1142, finalDeliveryInstructions is assembled with a "CVV: ..." field. The offline checkout flow places finalDeliveryInstructions in each order object and persists queued/cached orders in localStorage. The app also collects card number, expiry and CVV in the card-machine UI.
+
+Required action:
+- Confirm whether the CVV state can contain a real security code in production and whether the affected code is deployed.
+- Never persist a CVV/CVC/CID in an order, localStorage, offline queue, Firestore, Supabase, analytics or logs. Remove it from delivery instructions and all payloads.
+- For a physical card-machine payment, do not collect the customer's card number, expiry or CVV in LocalEats. The terminal handles those credentials. Store only the payment method, pending/confirmed/failed status and a safe terminal/provider reference as needed.
+- If LocalEats ever supports online card payments, use a PCI-compliant provider's tokenised/hosted payment flow. Do not build a home-grown card vault.
+- Check whether any real CVV value has already entered live orders or offline queues. Use a carefully scoped, privacy-preserving remediation plan; do not delete orders blindly. Do not copy card data into an AI prompt or ticket.
+
+Acceptance:
+- Automated test proves no CVV/CVC field can be added to order payloads, local caches or delivery instructions.
+- New card-machine orders can be placed without entering card credentials into LocalEats.
+- Existing valid orders and offline queue recovery still work.
+
+P0.2 — Reconcile Firebase rules safely
+Files:
+- LocalEats-app/firestore.rules
+- LocalEats-Dashboard.2/firestore.rules
+- firebase-applet-config.json in both repositories
+
+Evidence:
+- The customer app rules file contains broad "allow read, write: if true" rules for profiles, shops, menus, orders, messages/chat messages, rider data, push tokens and other collections.
+- The dashboard rules file instead has a default-deny rule and explicit authenticated/participant checks for several collections.
+- Both committed Firebase configs identify project localeats-5e26e and the named database ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe.
+- Customer-app AGENTS.md explains that rules were relaxed to true to work around a perceived Firebase/Supabase identity split. Other code uses Firebase Authentication and Firebase ID tokens. This documentation needs reconciliation with the current implementation.
+
+Required action:
+- Read the currently deployed rules for the exact named Firestore database; compare them to both repository versions and Firebase deployment configuration.
+- Map every active collection and client/server access path before composing a combined ruleset. A restrictive ruleset must preserve valid customer, merchant and rider workflows; do not blindly deploy one repository's file over the other.
+- Establish one consistent identity contract. Verify who signs in with Firebase Auth, which exact UID is placed in each order/message, and how the server verifies Firebase ID tokens. A Supabase access token must never be relabelled as a Firebase token.
+- Deny access by default. Publicly readable storefront fields may be explicitly public, but private profiles, orders, conversations, addresses, push tokens and operational records must be protected.
+- Order chat access must be limited to authenticated participants of that exact order. Clients must not self-assign another sender's identity or change server-controlled fields.
+- Use Firebase Emulator Suite and @firebase/rules-unit-testing for allow/deny tests before a staged rules deployment.
+- Review Firebase security rules and Supabase RLS independently; security in one system does not protect data in the other.
+
+Required negative tests:
+- Unauthenticated read/write to private collections is denied.
+- Customer A cannot read or mutate customer B's orders/messages.
+- A customer cannot act as a shop owner or rider.
+- A rider can see/act only on permitted available or assigned orders.
+- A merchant cannot manage another shop.
+- Clients cannot change financial totals, ownership, assignment, payment state or protected workflow fields.
+- Public shop/menu discovery still works only for intentionally public, approved/active records.
+
+P1 — DEFINE THE DATA AND SERVICE BOUNDARIES BEFORE REFACTORING
+
+P1.1 — Map the real production architecture
+Evidence in the repositories:
+- LocalEats-app/functions/src/index.ts exports a Firebase callable createOrder implementation with an atomic Firestore transaction.
+- LocalEats-app/src/lib/firebase.ts has createAuthoritativeOrder calling the same-origin Express endpoint /api/orders.
+- LocalEats-app/server.ts implements /api/orders, uses Supabase Admin for some persistence/pricing, and contains migration and in-memory fallbacks.
+- LocalEats-Dashboard.2/localeats-api/src/routes/orders.ts mounts a separate authenticated /api/v1/orders service backed by Supabase.
+- LocalEats-Dashboard.2/src/lib/supabase.ts is a Supabase-style compatibility facade implemented over Firestore for the dashboard UI, while localeats-api uses the real Supabase client.
+- LocalEats-app/supabase/migrations/20260828000000_orders_schema.sql contains an older schema using restaurants/restaurant_id; dashboard migrations and API code use shops/shop_id.
+
+Required action:
+Create a route-and-data ownership map before editing:
+- For each screen/action, record the frontend call site, request URL or Firebase callable, deployed host, authentication mechanism, database/table or collection, authoritative validation, and response shape.
+- Verify which endpoint is actually deployed and called by the current production checkout. Mark dead/legacy/unknown paths explicitly.
+- Inspect live Supabase tables, constraints, indexes, RLS policies, migration history and actual column types using read-only access first.
+- Identify Firebase project/database, deployed rules and active Cloud Functions with read-only inspection.
+- Do not execute historical SQL files simply because they exist in the repo.
+- Choose one authoritative data store for orders/order items and one authoritative service for each order mutation. Other stores, if temporarily needed, must be explicitly documented mirrors with a defined sync and reconciliation contract.
+- Keep the customer, merchant and rider IDs consistent across authentication, orders and chat. Do not infer ownership from localStorage, client metadata, claimed role, shop ID supplied by the client or an unverified cache.
+
+P1.2 — Make order creation authoritative, retry-safe and durable
+Important files:
+- LocalEats-app/server.ts (/api/orders and /api/orders/:id routes)
+- LocalEats-app/src/lib/firebase.ts (createAuthoritativeOrder)
+- LocalEats-app/functions/src/index.ts (callable createOrder)
+- LocalEats-app/src/utils/idempotency.ts
+- LocalEats-app/src/screens/CheckoutScreen.tsx
+- LocalEats-Dashboard.2/localeats-api/src/orders/orderContract.ts
+- LocalEats-Dashboard.2/localeats-api/src/orders/orderService.ts
+- LocalEats-Dashboard.2/localeats-api/src/orders/orderService.test.ts
+- LocalEats-Dashboard.2/localeats-api/src/routes/orders.ts
+
+Existing good pattern to evaluate:
+The dashboard API service parses and validates request fields, rejects client-calculated pricing, checks shop/menu availability, calculates price from server-side records, handles idempotent replay and conflicting reuse of a key, and has automated order-service tests. Reuse the design principles and tests only after confirming the service and schema intended for production.
+
+Issues to validate and resolve:
+- The Express /api/orders code accepts a _clientPricing migration fallback when the shop cannot be found. In that branch it trusts prices/totals from the request. Remove this fallback only after identifying and completing the necessary data migration; missing shop/menu data must fail closed rather than invent an authoritative order price.
+- Its idempotency flow checks for an existing key and then inserts. A check followed by an insert alone is race-prone; enforce uniqueness atomically in the authoritative database and handle unique conflicts by returning the existing matching order.
+- The Express implementation contains in-memory serverOrders fallback paths. An in-memory order disappears on process restart and is not the authoritative database. Never return a durable-order success for an unpersisted order. Offline-only orders must be explicitly labelled "queued locally / awaiting server acknowledgement" until reconciliation succeeds.
+- In the inspected server.ts, GET /api/orders starts from serverOrders rather than loading the persistent Supabase order set. Verify whether any active UI still calls this route and prevent successful persistent POSTs from disappearing from the corresponding read path.
+- The PATCH /api/orders/:id handler accepts remaining fields from the request body after removing a subset of forbidden fields. Replace broad field spreading with typed, per-action allow-lists and explicit legal state transitions. Customers must not set arbitrary order/delivery/payment states.
+- A database schema in the customer app's historical migration uses restaurant_id while the dashboard service expects shop_id. Do not guess which is current. Reconcile against the live schema and migrate forward without destroying order history.
+- Idempotency keys must be stable across a retry of the same attempt, scoped/associated with the authenticated user, persisted by the server, and protected by a database uniqueness constraint. Reusing a key with a different user or different order intent must be rejected.
+- Server pricing must re-read the shop, selected menu IDs, availability, accepted customisations, promos, delivery fee and permitted tip. A client quote is display-only. The server returns a quote; order creation revalidates it.
+- Check status transitions and cancellation/acceptance races. Use conditional updates or database transactions so two concurrent requests cannot both claim incompatible transitions.
+- Keep an order header and line items consistently. Do not create one independent order per cart item unless this is an explicit product rule.
+- Errors must distinguish validation failure, shop/menu changed, authentication/authorization failure, duplicate replay, temporary infrastructure failure and unknown failure. Never silently substitute fictional IDs/totals/data.
+
+Order acceptance tests:
+1. Repeating a successful checkout with the same key returns the same order and creates no duplicate.
+2. Two concurrent identical submissions create one durable order.
+3. Reusing the same key with a different intent returns a conflict.
+4. Client-supplied subtotal, total, delivery fee and menu price cannot override server prices.
+5. Missing/unavailable shop or menu data results in a clear failure, not a fabricated order or client-priced fallback.
+6. DB outage produces a truthful pending/failure response and preserves the cart or offline queue; it does not claim the shop received the order.
+7. The customer's order history and merchant dashboard read the same persisted record.
+8. Customer, shop and rider only perform their allowed state transitions; stale requests cannot overwrite a newer transition.
+9. Offline retry is idempotent and does not submit an order twice after reconnect.
+10. No raw secret/card fields appear in orders, event payloads, caches or logs.
+
+P1.3 — Unify customer/merchant order chat
+Important files:
+- LocalEats-app/src/components/ChatWidget.tsx
+- LocalEats-app/src/lib/firebase.ts
+- LocalEats-app/src/components/GlobalChatListener.tsx
+- LocalEats-Dashboard.2/src/components/OrdersManagement.tsx
+- LocalEats-Dashboard.2/src/lib/supabase.ts
+- Both repositories' firestore.rules
+
+Evidence:
+- Customer ChatWidget uses the Firestore "messages" collection and writes fields including order_id, sender_id, sender_role, message, timestamp and created_at.
+- Merchant OrdersManagement loads/subscribes/writes "chat_messages" and expects fields including order_id, shop_id, user_id, sender_id, sender_type, content and created_at through the dashboard compatibility facade.
+- Those collection names and contracts differ; no bridge connecting the inspected chat writes to the other collection was found in this static pass. Verify live traffic and deployed builds.
+
+Required action:
+- Select one canonical persisted conversation model for order-scoped chat. Document the message schema, allowed sender types, participants, timestamps, delivery/read state and retention.
+- Use one collection/table and one shared TypeScript contract. If a temporary legacy compatibility reader is needed, define a migration, dual-read period, metrics and removal date; do not write new messages independently to two stores.
+- Derive sender identity/role from verified session and server-side order participation, not from arbitrary fields supplied by the browser. Validate order_id against the actual order and the user's customer/shop/rider membership.
+- Enforce per-order authorization for fetching history, inserting, subscribing, marking read and updating read receipts. A guessed order ID must never grant conversation access.
+- Persist messages first to the authoritative store; realtime is a delivery mechanism, not the only copy. Recover by fetching recent persisted history after reconnect.
+- Add stable message IDs or client message IDs for idempotent sends. Deduplicate realtime echo vs server response. Sort using server timestamps plus a deterministic tie-breaker.
+- Every realtime subscription must have cleanup/unsubscribe logic. Subscribe only to the selected order/conversation; avoid a global stream containing private message bodies.
+- Give the UI explicit sending, sent, failed/retry and read states. If send fails, preserve the draft, show a retry action and do not mark it sent. Prevent accidental duplicate sends on double-click/reconnect.
+- Validate maximum message size and accepted fields; rate-limit abusive sends. Do not place addresses, phone numbers, tokens or whole message bodies into production logs unnecessarily.
+- Read receipts must only update the intended order's messages and must not let a user mark another participant's messages read as if they were the sender.
+
+Chat acceptance tests:
+1. Customer sends a message; the authorised merchant sees exactly one matching message in real time and after refresh.
+2. Merchant replies; the authorised customer sees exactly one matching message in real time and after refresh.
+3. Unauthorized customer, unrelated merchant and unrelated rider cannot read, subscribe to, write, edit or mark the conversation read.
+4. Disconnect/reconnect, app background/resume, timeout and retry recover history without missing or duplicating messages.
+5. Old messages are sorted consistently, read receipts are correct, and subscriptions are removed when the order/screen changes.
+6. If the API/database is down, the app never claims a message was delivered; it shows a clear retry state.
+
+P1.4 — Separate AI shop assistant from real order support
+Files:
+- LocalEats-app/src/components/ShopChatModal.tsx
+- LocalEats-app/server.ts (/api/shop-chat)
+
+Evidence:
+- ShopChatModal keeps its messages in React component state and resets the greeting when opened; this is not a durable, persistent order conversation.
+- /api/shop-chat accepts the shop, user profile, messages and query from the client. No authentication or rate-limit check is visible in this route. Error handling can return a generic reply instead of an HTTP failure, while the frontend also uses a locally generated fallback reply.
+
+Required action:
+- Clearly distinguish the pre-sale AI menu assistant from the persistent customer/merchant order chat.
+- Never imply an actual human shop employee received a query if it only received a local or generic fallback response. Label an offline fallback as local and unsubmitted.
+- Validate payload shape and lengths; add rate limiting, request timeout, bounded history and safe error responses.
+- Build trusted menu/product/price context from server-side data rather than trusting client-supplied shop/menu pricing. AI recommendations are informational only and must never create/confirm orders, promise availability or change order status.
+- Do not include unnecessary personal data in AI prompts. Keep model/API keys server-side.
+- If chat is meant to persist across sessions, create an explicit persistence and retention design with access controls. Otherwise label it as temporary help and don't pretend it is the same as order support.
+
+P2 — FRONTEND RELIABILITY AND USER TRUST
+
+- Represent important actions with clear states: loading, ready, submitting, acknowledged, failed, queued offline and retry available.
+- Keep order/cart state until the server acknowledges durable creation. On error, preserve the user's cart and form input.
+- Generate one order idempotency key per checkout attempt and reuse it for retries of that attempt. Do not create a new key just because a request timed out.
+- For offline ordering, store only the minimum required payload, never payment credentials; mark it queued, sync with bounded retry/backoff and a stable identifier, and only show server-confirmed status after reconciliation.
+- When a chat send fails, don't discard the draft or silently replace failure with a pretend reply.
+- Use typed API request/response contracts shared by customer and merchant frontends, with runtime validation at trust boundaries.
+- Render a useful empty/error/retry state for listeners. Don't catch security/database errors only to log and appear successful.
+- Keep realtime handlers bounded and clean up subscriptions on unmount, sign-out, order change and account switch.
+- Do not store secrets or authentication tokens in arbitrary application localStorage. Keep cache ownership scoped to the authenticated identity, and clear or partition private caches on sign-out/account switch.
+- Do not undertake a visual redesign as part of this reliability phase. Make only UI changes necessary to expose truthful system state and recovery actions.
+
+TESTING, BUILD AND RELEASE GATES
+
+Before the first implementation:
+- Record current commit SHA for both repos, create a working branch, and establish a clean baseline.
+- Run the repository's existing build/type-check/lint/tests and record failures without hiding pre-existing failures.
+- Add or verify scripts for deterministic automated tests. Current customer-app package scripts include build and a TypeScript lint command but no root test script; dashboard root has build/lint, while localeats-api has a test script that builds then runs Node tests.
+- Use Firebase Emulator Suite for rules and callable-function tests. Use a staging Supabase project (or local Supabase) for migrations, RLS, uniqueness and transaction tests.
+- Keep sample data synthetic. Never run adversarial tests against production customer data.
+
+Mandatory regression matrix:
+- Signup/sign-in/sign-out; Firebase token expiry/refresh; guest/anonymous identity if still supported; customer, merchant, rider and admin roles.
+- Place order, refresh, navigate away/back, repeat submit, disconnect during submit, reconnect, cancel, shop accepts, item becomes unavailable, stale status update, server/database timeout.
+- Customer-to-shop chat, shop-to-customer reply, empty state, long message rejection, send failure/retry, reconnect and access denied on another order.
+- Cross-user and cross-shop authorization checks for every endpoint and subscription.
+- No CVV/card security code in API payloads, logs, database rows, localStorage, offline queues, analytics or error-report breadcrumbs.
+- Fresh install/build and deployed smoke test against staging.
+
+Deploy gates:
+1. Tests pass and no new TypeScript/build/lint errors.
+2. Security/rules negative tests pass.
+3. A database migration has a reviewed rollback/recovery strategy and has been rehearsed against staging data.
+4. The order/chat flows pass end-to-end between the actual deployed customer and merchant builds.
+5. Logs contain no secrets, raw payment credentials or unnecessary customer conversation content.
+6. Rollout plan includes monitoring, rollback trigger and owner.
+
+OPEN-SOURCE REFERENCE PATTERNS
+Study designs and adapt them; do not transplant entire applications or blindly copy large code sections.
+- Chatwoot (open-source customer conversation/support architecture): https://github.com/chatwoot/chatwoot
+  Study persistent conversations, message histories, agent/customer roles, assignments, read state and operational workflows.
+- Supabase Realtime chat example: https://github.com/supabase/supabase-js/tree/master/packages/core/realtime-js/example
+  Study the separation of persisted message history and realtime delivery.
+- Supabase authorization demo: https://github.com/supabase/supabase/tree/master/examples/realtime/nextjs-authorization-demo
+  Study private rooms/channels and membership-based access.
+- Supabase Realtime authorization documentation: https://supabase.com/docs/guides/realtime/authorization
+  Private-channel authorization must be explicitly configured; a channel name alone is not access control.
+- Medusa workflow guidance: https://docs.medusajs.com/resources/commerce-modules/order/transactions
+  Study order/payment transaction boundaries and reconciliation.
+- Stripe idempotency guidance: https://docs.stripe.com/api/idempotent_requests
+  Study safe retries and reuse of the same idempotency key.
+- OWASP API Security Top 10, Broken Object Level Authorization: https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
+  Every endpoint receiving an order, conversation, shop or user identifier must check that the authenticated actor may access that exact object.
+
+IMPLEMENTATION ORDER
+Phase 0 — read-only live inventory: deployed Firebase rules, actual Supabase schema/RLS, migrations, deployments, active endpoints, secrets handling and baseline tests. Deliver a short evidence report. Make no production changes.
+Phase 1 — P0 card-data and access-control remediation. Build tests and stage first. Do not blindly deploy rules.
+Phase 2 — one authoritative order-create/read/update path, canonical schema, server pricing, idempotency, durable persistence and legal status transitions.
+Phase 3 — one secured chat contract and end-to-end customer/merchant delivery with reconnect/retry.
+Phase 4 — safer AI shop chat with truthful fallback, validation and rate limits.
+Phase 5 — ongoing maintainability: CI, dependency update policy, migration documentation, monitoring, runbook and scheduled restore/recovery rehearsal.
+
+HANDOFF INSTRUCTIONS FOR CLAUDE/CODEX
+Start in READ-ONLY AUDIT mode. Read AGENTS.md and the current architecture/functionality docs in both repositories before any implementation. Note that customer-app AGENTS.md refers to LocalEats_App_Functionality_Documentation.md; confirm the file exists in the working tree and reconcile the instruction if it does not. Read this plan fully.
+
+Also inspect both repositories and the connected Supabase/Firebase configuration with read-only permissions first. Do not request or print service-role keys. Never include credential values in the report. Verify what is deployed rather than trusting the repository alone.
+
+Output the findings as:
+1. Evidence: exact file and line or live schema/policy reference.
+2. Risk and customer/business impact.
+3. Minimal proposed change.
+4. Tests that fail before and pass after the change.
+5. Migration/deployment/rollback plan.
+6. Unknowns that need confirmation.
+
+Do not edit source code during this initial audit. After the audit, implement only Phase 1 in an isolated branch, test it, show the diff and wait for the repository owner to review before production deployment. Keep each later phase small and independently reviewable. Update the current architecture/functionality documentation after every approved functional phase. Do not claim a test or deployment passed unless it was actually run and its result was observed.
