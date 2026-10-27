@@ -88,3 +88,7 @@
 
 ### Hotfix: App.tsx Corruption Recovery
 - **Syntax Repair**: Recovered `src/App.tsx` from file corruption near line 11871, successfully restoring the `ExploreScreen` modal component and resolving the unclosed JSX tag Vite build failure.
+
+### Owner-approved pickup launch — 2026-10-27 (overrides historical prototype guidance)
+The active main entry renders src/pickup/PickupCustomerApp.tsx. Firebase Auth is identity; LocalEats API owns business authorization; Supabase/Postgres is authoritative through the API. Never activate older fake shops/coordinates/menus, direct Firestore order writes, local fabricated success, delivery/Rider checkout, permissive-rule deployment or background order replay for this pilot. Existing legacy/Rider source is retained but unmounted. Persistent Ready notices come from the authorized API inbox; FCM is best effort and optional. Payment and actual handover are independent merchant-confirmed API facts.
+Local fixtures are explicitly guarded by DEV + loopback + ?fixture=1. They force same-origin local API routing, use the loopback mock identity service and synthetic database location, and suppress real FCM. Production builds cannot enable fixture authentication/location through a query string. Never push/deploy or apply draft SQL without separate authorization.
