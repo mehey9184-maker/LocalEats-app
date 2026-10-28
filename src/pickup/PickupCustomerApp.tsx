@@ -7,7 +7,7 @@ import "./pickup.css";
 const api=createPickupApi(localPickupFixture ? "" : import.meta.env.VITE_LOCALEATS_API_URL || "",async()=>{
  if(!pickupAuth.currentUser) throw new Error("Sign in to continue.");
  return pickupAuth.currentUser.getIdToken();
-});
+},fetch,{requireExplicitHttps:import.meta.env.PROD});
 const money=(minor:number)=>new Intl.NumberFormat("en-ZA",{style:"currency",currency:"ZAR"}).format(minor/100);
 type Shop={id:string;name:string;location:string;distance_km:number};
 type Item={id:string;name:string;price:number;is_available:boolean};
