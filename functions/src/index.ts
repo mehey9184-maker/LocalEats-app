@@ -83,12 +83,8 @@ export interface CreateOrderResponse {
 /**
  * Authoritative Server-Side Order Creation Firebase Callable Cloud Function.
  */
-export const createOrder = onCall(
-  {
-    cors: true,
-    maxInstances: 10,
-  },
-  async (request: CallableRequest<CreateOrderRequestData>): Promise<CreateOrderResponse> => {
+// Preserved source for future reviewed delivery work; never registered or called by an endpoint.
+const retainedLegacyCreateOrder = async (request: CallableRequest<CreateOrderRequestData>): Promise<CreateOrderResponse> => {
     // 1. Authenticate Request
     if (!request.auth || !request.auth.uid) {
       throw new HttpsError(
@@ -532,5 +528,15 @@ export const createOrder = onCall(
     });
 
     return result;
-  }
-);
+  };
+
+void retainedLegacyCreateOrder;
+
+// Only this guarded callable is published. Admin SDK writes bypass Firestore rules,
+// so this guard must be deployed independently of client and rules changes.
+export const createOrder = onCall({cors:true,maxInstances:10},
+ async (request:CallableRequest<CreateOrderRequestData>):Promise<CreateOrderResponse>=>{
+  if(!request.auth?.uid) throw new HttpsError("unauthenticated","Authentication required.");
+  throw new HttpsError("failed-precondition","Update required. Use the pickup ordering app.",
+   {code:"PICKUP_CONTRACT_REQUIRED"});
+ });

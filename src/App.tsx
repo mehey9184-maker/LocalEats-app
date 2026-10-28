@@ -1,3 +1,4 @@
+import {readPickupCatalog, customerPickupApi} from "./services/customerPickup";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -680,69 +681,8 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const [shops, setShops] = useState<Shop[]>(() => {
-    const cached = safeLocalStorageGet("cached_shops", []);
-    const correctSpelling = (str: string) => {
-      if (!str) return str;
-      return str
-        .replace(/My-Keta/g, "My-Kota")
-        .replace(/My-keta/g, "My-Kota")
-        .replace(/my-keta/g, "my-kota")
-        .replace(/My Keta/g, "My Kota")
-        .replace(/Keta/g, "Kota")
-        .replace(/keta/g, "kota");
-    };
-    return cached.map((s: any) => ({
-      ...s,
-      name: correctSpelling(s.name),
-      description: correctSpelling(s.description),
-      address: correctSpelling(s.address),
-      category: correctSpelling(s.category),
-    }));
-  });
-
-  const visibleShops = useMemo(() => {
-    const currentUserId = userProfile?.id || session?.user?.id;
-    const currentEmail = (userProfile?.email || session?.user?.email || "").toLowerCase().trim();
-    const isTeejeyAccount =
-      currentEmail === "teejeyunam@gmail.com" ||
-      currentEmail.includes("teejeyunam") ||
-      (currentUserId && String(currentUserId).toLowerCase().includes("teejey"));
-
-    // Base collection of shops
-    // We only fallback to DEFAULT_FALLBACK_SHOPS if shops is strictly null/undefined, not if it's []
-    let activeBaseShops = shops ? [...shops] : [];
-
-    // If logged in as the test account (teejeyunam@gmail.com), ensure their My-Kota store is available for testing
-    // ONLY if the explicit test flag is set.
-    const isTestStoreEnabled = import.meta.env.VITE_ENABLE_TEST_STORE === "true";
-    
-    if (isTeejeyAccount && isTestStoreEnabled) {
-      const alreadyHasMyKotaStore = activeBaseShops.some(
-        (s) =>
-          s.id === MY_KOTA_TEST_STORE.id ||
-          s.owner_id === "teejeyunam@gmail.com" ||
-          (s as any).owner_email === "teejeyunam@gmail.com" ||
-          (s.name || "").toLowerCase().includes("my-kota") ||
-          (s.name || "").toLowerCase().includes("my-keta")
-      );
-      if (!alreadyHasMyKotaStore) {
-        activeBaseShops = [MY_KOTA_TEST_STORE, ...activeBaseShops];
-      }
-    }
-
-    const filtered = activeBaseShops.filter((s) => {
-      const nameLower = (s.name || "").toLowerCase();
-      const descLower = (s.description || "").toLowerCase();
-      const ownerEmail = ((s as any).owner_email || (s as any).created_by || "").toLowerCase().trim();
-      const ownerIdStr = String(s.owner_id || "").toLowerCase().trim();
-
-      // Allow all shops to be visible, regardless of name or ownership
-      return true;
-    });
-
-    return filtered;
-  }, [shops, userProfile, session]);
+  const [shops, setShops] = useState<Shop[]>([]);
+  const visibleShops = shops;
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -760,7 +700,7 @@ export default function App() {
   const { metrics: heartbeatMetrics, isPinging: isPingingHeartbeat, runHeartbeatPing } = useNetworkHeartbeat(15000, true);
 
   // Continuous background offline cart synchronization and network state monitoring
-  useOfflineSync(cart, session);
+  // Retained carts are local only. Legacy order/cancellation replay is disabled.
   const [modal, setModal] = useState<ModalState>({
     isOpen: false,
     title: "",
@@ -1000,10 +940,8 @@ export default function App() {
   const [userLocation, setUserLocation] = useState<{
     lat: number;
     lng: number;
-  } | null>(DEFAULT_COORDS);
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    return safeLocalStorageGet("app_notifications", []);
-  });
+  } | null>(null);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const ordersRef = useRef<Order[]>(orders);
   useEffect(() => {
@@ -1212,348 +1150,25 @@ export default function App() {
   const lastFetchedShopsTimeRef = useRef<number | null>(null);
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
-  const fetchShopsData = useCallback(async (retries = 3, force = false) => {
-    const now = Date.now();
-    if (
-      !force &&
-      lastFetchedShopsTimeRef.current !== null &&
-      now - lastFetchedShopsTimeRef.current < stalenessThresholdMs &&
-      shopsRef.current.length > 0
-    ) {
-      console.log(
-        `[fetchShopsData] Using memoized shop data (${Math.round(
-          (now - lastFetchedShopsTimeRef.current) / 1000
-        )}s old, threshold ${stalenessThresholdMs / 1000}s). Skipping redundant network request.`
-      );
-      return;
-    }
-
-    setLoadingShops(true);
-    setIsSyncing(true);
-    setFetchError(null);
-
-    // Initial cold start cache inspection: check if shops are stored in IndexedDB or localStorage
-    let hasCachedShops = false;
+  const catalogGeneration=useRef(0);
+  const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
+    const generation=++catalogGeneration.current;
+    setShops([]); setLoadingShops(true); setIsSyncing(true); setFetchError(null);
     try {
-      const idbCached = await getCachedBusinessResults("all_shops");
-      const localCached = safeLocalStorageGet("cached_shops", null);
-      const cached = idbCached || (Array.isArray(localCached) && localCached.length > 0 ? localCached : null);
-
-      if (cached && Array.isArray(cached) && cached.length > 0) {
-        hasCachedShops = true;
-        const hydratedCached = cached.map((s: Shop) => {
-          if (!s.menu || s.menu.length === 0) {
-            const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
-              (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
-            ) || DEFAULT_FALLBACK_SHOPS[0];
-            return {
-              ...s,
-              menu: matchedFallback.menu || []
-            };
-          }
-          return s;
-        });
-        setShops(hydratedCached);
-        // Hydrate from cache immediately to minimize wait time
-        setLoadingShops(false);
-
-        if (!navigator.onLine) {
-          setIsSyncing(false);
-          lastFetchedShopsTimeRef.current = Date.now();
-          return;
-        }
-      }
-    } catch (e) {
-      console.warn("Retrieving shops from IndexedDB/localStorage during cold start failed:", e);
-    }
-
-    // Explicit cold start UX: If no shops are cached in localStorage or IndexedDB, enforce explicit loading skeleton state
-    if (!hasCachedShops && shops.length === 0) {
-      setLoadingShops(true);
-    }
-
-    if (!navigator.onLine && !hasCachedShops) {
-      // Offline on cold start with no cache: fallback to default shops
-      setShops(DEFAULT_FALLBACK_SHOPS);
-      setLoadingShops(false);
-      setIsSyncing(false);
-      return;
-    }
-
-    try {
-      await CircuitBreaker.execute("fetchShopsAndMenu", async () => {
-        // Concurrently fetch shops from both Firestore AND Supabase
-        const [firestoreRes, supabaseRes] = await Promise.allSettled([
-          FirestoreService.getShops().catch((fErr) => {
-            console.debug("[App:Firestore] Shop fetch notice:", fErr);
-            return [] as Shop[];
-          }),
-          (async () => {
-            let shopsData: any[] | null = null;
-            let shopsError: any = null;
-            try {
-              const res = await fetch("/api/v1/shops");
-              if (!res.ok) {
-                throw new Error(`API returned ${res.status}`);
-              }
-              const json = await res.json();
-              if (json.success && json.shops) {
-                shopsData = json.shops;
-              } else {
-                throw new Error(json.error || "Failed to fetch shops");
-              }
-            } catch (err: any) {
-              shopsError = err;
-            }
-
-            if (shopsError) {
-              const isNetwork =
-                (shopsError.message &&
-                  (shopsError.message.toLowerCase().includes("failed to fetch") ||
-                   shopsError.message.toLowerCase().includes("schema cache") ||
-                   shopsError.message.toLowerCase().includes("circuit breaker") ||
-                   shopsError.message.toLowerCase().includes("retrying") ||
-                   shopsError.message.toLowerCase().includes("pgrst"))) ||
-                (shopsError.details &&
-                  shopsError.details.toLowerCase().includes("failed to fetch")) ||
-                shopsError.code === "PGRST301";
-              if (isNetwork) {
-                console.info("Database warm-up or transient notice fetching API shops:", shopsError.message);
-              } else {
-                console.info("API shops fetch note:", shopsError.message || shopsError);
-              }
-              return [] as Shop[];
-            }
-
-            let menuData: any[] = [];
-
-            const formattedShops: Shop[] = (shopsData || []).map((s) => {
-              const shopHash = hashString(String(s.id));
-              const deterministicLat = -25.9964 + ((shopHash % 30) - 15) * 0.0018;
-              const deterministicLng = 28.2268 + (((shopHash >> 2) % 30) - 15) * 0.0018;
-
-              const isActive = s.is_active === true || s.is_active === "true" || s.is_active === "t" || s.is_active === 1;
-              const { isOpen } = getShopStatus({
-                opening_time: s.opening_time,
-                closing_time: s.closing_time,
-                is_active: isActive,
-              });
-
-              const correctSpelling = (str: string) => {
-                if (!str) return str;
-                return str
-                  .replace(/My-Keta/g, "My-Kota")
-                  .replace(/My-keta/g, "My-Kota")
-                  .replace(/my-keta/g, "my-kota")
-                  .replace(/My Keta/g, "My Kota")
-                  .replace(/Keta/g, "Kota")
-                  .replace(/keta/g, "kota");
-              };
-
-              return {
-                id: String(s.id),
-                name: correctSpelling(s.name),
-                logo: s.logo_url || DEFAULT_SHOP_LOGO,
-                rating: Number(s.rating) || 4.5,
-                cash_trust_enabled:
-                  s.cash_trust_enabled === true || s.cash_trust_enabled === "true",
-                allow_external_riders:
-                  s.allow_external_riders === true || s.allow_external_riders === "true",
-                auto_look_for_rider:
-                  s.auto_look_for_rider === true || s.auto_look_for_rider === "true",
-                reviewCount: 12 + (shopHash % 88),
-                prepTime: "15-20 min",
-                isOpen: isOpen,
-                description: correctSpelling(s.description || "Local Flavours"),
-                address: correctSpelling(s.location || "Local Eats"),
-                category: correctSpelling(s.category || "Kota"),
-                owner_id: s.owner_id,
-                opening_time: s.opening_time,
-                closing_time: s.closing_time,
-                phone: s.phone || "+27 12 345 6789",
-                latitude:
-                  s.latitude !== undefined && s.latitude !== null && s.latitude !== 0
-                    ? s.latitude
-                    : deterministicLat,
-                longitude:
-                  s.longitude !== undefined && s.longitude !== null && s.longitude !== 0
-                    ? s.longitude
-                    : deterministicLng,
-                updated_at: s.updated_at,
-                is_active: isActive,
-                images: (s as any).images || [
-                  DEFAULT_SHOP_LOGO,
-                  "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-                  "https://images.unsplash.com/photo-1476224484581-5d996cc0750e?auto=format&fit=crop&q=80&w=600",
-                  "https://images.unsplash.com/photo-1493770348161-369560ae357d?auto=format&fit=crop&q=80&w=600",
-                ],
-                menu: (menuData || [])
-                  .filter((m) => String(m.shop_id) === String(s.id))
-                  .map((m) => ({
-                    id: String(m.id),
-                    name: m.name,
-                    price: Number(m.price),
-                    displayPrice: `R${Number(m.price).toFixed(2)}`,
-                    image: m.image_url || DEFAULT_MENU_IMAGE,
-                    description: m.description || "",
-                    category: m.category || "Main Course",
-                    is_available: m.is_available !== false,
-                    customizations: m.customizations || [],
-                  })),
-              };
-            });
-
-            return formattedShops;
-          })()
-        ]);
-
-        const firestoreShops =
-          firestoreRes.status === "fulfilled" && Array.isArray(firestoreRes.value)
-            ? firestoreRes.value
-            : [];
-        const supabaseShops =
-          supabaseRes.status === "fulfilled" && Array.isArray(supabaseRes.value)
-            ? supabaseRes.value
-            : [];
-
-        // Unified Multi-Source Merge: Keep Supabase and Firestore shops unified without clobbering
-        const unifiedShops = mergeShopsCatalogs(supabaseShops, firestoreShops);
-
-        console.log(
-          `[ShopCatalog] Unified aggregation: ${supabaseShops.length} API shops + ${firestoreShops.length} Firestore shops = ${unifiedShops.length} total active shops.`
-        );
-
-        // A. If the network failed entirely, or if it's explicitly explicitly unavailable, we can fallback.
-        // But if the API successfully returned 0 shops, we should respect that 0 shops exist.
-        const apiFailed = supabaseRes.status === "rejected" || (supabaseRes.status === "fulfilled" && supabaseRes.value === null);
-        const firestoreFailed = firestoreRes.status === "rejected";
-
-        if (apiFailed && firestoreFailed && !navigator.onLine) {
-          logEmptyShopListDiagnostic("Backend network unavailable. Falling back to default offline shops.");
-          setShops(DEFAULT_FALLBACK_SHOPS);
-          safeLocalStorageSet("cached_shops", JSON.stringify(DEFAULT_FALLBACK_SHOPS));
-          cacheBusinessResults("all_shops", DEFAULT_FALLBACK_SHOPS).catch(() => {});
-        } else {
-          setShops(unifiedShops);
-          safeLocalStorageSet("cached_shops", JSON.stringify(unifiedShops));
-          cacheBusinessResults("all_shops", unifiedShops).catch(() => {});
-        }
-
-        setIsOnline(true);
-        lastFetchedShopsTimeRef.current = Date.now();
-      });
-      setLoadingShops(false);
-    } catch (err: any) {
-      const errStr = (err?.message || String(err)).toLowerCase();
-      const isNetworkError =
-        errStr.includes("failed to fetch") ||
-        errStr.includes("network error") ||
-        errStr.includes("load failed") ||
-        errStr.includes("upstream connect error") ||
-        errStr.includes("connection timeout") ||
-        errStr.includes("disconnect/reset") ||
-        errStr.includes("timeout") ||
-        errStr.includes("schema cache") ||
-        errStr.includes("circuit breaker") ||
-        err?.name === "TypeError" ||
-        err?.message === "FAILED_TO_FETCH_MENU" ||
-        (err.message && err.message.toLowerCase().includes("network"));
-
-      if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
-        }
-      }
-
-      if (isNetworkError && typeof navigator !== "undefined" && !navigator.onLine) {
-        setIsOnline(false);
-      }
-
-      // Only log errors that are not network-related, or log them only on final failure
-      if (!isNetworkError || retries === 0) {
-        if (err?.message === "FAILED_TO_FETCH_MENU" || isNetworkError) {
-          console.info(
-            "Network connectivity or transient database note: falling back to offline content gracefully.",
-            err?.message || err,
-          );
-        } else {
-          console.info("Notice fetching shops:", err?.message || err);
-        }
-      }
-
-      let errorMessage = err.message || "Failed to connect to the server";
-
-      if (isNetworkError || err.message === "FAILED_TO_FETCH_MENU") {
-        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
-        errorMessage = isOffline
-          ? "Offline Mode: Showing cached stores and menus."
-          : "Server Notice: We're having trouble reaching the store backend. Using offline cached data while reconnecting.";
-      } else if (err.status === 401 || err.status === 403) {
-        errorMessage =
-          "Please Sign In: We need you to log in again to keep your information secure.";
-      } else if (err.status === 404) {
-        errorMessage =
-          "Not Found: We couldn't find the store or items you were looking for.";
-      } else if (err.code === "PGRST301") {
-        errorMessage =
-          "Session Expired: Your security token has timed out. A quick refresh should fix it!";
-      }
-
-      if (retries > 0) {
-        // Fast-fail over for known network connection errors to prevent agonizing loading screens
-        const nextRetries = isNetworkError ? 0 : retries - 1;
-        const delay = isNetworkError ? 500 : 2500;
-        console.info(
-          `Retrying fetchShopsData... (${nextRetries} retries left). Delay: ${delay}ms`,
-        );
-        setTimeout(() => fetchShopsData(nextRetries), delay);
-      } else {
-        // Sandboxed Zero-Downtime Guarantee: fallback to local cache if available when database fails
-        const cached = safeLocalStorageGet("cached_shops", null);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          console.info(
-            "Rendering cached shops data under Zero-Downtime Guarantee rules",
-          );
-          const hydratedCached = cached.map((s: Shop) => {
-            if (!s.menu || s.menu.length === 0) {
-              const matchedFallback = DEFAULT_FALLBACK_SHOPS.find(
-                (f) => f.category?.toLowerCase() === s.category?.toLowerCase() || f.name.toLowerCase() === s.name.toLowerCase()
-              ) || DEFAULT_FALLBACK_SHOPS[0];
-              return {
-                ...s,
-                menu: matchedFallback.menu || []
-              };
-            }
-            return s;
-          });
-          setShops(hydratedCached);
-          setLoadingShops(false);
-          toast.info(
-            "You are offline. Showing your saved shops. 👍",
-            { id: "database-offline-toast", duration: 4000 },
-          );
-        } else {
-          console.log(
-            "Database fetch failed and no cache found - Landing on premium offline fallback content",
-          );
-          setShops(DEFAULT_FALLBACK_SHOPS);
-          safeLocalStorageSet(
-            "cached_shops",
-            JSON.stringify(DEFAULT_FALLBACK_SHOPS),
-          );
-          setLoadingShops(false);
-          toast.info(
-            "You are offline. Showing cached menus. Ready to explore! 🍟",
-            { id: "database-offline-toast", duration: 4000 },
-          );
-        }
-      }
+      const result=await readPickupCatalog(userLocation);
+      if(generation!==catalogGeneration.current)return;
+      setShops(result);
+      // A successful empty result is not a network or authentication error.
+    } catch(error) {
+      if(generation===catalogGeneration.current)setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
     } finally {
-      setIsSyncing(false);
+      if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
-  }, [stalenessThresholdMs]);
+  }, [userLocation?.lat,userLocation?.lng]);
 
   const syncOfflineOrders = useCallback(async (retryCount = 0) => {
+    return; // Old saved intents must never be replayed as authoritative orders.
+
     const queue = safeLocalStorageGet("offline_orders_queue", []);
     if (!queue || queue.length === 0) {
       setSyncError(null);
@@ -1828,10 +1443,10 @@ export default function App() {
         
         let errorMsg = "Could not get your location automatically.";
         if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = "Location access denied. Please set address manually.";
+          errorMsg = "Location access denied. Allow your real location to discover pickup shops within 4 km.";
         } else if (error.code === error.TIMEOUT) {
           errorMsg =
-            "Location timed out. Using default (Koffiefontein area). Search manually for better accuracy.";
+            "Location timed out. Please retry; no default discovery location is used.";
         }
         setNotification({
           message: errorMsg,
@@ -2093,6 +1708,8 @@ export default function App() {
 
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
+      showAlert("Pickup ordering unavailable", "Order changes require pickup database activation. No status has been changed."); return;
+
       // 1. Network connectivity check
       const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
 
@@ -2597,370 +2214,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session?.user?.id) return;
-
-    // Listen for status changes on the user's orders
-    const channel = getFreshChannel(`user_notifications:${session.user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "orders",
-          filter: `user_id=eq.${session.user.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            setOrders((prev) => [payload.new as Order, ...prev]);
-            return;
-          }
-
-          if (payload.eventType === "UPDATE") {
-            const existingOrder = ordersRef.current.find((o) => o.id === payload.new.id);
-
-            setOrders((prev) =>
-              prev.map((o) =>
-                o.id === payload.new.id ? (payload.new as Order) : o,
-              ),
-            );
-
-            const oldStatus = existingOrder?.status || payload.old?.status;
-            const newStatus = payload.new?.status;
-            const oldDeliveryStatus = existingOrder?.delivery_status || payload.old?.delivery_status;
-            const newDeliveryStatus = payload.new?.delivery_status;
-            const oldOrderType = (existingOrder as any)?.order_type || payload.old?.order_type;
-            const newOrderType = payload.new?.order_type;
-
-            // 1. Core Order Status Updates (only if previous status was known and actually changed)
-            if (oldStatus && newStatus && oldStatus !== newStatus) {
-              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
-              const title = `Store Update`;
-              let message = `Your order from ${shop?.name || "the shop"} is now ${newStatus}.`;
-
-              if (newStatus === "preparing")
-                message = `Chef at ${shop?.name} is preparing your food! 🍳`;
-              if (newStatus === "ready")
-                message = `🔥 Your order from ${shop?.name} is READY for collection!`;
-              if (newStatus === "confirmed")
-                message = `${shop?.name} has confirmed your order!`;
-              if (newStatus === "completed")
-                message = `Legendary! You've collected your order from ${shop?.name}. Enjoy! 😋`;
-              if (newStatus === "cancelled")
-                message = `🚨 Your order from ${shop?.name || "the shop"} has been cancelled.`;
-
-              // Centralized Psychoacoustic Sound Engine Triggers
-              if (newStatus === "confirmed") audioHelper.play("confirmed");
-              else if (newStatus === "preparing") audioHelper.play("preparing");
-              else if (newStatus === "ready") audioHelper.play("ready");
-              else if (newStatus === "completed") audioHelper.play("delivered");
-              else if (newStatus === "cancelled") audioHelper.play("cancelled");
-
-              // Special handling for "ready" status - High visibility UI
-              if (newStatus === "ready") {
-                const isDelivery = payload.new.is_delivery;
-                toast.success(`🔥 YOUR ORDER IS READY!`, {
-                  description: isDelivery
-                    ? `Order from ${shop?.name} is ready for the driver! 🚚`
-                    : `Run! ${shop?.name} has your order ready for pickup! 🏃‍♂️`,
-                  duration: 10000,
-                  position: "top-center",
-                  style: {
-                    background: "#059669", // Emerald 600
-                    color: "#ffffff",
-                    border: "4px solid #10b981",
-                    borderRadius: "28px",
-                    padding: "20px",
-                    fontSize: "18px",
-                    fontWeight: "900",
-                    boxShadow: "0 25px 50px -12px rgb(0 0 0 / 0.5)",
-                    textTransform: "uppercase",
-                  },
-                });
-
-                // Haptic Pulse (Double vibration)
-                if (navigator.vibrate) {
-                  navigator.vibrate([100, 50, 100, 50, 200]);
-                }
-              }
-
-              // Trigger review when completed
-              if (newStatus === "completed") {
-                const reviewPayload = {
-                  orderId: payload.new.id,
-                  shopId: payload.new.shop_id,
-                  productName: payload.new.product_name,
-                  snoozeCount: 0,
-                  nextReminder: 0,
-                };
-                setPendingReview(reviewPayload);
-                safeLocalStorageSet("pending_review", JSON.stringify(reviewPayload));
-              }
-
-              // Trigger browser notification if permission granted
-              if (
-                "Notification" in window &&
-                Notification.permission === "granted"
-              ) {
-                new Notification(title, { body: message, icon: shop?.logo });
-              }
-
-              // Show prominent temporary notification (toast)
-              setNotification({
-                message: message,
-                type:
-                  newStatus === "cancelled"
-                    ? "error"
-                    : newStatus === "ready" || newStatus === "completed"
-                      ? "success"
-                      : "info",
-              });
-
-              const newNotif: AppNotification = {
-                id: Math.random().toString(36).substr(2, 9),
-                title,
-                message,
-                type: "order",
-                timestamp: Date.now(),
-                read: false,
-                orderId: payload.new.id,
-              };
-
-              setNotifications((prev) => [newNotif, ...prev]);
-
-              if (newStatus === "ready") {
-                // Add vibration for confirmation
-                if ("vibrate" in navigator) {
-                  navigator.vibrate([100, 50, 100]);
-                }
-
-                setNotification({
-                  message: `✅ ${message}`,
-                  type: "ready",
-                  persistent: true,
-                  actions: [
-                    {
-                      label: "Track Order",
-                      onClick: () => setCurrentScreen("order-tracking"),
-                    },
-                    { label: "Dismiss", onClick: () => {} },
-                  ],
-                });
-              } else {
-                setNotification({
-                  message: `✅ ${message}`,
-                  type: "success",
-                  actions: [
-                    {
-                      label: "Track Order",
-                      onClick: () => setCurrentScreen("order-tracking"),
-                    },
-                  ],
-                });
-              }
-            }
-
-            // 2. Rider Delivery Status Updates (only if previous status was known and changed)
-            if (oldDeliveryStatus && newDeliveryStatus && oldDeliveryStatus !== newDeliveryStatus) {
-              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
-              let deliveryMessage = ``;
-
-              if (newDeliveryStatus === "rider_assigned") {
-                deliveryMessage = `🏍️ Good news! A delivery rider has accepted your order from ${shop?.name || "the shop"}!`;
-                audioHelper.play("confirmed");
-              } else if (newDeliveryStatus === "picked_up") {
-                deliveryMessage = `🚀 Your order has been picked up by the rider and is hot on-route!`;
-                audioHelper.play("dispatched");
-              } else if (newDeliveryStatus === "arrived") {
-                deliveryMessage = `🏡 Ding Dong! Your delivery rider has arrived outside with your fresh order!`;
-                audioHelper.play("ready"); // High attention chime
-              } else if (newDeliveryStatus === "delivered") {
-                deliveryMessage = `🎉 Order successfully delivered. Bon Appétit!`;
-                audioHelper.play("delivered"); // Satisfying celebratory harmony
-              }
-
-              if (deliveryMessage) {
-                toast.success(deliveryMessage, { duration: 6000 });
-
-                const newNotif: AppNotification = {
-                  id: Math.random().toString(36).substr(2, 9),
-                  title: `Delivery Dispatch`,
-                  message: deliveryMessage,
-                  type: "order",
-                  timestamp: Date.now(),
-                  read: false,
-                  orderId: payload.new.id,
-                };
-                setNotifications((prev) => [newNotif, ...prev]);
-
-                setNotification({
-                  message: deliveryMessage,
-                  type: "success",
-                  actions: [
-                    {
-                      label: "Track Order",
-                      onClick: () => setCurrentScreen("order-tracking"),
-                    },
-                  ],
-                });
-              }
-            }
-
-            // 3. Fallback to Collection
-            if (oldOrderType && newOrderType && oldOrderType === "delivery" && newOrderType === "collection" && oldOrderType !== newOrderType) {
-              const shop = shopsRef.current.find((s) => s.id === payload.new.shop_id);
-              const fallbackMsg = `🚨 The shop ${shop?.name || ""} had to switch your order to COLLECTION as no riders are currently available. Please self-pickup!`;
-              toast.error(fallbackMsg, {
-                duration: 15000,
-                position: "top-center",
-                style: {
-                  background: "#b91c1c", // Red 700
-                  color: "#ffffff",
-                  border: "4px solid #ef4444",
-                  borderRadius: "16px",
-                  padding: "16px",
-                  fontSize: "16px",
-                  fontWeight: "bold",
-                }
-              });
-              audioHelper.play("cancelled");
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400]);
-              
-              setNotification({
-                  message: fallbackMsg,
-                  type: "error",
-                  persistent: true,
-                  actions: [
-                    {
-                      label: "Track Order",
-                      onClick: () => setCurrentScreen("order-tracking"),
-                    },
-                    { label: "Dismiss", onClick: () => {} },
-                  ],
-                });
-            }
-
-            if (newStatus === "completed") {
-              setPendingReview({
-                orderId: payload.new.id,
-                shopId: payload.new.shop_id,
-                productName: payload.new.product_name,
-                snoozeCount: 0,
-              });
-              setCurrentScreen("review");
-            }
-          }
-        },
-      )
-      .subscribe();
-
-    // Initial orders fetch with timestamp reconciliation
-    const fetchOrders = async () => {
-      if (!session?.user?.id) return;
-      const safeColumns = "id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng";
+    let active=true;
+    setOrders([]);setNotifications([]);
+    if(!session?.user?.id)return;
+    const refresh=async()=>{
       try {
-        let fetchedData: any[] | null = null;
-        
-        // Fetch from Supabase
-        if (!fetchedData || fetchedData.length === 0) {
-          try {
-            const { data, error } = await supabase
-              .from("orders")
-              .select(safeColumns)
-              .eq("user_id", session.user.id)
-              .order("created_at", { ascending: false })
-              .limit(50);
-            if (!error && data) {
-              fetchedData = data;
-            }
-          } catch (_) {}
-        }
-
-        if (!fetchedData) {
-          try {
-            const res = await fetch(`/api/orders?user_id=${session.user.id}`).catch(() => null);
-            if (res && res.ok) {
-              const json = await res.json().catch(() => null);
-              if (json && Array.isArray(json.orders)) fetchedData = json.orders;
-            }
-          } catch (_) {}
-        }
-
-        if (fetchedData) {
-          setOrders((prev) => DualSyncEngine.reconcileEntities(prev, fetchedData as Order[]));
-        }
-      } catch (err) {
-        console.warn("[DualSync] Notice fetching orders via polling:", err);
-      }
+        const data=await customerPickupApi.orders();
+        if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+      } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
+      // Inbox persistence is not installed yet. Do not fabricate Ready notifications or poll a known missing table.
     };
-    fetchOrders();
-
-    // Determine if user has active in-flight orders for adaptive polling speed
-    const hasActiveOrders = ordersRef.current.some((o) =>
-      ["pending", "confirmed", "preparing", "ready"].includes(o.status) ||
-      ["finding_rider", "rider_assigned", "picked_up"].includes(o.delivery_status || "")
-    );
-    const pollInterval = hasActiveOrders ? 8000 : 25000;
-
-    // Dual sync polling loop
-    const timer = setInterval(fetchOrders, pollInterval);
-
-    // Reconcile immediately when window returns to foreground
-    const handleReconcile = () => {
-      fetchOrders();
-    };
-    window.addEventListener("localeats_force_reconcile", handleReconcile);
-
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(timer);
-      window.removeEventListener("localeats_force_reconcile", handleReconcile);
-    };
+    void refresh();const timer=setInterval(refresh,30000);
+    return()=>{active=false;clearInterval(timer);};
   }, [session?.user?.id]);
 
   useEffect(() => {
-    // Initial fetch of shops & menu items
-    fetchShopsData();
-
-    // Subscribe to changes in shops and menu_items in Supabase
-    const shopsChannel = getFreshChannel("public:shops")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "shops" },
-        () => fetchShopsData(),
-      )
-      .subscribe();
-
-    const menuChannel = getFreshChannel("public:menu_items")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "menu_items" },
-        () => fetchShopsData(),
-      )
-      .subscribe();
-
-    // Subscribe to live shop updates in Firestore
-    let unsubFirestore: (() => void) | null = null;
-    try {
-      unsubFirestore = FirestoreService.listenToShops((liveFirestoreShops) => {
-        if (liveFirestoreShops && liveFirestoreShops.length > 0) {
-          console.log(`[App:Firestore] Live shop updates received: ${liveFirestoreShops.length}`);
-          setShops((prev) => {
-            const merged = mergeShopsCatalogs(prev, liveFirestoreShops);
-            safeLocalStorageSet("cached_shops", JSON.stringify(merged));
-            cacheBusinessResults("all_shops", merged).catch(() => {});
-            return merged;
-          });
-        }
-      });
-    } catch (fErr) {
-      console.debug("[App:Firestore] Live shops listener notice:", fErr);
-    }
-
-    return () => {
-      supabase.removeChannel(shopsChannel);
-      supabase.removeChannel(menuChannel);
-      if (unsubFirestore) unsubFirestore();
-    };
+    void fetchShopsData();
+    const timer=setInterval(()=>void fetchShopsData(),60000);
+    return()=>{catalogGeneration.current++;clearInterval(timer);};
   }, [fetchShopsData]);
 
   useEffect(() => {
@@ -3078,12 +2349,12 @@ export default function App() {
         (error) => {
           // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
           console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(DEFAULT_COORDS);
+          setUserLocation(null);
         },
         { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
       );
     } else {
-      setUserLocation(DEFAULT_COORDS);
+      setUserLocation(null);
     }
   }, []);
 
@@ -3984,19 +3255,13 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && (
+              {currentScreen === "store-info" && visibleShops.some(s=>String(s.id)===String(selectedStoreId)) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={
-                    visibleShops && visibleShops.length > 0
-                      ? visibleShops.find(
-                           (s) => String(s.id) === String(selectedStoreId),
-                        ) || visibleShops[0]
-                      : DEFAULT_FALLBACK_SHOPS[0]
-                  }
+                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId))!}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -4753,6 +4018,8 @@ function HomeScreen({
   });
 
   const handleRequestNotifications = async () => {
+    showAlert("Notifications not enabled", "Ready notifications require pickup database activation. No push subscription has been saved."); return;
+
     if (typeof window === "undefined" || !("Notification" in window)) {
       showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
       return;
@@ -5067,34 +4334,6 @@ function HomeScreen({
       </motion.div>
     );
   }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
-
-  if (fetchError && shops.length === 0) {
-    return (
-      <div className="bg-slate-50 dark:bg-slate-900 min-h-screen flex flex-col items-center justify-center p-8 max-w-md mx-auto shadow-xl">
-        <div className="bg-red-50 dark:bg-red-500/10 p-6 rounded-[32px] border border-red-100 dark:border-red-900/30 flex flex-col items-center text-center">
-          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center text-red-600 mb-4">
-            <WifiOff className="w-8 h-8" />
-          </div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white mb-2 leading-tight tracking-tight">
-            Backend Timeout
-          </h2>
-          <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 max-w-[240px]">
-            {fetchError.includes("Network Error") || fetchError.includes("Failed to fetch")
-              ? (typeof navigator !== "undefined" && !navigator.onLine
-                  ? "You are currently offline. Please check your network connection."
-                  : "Unable to reach the servers. The database service may be temporarily waking up or reconnecting. Please retry in a moment.")
-              : fetchError}
-          </p>
-          <button
-            onClick={onRetry}
-            className="w-full py-4 bg-slate-900 dark:bg-orange-600 text-white font-black rounded-2xl shadow-xl active:scale-95 transition-all cursor-pointer hover:shadow-xl"
-          >
-            Reconnect & Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (loadingShops && shops.length === 0) {
     return <AppSkeletonLoader userProfile={userProfile} />;
@@ -5752,14 +4991,14 @@ function HomeScreen({
                     </span>
                   ) : (
                     <span className="text-[9px] font-bold uppercase tracking-wider bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-md">
-                      Live Push Alerts
+                      Optional Notifications
                     </span>
                   )}
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
                   {activeOrders.length > 0
                     ? "You have orders in progress! Enable notifications to receive instant updates when food is cooking, packed, and out for delivery."
-                    : "Receive real-time push alerts when your kitchen starts cooking, when food is packed, and when your driver is approaching."}
+                    : "Ready notifications require pickup database activation. Push is optional and best effort."}
                 </p>
               </div>
             </div>
@@ -5930,12 +5169,12 @@ function HomeScreen({
             </div>
 
             <h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              {shops.length === 0 ? "No Shops Found" : "No Kitchens Found"}
+              {shops.length === 0 ? (fetchError ? (!userLocation ? "Location required" : "Shops unavailable") : "No Shops Found") : "No Kitchens Found"}
             </h3>
 
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 max-w-xs mx-auto font-medium leading-relaxed">
               {shops.length === 0
-                ? (fetchError || "It looks like there are no active shops in your area yet.")
+                ? (fetchError || "No approved, available pickup shops found within 4 km of your real location.")
                 : searchQuery
                 ? `No merchants matching "${searchQuery}". Try a different keyword.`
                 : `No kitchens currently open in "${selectedCategory}".`}
@@ -5995,14 +5234,14 @@ function HomeScreen({
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
-                    Service Status
+                    Pickup Status
                   </span>
                   <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-200 dark:border-emerald-800">
-                    Online
+                    Not taking orders
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                  Connected to <strong>LocalEats Cloud Service</strong>. Live menu updates and real-time ordering are active and ready.
+                  <strong>Pickup development.</strong> Catalog reads require real location. Order submission and Ready notifications remain disabled until database activation.
                 </p>
               </div>
             )}
@@ -7104,19 +6343,17 @@ function DiscoverScreen({
               </div>
             </div>
 
-            {/* Delivery Radius Section */}
+            {/* Pickup Radius Section */}
             {userLocation && (
               <div className="flex flex-col gap-1.5 px-6">
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                  Delivery Radius
+                  Pickup Radius
                 </span>
                 <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {[
-                    { val: null, label: "Any distance" },
+                    { val: null, label: "Within 4 km" },
                     { val: 2, label: "Within 2 km" },
-                    { val: 5, label: "Within 5 km" },
-                    { val: 10, label: "Within 10 km" },
-                    { val: 25, label: "Within 25 km" }
+                    { val: 4, label: "Within 4 km" }
                   ].map((opt, i) => (
                     <button
                       key={i}
@@ -7281,7 +6518,7 @@ function DiscoverScreen({
                 
                 <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
                   {shops.length === 0
-                    ? "It looks like there are no active shops in your area yet."
+                    ? "No approved, available pickup shops found within 4 km of your real location."
                     : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
                 </p>
 
@@ -10844,7 +10081,7 @@ function ExploreScreen({
               <div className="h-4 w-px bg-slate-200 dark:bg-slate-800 shrink-0 mx-0.5" />
 
               {/* Distance Radius Quick Chips: 1km, 5km, 10km */}
-              {([null, 1, 5, 10] as (number | null)[]).map((dist) => {
+              {([null, 1, 2, 4] as (number | null)[]).map((dist) => {
                 const isActive = maxDistance === dist;
                 return (
                   <button
@@ -10967,7 +10204,7 @@ function ExploreScreen({
                     Maximum Distance Radius
                   </p>
                   <div className="grid grid-cols-4 gap-2">
-                    {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+                    {([null, 1, 2, 4] as (number | null)[]).map((dist) => (
                       <button
                         key={dist === null ? "any" : dist}
                         onClick={() => {
@@ -11580,7 +10817,7 @@ function ExploreScreen({
                       Radius Limit
                     </p>
                     <div className="grid grid-cols-4 gap-1.5">
-                      {([null, 1, 5, 10] as (number | null)[]).map((dist) => (
+                      {([null, 1, 2, 4] as (number | null)[]).map((dist) => (
                         <button
                           key={dist === null ? "rad-any" : `rad-${dist}`}
                           type="button"

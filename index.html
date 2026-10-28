@@ -28,7 +28,7 @@
     <script>
       // Only initialize OneSignal if we are on the production domain or allowLocalhost is set.
       // We skip initialization in the AI Studio preview to prevent Service Worker fetch interception errors.
-      if (!window.location.hostname.includes('run.app') && !window.location.hostname.includes('localhost')) {
+      if (window.location.hostname === 'www.localeatssa.co.za' || window.location.hostname === 'localeatssa.co.za') {
         const script = document.createElement('script');
         script.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
         script.defer = true;

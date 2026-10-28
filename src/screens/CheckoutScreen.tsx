@@ -1,3 +1,4 @@
+import {quotePickupCart, blockPickupSubmission} from "../services/customerPickup";
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -113,6 +114,10 @@ export function CheckoutScreen({
   triggerHaptic: (pattern?: number | number[]) => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [pickupQuote,setPickupQuote]=useState<Awaited<ReturnType<typeof quotePickupCart>>|null>(null);
+  const [quoteConsent,setQuoteConsent]=useState(false);
+  const [pickupQuoteError,setPickupQuoteError]=useState("");
+  const quoteLock=useRef(false);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
     "cash",
   );
@@ -785,10 +790,11 @@ export function CheckoutScreen({
     return (subtotal * tipPercentage) / 100;
   }, [tipPercentage, customTipInput, subtotal]);
 
-  const totalAmount = Math.max(
+  const estimatedTotalAmount = Math.max(
     0,
     subtotal - discountAmount + activeDeliveryFee + serviceFee + tipAmount,
   );
+  const totalAmount=pickupQuote ? pickupQuote.quote.total_minor/100 : estimatedTotalAmount;
   const totalSavings = discountAmount;
 
   // Psychological Price Anchoring Calculations:
@@ -865,7 +871,22 @@ export function CheckoutScreen({
     }
   }, [isCoaDisabled, paymentMethod, deliveryType]);
 
+  useEffect(()=>{setPickupQuote(null);setQuoteConsent(false);setPickupQuoteError("");},[cart,customerName,customerPhone,paymentMethod,userLocation?.lat,userLocation?.lng]);
+  const reviewPickupQuote = async () => {
+    if(quoteLock.current)return;
+    quoteLock.current=true;setLoading(true);setPickupQuoteError("");
+    try {
+      if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
+      if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
+      if(pickupQuote && quoteConsent)blockPickupSubmission();
+      const result=await quotePickupCart(cart,userLocation,customerName,customerPhone,paymentMethod);
+      setPickupQuote(result);setQuoteConsent(false);
+    } catch(error){setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");}
+    finally{quoteLock.current=false;setLoading(false);}
+  };
   const handleConfirm = async () => {
+    await reviewPickupQuote(); return; // No legacy checkout, payment, queue or success path may execute.
+
     if (loading) return;
     if (cart.length === 0) {
       toast.error("Empty Cart", {
@@ -933,7 +954,7 @@ export function CheckoutScreen({
     if (!activeCustomerPhone || activeCustomerPhone.replace(/\D/g, "").length < 9) {
       toast.error("Valid Mobile Number Required", {
         description:
-          "Please input a proper mobile number so our riders can call you!",
+          "Please enter a callable mobile number for your pickup order.",
       });
       setCurrentStep(1);
       setTimeout(() => {
@@ -1000,6 +1021,8 @@ export function CheckoutScreen({
   };
 
   const processCheckout = async (isClosed: boolean) => {
+    blockPickupSubmission();
+
     setLoading(true);
     triggerHaptic?.([200, 100, 200]);
 
@@ -2004,6 +2027,7 @@ export function CheckoutScreen({
               <button
                 type="button"
                 onClick={() => {
+                  showAlert("Pickup only", "Delivery is unavailable for this pilot."); return;
                   setDeliveryType("delivery");
                   if (!deliveryAddressText || !isLocationConfirmed) {
                     setShowAddressModal(true);
@@ -2991,7 +3015,7 @@ export function CheckoutScreen({
                   <div
                     className={`size-5 rounded-full border-2 flex items-center justify-center ${paymentMethod === "card_machine" ? "border-orange-500" : "border-slate-300"}`}
                   >
-                    {paymentMethod === "card_machine" && (
+                    {false && paymentMethod === "card_machine" && (
                       <div className="size-2.5 bg-orange-500 rounded-full animate-scale-in" />
                     )}
                   </div>
@@ -3558,6 +3582,17 @@ export function CheckoutScreen({
             </div>
           </section>
 
+          <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
+            <p className="font-bold">Pickup · Pay at the shop</p>
+            <p>Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned.</p>
+            {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
+            {pickupQuote && <>
+              <ul>{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id}>{line.quantity} × {line.name}: R {(line.line_minor/100).toFixed(2)}</li>)}</ul>
+              <p>Server total: R {(pickupQuote.quote.total_minor/100).toFixed(2)}</p>
+              <p>Service fee: R {(pickupQuote.quote.service_fee_minor/100).toFixed(2)} · No delivery fee</p>
+              <label className="flex items-center gap-2"><input type="checkbox" checked={quoteConsent} onChange={e=>setQuoteConsent(e.target.checked)}/>I have reviewed this server quote. This does not place an order.</label>
+            </>}
+          </section>
           {/* PINNED BOTTOM CHECKOUT BUTTON STACK */}
           <div className="sticky bottom-0 z-30 -mx-4 -mb-6 mt-6 px-4 py-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-100 dark:border-slate-800 shadow-[0_-8px_20px_rgba(0,0,0,0.06)] dark:shadow-[0_-8px_20px_rgba(0,0,0,0.4)] max-w-2xl w-[calc(100%+2rem)] rounded-b-3xl">
             <button
@@ -3584,7 +3619,7 @@ export function CheckoutScreen({
               {loading && (
                 <div className="absolute inset-0 bg-orange-700/95 dark:bg-orange-800/95 flex items-center justify-center gap-2 text-white font-bold text-xs uppercase tracking-wider backdrop-blur-xs z-10 select-none pointer-events-none">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Processing Order...</span>
+                  <span>Requesting server quote...</span>
                 </div>
               )}
 
@@ -3594,7 +3629,7 @@ export function CheckoutScreen({
                 distance !== null &&
                 distance > ZONE_B_LIMIT
                   ? "Out of Delivery Range"
-                  : `Confirm & Pay R ${totalAmount.toFixed(2)}`}
+                  : pickupQuote && quoteConsent ? "Ordering not enabled yet" : "Review pickup quote"}
               </span>
             </button>
             <button
@@ -3699,7 +3734,7 @@ export function CheckoutScreen({
                   ) : (
                     <>
                       <ShoppingBag className="w-3.5 h-3.5" />
-                      <span>Confirm</span>
+                      <span>Review pickup quote</span>
                     </>
                   )}
                 </button>

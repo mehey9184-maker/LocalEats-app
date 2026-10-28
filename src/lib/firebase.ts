@@ -1,3 +1,4 @@
+import {rejectLegacyOrderWrite} from "./legacyOrderWrite";
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import {
   getFirestore,
@@ -315,48 +316,11 @@ export const FirestoreService = {
 
   // Orders
   async createAuthoritativeOrder(requestData: CreateOrderRequestData): Promise<CreateOrderResponse> {
-    try {
-      const { getApiAuthHeaders } = await import('./apiAuth');
-      const headers = await getApiAuthHeaders();
-      const response = await fetch('/api/orders', {
-
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers
-        },
-        body: JSON.stringify(requestData)
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create order");
-      }
-      return {
-        success: true,
-        order_id: data.order?.id || requestData.idempotency_key,
-        subtotal: data.order?.subtotal || 0,
-        delivery_fee: data.order?.delivery_fee || 0,
-        service_fee: data.order?.service_fee || 0,
-        discount_amount: data.order?.discount_amount || 0,
-        tip_amount: data.order?.tip_amount || 0,
-        total_price: data.order?.total_price || 0,
-        status: data.order?.status || 'pending',
-        delivery_status: data.order?.delivery_status || 'none',
-      };
-    } catch (e: any) {
-      console.error("[FirestoreService] createAuthoritativeOrder failed:", e);
-      throw e;
-    }
+    return rejectLegacyOrderWrite();
   },
 
   async saveOrder(order: any): Promise<void> {
-    if (!order || !order.id) return;
-    const orderDoc = doc(db, "orders", String(order.id));
-    await setDoc(orderDoc, {
-      ...order,
-      created_at: order.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }, { merge: true });
+    return rejectLegacyOrderWrite();
   },
 
   async getOrder(orderId: string): Promise<any | null> {
@@ -583,12 +547,7 @@ export const FirestoreService = {
   
   // Mutations
   async updateOrder(orderId: string, updateData: any): Promise<void> {
-    try {
-      const orderDoc = doc(db, "orders", String(orderId));
-      await setDoc(orderDoc, updateData, { merge: true });
-    } catch (e) {
-      console.warn("[FirestoreService] updateOrder notice:", e);
-    }
+    return rejectLegacyOrderWrite();
   },
 
   async updateShop(shopId: string, updateData: any): Promise<void> {
