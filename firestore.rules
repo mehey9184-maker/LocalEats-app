@@ -77,9 +77,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // 4. Orders Collection
+    // 4. Legacy order history only. All order facts and transitions belong to
+    // the authenticated LocalEats API / Supabase. Admin SDKs bypass these rules.
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow read: if true; // Preserve existing history access in this scoped change.
+      allow create, update, delete: if false;
     }
 
     // 5. Rider Locations
