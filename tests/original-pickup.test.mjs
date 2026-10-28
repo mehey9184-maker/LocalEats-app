@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {requireRealLocation,mapPickupShop,pickupCartIntent,blockPickupSubmission} from '../src/services/pickupMapping.ts';
+import {retryPickupDiscovery,requireRealLocation,mapPickupShop,pickupCartIntent,blockPickupSubmission} from '../src/services/pickupMapping.ts';
 const point={lat:-25.98,lng:28.2};
 const item={id:'real-menu',shopId:'real-shop',name:'Item',quantity:2,price:0.01,image:''};
 test('discovery never substitutes coordinates or accepts invalid or outside-radius API data',()=>{
@@ -37,4 +37,14 @@ test('submission remains blocked regardless of quote consent and original entry 
  assert.match(checkout,/if\(pickupQuote && quoteConsent\)blockPickupSubmission\(\)/);
  const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
  assert.match(app,/readPickupCatalog\(userLocation\)/);assert.doesNotMatch(app,/setShops\(DEFAULT_FALLBACK_SHOPS\)/);
+});
+
+test('missing-location retry requests device location instead of reloading a catalog with null coordinates',()=>{
+ let locations=0,reloads=0;
+ retryPickupDiscovery(null,()=>locations++,()=>reloads++);
+ assert.equal(locations,1);assert.equal(reloads,0);
+ retryPickupDiscovery(point,()=>locations++,()=>reloads++);
+ assert.equal(locations,1);assert.equal(reloads,1);
+ assert.throws(()=>retryPickupDiscovery({lat:NaN,lng:0},()=>locations++,()=>reloads++));
+ assert.equal(reloads,1);
 });

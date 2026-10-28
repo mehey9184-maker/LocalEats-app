@@ -1,3 +1,4 @@
+import {retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi} from "./services/customerPickup";
 /**
  * @license
@@ -1416,6 +1417,8 @@ export default function App() {
 
   const requestLocation = useCallback((silent = false) => {
     if (!navigator.geolocation) {
+      setLoadingShops(false);
+      setFetchError("Location is unavailable in this browser. Use a browser with location access to find pickup shops.");
       if (!silent) {
         setNotification({
           message: "Geolocation is not supported by your browser",
@@ -1439,7 +1442,9 @@ export default function App() {
         } else {
           console.log("Error getting location (graceful fallback):", error?.message);
         }
-        if (silent) return; // Fail silently for automatic requests to avoid annoying timeout toasts
+        setLoadingShops(false);
+        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location could not be obtained. Tap Reload shops & live data to retry.");
+        if (silent) return; // Keep the existing non-intrusive automatic location behavior.
         
         let errorMsg = "Could not get your location automatically.";
         if (error.code === error.PERMISSION_DENIED) {
@@ -3046,7 +3051,7 @@ export default function App() {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
                   }}
-                  onRetry={() => fetchShopsData()}
+                  onRetry={() => retryPickupDiscovery(userLocation, () => {setLoadingShops(true);setFetchError(null);requestLocation();}, () => {void fetchShopsData();})}
                   cart={cart}
                   addToCart={addToCart}
                   removeFromCart={removeFromCart}

@@ -30,3 +30,8 @@ export function pickupCartIntent(cart:CartItem[],location:{lat:number;lng:number
 export function blockPickupSubmission():never {
  throw new Error("Order submission is not enabled yet. Your quote is not an order. No payment has been taken. Pickup database activation requires separate approval.");
 }
+
+export function retryPickupDiscovery(point:{lat:number;lng:number}|null,locate:()=>void,reload:()=>void):void {
+ if(!point){locate();return;}
+ requireRealLocation(point);reload();
+}
