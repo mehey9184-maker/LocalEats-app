@@ -31,10 +31,8 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 /**
  * Authoritative Server-Side Order Creation Firebase Callable Cloud Function.
  */
-exports.createOrder = (0, https_1.onCall)({
-    cors: true,
-    maxInstances: 10,
-}, async (request) => {
+// Preserved source for future reviewed delivery work; never registered or called by an endpoint.
+const retainedLegacyCreateOrder = async (request) => {
     // 1. Authenticate Request
     if (!request.auth || !request.auth.uid) {
         throw new https_1.HttpsError("unauthenticated", "Authentication is required to place an order. Anonymous guest sessions are supported.");
@@ -347,5 +345,13 @@ exports.createOrder = (0, https_1.onCall)({
         };
     });
     return result;
+};
+void retainedLegacyCreateOrder;
+// Only this guarded callable is published. Admin SDK writes bypass Firestore rules,
+// so this guard must be deployed independently of client and rules changes.
+exports.createOrder = (0, https_1.onCall)({ cors: true, maxInstances: 10 }, async (request) => {
+    if (!request.auth?.uid)
+        throw new https_1.HttpsError("unauthenticated", "Authentication required.");
+    throw new https_1.HttpsError("failed-precondition", "Update required. Use the pickup ordering app.", { code: "PICKUP_CONTRACT_REQUIRED" });
 });
 //# sourceMappingURL=index.js.map

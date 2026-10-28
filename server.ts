@@ -1,3 +1,4 @@
+import {legacyOrderGuard} from "./legacyOrderGuards";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -37,6 +38,7 @@ export const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
 const app = express();
 const PORT = 3000;
 
+app.use(legacyOrderGuard);
 app.use(express.json({ limit: "10mb" }));
 
 // Initialize Gemini Client with mandatory telemetry header
