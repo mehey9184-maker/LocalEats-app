@@ -1,4 +1,4 @@
-import {quotePickupCart, blockPickupSubmission} from "../services/customerPickup";
+import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -879,7 +879,10 @@ export function CheckoutScreen({
       if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
       if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
-      if(pickupQuote && quoteConsent)blockPickupSubmission();
+      if(pickupQuote && quoteConsent){
+        if(!pickupOrderingEnabled())blockPickupSubmission();
+        await submitPickupQuote(pickupQuote); setCart([]); onConfirm(); return;
+      }
       const result=await quotePickupCart(cart,userLocation,customerName,customerPhone,paymentMethod);
       setPickupQuote(result);setQuoteConsent(false);
     } catch(error){setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");}
@@ -1550,7 +1553,7 @@ export function CheckoutScreen({
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
-        <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>
+        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>}
         {!primaryShop && <p role="alert" className="text-sm text-orange-700 dark:text-orange-300">Your cart is preserved. Pickup shop details are unavailable. Return to browsing and reload shops before reviewing a quote.</p>}
         {/* Unified Card Container */}
         <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
@@ -3587,7 +3590,8 @@ export function CheckoutScreen({
 
           <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
             <p className="font-bold">Pickup · Pay at the shop</p>
-            <p>Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned.</p>
+            <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
+            {pickupOrderingEnabled() && <button type="button" disabled={loading} onClick={async()=>{setLoading(true);try{await submitPickupQuote(null);setCart([]);onConfirm();}catch(e){setPickupQuoteError(e instanceof Error?e.message:"Submission remains unconfirmed.");}finally{setLoading(false);}}}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
             {pickupQuote && <>
               <ul>{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id}>{line.quantity} × {line.name}: R {(line.line_minor/100).toFixed(2)}</li>)}</ul>
@@ -3632,7 +3636,7 @@ export function CheckoutScreen({
                 distance !== null &&
                 distance > ZONE_B_LIMIT
                   ? "Out of Delivery Range"
-                  : pickupQuote && quoteConsent ? "Ordering not enabled yet" : "Review pickup quote"}
+                  : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
               </span>
             </button>
             <button

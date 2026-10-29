@@ -8,7 +8,7 @@ import {renderToString} from 'react-dom/server';
 // React hooks, cart rendering and pricing components run unchanged.
 const result=await build({entryPoints:['src/screens/CheckoutScreen.tsx'],write:false,bundle:true,platform:'node',format:'cjs',packages:'external',plugins:[{name:'offline-provider-boundaries',setup(b){
  b.onLoad({filter:/[\\/]lib[\\/](firebase|supabase|audioHelper|profileService)\.ts$|[\\/]components[\\/]MapComponents\.tsx$/},args=>({contents:args.path.endsWith('firebase.ts')?'export const FirestoreService={};export const registerAndSyncPushToken=()=>{};export const ensureAnonymousAuth=()=>{};':args.path.endsWith('supabase.ts')?'export const supabase={};':args.path.endsWith('audioHelper.ts')?'export const audioHelper={};':args.path.endsWith('profileService.ts')?'export const upsertProfileWithRPC=()=>{};':'export const LocationPickerMap=()=>null;',loader:'js'}));
- b.onLoad({filter:/[\\/]customerPickup\.ts$/},()=>({contents:'export const quotePickupCart=()=>{throw Error("No network in render test")};export const blockPickupSubmission=()=>{throw Error("Ordering not enabled")};',loader:'js'}));
+ b.onLoad({filter:/[\\/]customerPickup\.ts$/},()=>({contents:'export const pickupOrderingEnabled=()=>false;export const submitPickupQuote=()=>{throw Error("No network in render test")};export const quotePickupCart=()=>{throw Error("No network in render test")};export const blockPickupSubmission=()=>{throw Error("Ordering not enabled")};',loader:'js'}));
  b.onResolve({filter:/^react-leaflet$/},()=>({path:'react-leaflet',namespace:'mock'}));
  b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:'export const MapContainer=()=>null,TileLayer=()=>null,Marker=()=>null,Popup=()=>null;',loader:'js'}));
 }}]});

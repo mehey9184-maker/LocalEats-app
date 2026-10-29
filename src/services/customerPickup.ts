@@ -28,3 +28,25 @@ export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:n
   return {intent,quote:result.quote};
 }
 export {blockPickupSubmission};
+
+export const pickupOrderingEnabled=()=>import.meta.env?.VITE_PICKUP_ORDERING_ENABLED === "true";
+export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
+ if(!pickupOrderingEnabled())blockPickupSubmission();
+ const uid=auth.currentUser?.uid;
+ if(!uid)throw new Error("Sign in before submitting an order.");
+ const key=`pickup-create:${uid}`;
+ const stored=sessionStorage.getItem(key);
+ const payload=review ? {...review.intent,consent:{currency:"ZAR",total_minor:review.quote.total_minor,pricing_fingerprint:review.quote.pricing_fingerprint}} : null;
+ const pending=stored ? JSON.parse(stored) : payload;
+ if(!pending)throw new Error("Review a quote before submitting.");
+ if(stored && payload && JSON.stringify(pending)!==JSON.stringify(payload))throw new Error("A previous order outcome is unresolved. Use Retry previous submission first.");
+ sessionStorage.setItem(key,JSON.stringify(pending));
+ let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
+ try{result=await customerPickupApi.create(pending);}catch(error){
+  if(error && typeof error==="object" && "status" in error && [400,403,404,409,422].includes(Number(error.status)))sessionStorage.removeItem(key);
+  throw error;
+ }
+ if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
+ sessionStorage.removeItem(key);
+ return result.order;
+}

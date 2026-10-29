@@ -34,7 +34,7 @@ test('submission remains blocked regardless of quote consent and original entry 
  assert.match(entry,/import App from '.\/App.tsx'/);assert.doesNotMatch(entry,/PickupCustomerApp/);
  const checkout=readFileSync(new URL('../src/screens/CheckoutScreen.tsx',import.meta.url),'utf8');
  assert.match(checkout,/await reviewPickupQuote\(\); return;/);
- assert.match(checkout,/if\(pickupQuote && quoteConsent\)blockPickupSubmission\(\)/);
+ assert.match(checkout,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
  const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
  assert.match(app,/readPickupCatalog\(userLocation\)/);assert.doesNotMatch(app,/setShops\(DEFAULT_FALLBACK_SHOPS\)/);
 });

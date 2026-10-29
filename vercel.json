@@ -7,7 +7,8 @@
   ],
   "git": {
     "deploymentEnabled": {
-      "integration/customer-original-ui-pickup": true
+      "integration/customer-original-ui-pickup": true,
+      "activation/pickup-workflow": false
     }
   }
 }

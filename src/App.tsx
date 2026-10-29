@@ -1,5 +1,5 @@
 import {retryPickupDiscovery} from "./services/pickupMapping";
-import {readPickupCatalog, customerPickupApi} from "./services/customerPickup";
+import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -2227,11 +2227,14 @@ export default function App() {
         const data=await customerPickupApi.orders();
         if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
       } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
-      // Inbox persistence is not installed yet. Do not fabricate Ready notifications or poll a known missing table.
+      if(pickupOrderingEnabled())try{
+        const inbox=await customerPickupApi.notifications();
+        if(active)setNotifications((inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as unknown as AppNotification[]);
+      }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
     };
     void refresh();const timer=setInterval(refresh,30000);
     return()=>{active=false;clearInterval(timer);};
-  }, [session?.user?.id]);
+  }, [session?.user?.id,currentScreen]);
 
   useEffect(() => {
     void fetchShopsData();
@@ -3456,19 +3459,7 @@ export default function App() {
                       shops={visibleShops}
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
-                      onConfirm={() => {
-                        const pointsEarned = Math.floor(cartTotal / 10);
-                        setOrderAgainEnabled(true);
-                        if (session?.user?.id) {
-                          handleUpdateProfile(
-                            { loyaltyPoints: (userProfile.loyaltyPoints || 0) + pointsEarned },
-                            false,
-                            () => setCurrentScreen("order-success")
-                          );
-                        } else {
-                          setCurrentScreen("order-success");
-                        }
-                      }}
+                      onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
                         setCurrentScreen("complete-profile");
@@ -5246,7 +5237,7 @@ function HomeScreen({
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                  <strong>Pickup development.</strong> Catalog reads require real location. Order submission and Ready notifications remain disabled until database activation.
+                  {pickupOrderingEnabled() ? "Pickup pilot. Use your real location. Pay at the shop; follow order status and Ready notifications in-app." : "Pickup development. Catalog reads require real location. Order submission and Ready notifications remain disabled until database activation."}
                 </p>
               </div>
             )}
