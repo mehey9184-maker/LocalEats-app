@@ -142,7 +142,7 @@ export function CheckoutScreen({
 
   const isCardMachineIntegrationEnabled = useMemo(() => {
     const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
-    const pShop = shops.find((s) => s.id === primaryShopId) || shops[0];
+    const pShop = shops.find((s) => s.id === primaryShopId);
     if (!pShop) return false;
     return (
       localStorage.getItem("localeats_card_machine_enabled_" + pShop.id) === "true" ||
@@ -463,7 +463,7 @@ export function CheckoutScreen({
   const [deliveryFee, setDeliveryFee] = useState<number>(5.0);
 
   const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
-  const primaryShop = shops.find((s) => s.id === primaryShopId) || shops[0];
+  const primaryShop = shops.find((s) => s.id === primaryShopId);
 
   const shopRadiusLimit = useMemo(() => {
     if (primaryShop) {
@@ -521,7 +521,7 @@ export function CheckoutScreen({
   }, [primaryShop?.id]);
 
   useEffect(() => {
-    if (deliveryCoordinates && primaryShop.latitude && primaryShop.longitude) {
+    if (deliveryCoordinates && primaryShop?.latitude && primaryShop.longitude) {
       const [lng, lat] = deliveryCoordinates.coordinates;
       const dist = calculateDistance(
         lat,
@@ -876,6 +876,7 @@ export function CheckoutScreen({
     if(quoteLock.current)return;
     quoteLock.current=true;setLoading(true);setPickupQuoteError("");
     try {
+      if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
       if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
       if(pickupQuote && quoteConsent)blockPickupSubmission();
@@ -1010,7 +1011,7 @@ export function CheckoutScreen({
     if (isClosed) {
       showConfirm(
         "Shop Closed",
-        `${primaryShop.name} is currently closed. Your order will be attended to when they open at ${status.nextOpeningTime || "their next opening hour"}. Do you want to proceed?`,
+        `${primaryShop?.name || "Shop details unavailable"} is currently closed. Your order will be attended to when they open at ${status.nextOpeningTime || "their next opening hour"}. Do you want to proceed?`,
         () => {
           processCheckout(isClosed);
         },
@@ -1159,7 +1160,7 @@ export function CheckoutScreen({
       const cleanNum = cardNumber.replace(/\s/g, "");
       const maskedCard = `${cleanNum.slice(0, 4)} ${cleanNum.slice(4, 6)}•• •••• ${cleanNum.slice(-4)}`;
       const terminalIdVal = localStorage.getItem("localeats_card_machine_terminal_id_" + primaryShop.id) || "POS-TERM-101";
-      const brandVal = localStorage.getItem("localeats_card_machine_brand_" + primaryShop.id) || "Yoco Go";
+      const brandVal = localStorage.getItem("localeats_card_machine_brand_" + primaryShop?.id) || "Yoco Go";
       
       finalDeliveryInstructions = `[CARD_MACHINE_PAYMENT: Holder: ${cardHolder.trim()}, Card: ${maskedCard}, Exp: ${cardExpiry}, CVV: ${cardCvv}, Terminal: ${terminalIdVal}, Brand: ${brandVal}]`;
     }
@@ -1549,6 +1550,8 @@ export function CheckoutScreen({
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
+        <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>
+        {!primaryShop && <p role="alert" className="text-sm text-orange-700 dark:text-orange-300">Your cart is preserved. Pickup shop details are unavailable. Return to browsing and reload shops before reviewing a quote.</p>}
         {/* Unified Card Container */}
         <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
         {/* Header Block */}
@@ -2415,10 +2418,10 @@ export function CheckoutScreen({
               <div className="flex items-stretch gap-3">
                 <div className="flex-1 space-y-1">
                   <h4 className="font-black text-slate-900 dark:text-white text-base">
-                    {primaryShop.name}
+                    {primaryShop?.name || "Shop details unavailable"}
                   </h4>
                   <p className="text-xs text-slate-500 tracking-tight leading-relaxed">
-                    {primaryShop.address}
+                    {primaryShop?.address || "Reload shops to verify pickup details."}
                   </p>
                   <div className="pt-2 flex items-center gap-1.5">
                     <span className="text-[9px] uppercase tracking-widest bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 rounded font-black">
@@ -2429,11 +2432,11 @@ export function CheckoutScreen({
                     </span>
                   </div>
                 </div>
-                {primaryShop.logo && (
+                {primaryShop?.logo && (
                   <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-inner shrink-0 leading-none">
                     <BlurUpImage
                       src={primaryShop.logo}
-                      alt={primaryShop.name}
+                      alt={primaryShop?.name || "Shop details unavailable"}
                       className="w-full h-full object-cover"
                       blurHash={`https://picsum.photos/seed/${primaryShop.id}/10/10?blur=10`}
                     />
@@ -2456,7 +2459,7 @@ export function CheckoutScreen({
               </div>
 
               {/* Simple illustrative pickup Map to help find the shop */}
-              {primaryShop.latitude && primaryShop.longitude && (
+              {primaryShop?.latitude && primaryShop.longitude && (
                 <div className="h-40 rounded-2xl overflow-hidden border border-slate-150 mt-3 relative z-0">
                   <MapContainer
                     center={[primaryShop.latitude, primaryShop.longitude]}
@@ -2469,12 +2472,12 @@ export function CheckoutScreen({
                       position={[primaryShop.latitude, primaryShop.longitude]}
                     >
                       <Popup>
-                        <p className="font-bold text-xs">{primaryShop.name}</p>
+                        <p className="font-bold text-xs">{primaryShop?.name || "Shop details unavailable"}</p>
                       </Popup>
                     </Marker>
                   </MapContainer>
                   <div className="absolute bottom-2 left-2 bg-slate-950/75 backdrop-blur-sm text-white text-[10px] whitespace-nowrap font-black uppercase tracking-widest px-2 py-1 rounded">
-                    📍 {primaryShop.name} Position
+                    📍 {primaryShop?.name || "Shop details unavailable"} Position
                   </div>
                 </div>
               )}
@@ -3272,7 +3275,7 @@ export function CheckoutScreen({
                 <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl border border-indigo-100/50 dark:border-indigo-800/30 flex items-start gap-2">
                   <span className="text-[11px] leading-none">🔒</span>
                   <p className="text-[9px] text-indigo-700 dark:text-indigo-400 font-semibold font-sans leading-snug">
-                    Terminal Charge Authorized: By submitting, your payment details are secured on the local point-of-sale queue. The merchant will capture R {totalAmount.toFixed(2)} directly on the connected card machine ({localStorage.getItem("localeats_card_machine_brand_" + primaryShop.id) || "Yoco Terminal"}).
+                    Terminal Charge Authorized: By submitting, your payment details are secured on the local point-of-sale queue. The merchant will capture R {totalAmount.toFixed(2)} directly on the connected card machine ({localStorage.getItem("localeats_card_machine_brand_" + primaryShop?.id) || "Yoco Terminal"}).
                   </p>
                 </div>
               </div>
@@ -3406,7 +3409,7 @@ export function CheckoutScreen({
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
                   <MapPin className="w-4 h-4 text-orange-500 shrink-0" />
                   <span className="truncate max-w-[220px]">
-                    {deliveryType === "delivery" ? deliveryAddressText || "Delivery Spot Set" : `Counter Pickup @ ${primaryShop.name}`}
+                    {deliveryType === "delivery" ? deliveryAddressText || "Delivery Spot Set" : `Counter Pickup @ ${primaryShop?.name || "Shop details unavailable"}`}
                   </span>
                 </div>
                 <button
