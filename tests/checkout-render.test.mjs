@@ -20,7 +20,8 @@ const props={userProfile:{fullName:'',phone:'',address:''},session:null,cart:[it
 for(const [label,shops] of [['empty discovery',[]],['different shop',[{id:'different',name:'Wrong shop'}]],['matching shop',[{id:'cart-shop',name:'Cart shop',menu:[item]}]]])test(`checkout renders with ${label} and preserves the cart`,()=>{
  const html=renderToString(React.createElement(CheckoutScreen,{...props,shops}));
  assert.match(html,/Secure Checkout/);assert.match(html,/Cart Summary Preview/);assert.match(html,/25\.00/);assert.match(html,/Ordering is temporarily disabled/);
- assert.doesNotMatch(html,/Checkout failed to load|Wrong shop/);
+ assert.doesNotMatch(html,/Checkout failed to load|Wrong shop|Order Tax Invoice|Tax \/ VAT \(15% Included\)/);
+ assert.doesNotMatch(html,/27\.50/);
  if(label!=='matching shop')assert.match(html,/Pickup shop details are unavailable/);
  assert.equal(props.cart[0].quantity,1);
 });

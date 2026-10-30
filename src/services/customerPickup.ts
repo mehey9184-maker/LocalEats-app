@@ -1,3 +1,4 @@
+import {pickupQuoteAmounts} from "./pickupSummary";
 import {auth} from "../lib/firebase";
 import {createPickupApi} from "../pickup/client";
 import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
@@ -25,6 +26,7 @@ export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:n
   const result=await customerPickupApi.quote(intent);
   if(!result.quote || !Number.isSafeInteger(result.quote.total_minor) || result.quote.total_minor<0)
     throw new Error("The service did not confirm an authoritative quote.");
+  pickupQuoteAmounts(result.quote);
   return {intent,quote:result.quote};
 }
 export {blockPickupSubmission};

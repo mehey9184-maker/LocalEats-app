@@ -3519,6 +3519,7 @@ export default function App() {
 
           {/* Slide-Over Cart Drawer */}
           <CartDrawer
+            fulfillment="collection"
             isOpen={isCartDrawerOpen}
             onClose={() => setIsCartDrawerOpen(false)}
             cart={cart}
