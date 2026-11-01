@@ -290,6 +290,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
+import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ContactScreen } from "./screens/ContactScreen";
@@ -683,7 +684,10 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
-  const visibleShops = shops;
+  const visibleShops = userLocation ? shops.filter(shop =>
+    Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
+    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
+  ) : [];
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -1152,16 +1156,37 @@ export default function App() {
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
   const catalogGeneration=useRef(0);
+  const loadedCatalogLocation=useRef<{lat:number;lng:number}|null>(null);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
+    // The pickup catalog must never be queried for an invented location.
+    if (!userLocation) return;
     const generation=++catalogGeneration.current;
-    setShops([]); setLoadingShops(true); setIsSyncing(true); setFetchError(null);
+    const locationChanged=loadedCatalogLocation.current!==null &&
+      distanceKm(loadedCatalogLocation.current,userLocation)>0.15;
+    // Keep verified shops visible on ordinary refresh, and use a short-lived
+    // prior API response while refreshing after a tab reload.
+    let cached:Shop[]|null=null;
+    if (!locationChanged && loadedCatalogLocation.current===null) {
+      cached=readDisplayCatalog(userLocation);
+      if (cached!==null) {
+        setShops(cached);
+        loadedCatalogLocation.current=userLocation;
+      }
+    }
+    if (locationChanged) setShops([]);
+    setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
+    setIsSyncing(true); setFetchError(null);
     try {
       const result=await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
+      loadedCatalogLocation.current=userLocation;
       setShops(result);
-      // A successful empty result is not a network or authentication error.
+      saveDisplayCatalog(userLocation,result);
+      // A genuinely empty authorized result stays empty; no fabricated shops.
     } catch(error) {
-      if(generation===catalogGeneration.current)setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      if(generation===catalogGeneration.current) {
+        setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      }
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
@@ -2242,11 +2267,8 @@ export default function App() {
     return()=>{catalogGeneration.current++;clearInterval(timer);};
   }, [fetchShopsData]);
 
-  useEffect(() => {
-    if (currentScreen === "home" || currentScreen === "explore" || currentScreen === "discover") {
-      requestLocation(true);
-    }
-  }, [requestLocation, currentScreen]);
+  // Location is requested once on mount; Home navigation must not restart the
+  // geolocation/catalog sequence. Explicit retry remains available to the user.
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
