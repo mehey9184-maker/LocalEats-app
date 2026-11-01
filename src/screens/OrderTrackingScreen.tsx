@@ -1434,8 +1434,14 @@ export function OrderTrackingScreen({
               );
             }
 
-            // Define delivery milestones/steps for Smart Dispatch 3-stage flow
-            const steps = [
+
+            const isCollection = isCollectionTrackingOrder(order);
+            const steps = isCollection ? [
+              { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received by kitchen" },
+              { s: "cooking", label: "Cooking", icon: <ChefHat className="w-4 h-4" />, desc: "The kitchen is cooking your food" },
+              { s: "ready", label: "Ready for Pickup", icon: <PackageCheck className="w-4 h-4" />, desc: "Collect at the shop" },
+              { s: "collected", label: "Collected", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Shop confirmed collection" },
+            ] : [
               { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received by kitchen" },
               { s: "cooking", label: "Cooking", icon: <ChefHat className="w-4 h-4" />, desc: "The kitchen is cooking your food" },
               { s: "ready", label: "Packed & Ready", icon: <PackageCheck className="w-4 h-4" />, desc: "Waiting for rider pickup" },
@@ -1443,26 +1449,22 @@ export function OrderTrackingScreen({
               { s: "delivered", label: "Delivered", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Delivered safely" },
             ];
 
-            // Numerical tracking index
-            let currentStepIndex = 0;
             const dStatus = (order.delivery_status || "").toLowerCase();
             const oStatus = (order.status || "").toLowerCase();
-
-            if (oStatus === "completed" || oStatus === "delivered") {
-              currentStepIndex = 4;
-            } else if (
-              dStatus === "picked_up" ||
-              dStatus === "out_for_delivery" ||
-              dStatus === "delivering" ||
-              dStatus === "in_transit"
-            ) {
-              currentStepIndex = 3;
-            } else if (oStatus === "ready") {
-              currentStepIndex = 2;
-            } else if (oStatus === "preparing" || oStatus === "confirmed") {
-              currentStepIndex = 1;
-            } else {
-              currentStepIndex = 0;
+            let currentStepIndex = isCollection ? collectionTrackingStep(oStatus) : 0;
+            if (!isCollection) {
+              if (oStatus === "completed" || oStatus === "delivered") {
+                currentStepIndex = 4;
+              } else if (
+                dStatus === "picked_up" || dStatus === "out_for_delivery" ||
+                dStatus === "delivering" || dStatus === "in_transit"
+              ) {
+                currentStepIndex = 3;
+              } else if (oStatus === "ready") {
+                currentStepIndex = 2;
+              } else if (oStatus === "preparing" || oStatus === "confirmed") {
+                currentStepIndex = 1;
+              }
             }
 
             return (
