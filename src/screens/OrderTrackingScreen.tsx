@@ -1514,7 +1514,7 @@ export function OrderTrackingScreen({
                       {order.payment_status === "paid" ? "Payment has been confirmed by the shop. Present your order details when collecting." : order.payment_method === "card_machine" ? "Pay at the shop using its physical card machine before collection." : order.payment_method === "cash" ? "Pay cash at the shop before collection." : "Payment must be confirmed by the shop before your order can be collected."}
                     </p>
                   </div>
-                )
+                )}
 
                 {/* Direct Driver Chat Banner for Delivery Orders: Only active in Live Delivery Phase */}
                 {order.is_delivery && isLiveDeliveryActive(order) && (
