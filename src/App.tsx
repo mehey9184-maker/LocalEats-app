@@ -684,10 +684,6 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
-  const visibleShops = userLocation ? shops.filter(shop =>
-    Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
-    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
-  ) : [];
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -946,6 +942,10 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  const visibleShops = userLocation ? shops.filter(shop =>
+    Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
+    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
+  ) : [];
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
