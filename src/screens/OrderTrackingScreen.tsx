@@ -1222,7 +1222,7 @@ export function OrderTrackingScreen({
   const activeOrders = combinedOrders.filter(
     (o) => {
       const s = (o.status || "").toLowerCase();
-      return s !== "completed" && s !== "cancelled" && s !== "delivered";
+      return s !== "completed" && s !== "collected" && s !== "cancelled" && s !== "delivered";
     }
   );
 
