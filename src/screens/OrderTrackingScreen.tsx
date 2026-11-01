@@ -1497,16 +1497,24 @@ export function OrderTrackingScreen({
                   </div>
                   <div className="text-right flex flex-col items-end">
                     <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
-                      {formatRand(order.price + (order.delivery_fee || 0))}
+                      {formatRand(typeof order.total_price === "number" && Number.isFinite(order.total_price) ? order.total_price : order.price + (order.delivery_fee || 0))}
                     </p>
                     <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[10px] whitespace-nowrap font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
-                      {order.is_delivery ? "🚚 Delivery" : "🛍️ Collection"}
+                      {isCollection ? "🛍️ Collection" : "🚚 Delivery"}
                     </span>
                   </div>
                 </div>
 
                 {/* Smart Dispatch & 3-Stage Tracking State Banner */}
                 <SmartDispatchTrackingBanner order={order} shop={shop} />
+                {isCollection && (oStatus === "ready" || oStatus === "ready_for_pickup") && (
+                  <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/50 p-4 space-y-1">
+                    <p className="text-xs font-black text-emerald-800 dark:text-emerald-300">Collect your order from {shop?.name || "the shop"}.</p>
+                    <p className="text-xs text-emerald-800/80 dark:text-emerald-200/80">
+                      {order.payment_status === "paid" ? "Payment has been confirmed by the shop. Present your order details when collecting." : order.payment_method === "card_machine" ? "Pay at the shop using its physical card machine before collection." : order.payment_method === "cash" ? "Pay cash at the shop before collection." : "Payment must be confirmed by the shop before your order can be collected."}
+                    </p>
+                  </div>
+                )
 
                 {/* Direct Driver Chat Banner for Delivery Orders: Only active in Live Delivery Phase */}
                 {order.is_delivery && isLiveDeliveryActive(order) && (
@@ -1884,7 +1892,7 @@ export function OrderTrackingScreen({
                         {order.status.toLowerCase() === "pending" && "Waiting for shop acceptance..."}
                         {order.status.toLowerCase() === "confirmed" && "Order accepted! Preparing..."}
                         {order.status.toLowerCase() === "preparing" && "Chef is cooking your meal!"}
-                        {order.status.toLowerCase() === "ready" && "Your meal is ready for collection!"}
+                        {order.status.toLowerCase() === "ready" && (isCollection ? "Your meal is ready for collection!" : "Your meal is ready for rider pickup!")}
                       </p>
                       <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                         Est. preparation duration: 15-20 minutes
@@ -1892,9 +1900,9 @@ export function OrderTrackingScreen({
                     </div>
                   </div>
 
-                  <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={order.is_delivery} />
+                  <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={!isCollection} />
 
-                  {order.is_delivery && (
+                  {!isCollection && order.is_delivery && (
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60">
                       {shop?.allow_external_riders === false ? (
                         <p className="text-[10px] text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1.5 leading-none">
@@ -1927,7 +1935,7 @@ export function OrderTrackingScreen({
 
                     {isExpanded && (
                       <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <DetailedKitchenStatus createdAt={order.created_at} status={order.status} />
+                        <DetailedKitchenStatus createdAt={order.created_at} status={order.status} isCollection={isCollection} />
 
                         <button
                           onClick={() => {
@@ -1946,7 +1954,7 @@ export function OrderTrackingScreen({
                 </div>
 
                 {/* Cancel Action */}
-                {["pending", "confirmed"].includes((order.status || "").toLowerCase()) && (
+                {!isCollection && ["pending", "confirmed"].includes((order.status || "").toLowerCase()) && (
                   <button
                     onClick={() => setCancellationModal({ isOpen: true, orderId: order.id })}
                     className="w-full py-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/[0.06] dark:hover:bg-red-500/[0.12] text-red-600 dark:text-red-400 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-red-200/30 dark:border-red-900/20 transition-all active:scale-95 cursor-pointer"
@@ -1957,7 +1965,7 @@ export function OrderTrackingScreen({
                 )}
 
                 {/* Mark as Received Action */}
-                {["ready", "picked_up", "delivered"].includes((order.status || "").toLowerCase()) && (
+                {!isCollection && ["ready", "picked_up", "delivered"].includes((order.status || "").toLowerCase()) && (
                   <button
                     onClick={() => handleMarkReceived(order.id, order.shop_id, order.product_name)}
                     className="w-full mt-2 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer"
