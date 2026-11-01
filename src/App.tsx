@@ -290,6 +290,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
+import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ContactScreen } from "./screens/ContactScreen";
@@ -683,7 +684,6 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
-  const visibleShops = shops;
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -942,7 +942,13 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  const visibleShops = userLocation ? shops.filter(shop =>
+    Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
+    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
+  ) : [];
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const ordersRef = useRef<Order[]>(orders);
   useEffect(() => {
@@ -1019,9 +1025,16 @@ export default function App() {
     safeLocalStorageSet("favorites", JSON.stringify(favorites));
   }, [favorites]);
 
+  // Inbox entries belong to one authenticated account. Do not persist them in
+  // the legacy global localStorage key shared across logins.
   useEffect(() => {
-    safeLocalStorageSet("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+    try {localStorage.removeItem("app_notifications");} catch {}
+  }, []);
+  useEffect(() => {
+    if (notificationOwnerId && notificationOwnerId === session?.user?.id) {
+      saveDisplayInbox(notificationOwnerId, notifications);
+    }
+  }, [notifications, notificationOwnerId, session?.user?.id]);
 
   useEffect(() => {
     safeLocalStorageSet("order_again_enabled", String(orderAgainEnabled));
@@ -1152,16 +1165,37 @@ export default function App() {
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
   const catalogGeneration=useRef(0);
+  const loadedCatalogLocation=useRef<{lat:number;lng:number}|null>(null);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
+    // The pickup catalog must never be queried for an invented location.
+    if (!userLocation) return;
     const generation=++catalogGeneration.current;
-    setShops([]); setLoadingShops(true); setIsSyncing(true); setFetchError(null);
+    const locationChanged=loadedCatalogLocation.current!==null &&
+      distanceKm(loadedCatalogLocation.current,userLocation)>0.15;
+    // Keep verified shops visible on ordinary refresh, and use a short-lived
+    // prior API response while refreshing after a tab reload.
+    let cached:Shop[]|null=null;
+    if (!locationChanged && loadedCatalogLocation.current===null) {
+      cached=readDisplayCatalog(userLocation);
+      if (cached!==null) {
+        setShops(cached);
+        loadedCatalogLocation.current=userLocation;
+      }
+    }
+    if (locationChanged) setShops([]);
+    setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
+    setIsSyncing(true); setFetchError(null);
     try {
       const result=await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
+      loadedCatalogLocation.current=userLocation;
       setShops(result);
-      // A successful empty result is not a network or authentication error.
+      saveDisplayCatalog(userLocation,result);
+      // A genuinely empty authorized result stays empty; no fabricated shops.
     } catch(error) {
-      if(generation===catalogGeneration.current)setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      if(generation===catalogGeneration.current) {
+        setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      }
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
@@ -1707,9 +1741,7 @@ export default function App() {
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
 
-  useEffect(() => {
-    localStorage.setItem("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+
 
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
@@ -2220,21 +2252,43 @@ export default function App() {
 
   useEffect(() => {
     let active=true;
-    setOrders([]);setNotifications([]);
-    if(!session?.user?.id)return;
-    const refresh=async()=>{
-      try {
-        const data=await customerPickupApi.orders();
-        if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
-      } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
-      if(pickupOrderingEnabled())try{
-        const inbox=await customerPickupApi.notifications();
-        if(active)setNotifications((inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as unknown as AppNotification[]);
-      }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+    const uid=session?.user?.id;
+    if(!uid){
+      setOrders([]);setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
+      return;
+    }
+    // First hydrate the confirmed, tab-scoped inbox for THIS account only.
+    // Navigation must never wipe the inbox or restart authenticated fetches.
+    const previous=readDisplayInbox(uid);
+    setNotificationOwnerId(uid);
+    setNotifications(previous ?? []);
+    setNotificationsLoading(previous===null);
+    const refresh=()=>{
+      void (async()=>{
+        try {
+          const data=await customerPickupApi.orders();
+          if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+        }catch{if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});}
+      })();
+      if (pickupOrderingEnabled()) {
+        void (async()=>{
+          try {
+            const inbox=await customerPickupApi.notifications();
+            if(active) {
+              const items=(inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as AppNotification[];
+              setNotifications(prev=>{
+                const readIds=new Set(prev.filter(n=>n.read).map(n=>n.id));
+                return items.map(n=>({...n,read:readIds.has(n.id)}));
+              });
+            }
+          }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+          finally{if(active)setNotificationsLoading(false);}
+        })();
+      }else setNotificationsLoading(false);
     };
-    void refresh();const timer=setInterval(refresh,30000);
+    refresh();const timer=setInterval(refresh,30000);
     return()=>{active=false;clearInterval(timer);};
-  }, [session?.user?.id,currentScreen]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     void fetchShopsData();
@@ -2242,11 +2296,8 @@ export default function App() {
     return()=>{catalogGeneration.current++;clearInterval(timer);};
   }, [fetchShopsData]);
 
-  useEffect(() => {
-    if (currentScreen === "home" || currentScreen === "explore" || currentScreen === "discover") {
-      requestLocation(true);
-    }
-  }, [requestLocation, currentScreen]);
+  // Location is requested once on mount; Home navigation must not restart the
+  // geolocation/catalog sequence. Explicit retry remains available to the user.
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -3049,7 +3100,7 @@ export default function App() {
                   onNotifications={() => {
                     setCurrentScreen("notifications");
                   }}
-                  unreadCount={notifications.filter((n) => !n.read).length}
+                  unreadCount={notificationOwnerId===session?.user?.id ? notifications.filter((n) => !n.read).length : 0}
                   onStoreInfo={(id) => {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
@@ -3082,7 +3133,8 @@ export default function App() {
               )}
               {currentScreen === "notifications" && (
                 <NotificationsScreen
-                  notifications={notifications}
+                  notifications={notificationOwnerId===session?.user?.id ? notifications : []}
+                  loading={Boolean(session?.user?.id) && (notificationOwnerId!==session?.user?.id || notificationsLoading)}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onRead={(id) =>
                     setNotifications((prev) =>
