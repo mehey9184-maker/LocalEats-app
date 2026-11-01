@@ -22,9 +22,18 @@ test('quote sends IDs/quantities and pickup contact, never client prices',()=>{
  assert.deepEqual(intent.items,[{menu_item_id:'real-menu',quantity:2}]);
  assert.equal(intent.delivery_type,'collection');assert.equal(intent.tip_amount,0);
  assert.equal(intent.customer_details.phone,'0712345678');assert.ok(!JSON.stringify(intent).includes('0.01'));
+ assert.doesNotMatch(JSON.stringify(intent),/card_number|cardnumber|cvv|cvc|expiry|pan/i);
+});
+test('pickup cart offers only at-shop payment methods and contains no card credential collection',()=>{
+ const cart=readFileSync(new URL('../src/components/CartDrawer.tsx',import.meta.url),'utf8');
+ assert.match(cart,/Cash at shop/);assert.match(cart,/Card at shop \(physical card machine\)/);
+ assert.match(cart,/Place Pickup Order/);assert.doesNotMatch(cart,/cardNumber|cardExpiry|cardCvv|\bCVV\b|\bPAN\b/i);
+ const api=readFileSync(new URL('../src/services/customerPickup.ts',import.meta.url),'utf8');
+ assert.match(api,/sessionStorage\.setItem\(key,JSON\.stringify\(pending\)\)/);
+ assert.doesNotMatch(api,/localeats_saved_cards|card_number|card_cvv|card_expiry/i);
 });
 test('invalid carts, contact and unsupported options cannot obtain a quote',()=>{
- for(const cart of [[],[item,{...item,shopId:'other'}],[{...item,quantity:0}],[{...item,selectedCustomizations:[{name:'Extra',price:5}]}]])
+ for(const cart of [[],[item,{...item,shopId:'other'}],[{...item,quantity:0}],[{...item,quantity:21}],[{...item,selectedCustomizations:[{name:'Extra',price:5}]}]])
   assert.throws(()=>pickupCartIntent(cart,point,'Test','0712345678','cash'));
  assert.throws(()=>pickupCartIntent([item],point,'Test','bad','cash'));
 });

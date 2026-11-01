@@ -123,6 +123,7 @@ export type Shop = {
   images?: string[];
   delivery_radius_km?: number;
   cash_trust_enabled?: boolean;
+  pickup_payment_methods?: ("cash" | "card_machine")[];
   localeats_cash_trust?: boolean;
   allow_external_riders?: boolean;
   auto_look_for_rider?: boolean;

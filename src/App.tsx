@@ -3492,6 +3492,7 @@ export default function App() {
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
                   session={session}
+                  pickupOrders={orders}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   userProfile={userProfile}
                   showAlert={showAlert}
@@ -3527,6 +3528,23 @@ export default function App() {
             onUpdateQuantity={updateCartQuantity}
             onRemoveItem={removeItemFromCart}
             onClearCart={clearCart}
+            pickupLocation={userLocation}
+            pickupName={userProfile?.fullName || userProfile?.name || ""}
+            pickupPhone={userProfile?.phone || ""}
+            isSignedIn={Boolean(session?.user?.id && firebaseAuth.currentUser)}
+            onPickupOrderPlaced={(order) => {
+                              message: `Pickup order ${order.id} is ${order.status}. Payment expected: ${order.payment_method === "cash" ? "Cash at shop" : "Card at shop"}. Pay R ${Number(order.total_price).toFixed(2)} at ${shops.find((shop) => shop.id === order.shop_id)?.name || "the shop"}.`,
+              setCart([]);
+              setIsCartDrawerOpen(false);
+              const confirmedOrder={...order,status:order.status==="ready_for_pickup"?"ready":order.status==="collected"?"completed":order.status} as unknown as Order;
+              setOrders(previous=>[confirmedOrder,...previous.filter(existing=>existing.id!==order.id)]);
+              setNotification({
+                type: "success",
+                message: `Pickup order ${order.id} is ${order.status}. Payment expected: ${order.payment_method === "cash" ? "Cash at shop" : "Card at shop"}. Pay R ${order.total_price.toFixed(2)} at ${shops.find((shop) => shop.id === order.shop_id)?.name || "the shop"}.`,
+              });
+              setPreviousScreen(currentScreen);
+              setCurrentScreen("order-history");
+            }}
             onProceedToCheckout={() => {
               if (!session) {
                 showAlert(

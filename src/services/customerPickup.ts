@@ -32,6 +32,12 @@ export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:n
 export {blockPickupSubmission};
 
 export const pickupOrderingEnabled=()=>import.meta.env?.VITE_PICKUP_ORDERING_ENABLED === "true";
+export function hasPendingPickupSubmission():boolean {
+ const uid=auth.currentUser?.uid;
+ if(!uid)return false;
+ try{return Boolean(sessionStorage.getItem(`pickup-create:${uid}`));}catch{return false;}
+}
+
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
  if(!pickupOrderingEnabled())blockPickupSubmission();
  const uid=auth.currentUser?.uid;
@@ -49,6 +55,9 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
   throw error;
  }
  if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
+ const persistedTotalMinor=Math.round(Number(result.order.total_price)*100);
+ if(!Number.isSafeInteger(persistedTotalMinor) || (review && persistedTotalMinor!==review.quote.total_minor) || (!result.replayed && result.order.payment_method!==pending.payment_method))
+  throw new Error("The API returned an order that does not match the confirmed total or payment choice.");
  sessionStorage.removeItem(key);
  return result.order;
 }

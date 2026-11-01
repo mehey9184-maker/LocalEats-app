@@ -14,14 +14,18 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
    throw new Error("The service returned an invalid menu price.");
   return {...item,id:String(item.id),displayPrice:`R ${item.price.toFixed(2)}`,image:item.image_url || "",customizations:[]};
  });
+ const pickupMethods=Array.isArray(shop.pickup_payment_methods)
+  ? shop.pickup_payment_methods.filter((method:string)=>method==="cash" || method==="card_machine") as ("cash"|"card_machine")[]
+  : [];
  return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
-  address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:true,menu};
+  address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:true,menu,
+  pickup_payment_methods:pickupMethods};
 }
 export function pickupCartIntent(cart:CartItem[],location:{lat:number;lng:number},name:string,phone:string,method:string) {
  if(!cart.length || new Set(cart.map(i=>i.shopId)).size!==1) throw new Error("Choose items from one pickup shop per quote.");
  if(!["cash","card_machine"].includes(method)) throw new Error("Pay at the shop with cash or its physical card machine.");
  if(!name.trim() || !/^\+?[0-9 ()-]{9,20}$/.test(phone.trim())) throw new Error("Enter your name and a callable phone number.");
- for(const item of cart) if(!Number.isSafeInteger(item.quantity) || item.quantity<1 || item.quantity>99 || item.selectedCustomizations?.length)
+ for(const item of cart) if(!Number.isSafeInteger(item.quantity) || item.quantity<1 || item.quantity>20 || item.selectedCustomizations?.length)
   throw new Error("Check item quantities. Menu options require server support and are unavailable for this pilot.");
  return {contract_version:"pickup-v1",idempotency_key:crypto.randomUUID(),shop_id:cart[0].shopId,
   items:cart.map(i=>({menu_item_id:i.id,quantity:i.quantity})),delivery_type:"collection",delivery_schedule_mode:"standard",

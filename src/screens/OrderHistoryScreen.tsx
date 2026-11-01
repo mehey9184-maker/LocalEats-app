@@ -26,6 +26,7 @@ interface OrderHistoryScreenProps {
   setCurrentScreen?: (screen: any) => void;
   triggerHaptic?: (duration?: number) => void;
   onScanFlyer?: () => void;
+  pickupOrders?: Order[];
 }
 
 export function OrderHistoryScreen({
@@ -40,9 +41,11 @@ export function OrderHistoryScreen({
   setCurrentScreen,
   triggerHaptic,
   onScanFlyer,
+  pickupOrders = [],
 }: OrderHistoryScreenProps) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const apiPickupOrders=pickupOrders.filter((order)=>order.delivery_type==="collection" || order.order_type==="collection");
 
   useEffect(() => {
     async function loadOrders() {
@@ -59,19 +62,23 @@ export function OrderHistoryScreen({
 
           if (error) {
             console.debug("Supabase orders history notice:", error);
+            setOrders(apiPickupOrders);
           } else if (data) {
-            setOrders(data as Order[]);
+            const combined=[...apiPickupOrders,...(data as Order[])];
+            setOrders(combined.filter((order,index)=>combined.findIndex(candidate=>candidate.id===order.id)===index));
           }
         }
+        if (!userId || !isOnline) setOrders(apiPickupOrders);
       } catch (err) {
         console.debug("Order history fetch notice:", err);
+        setOrders(apiPickupOrders);
       } finally {
         setLoading(false);
       }
     }
 
     loadOrders();
-  }, [session?.user?.id, userProfile?.id]);
+  }, [session?.user?.id, userProfile?.id, pickupOrders, isOnline]);
 
   const handleReorder = (order: Order) => {
     if (triggerHaptic) triggerHaptic(10);
@@ -211,6 +218,9 @@ export function OrderHistoryScreen({
         ) : (
           orders.map((order) => {
             const shop = shops.find((s) => String(s.id) === String(order.shop_id));
+            const isPickup=order.delivery_type==="collection" || order.order_type==="collection";
+            const expectedPayment=order.payment_method==="cash" ? "Cash at shop" : order.payment_method==="card_machine" ? "Card at shop (physical card machine)" : "Payment method unavailable";
+            const payableAmount=Number(order.total_price ?? order.total_amount ?? order.total ?? order.price ?? 0);
             const isOngoing =
               order.status &&
               !["delivered", "completed", "cancelled", "declined"].includes(
@@ -242,7 +252,7 @@ export function OrderHistoryScreen({
                   </div>
                   <div className="text-right">
                     <span className="text-sm font-black text-slate-900 dark:text-white">
-                      R{Number(order.total_amount || order.total || 0).toFixed(2)}
+                      R{Number.isFinite(payableAmount) ? payableAmount.toFixed(2) : "0.00"}
                     </span>
                     <div className="mt-1">{formatStatus(order.status)}</div>
                   </div>
@@ -256,6 +266,13 @@ export function OrderHistoryScreen({
                         {idx < order.items.length - 1 ? ", " : ""}
                       </span>
                     ))}
+                  </div>
+                )}
+
+                {isPickup && (
+                  <div className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                    <p>{order.payment_status==="paid" ? `Payment received: ${expectedPayment}` : `Payment expected: ${expectedPayment}`}</p>
+                    <p className="font-bold">{order.payment_status==="paid" ? "Paid" : "Pay"} R {Number.isFinite(payableAmount) ? payableAmount.toFixed(2) : "unavailable"} at {shop?.name || `Shop #${order.shop_id}`}</p>
                   </div>
                 )}
 
