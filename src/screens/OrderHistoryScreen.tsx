@@ -35,6 +35,7 @@ export function OrderHistoryScreen({
   userProfile,
   showAlert,
   showConfirm,
+  isOnline = true,
   shops = [],
   addToCart,
   setCart,

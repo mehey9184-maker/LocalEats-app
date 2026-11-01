@@ -282,6 +282,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth as firebaseAuth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -3533,7 +3534,6 @@ export default function App() {
             pickupPhone={userProfile?.phone || ""}
             isSignedIn={Boolean(session?.user?.id && firebaseAuth.currentUser)}
             onPickupOrderPlaced={(order) => {
-                              message: `Pickup order ${order.id} is ${order.status}. Payment expected: ${order.payment_method === "cash" ? "Cash at shop" : "Card at shop"}. Pay R ${Number(order.total_price).toFixed(2)} at ${shops.find((shop) => shop.id === order.shop_id)?.name || "the shop"}.`,
               setCart([]);
               setIsCartDrawerOpen(false);
               const confirmedOrder={...order,status:order.status==="ready_for_pickup"?"ready":order.status==="collected"?"completed":order.status} as unknown as Order;

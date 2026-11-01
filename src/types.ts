@@ -39,6 +39,8 @@ export type Order = {
   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
   order_type?: 'delivery' | 'collection' | string;
+  delivery_type?: 'delivery' | 'collection' | string;
+  payment_status?: 'unpaid' | 'paid' | string;
   delivery_pin?: string;
   delivery_fee?: number;
   rider_id?: string;
