@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Order, Shop } from "../types";
+import { isCollectionTrackingOrder, collectionTrackingStep } from "../services/orderTrackingPolicy";
 import { supabase, getFreshChannel } from "../lib/supabase";
 import { FirestoreService } from "../lib/firebase";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
@@ -46,7 +47,7 @@ import { storeMapIcon, riderMapIcon, userMapIcon } from "../components/MapCompon
 import L from "leaflet";
 
 export const isLiveDeliveryActive = (ord: any) => {
-  if (!ord) return false;
+  if (!ord || isCollectionTrackingOrder(ord)) return false;
   const dStatus = (ord.delivery_status || "").toLowerCase();
   return (
     dStatus === "picked_up" ||
@@ -70,13 +71,14 @@ interface SmartDispatchTrackingBannerProps {
 export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTrackingBannerProps) {
   const status = (order.status || "").toLowerCase();
   const deliveryStatus = (order.delivery_status || "").toLowerCase();
+  const isCollection = isCollectionTrackingOrder(order);
 
   // 1. Live Delivery Phase: When delivery_status === 'picked_up'
   if (
-    deliveryStatus === "picked_up" ||
+    !isCollection && (deliveryStatus === "picked_up" ||
     deliveryStatus === "out_for_delivery" ||
     deliveryStatus === "delivering" ||
-    deliveryStatus === "in_transit"
+    deliveryStatus === "in_transit")
   ) {
     return (
       <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/40 rounded-3xl space-y-3 shadow-lg animate-in fade-in duration-300">
@@ -103,7 +105,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
   }
 
   // 2. Ready Phase: If status === 'ready'
-  if (status === "ready") {
+  if (status === "ready" || (isCollection && status === "ready_for_pickup")) {
     return (
       <div className="p-5 bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-transparent dark:from-amber-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-amber-500/40 rounded-3xl space-y-3 shadow-md animate-in fade-in duration-300">
         <div className="flex items-center justify-between gap-2">
@@ -113,16 +115,16 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
             </div>
             <div>
               <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-amber-500/20 text-amber-800 dark:text-amber-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-amber-500/30">
-                Ready Phase
+                {isCollection ? "Ready for Collection" : "Ready Phase"}
               </span>
               <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
-                Your food is packed and waiting for the rider to grab it.
+                {isCollection ? `Your food is ready for collection at ${shop?.name || "the shop"}.` : "Your food is packed and waiting for the rider to grab it."}
               </h4>
             </div>
           </div>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
-          The kitchen has completed preparation and packed your meal in warmth-retaining packaging at {shop?.name || "the shop"}. Waiting for courier to grab it.
+          {isCollection ? "Visit the shop to collect your food. Payment and physical handover must be confirmed by the shop before the order is completed." : `The kitchen has completed preparation and packed your meal at ${shop?.name || "the shop"}. Waiting for courier pickup.`}
         </p>
       </div>
     );
@@ -130,7 +132,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
 
   // 3. Rider Approach Phase: If status === 'preparing' AND delivery_status === 'accepted' (or rider_assigned)
   if (
-    (status === "preparing" || status === "confirmed") &&
+    !isCollection && (status === "preparing" || status === "confirmed") &&
     (deliveryStatus === "accepted" || deliveryStatus === "rider_assigned" || deliveryStatus === "approaching_restaurant")
   ) {
     return (
@@ -184,7 +186,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
   }
 
   // 5. Completed / Delivered Phase
-  if (status === "completed" || status === "delivered") {
+  if (status === "completed" || status === "delivered" || (isCollection && status === "collected")) {
     return (
       <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/30 rounded-3xl space-y-2 shadow-md">
         <div className="flex items-center gap-3">
@@ -193,10 +195,10 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
           </div>
           <div>
             <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full inline-block mb-1">
-              Delivered Safely
+              {isCollection ? "Collected at Shop" : "Delivered Safely"}
             </span>
             <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
-              Order Completed! Enjoy your meal.
+              {isCollection ? "Collection completed. Enjoy your meal!" : "Order Completed! Enjoy your meal."}
             </h4>
           </div>
         </div>
@@ -277,18 +279,23 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
     );
   }
 
-  if (status === "completed" || status === "delivered" || secondsLeft === 0) {
+  if (!isDelivery && (status === "ready" || status === "ready_for_pickup")) {
+    return <p className="text-xs font-bold text-emerald-600 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 mt-2">Ready for collection at the shop</p>;
+  }
+
+  if (status === "completed" || status === "delivered" || status === "collected") {
     return (
       <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 mt-2 animate-pulse">
         <span className="relative flex h-2 w-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
         </span>
-        Arrived & Delivered!
+        {isDelivery ? "Delivered!" : "Collected at the shop"}
       </div>
     );
   }
 
+  if (secondsLeft === 0) return <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mt-2">Estimated preparation time has passed. Check the latest order status.</p>;
   if (secondsLeft === null) return null;
 
   const minutes = Math.floor(secondsLeft / 60);
@@ -335,10 +342,10 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
 
         <div>
           <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 leading-none">
-            {status === "ready" ? "Rider Transfer" : "Estimated Food Prep"}
+            {status === "ready" ? (isDelivery ? "Rider Transfer" : "Ready for Collection") : "Estimated Food Prep"}
           </h5>
           <p className="text-xs font-black text-slate-800 dark:text-slate-200 mt-1 leading-none">
-            {status === "ready" ? "On the way" : "Crafting your order"}
+            {status === "ready" ? (isDelivery ? "Awaiting courier" : "Go to the shop") : "Crafting your order"}
           </p>
         </div>
       </div>
@@ -355,7 +362,7 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
   );
 }
 
-export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string; status: string }) {
+export function DetailedKitchenStatus({ createdAt, status, isCollection = false }: { createdAt: string; status: string; isCollection?: boolean }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -386,16 +393,16 @@ export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string
     } else if (status === "ready") {
       return [
         { label: "Cooking completed & inspected", done: true, current: false },
-        { label: "Packed in heat-resistant dispatch bundle", done: true, current: false },
-        { label: "Food ready! Awaiting driver pickup or hand-over", done: false, current: true },
+        { label: isCollection ? "Packed for customer collection" : "Packed in heat-resistant dispatch bundle", done: true, current: false },
+        { label: isCollection ? "Ready for customer pickup at the shop" : "Food ready! Awaiting driver pickup or hand-over", done: false, current: true },
       ];
     } else {
       return [
         { label: "Food prepared & hand over complete", done: true, current: false },
-        { label: "Delivered safely - Enjoy!", done: true, current: false },
+        { label: isCollection ? "Collected at shop - Enjoy!" : "Delivered safely - Enjoy!", done: true, current: false },
       ];
     }
-  }, [status, elapsedMinutes]);
+  }, [status, elapsedMinutes, isCollection]);
 
   return (
     <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-150/40 dark:border-slate-800/80 mt-3 space-y-3">
