@@ -281,7 +281,6 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { auth as firebaseAuth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
