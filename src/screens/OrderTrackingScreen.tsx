@@ -843,6 +843,7 @@ export function OrderTrackingScreen({
       if (prevState) {
         // 1. Live Delivery Phase Trigger: When delivery_status becomes 'picked_up'
         if (
+          !isCollectionTrackingOrder(order) &&
           (currentDStatus === "picked_up" || currentDStatus === "out_for_delivery") &&
           prevDStatus !== "picked_up" &&
           prevDStatus !== "out_for_delivery"
@@ -875,13 +876,14 @@ export function OrderTrackingScreen({
           if (triggerHaptic) {
             triggerHaptic([300, 100, 300]);
           }
-          toast.info("Your food is packed and waiting for the rider to grab it.", {
-            description: `Meal is ready and packaged at the restaurant.`,
+          toast.info(isCollectionTrackingOrder(order) ? "Your order is ready for collection!" : "Your food is packed and waiting for the rider to grab it.", {
+            description: isCollectionTrackingOrder(order) ? "Visit the shop and complete payment before collecting your food." : "Meal is ready and packaged at the restaurant.",
           });
         }
 
         // 3. Rider Approach Phase Trigger
         if (
+          !isCollectionTrackingOrder(order) &&
           currentStatus === "preparing" &&
           (currentDStatus === "accepted" || currentDStatus === "rider_assigned") &&
           prevDStatus !== "accepted" &&
@@ -901,7 +903,7 @@ export function OrderTrackingScreen({
           if (triggerHaptic) {
             triggerHaptic([500, 100, 500]);
           }
-          toast.success(`Order #${order.id.slice(0, 5)} delivered!`, {
+          toast.success(`Order #${order.id.slice(0, 5)} ${isCollectionTrackingOrder(order) ? "collected!" : "delivered!"}`, {
             description: "Enjoy your meal!",
           });
         }
@@ -980,6 +982,11 @@ export function OrderTrackingScreen({
   };
 
   const handleMarkReceived = async (orderId: string, shopId: string, productName: string) => {
+    const currentOrder = localOrders.find(order => order.id === orderId) || orders.find(order => order.id === orderId);
+    if (!currentOrder || isCollectionTrackingOrder(currentOrder)) {
+      toast.error("Only the shop can complete a pickup order after payment and handover.");
+      return;
+    }
     if ("vibrate" in navigator) {
       navigator.vibrate([20, 30, 20]);
     }
@@ -1023,6 +1030,11 @@ export function OrderTrackingScreen({
   };
 
   const executeCancellation = async (orderId: string, reason: string) => {
+    const currentOrder = localOrders.find(order => order.id === orderId) || orders.find(order => order.id === orderId);
+    if (!currentOrder || isCollectionTrackingOrder(currentOrder)) {
+      toast.error("Contact the shop to cancel a pickup order. No order status was changed.");
+      return;
+    }
     setIsCancelling(true);
     triggerHaptic?.(15);
 
@@ -1233,7 +1245,7 @@ export function OrderTrackingScreen({
           >
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-lg font-black tracking-tight text-center flex-1 line-clamp-1">Track Deliveries</h1>
+          <h1 className="text-lg font-black tracking-tight text-center flex-1 line-clamp-1">Track Orders</h1>
           <div className="flex items-center gap-1 shrink-0">
             {activeChatDeliveryOrder && (
               <button
@@ -1339,9 +1351,9 @@ export function OrderTrackingScreen({
               </div>
             </div>
             <div className="space-y-2">
-              <h2 className="text-lg font-black text-slate-800 dark:text-white">No Active Deliveries</h2>
+              <h2 className="text-lg font-black text-slate-800 dark:text-white">No Active Orders</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[240px] leading-relaxed mx-auto font-medium">
-                You don't have any deliveries in progress right now. Place an order to see it tracked live step-by-step!
+                You don't have any active orders right now. Place an order to follow its progress here!
               </p>
             </div>
           </div>
