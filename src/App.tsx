@@ -947,6 +947,8 @@ export default function App() {
     lng: number;
   } | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const ordersRef = useRef<Order[]>(orders);
   useEffect(() => {
@@ -1023,9 +1025,16 @@ export default function App() {
     safeLocalStorageSet("favorites", JSON.stringify(favorites));
   }, [favorites]);
 
+  // Inbox entries belong to one authenticated account. Do not persist them in
+  // the legacy global localStorage key shared across logins.
   useEffect(() => {
-    safeLocalStorageSet("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+    try {localStorage.removeItem("app_notifications");} catch {}
+  }, []);
+  useEffect(() => {
+    if (notificationOwnerId && notificationOwnerId === session?.user?.id) {
+      saveDisplayInbox(notificationOwnerId, notifications);
+    }
+  }, [notifications, notificationOwnerId, session?.user?.id]);
 
   useEffect(() => {
     safeLocalStorageSet("order_again_enabled", String(orderAgainEnabled));
@@ -1732,9 +1741,7 @@ export default function App() {
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
 
-  useEffect(() => {
-    localStorage.setItem("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+
 
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
@@ -2245,21 +2252,43 @@ export default function App() {
 
   useEffect(() => {
     let active=true;
-    setOrders([]);setNotifications([]);
-    if(!session?.user?.id)return;
-    const refresh=async()=>{
-      try {
-        const data=await customerPickupApi.orders();
-        if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
-      } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
-      if(pickupOrderingEnabled())try{
-        const inbox=await customerPickupApi.notifications();
-        if(active)setNotifications((inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as unknown as AppNotification[]);
-      }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+    const uid=session?.user?.id;
+    if(!uid){
+      setOrders([]);setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
+      return;
+    }
+    // First hydrate the confirmed, tab-scoped inbox for THIS account only.
+    // Navigation must never wipe the inbox or restart authenticated fetches.
+    const previous=readDisplayInbox(uid);
+    setNotificationOwnerId(uid);
+    setNotifications(previous ?? []);
+    setNotificationsLoading(previous===null);
+    const refresh=()=>{
+      void (async()=>{
+        try {
+          const data=await customerPickupApi.orders();
+          if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+        }catch{if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});}
+      })();
+      if (pickupOrderingEnabled()) {
+        void (async()=>{
+          try {
+            const inbox=await customerPickupApi.notifications();
+            if(active) {
+              const items=(inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as AppNotification[];
+              setNotifications(prev=>{
+                const readIds=new Set(prev.filter(n=>n.read).map(n=>n.id));
+                return items.map(n=>({...n,read:readIds.has(n.id)}));
+              });
+            }
+          }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+          finally{if(active)setNotificationsLoading(false);}
+        })();
+      }else setNotificationsLoading(false);
     };
-    void refresh();const timer=setInterval(refresh,30000);
+    refresh();const timer=setInterval(refresh,30000);
     return()=>{active=false;clearInterval(timer);};
-  }, [session?.user?.id,currentScreen]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     void fetchShopsData();
@@ -3071,7 +3100,7 @@ export default function App() {
                   onNotifications={() => {
                     setCurrentScreen("notifications");
                   }}
-                  unreadCount={notifications.filter((n) => !n.read).length}
+                  unreadCount={notificationOwnerId===session?.user?.id ? notifications.filter((n) => !n.read).length : 0}
                   onStoreInfo={(id) => {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
@@ -3104,7 +3133,8 @@ export default function App() {
               )}
               {currentScreen === "notifications" && (
                 <NotificationsScreen
-                  notifications={notifications}
+                  notifications={notificationOwnerId===session?.user?.id ? notifications : []}
+                  loading={Boolean(session?.user?.id) && (notificationOwnerId!==session?.user?.id || notificationsLoading)}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onRead={(id) =>
                     setNotifications((prev) =>
