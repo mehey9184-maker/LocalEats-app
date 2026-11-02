@@ -4207,27 +4207,20 @@ function HomeScreen({
         return getMinPrepTime(a) - getMinPrepTime(b);
       }
 
-      // Default 'recommended' sort (Distance -> Special -> Rating)
+      // Default 'recommended' ordering: genuine distance, no fabricated GPS.
       if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
+        const knownDistance=(shop:Shop):number => {
+          if (typeof shop.distance==="number" && Number.isFinite(shop.distance) && shop.distance>=0 && shop.distance<=4)
+            return shop.distance;
+          if (typeof shop.latitude==="number" && Number.isFinite(shop.latitude) && Math.abs(shop.latitude)<=90 &&
+              typeof shop.longitude==="number" && Number.isFinite(shop.longitude) && Math.abs(shop.longitude)<=180)
+            return distanceKm({lat:shop.latitude,lng:shop.longitude},userLocation);
+          return Number.POSITIVE_INFINITY;
+        };
+        const distA=knownDistance(a), distB=knownDistance(b);
+        if(Number.isFinite(distA)!==Number.isFinite(distB))return Number.isFinite(distA)?-1:1;
+        if(Number.isFinite(distA)&&Number.isFinite(distB)&&Math.abs(distA-distB)>0.1)
+          return distA-distB;
       }
 
       // Prioritize "Local Eats Special"
