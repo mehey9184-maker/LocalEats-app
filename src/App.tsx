@@ -1544,60 +1544,52 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
-  const subscribeToPushNotifications = useCallback(
-    async (customUserId?: string) => {
-      const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) return;
-      try {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-           await registerAndSyncPushToken(targetUserId);
-        }
-      } catch (err) {
-        console.debug("[Push] Notice:", err);
-      }
-    },
-    [session]
-  );
-
-  const requestNotificationPermission = useCallback(async () => {
-    if (!("Notification" in window)) {
-      return;
-    }
+  // User-action enrollment only. Browser permission alone is not a usable
+  // subscription: the authenticated pickup API must confirm the FCM token.
+  const subscribeToPushNotifications = useCallback(async (customUserId?: string) => {
+    const targetUserId=customUserId || session?.user?.id;
+    if(!pickupOrderingEnabled() || !targetUserId || targetUserId!==session?.user?.id ||
+       firebaseAuth.currentUser?.uid!==targetUserId || !("Notification" in window)) return;
     try {
-      if (Notification.permission !== "denied") {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-          if (session?.user?.id) {
-            // Sync with push notifications in background
-            subscribeToPushNotifications(session.user.id).catch(() => {});
-            registerAndSyncPushToken(session.user.id).catch(() => {});
-          }
-        }
+      if(Notification.permission==="denied")return;
+      const permission=Notification.permission==="granted" ? "granted" : await Notification.requestPermission();
+      if(permission!=="granted")return;
+      const token=await requestNotificationPermissionAndGetToken();
+      if(!token) {
+        console.info("[Pickup push] Background notifications are not available on this browser.");
+        return;
       }
-    } catch (_) {}
-  }, [session, subscribeToPushNotifications]);
+      await customerPickupApi.subscribe(pickupInstallationId(targetUserId),token);
+    } catch(err) {
+      console.warn("[Pickup push] Enrollment was not confirmed:",err instanceof Error?err.message:"Unavailable");
+    }
+  },[session?.user?.id]);
 
-  // Listen for FCM foreground web push messages and display sonner toast notifications
+  // Called at session bootstrap: never pop an unsolicited permission prompt.
+  const requestNotificationPermission = useCallback(() => {
+    const uid=session?.user?.id;
+    if(!uid || !pickupOrderingEnabled() || !("Notification" in window) ||
+       Notification.permission!=="granted" || !existingPickupInstallationId(uid))return;
+    void subscribeToPushNotifications(uid);
+  },[session?.user?.id,subscribeToPushNotifications]);
+
+  // FCM is a wake-up signal, not an authority for order states or inbox facts.
+  // Refresh the authenticated API inbox before showing the customer an update.
   useEffect(() => {
-    let unsubscribe: (() => void) | void;
-    onForegroundMessage((payload) => {
-      const title = payload.notification?.title || payload.data?.title || "LocalEats Notification";
-      const body = payload.notification?.body || payload.data?.body || payload.data?.message || "You have an update regarding your order.";
-      toast.success(title, {
-        description: body,
-        duration: 5000,
-      });
-    }).then((unsub) => {
-      unsubscribe = unsub;
-    }).catch(console.warn);
-
-    return () => {
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
-      }
+    let active=true;
+    let unsubscribe:(()=>void)|void;
+    void onForegroundMessage(payload => {
+      if(payload.data?.type!=="pickup_ready" || typeof payload.data?.event_id!=="string")return;
+      window.dispatchEvent(new Event("localeats-pickup-ready"));
+    }).then(unsub=>{
+      if(active)unsubscribe=unsub;
+      else if(typeof unsub==="function")unsub();
+    }).catch(()=>{});
+    return()=>{
+      active=false;
+      if(typeof unsubscribe==="function")unsubscribe();
     };
-  }, []);
+  },[]);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
@@ -1738,15 +1730,16 @@ export default function App() {
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Resubscribe only a previously opted-in account with a granted browser
+  // permission. Never subscribe an account based on cached profile identity.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
-      registerAndSyncPushToken(activeUserId).catch((err) => {
-        console.warn("[FCM] Auto push token registration notice:", err);
-      });
+    const uid=session?.user?.id;
+    if(uid && firebaseAuth.currentUser?.uid===uid && pickupOrderingEnabled() &&
+       typeof Notification!=="undefined" && Notification.permission==="granted" &&
+       existingPickupInstallationId(uid)) {
+      void subscribeToPushNotifications(uid);
     }
-  }, [session?.user?.id, userProfile?.id]);
+  },[session?.user?.id,subscribeToPushNotifications]);
 
   // Account switch detection: Clear old user profile and sync immediately with new active session
   useEffect(() => {
@@ -2295,6 +2288,8 @@ export default function App() {
       setOrders([]);setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
       return;
     }
+    let hasServerInbox=false;
+    let seenReadyIds=new Set<string>();
     // First hydrate the confirmed, tab-scoped inbox for THIS account only.
     // Navigation must never wipe the inbox or restart authenticated fetches.
     const previous=readDisplayInbox(uid);
@@ -2314,9 +2309,16 @@ export default function App() {
             const inbox=await customerPickupApi.notifications();
             if(active) {
               const items=(inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as AppNotification[];
+              const newlyConfirmed=hasServerInbox && items.some(n=>!seenReadyIds.has(n.id));
+              seenReadyIds=new Set(items.map(n=>n.id));
+              hasServerInbox=true;
               setNotifications(prev=>{
                 const readIds=new Set(prev.filter(n=>n.read).map(n=>n.id));
                 return items.map(n=>({...n,read:readIds.has(n.id)}));
+              });
+              if(newlyConfirmed)toast.success("Pickup ready",{
+                description:"Your shop has confirmed an order is ready for collection.",
+                duration:5000
               });
             }
           }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
@@ -2324,8 +2326,17 @@ export default function App() {
         })();
       }else setNotificationsLoading(false);
     };
-    refresh();const timer=setInterval(refresh,30000);
-    return()=>{active=false;clearInterval(timer);};
+    const onRealtimeWake=()=>{if(!document.hidden)refresh();};
+    refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},30000);
+    window.addEventListener("localeats-pickup-ready",onRealtimeWake);
+    window.addEventListener("focus",onRealtimeWake);
+    document.addEventListener("visibilitychange",onRealtimeWake);
+    return()=>{
+      active=false;clearInterval(timer);
+      window.removeEventListener("localeats-pickup-ready",onRealtimeWake);
+      window.removeEventListener("focus",onRealtimeWake);
+      document.removeEventListener("visibilitychange",onRealtimeWake);
+    };
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -3479,6 +3490,17 @@ export default function App() {
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
                   onLogout={async () => {
+                    // Revoke this account's API-owned device subscription before
+                    // signing out, to avoid delivering its orders to a later user
+                    // of the same browser. Never block sign-out indefinitely.
+                    const logoutUid=session?.user?.id;
+                    const installation=logoutUid ? existingPickupInstallationId(logoutUid) : null;
+                    if(installation && pickupOrderingEnabled()) {
+                      await Promise.race([
+                        customerPickupApi.revoke(installation).catch(()=>{}),
+                        new Promise<void>(resolve=>setTimeout(resolve,2000))
+                      ]);
+                    }
                     await supabase.auth.signOut();
                     // Clear sensitive data on logout
                     localStorage.removeItem("remember_me_secure_token");
