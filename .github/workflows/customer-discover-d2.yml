@@ -1,0 +1,26 @@
+name: Customer Discover D2 usability checks
+on:
+  push:
+    branches: [repair/discover-phase-d2-clean-usability-01]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Discover D2, Discover D1, Customer/Home/checkout startup and pickup regressions
+        run: node --experimental-strip-types --test tests/customer-discover-phase-d2.test.mjs tests/customer-discover-phase-d1.test.mjs tests/customer-background-status-fcm.test.mjs tests/customer-confirmed-order-status-alerts.test.mjs tests/customer-home-live-location-and-push.test.mjs tests/customer-home-phase3-performance.test.mjs tests/customer-home-phase2-polish.test.mjs tests/customer-home-phase1-polish.test.mjs tests/customer-startup-auth-routing.test.mjs tests/customer-closed-menu-browsing.test.mjs tests/customer-closed-pickup-previews.test.mjs tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs tests/customer-collection-tracking.test.mjs tests/original-pickup.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: TypeScript lint
+        run: npm run lint
+      - name: Complete Customer build
+        run: npm run build
