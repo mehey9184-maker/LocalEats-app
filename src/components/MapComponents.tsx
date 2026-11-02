@@ -331,12 +331,14 @@ export const MemoizedShopMarker = React.memo(
   }) {
     const shopIcon = useMemo(() => createShopMapIcon(isOpen), [isOpen]);
 
+    // Never invent a shop's location if the catalog omits GPS coordinates.
+    if(typeof shop.latitude!=="number" || typeof shop.longitude!=="number" ||
+       !Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude) ||
+       Math.abs(shop.latitude)>90 || Math.abs(shop.longitude)>180 ||
+       (shop.latitude===0 && shop.longitude===0))return null;
     return (
       <Marker
-        position={[
-          shop.latitude || -25.9964,
-          shop.longitude || 28.2268,
-        ]}
+        position={[shop.latitude,shop.longitude]}
         icon={shopIcon}
         eventHandlers={{
           click: () => onSelectShop(shop.id),
@@ -357,10 +359,12 @@ export const MemoizedShopMarker = React.memo(
               )}
             </div>
             <div className="flex items-center justify-between gap-2 mb-1.5">
-              <div className="flex items-center gap-1">
-                <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                <span className="text-xs font-black">{shop.rating}</span>
-              </div>
+              {typeof shop.rating==="number" && Number.isFinite(shop.rating) && shop.rating>0 && shop.rating<=5 && (
+                <div className="flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
+                  <span className="text-xs font-black">{shop.rating.toFixed(1)}</span>
+                </div>
+              )}
               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
                 isOpen
                   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/30"
