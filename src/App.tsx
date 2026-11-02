@@ -290,7 +290,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
-import {nearbyClosedPickupShops, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
+import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -1198,24 +1198,17 @@ export default function App() {
       loadedCatalogLocation.current=userLocation;
       setShops(result);
       saveDisplayCatalog(userLocation,result);
-      // The pickup API is authoritative for ORDERABLE shops. Only when it
-      // returns no available shops, load approved nearby closed shop metadata
-      // for an explicitly non-interactive, no-checkout display.
-      if(result.length===0){
-        setClosedPickupShopsLoading(true);
-        try{
-          const publicCatalog=await customerPickupApi.approvedShops();
-          if(generation===catalogGeneration.current)
-            setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
-        }catch{
-          if(generation===catalogGeneration.current)setClosedPickupShops([]);
-        }finally{
-          if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
-        }
-      }else{
-        setClosedPickupShops([]);
-        setClosedPickupShopsLoading(false);
-      }
+      // Orderable shops remain API-authoritative. Closed metadata is only
+      // for a read-only version of the original visual ShopCard.
+      setClosedPickupShopsLoading(true);
+      void customerPickupApi.approvedShops().then(publicCatalog=>{
+        if(generation===catalogGeneration.current)
+          setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
+      }).catch(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShops([]);
+      }).finally(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
+      });
       // A genuinely empty authoritative pickup result still means zero orderable shops.
     } catch(error) {
       if(generation===catalogGeneration.current) {
