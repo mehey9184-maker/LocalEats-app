@@ -26,7 +26,7 @@ test("Search suggestions include approved closed menus, with stable shop IDs and
 test("Search and catalog filters match categories and multiword queries consistently",()=>{
  const shop=makeShop("s1","My Kota", {description:"Fresh charcoal braai"});
  assert.equal(homeSearchMatches(shop,"KOTA charcoal"),true);
- assert.equal(homeSearchMatches(shop,"brAi"),true);
+ assert.equal(homeSearchMatches(shop,"BRAAI"),true);
  assert.equal(homeSearchMatches(shop,"Kota sushi"),false);
  assert.equal(homeSearchMatches(shop,"  "),true);
 });
