@@ -284,6 +284,7 @@ import {
 import { auth as firebaseAuth, onForegroundMessage, requestNotificationPermissionAndGetToken, FirestoreService } from "./lib/firebase";
 import {pickupInstallationId,existingPickupInstallationId} from "./services/customerPushSubscription";
 import {nearestHomeDistance,shouldUpdateHomeLocation} from "./services/homeProximity";
+import {customerOrderStatusNotices,type CustomerStatusOrder} from "./services/customerOrderStatusNotices";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -2324,6 +2325,8 @@ export default function App() {
     }
     let hasServerInbox=false;
     let seenReadyIds=new Set<string>();
+    let previousConfirmedOrders:CustomerStatusOrder[]|null=null;
+    let latestOrderFetch=0;
     // First hydrate the confirmed, tab-scoped inbox for THIS account only.
     // Navigation must never wipe the inbox or restart authenticated fetches.
     const previous=readDisplayInbox(uid);
@@ -2331,11 +2334,20 @@ export default function App() {
     setNotifications(previous ?? []);
     setNotificationsLoading(previous===null);
     const refresh=()=>{
+      const request=++latestOrderFetch;
       void (async()=>{
         try {
           const data=await customerPickupApi.orders();
-          if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
-        }catch{if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});}
+          if(!active || request!==latestOrderFetch)return;
+          if(!Array.isArray(data.orders))throw new Error("Orders response missing");
+          const confirmed=data.orders as CustomerStatusOrder[];
+          const notices=customerOrderStatusNotices(previousConfirmedOrders,confirmed,uid);
+          previousConfirmedOrders=confirmed;
+          setOrders(data.orders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+          for(const notice of notices){
+            toast.info(notice.title,{description:notice.message,duration:6500});
+          }
+        }catch{if(active && request===latestOrderFetch)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});}
       })();
       if (pickupOrderingEnabled()) {
         void (async()=>{
@@ -2361,7 +2373,9 @@ export default function App() {
       }else setNotificationsLoading(false);
     };
     const onRealtimeWake=()=>{if(!document.hidden)refresh();};
-    refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},30000);
+    // Active order statuses are checked while the app is visible. Background
+    // alerts still require deployed server push; no hidden-tab polling.
+    refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},15000);
     window.addEventListener("localeats-pickup-ready",onRealtimeWake);
     window.addEventListener("focus",onRealtimeWake);
     document.addEventListener("visibilitychange",onRealtimeWake);
