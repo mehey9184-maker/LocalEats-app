@@ -297,6 +297,7 @@ import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPrev
 import {homeReorderMenuItem,homeRating} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
+import {discoverMatchesShopOrFood,discoverFoodPreviews,discoverFoodSuggestions} from "./services/discoverFoodSearch";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -5717,61 +5718,9 @@ function DiscoverScreen({
     ...new Set(shops.map((s) => s.category)),
   ];
 
-  // Pre-calculate search index map for DiscoverScreen to optimize searching
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
-
-  const realFreshItems = useMemo(() => {
-    const items: Array<{
-      id: string;
-      shopId: string;
-      shopName: string;
-      itemName: string;
-      price: number;
-      image: string;
-      description: string;
-      badge: string;
-    }> = [];
-
-    shops.forEach((shop) => {
-      if (Array.isArray(shop.menu)) {
-        shop.menu.forEach((item) => {
-          if (item.is_available!==false && typeof item.image==="string" && item.image.trim() &&
-              typeof item.price==="number" && Number.isFinite(item.price) && item.price>=0) {
-            items.push({
-              id: `${shop.id}-${item.id}`,
-              shopId: shop.id,
-              shopName: shop.name,
-              itemName: item.name,
-              price: item.price,
-              image: item.image,
-              description: item.description || `From ${shop.name}`,
-              badge: "Menu item",
-            });
-          }
-        });
-      }
-    });
-
-    return items.slice(0, 8);
-  }, [shops]);
-
   const filteredShops = useMemo(() => {
-    const query = debouncedSearchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
     return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
-
-      let matchesCategory = false;
+      const matchesSearch=discoverMatchesShopOrFood(shop,debouncedSearchQuery);
       if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
       if(!discoverCategoryMatches(shop,selectedCategory))return false;
       const rating=homeRating(shop);
@@ -5782,21 +5731,31 @@ function DiscoverScreen({
       const matchesDistance=!needsDistance || Number.isFinite(distance) && (maxDistance===null || distance<=maxDistance);
       return matchesSearch && matchesRating && matchesOpen && matchesDistance;
     });
-  }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation]);
 
-  const suggestions = useMemo(() => {
-    if (debouncedSearchQuery.length < 2) return [];
-    return shops
-      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
-      .map((s) => s.name)
-      .slice(0, 5);
-  }, [shops, debouncedSearchQuery]);
+  const suggestions=useMemo(()=>discoverFoodSuggestions(shops,debouncedSearchQuery,6),[shops,debouncedSearchQuery]);
 
-  const sortedShops=discoverSortShops(
+  const sortedShops=useMemo(()=>discoverSortShops(
     filteredShops,
     selectedCategory==="Nearby" ? "distance" : sortPriority,
     userLocation,
     (shop)=>getShopStatus(shop).isOpen,
+  ),[filteredShops,selectedCategory,sortPriority,userLocation]);
+
+  const matchingFoodItems=useMemo(
+    ()=>debouncedSearchQuery.trim()
+      ? discoverFoodPreviews(sortedShops,debouncedSearchQuery,userLocation,shop=>getShopStatus(shop).isOpen,6)
+      : [],
+    [sortedShops,debouncedSearchQuery,userLocation],
+  );
+  const realFreshItems=useMemo(
+    ()=>discoverFoodPreviews(sortedShops,"",userLocation,shop=>getShopStatus(shop).isOpen,8),
+    [sortedShops,userLocation],
+  );
+  const nearbyShops=useMemo(
+    ()=>discoverSortShops(shops,"distance",userLocation,shop=>getShopStatus(shop).isOpen)
+      .filter(shop=>Number.isFinite(discoverShopDistance(shop,userLocation))).slice(0,2),
+    [shops,userLocation],
   );
 
   return (
@@ -5983,20 +5942,17 @@ function DiscoverScreen({
                           <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
                             🔍 Search Suggestions
                           </div>
-                          {suggestions.map((s, idx) => (
-                            <button
-                              key={`sugg-${idx}`}
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                setSearchQuery(s);
-                                setShowSuggestions(false);
-                                saveRecentSearch(s);
-                              }}
-                              className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                          {suggestions.map(suggestion => (
+                            <button key={suggestion.key} type="button"
+                              onClick={(e)=>{e.preventDefault();setSearchQuery(suggestion.query);setShowSuggestions(false);saveRecentSearch(suggestion.query);}}
+                              aria-label={suggestion.kind==="food" ? `Search for ${suggestion.label} from ${suggestion.shopName}` : `Search for ${suggestion.label}`}
+                              className="w-full min-h-11 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none focus-visible:outline-2 focus-visible:outline-orange-500"
                             >
-                              <Search className="w-3.5 h-3.5 text-orange-500" />
-                              {s}
+                              {suggestion.kind==="food" ? <Utensils className="w-4 h-4 shrink-0 text-orange-500" /> : <Store className="w-4 h-4 shrink-0 text-orange-500" />}
+                              <span className="min-w-0 flex flex-col gap-0.5">
+                                <span className="truncate">{suggestion.label}</span>
+                                {suggestion.kind==="food" && <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Menu item · {suggestion.shopName}</span>}
+                              </span>
                             </button>
                           ))}
                         </>
@@ -6211,6 +6167,31 @@ function DiscoverScreen({
             </div>
           </div>
         </section>
+
+        {/* Available menu items matching this query, without fabricated photos */}
+        {debouncedSearchQuery.trim().length>0 && matchingFoodItems.length>0 && (
+          <section className="px-4 sm:px-6 mb-8" aria-label="Food matching your search">
+            <h3 className="text-base font-black text-slate-900 dark:text-white mb-1">Food matching your search</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Current menu items and catalog prices. Open the shop to see options.</p>
+            <div className="flex gap-3 overflow-x-auto pb-2 touch-pan-x snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {matchingFoodItems.map(feed=>(
+                <button type="button" key={feed.id} onClick={()=>onSelectShop(feed.shopId)}
+                  aria-label={`View ${feed.itemName} at ${feed.shopName} menu`}
+                  className="flex-shrink-0 w-52 sm:w-60 snap-start text-left bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm hover:border-orange-500/30 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-orange-500">
+                  <div className="h-28 relative bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                    {feed.image ? <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" /> : <Store className="w-8 h-8 text-slate-400" aria-hidden="true" />}
+                    <span className="absolute bottom-2 right-2 bg-black/75 text-white text-xs font-black px-2 py-1 rounded-lg">R{feed.price.toFixed(2)}</span>
+                  </div>
+                  <div className="p-3">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</p>
+                    <p className="text-xs text-orange-600 dark:text-orange-400 truncate mt-1">{feed.shopName}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-1">{feed.open ? Number.isFinite(feed.distance) ? `${feed.distance.toFixed(1)} km · Browse menu` : "Browse menu" : "Closed · Browse menu"}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Store Grid or Map */}
         {viewMode === "list" ? (
