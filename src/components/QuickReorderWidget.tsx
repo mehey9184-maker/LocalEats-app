@@ -6,6 +6,7 @@ import { BlurUpImage } from './BlurUpImage';
 
 interface QuickReorderWidgetProps {
   orders: Order[];
+  showQuickReorder?: boolean;
   shops: Shop[];
   favorites: string[];
   onQuickReorder: (itemData: { product_name: string; price: number; quantity: number; shop_id: string }) => void;
@@ -15,6 +16,7 @@ interface QuickReorderWidgetProps {
 
 export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
   orders,
+  showQuickReorder=true,
   shops,
   favorites,
   onQuickReorder,
@@ -68,14 +70,14 @@ export const QuickReorderWidget: React.FC<QuickReorderWidgetProps> = ({
     return shops.filter((s) => favorites.includes(s.id));
   }, [favorites, shops]);
 
-  if (topFrequentItems.length === 0 && favoriteShops.length === 0) {
+  if ((!showQuickReorder || topFrequentItems.length === 0) && favoriteShops.length === 0) {
     return null;
   }
 
   return (
     <div className="w-full space-y-3.5 my-2">
       {/* 1-Tap Quick Reorder Section for Most Frequently Purchased Items */}
-      {topFrequentItems.length > 0 && (
+      {showQuickReorder && topFrequentItems.length > 0 && (
         <div className="bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:via-amber-500/15 dark:to-slate-900 rounded-2xl p-4 border border-orange-500/20 shadow-xs">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">

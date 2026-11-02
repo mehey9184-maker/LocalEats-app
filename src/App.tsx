@@ -294,10 +294,11 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
-import {homeReorderMenuItem,homeRating} from "./services/homeTrustPolicy";
+import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
 import {discoverMatchesShopOrFood,discoverFoodPreviews,discoverFoodSuggestions} from "./services/discoverFoodSearch";
+import {mapShopCoordinates,mapShopDistance,mapVisibleShops,mapInitialCenter} from "./services/customerMapTrust";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -9732,173 +9733,23 @@ function ExploreScreen({
   const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop' | 'rider'>('all');
+  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop'>('all');
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
   >("rating");
 
-  // Fetch real registered riders from Supabase (no fake pins)
-  const [realRiders, setRealRiders] = useState<any[]>([]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadRealRiders = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("rider_profiles")
-          .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online");
-        if (!error && data && isMounted) {
-          setRealRiders(data);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch real rider profiles:", err);
-      }
-    };
-    loadRealRiders();
-
-    const channel = getFreshChannel("explore-map-riders-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "rider_profiles" },
-        () => {
-          loadRealRiders();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      isMounted = false;
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const categories = [
-    "All",
-    "Favorites",
-    "Nearby",
-    ...new Set(shops.map((s) => s.category)),
-  ];
-
-  // Pre-calculate search index map for ExploreScreen to optimize searching on low-end devices
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
-
-  const filteredShops = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
-    return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
-
-      let matchesCategory = false;
-      if (selectedCategory === "All") {
-        matchesCategory = true;
-      } else if (selectedCategory === "Favorites") {
-        matchesCategory = favorites.includes(shop.id);
-      } else if (selectedCategory === "Nearby") {
-        matchesCategory = true; // Handled in sort
-      } else {
-        matchesCategory = shop.category === selectedCategory;
-      }
-
-      const matchesRating = shop.rating >= minRating;
-      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-
-      // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
-
-      return (
-        matchesSearch &&
-        matchesCategory &&
-        matchesRating &&
-        matchesOpen &&
-        matchesDistance
-      );
-    });
-  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
-
-  const sortedShops = [...filteredShops].sort((a, b) => {
-    const statusA = getShopStatus(a);
-    const statusB = getShopStatus(b);
-    if (statusA.isOpen && !statusB.isOpen) return -1;
-    if (!statusA.isOpen && statusB.isOpen) return 1;
-
-    if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
-    }
-
-    if (sortPriority === "name") {
-      return a.name.localeCompare(b.name);
-    }
-
-    // Default: Sort by rating
-    return b.rating - a.rating;
-  });
-
-  const activeShop = shops.find((s) => s.id === selectedShopId);
-  const mapCenter: [number, number] =
-    activeShop && activeShop.latitude && activeShop.longitude
-      ? [activeShop.latitude, activeShop.longitude]
-      : userLocation
-        ? [userLocation.lat, userLocation.lng]
-        : [-25.9964, 28.2268];
-
-  // Real-time Rider Proximity Observer: Filter riders to ONLY active/online couriers within 5km radius of user location or map center
-  const activeProximityRiders = useMemo(() => {
-    const refLat = userLocation?.lat ?? mapCenter[0];
-    const refLng = userLocation?.lng ?? mapCenter[1];
-
-    return realRiders.filter((rider) => {
-      const isOnline = rider.is_online === true || rider.is_online === "true";
-      if (!isOnline) return false;
-
-      const rLat = typeof rider.latitude === "number" && rider.latitude !== 0 ? rider.latitude : null;
-      const rLng = typeof rider.longitude === "number" && rider.longitude !== 0 ? rider.longitude : null;
-
-      if (rLat === null || rLng === null) return false;
-
-      const dist = calculateDistance(rLat, rLng, refLat, refLng);
-      return dist <= 5.0; // Strictly within 5.0 km radius limit
-    });
-  }, [realRiders, userLocation, mapCenter]);
+  // The public map reads only the authorized pickup shop catalog and
+  // this customer's own device location. Rider telemetry is never queried.
+  const categories=["All","Favorites","Nearby",...new Set(shops.map(shop=>shop.category).filter(Boolean))];
+  const sortedShops=useMemo(()=>mapVisibleShops(shops,{
+    query:searchQuery,category:selectedCategory,favorites,minRating,onlyOpen:showOnlyOpen,
+    maxDistance,location:userLocation,sort:sortPriority,isOpen:shop=>getShopStatus(shop).isOpen,
+  }),[shops,searchQuery,selectedCategory,favorites,minRating,showOnlyOpen,maxDistance,userLocation,sortPriority]);
+  const filteredShops=sortedShops;
+  const activeShop=shops.find(shop=>shop.id===selectedShopId);
+  const mapCenter=mapInitialCenter(activeShop,userLocation,sortedShops);
+  const mappedShops=sortedShops.filter(shop=>mapShopCoordinates(shop)!==null);
 
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-xl overflow-hidden">
@@ -10173,34 +10024,17 @@ function ExploreScreen({
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
             <Suspense fallback={null}>
               <QuickReorderWidget
-                orders={orders || []}
+                orders={[]}
                 shops={shops}
                 favorites={favorites}
-                onQuickReorder={(item) => {
-                  const shop = shops.find((s) => s.id === item.shop_id);
-                  if (item.product_name && item.price && addToCart) {
-                    addToCart({
-                    id: item.product_name.toLowerCase().replace(/\s+/g, '-'),
-                    name: item.product_name,
-                    price: item.price,
-                    quantity: item.quantity || 1,
-                    shopId: item.shop_id || (shop ? shop.id : '1'),
-                    image: shop ? (shop.logo_url || shop.logo) : DEFAULT_SHOP_LOGO,
-                  });
-                  toast.success(`Reordered ${item.product_name}!`, {
-                    description: "Item added to cart for 1-tap checkout.",
-                  });
-                } else if (shop) {
-                  onStoreInfo(shop.id);
-                }
-              }}
-              onSelectShop={(shop) => {
-                onStoreInfo(shop.id);
-              }}
-              onViewAllFavorites={() => {
-                setSelectedCategory("Favorites");
-              }}
-            />
+                showQuickReorder={false}
+                onQuickReorder={(item)=>{
+                  const current=shops.find(shop=>shop.id===item.shop_id);
+                  if(current)onStoreInfo(current.id);
+                }}
+                onSelectShop={(shop)=>onStoreInfo(shop.id)}
+                onViewAllFavorites={()=>setSelectedCategory("Favorites")}
+                          />
             </Suspense>
 
             <div className="flex justify-between items-center px-2">
@@ -10250,21 +10084,8 @@ function ExploreScreen({
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
 
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const distanceVal=mapShopDistance(shop,userLocation);
+                const hasMapPin=mapShopCoordinates(shop)!==null;
 
                 return (
                   <div
@@ -10284,7 +10105,7 @@ function ExploreScreen({
                       />
 
                       {/* Distance Float Indicator */}
-                      {distanceVal !== null && (
+                      {Number.isFinite(distanceVal) && (
                         <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
                           <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
                           <span>{distanceVal.toFixed(1)} km away</span>
@@ -10336,17 +10157,18 @@ function ExploreScreen({
 
                         {/* Stable Decision Metrics Row */}
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-bold mt-2.5 mb-2">
-                          <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
-                            <Star className="w-3 h-3 fill-current text-amber-500" />
-                            <span>{shop.rating.toFixed(1)}</span>
-                            <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
-                          </div>
+                          {homeRating(shop)!==null && (
+                            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
+                              <Star className="w-3 h-3 fill-current text-amber-500" />
+                              <span>{homeRating(shop)!.toFixed(1)}</span>
+                              {homeReviewCount(shop)!==null && <span className="text-[10px] font-medium opacity-80">({homeReviewCount(shop)})</span>}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1 mb-4 leading-relaxed font-semibold">
-                        {shop.description ||
-                          "Discover incredible local delicacies made with fresh ingredients and served warm."}
+                        {shop.description || "Browse this shop's available menu."}
                       </p>
 
                       <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
@@ -10359,16 +10181,19 @@ function ExploreScreen({
                           className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>View Menu</span>
                         </button>
 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            if(!hasMapPin)return;
                             setSelectedShopId(shop.id);
                             setLayoutMode("map");
                             triggerHaptic(10);
                           }}
+                          disabled={!hasMapPin}
+                          aria-label={hasMapPin ? `View ${shop.name} on the map` : `Map position not available for ${shop.name}`}
                           className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-white rounded-2xl active:scale-95 transition-all text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
                           title="View on Map"
                         >
@@ -10400,7 +10225,7 @@ function ExploreScreen({
               </h3>
               <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
                 Interactive maps require an active data connection to stream
-                tiles. Switch to List view to browse saved shops.
+                tiles. Switch to List view to browse the available shop list. Offline map tiles may not load.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
                 <button
@@ -10431,9 +10256,10 @@ function ExploreScreen({
               <MapLegend
                 userLocation={userLocation}
                 activeFilter={legendFilter}
-                onSelectFilter={(f) => setLegendFilter(f)}
-                shopCount={filteredShops.length}
-                riderCount={activeProximityRiders?.length || 0}
+                onSelectFilter={(filter)=>{if(filter!=="rider")setLegendFilter(filter);}}
+                shopCount={mappedShops.length}
+                showRiders={false}
+                riderCount={0}
                 onFocusCustomer={() => {
                   if (!userLocation) {
                     onRequestLocation();
@@ -10442,17 +10268,13 @@ function ExploreScreen({
                   }
                 }}
                 onFocusShop={() => {
-                  if (filteredShops.length > 0) {
-                    const s = filteredShops[0];
+                  if (mappedShops.length > 0) {
+                    const s = mappedShops[0];
                     setSelectedShopId(s.id);
                     toast.info(`Focused on ${s.name}`);
                   }
                 }}
-                onFocusRider={() => {
-                  if (activeProximityRiders && activeProximityRiders.length > 0) {
-                    toast.info(`Found ${activeProximityRiders.length} active couriers nearby`);
-                  }
-                }}
+
               />
             </div>
 
@@ -10486,6 +10308,13 @@ function ExploreScreen({
             </div>
           </div>
 
+          {!loadingShops && mappedShops.length===0 && (
+            <div className="absolute top-24 left-4 right-4 z-[700] bg-white/95 dark:bg-slate-900/95 p-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700">
+              <p className="text-sm font-bold">No verified shop locations to display</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Shops without GPS coordinates can still be browsed in the list.</p>
+              <button type="button" onClick={()=>setLayoutMode("list")} className="mt-2 text-xs text-orange-600 font-bold underline">View shops as a list</button>
+            </div>
+          )}
           <MapContainer
             center={mapCenter}
             zoom={14}
@@ -10517,25 +10346,13 @@ function ExploreScreen({
               />
             )}
 
-            {/* Active Couriers / Riders Pins (Memoized Riders) */}
-            {(legendFilter === 'all' || legendFilter === 'rider') && (activeProximityRiders || []).map((rider) => {
-              const dist = userLocation ? calculateDistance(rider.latitude, rider.longitude, userLocation.lat, userLocation.lng) : 0;
-              return (
-                <MemoizedRiderMarker
-                  key={rider.id}
-                  rider={rider}
-                  distVal={dist}
-                />
-              );
-            })}
-
             {/* Shop Pins Cluster (Memoized Shops) */}
             <MarkerClusterGroup
               chunkedLoading
               maxClusterRadius={40}
               spiderfyOnMaxZoom={true}
             >
-              {filteredShops
+              {mappedShops
                 .filter((shop) => {
                   const status = getShopStatus(shop);
                   if (legendFilter === 'all') return true;
@@ -10823,35 +10640,22 @@ function ExploreScreen({
                   <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">
                     {activeShop.category} • {activeShop.address}
                   </p>
-                  <div className="flex items-center mt-1">
-                    <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
-                    <span className="text-sm font-bold ml-1 dark:text-white">
-                      {activeShop.rating}
-                    </span>
-                    <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">
-                      (120+ reviews)
-                    </span>
-                    {userLocation && (
-                      <>
-                        <span className="text-gray-300 dark:text-slate-700 mx-2">
-                          •
-                        </span>
-                        <span className="text-xs text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-wide">
-                          📍{" "}
-                          {calculateDistance(
-                            activeShop.latitude ||
-                              -25.9964 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            activeShop.longitude ||
-                              28.2268 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            userLocation.lat,
-                            userLocation.lng,
-                          ).toFixed(1)}{" "}
-                          km away
-                        </span>
-                      </>
+                  <div className="flex items-center flex-wrap gap-2 mt-1">
+                    {homeRating(activeShop)!==null && (
+                      <span className="flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400">
+                        <Star className="w-3.5 h-3.5 fill-current" />
+                        {homeRating(activeShop)!.toFixed(1)}
+                        {homeReviewCount(activeShop)!==null && <span className="text-slate-400">({homeReviewCount(activeShop)} reviews)</span>}
+                      </span>
                     )}
+                    {Number.isFinite(mapShopDistance(activeShop,userLocation)) && (
+                      <span className="text-xs text-orange-600 dark:text-orange-400 font-bold">
+                        📍 {mapShopDistance(activeShop,userLocation).toFixed(1)} km away
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500 font-semibold">
+                      {getShopStatus(activeShop).isOpen?"Open now":"Closed · Menu browsing available"}
+                    </span>
                   </div>
                 </div>
               </div>
