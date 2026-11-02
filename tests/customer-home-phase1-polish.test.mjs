@@ -45,6 +45,9 @@ test("Home copy describes pickup and guards Order Again at click time",()=>{
  assert.doesNotMatch(app,/const \[notificationPermissionStatus/);
  assert.doesNotMatch(app,/Enable Alerts/);
  assert.match(app,/onClick=\{onNotifications\}/);
+ const sorting=app.slice(app.indexOf("// Default 'recommended' ordering:"),app.indexOf('// Prioritize "Local Eats Special"'));
+ assert.match(sorting,/knownDistance\(a\)/);
+ assert.doesNotMatch(sorting,/hashString|25\.9964|28\.2268/);
 });
 test("original card remains and no fabricated trust metrics or ETA are shown",()=>{
  const card=readFileSync(new URL("../src/components/ShopCard.tsx",import.meta.url),"utf8");
