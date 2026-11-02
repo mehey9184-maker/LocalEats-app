@@ -41,7 +41,8 @@ test("Closed previews render the ORIGINAL ShopCard in the normal grid with no or
  assert.match(grid,/matchingClosedShops\.map\(preview=>\(/);
  assert.match(grid,/<ShopCard[\s\S]*shop=\{closedPickupCardData\(preview\)\}[\s\S]*readOnlyClosed/);
  assert.doesNotMatch(app,/Nearby shops are closed right now/);
- assert.match(card,/onClick=\{readOnlyClosed \? undefined :/);
+ assert.match(card,/onClick=\{\(\) => \{/);
+ assert.match(card,/onStoreInfo\(shop.id\)/);
  assert.match(card,/aria-label=\{readOnlyClosed \?/);
  assert.match(card,/status\.isOpen \? "Open Now" : "Closed"/);
  assert.match(card,/readOnlyClosed \? "Closed right now · Orders unavailable"/);
