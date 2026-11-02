@@ -393,28 +393,9 @@ const getShopCategoryIcon = (category: string) => {
 // Storage utilities and cache cleaners outsourced to ./utils
 
 export default function App() {
-  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(() => {
-    try {
-      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-        const hasSupabaseToken = Object.keys(localStorage).some(
-          (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
-                   key === "supabase.auth.token"
-        );
-        const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
-        const hasSessionToken = !!localStorage.getItem("localeats_session") || !!sessionStorage.getItem("localeats_session");
-        
-        // Only initialize straight to home if genuine auth tokens or verified session tokens exist.
-        // We avoid jumping to home solely on raw unverified userProfile cache, preventing stale profile loops after database wipes.
-        if (hasSupabaseToken || (hasRememberToken && hasSessionToken)) {
-          console.info("[Auth Init] Active auth session token found. Initializing on Home screen while verifying session.");
-          return ["home"];
-        }
-      }
-    } catch (e) {
-      console.warn("Auth screen initialization error:", e);
-    }
-    return ["splash"];
-  });
+  // Screen selection is deferred until Firebase finishes restoring its
+  // persisted session. Never infer sign-in from legacy cached token keys.
+  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(["splash"]);
   const currentScreen = currentScreenStack[currentScreenStack.length - 1];
   const previousScreen = currentScreenStack.length > 1 ? currentScreenStack[currentScreenStack.length - 2] : null;
 
@@ -543,18 +524,10 @@ export default function App() {
     }
   }, [userProfile]);
 
-  const [isRestoringSession, setIsRestoringSession] = useState(() => {
-    try {
-      const hasToken = Object.keys(localStorage).some(
-        (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
-      );
-      const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
-      return hasToken || hasRememberToken;
-    } catch {
-      return false;
-    }
-  });
-
+  // Always hold the first render until Firebase knows whether this is a
+  // returning customer or a guest; IndexedDB auth is not synchronous.
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [authRestoreSlow, setAuthRestoreSlow] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(() => {
     return safeLocalStorageGet("favorites", []);
   });
@@ -2019,26 +1992,26 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Safety max timeout to guarantee Securing Session never freezes UI
-    const safetyTimer = setTimeout(() => {
-      setIsRestoringSession(false);
-    }, 1500);
+    let active = true;
+    // Show a retry prompt if Firebase restoration is slow, but never reveal
+    // the splash/login route before auth state is actually known.
+    const slowTimer = setTimeout(() => {if(active)setAuthRestoreSlow(true);}, 8000);
 
     const hasToken = Object.keys(localStorage).some(
       (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
                key === "supabase.auth.token"
     );
-    const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
     const cachedProfile = safeLocalStorageGet("userProfile", null);
     const hasCachedUser = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
 
-    if (hasToken || hasRememberToken) {
-      setIsRestoringSession(true);
+    {
       getResilientSession(3000).then(async ({ data: { session } }) => {
+        if (!active) return;
         if (session) {
           // Verify session validity with Supabase auth service to catch wiped DB or revoked tokens
           try {
             const { data: userData, error: userError } = await supabase.auth.getUser();
+            if (!active) return;
             if (userError || !userData?.user) {
               const errMsg = (userError?.message || "").toLowerCase();
               if (errMsg.includes("invalid") || errMsg.includes("not found") || errMsg.includes("sub claim") || errMsg.includes("jwt") || errMsg.includes("user_not_found")) {
@@ -2142,8 +2115,10 @@ export default function App() {
             }
           }
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       }).catch((err) => {
+        if (!active) return;
         console.info("[Auth] Session recovery error/offline, fallback to cached state:", err?.message || String(err));
         if (typeof navigator !== "undefined" && !navigator.onLine && hasCachedUser) {
           setCurrentScreen((prev) => {
@@ -2159,15 +2134,15 @@ export default function App() {
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       });
-    } else {
-      setIsRestoringSession(false);
     }
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
       if (_event === "PASSWORD_RECOVERY") {
         setCurrentScreen("reset-password");
         setIsRestoringSession(false);
@@ -2215,7 +2190,8 @@ export default function App() {
           return prev; // Stay on current screen if momentary loss
         });
       }
-      setIsRestoringSession(false);
+      // Startup gate is resolved by the Firebase-backed getSession above, not
+      // by an early/stale auth event.
     });
 
     const handleJwtExpired = () => {
@@ -2233,7 +2209,8 @@ export default function App() {
     window.addEventListener("supabase-jwt-expired", handleJwtExpired);
 
     return () => {
-      clearTimeout(safetyTimer);
+      active = false;
+      clearTimeout(slowTimer);
       subscription.unsubscribe();
       window.removeEventListener("supabase-jwt-expired", handleJwtExpired);
       // Ensure we explicitly release locks or reset any local lock state if needed on unmount
@@ -2721,29 +2698,19 @@ export default function App() {
   }, [userProfile, session, favorites]);
 
   if (isRestoringSession) {
+    // Keep one Home-shaped loading view in place until the persisted account
+    // is resolved. Do not flash Splash, Login, or unverified customer data.
     return (
-      <div className="relative min-h-screen">
-        <AuthSkeleton />
-        <div id="auth-loading-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-xs">
-          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 p-6 rounded-2xl shadow-xl flex flex-col items-center gap-4 max-w-xs text-center">
-            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-              <div className="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Lock className="w-4 h-4 text-primary animate-pulse" />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">Securing Session</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Verifying secure connection details safely...</p>
-            </div>
-            <button
-              onClick={() => setIsRestoringSession(false)}
-              className="mt-1 text-xs font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 bg-orange-50 dark:bg-orange-950/60 px-3.5 py-1.5 rounded-xl border border-orange-200 dark:border-orange-800/80 cursor-pointer active:scale-95 transition-all"
-            >
-              Continue to App
+      <div aria-busy="true" aria-label="Loading LocalEats home" className="min-h-screen relative">
+        <AppSkeletonLoader userProfile={{fullName:"",city:"",address:""}} />
+        {authRestoreSlow && (
+          <div role="status" className="fixed bottom-24 inset-x-4 z-50 max-w-sm mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-4 text-center">
+            <p className="text-sm font-semibold">Checking your account is taking longer than usual.</p>
+            <button type="button" onClick={() => window.location.reload()} className="mt-3 bg-orange-600 text-white text-sm font-bold py-2 px-5 rounded-lg">
+              Retry
             </button>
           </div>
-        </div>
+        )}
       </div>
     );
   }
