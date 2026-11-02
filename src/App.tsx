@@ -942,6 +942,8 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  const locationAttemptRef = useRef(0);
+  const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleShops = userLocation ? shops.filter(shop =>
     Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
     distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
@@ -1168,6 +1170,8 @@ export default function App() {
   const loadedCatalogLocation=useRef<{lat:number;lng:number}|null>(null);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     // The pickup catalog must never be queried for an invented location.
+    // Missing-location loading is resolved by the bounded geolocation attempt,
+    // instead of repeatedly issuing unauthorized or location-less requests.
     if (!userLocation) return;
     const generation=++catalogGeneration.current;
     const locationChanged=loadedCatalogLocation.current!==null &&
@@ -1450,51 +1454,69 @@ export default function App() {
   }, [fetchShopsData, syncOfflineOrders]);
 
   const requestLocation = useCallback((silent = false) => {
-    if (!navigator.geolocation) {
+    const attempt = ++locationAttemptRef.current;
+    if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+
+    const fail = (message: string) => {
+      if (attempt !== locationAttemptRef.current) return;
+      if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+      locationTimeoutRef.current = null;
+      // No fake coordinates or shops: show the real retry/error state, not
+      // a skeleton that can remain forever if GPS permission is unresolved.
       setLoadingShops(false);
-      setFetchError("Location is unavailable in this browser. Use a browser with location access to find pickup shops.");
-      if (!silent) {
-        setNotification({
-          message: "Geolocation is not supported by your browser",
-          type: "info",
-        });
-      }
+      setFetchError(message);
+      if (!silent) setNotification({message, type:"info"});
+    };
+
+    if (!navigator.geolocation) {
+      fail("Location is unavailable in this browser. Allow location access to find pickup shops within 4 km.");
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setUserLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        // Notification removed to keep it in the background as requested
-      },
-      (error) => {
-        if (error?.message && error.message.includes("permissions policy")) {
-          console.log("Geolocation disabled by iframe permissions policy.");
-        } else {
-          console.log("Error getting location (graceful fallback):", error?.message);
-        }
-        setLoadingShops(false);
-        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location could not be obtained. Tap Reload shops & live data to retry.");
-        if (silent) return; // Keep the existing non-intrusive automatic location behavior.
-        
-        let errorMsg = "Could not get your location automatically.";
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = "Location access denied. Allow your real location to discover pickup shops within 4 km.";
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg =
-            "Location timed out. Please retry; no default discovery location is used.";
-        }
-        setNotification({
-          message: errorMsg,
-          type: "info",
-        });
-      },
-      { timeout: 15005, enableHighAccuracy: false, maximumAge: 300000 },
-    );
+    // Some browsers leave the permission prompt unresolved indefinitely.
+    // Independently bound the Home loading state even if callbacks never fire.
+    locationTimeoutRef.current = setTimeout(() => {
+      fail("Location is taking too long. Allow location access and tap Reload Shops & Live Data to retry.");
+    }, 12000);
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          if (attempt !== locationAttemptRef.current) return;
+          const point = {lat:position.coords.latitude, lng:position.coords.longitude};
+          if (!Number.isFinite(point.lat) || Math.abs(point.lat)>90 ||
+              !Number.isFinite(point.lng) || Math.abs(point.lng)>180) {
+            fail("The device did not provide a valid location. Please retry.");
+            return;
+          }
+          if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+          locationTimeoutRef.current = null;
+          setFetchError(null);
+          setUserLocation(prev =>
+            prev?.lat===point.lat && prev?.lng===point.lng ? prev : point);
+          // The catalog effect fetches for this verified location.
+        },
+        (error) => {
+          if (attempt !== locationAttemptRef.current) return;
+          fail(error.code === error.PERMISSION_DENIED
+            ? "Location access denied. Allow your real location and tap Reload Shops & Live Data."
+            : "Location could not be obtained. Tap Reload Shops & Live Data to retry.");
+        },
+        {timeout:10000,enableHighAccuracy:false,maximumAge:300000},
+      );
+    } catch {
+      fail("Location is unavailable in this browser. Please allow location and retry.");
+    }
   }, []);
+
+  useEffect(() => {
+    requestLocation(true);
+    return () => {
+      locationAttemptRef.current++;
+      if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+      locationTimeoutRef.current = null;
+    };
+  }, [requestLocation]);
 
   useEffect(() => {
     if (searchQuery.length > 1) {
@@ -2395,27 +2417,6 @@ export default function App() {
       }
     }
   }, [pendingReview]);
-
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
-          console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(null);
-        },
-        { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
-      );
-    } else {
-      setUserLocation(null);
-    }
-  }, []);
 
   const addToCart = useCallback(
     (
