@@ -3332,13 +3332,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && visibleShops.some(s=>String(s.id)===String(selectedStoreId)) && (
+              {currentScreen === "store-info" && (visibleShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId))!}
+                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
+                  readOnlyClosed={!visibleShops.some(s=>String(s.id)===String(selectedStoreId))}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
