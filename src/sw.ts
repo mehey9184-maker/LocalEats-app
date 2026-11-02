@@ -18,11 +18,20 @@ void isSupported().then(supported=>{
   appId:import.meta.env.VITE_FIREBASE_APP_ID || config.appId,
  });
  onBackgroundMessage(getMessaging(app),payload=>{
-  if(payload.data?.type!=="pickup_ready" || !payload.data.event_id)return;
-  return self.registration.showNotification("LocalEats pickup update",{
-   body:"An order was marked Ready. Open LocalEats to check its current status.",
-   icon:"/logo.png",tag:payload.data.event_id,data:{url:"/"},
-  });
+  // Data-only wake-ups. Never use unverified push data as order truth.
+  if(payload.data?.type==="pickup_ready" && payload.data.event_id){
+   return self.registration.showNotification("LocalEats pickup update",{
+    body:"An order was marked Ready. Open LocalEats to check its current status.",
+    icon:"/logo.png",tag:payload.data.event_id,data:{url:"/"},
+   });
+  }
+  if(payload.data?.type==="pickup_status" && ["preparing","completed","cancelled"].includes(payload.data.status??"") &&
+     /^[a-f0-9-]{36}$/i.test(payload.data.order_id??"")){
+    return self.registration.showNotification("LocalEats order update",{
+     body:"Your order may have a new status. Open LocalEats to confirm the latest update.",
+     icon:"/logo.png",tag:"pickup-status-"+payload.data.order_id+"-"+payload.data.status,data:{url:"/"},
+    });
+  }
  });
 }).catch(()=>{/* Push is optional; the authorized API inbox remains available. */});
 self.addEventListener("notificationclick",event=>{
