@@ -1,4 +1,4 @@
-import React from "react";
+import React, {useState} from "react";
 import {
   ArrowLeft,
   User,
@@ -13,6 +13,7 @@ import {
   Wifi,
   Smartphone,
   Info,
+  Bell,
 } from "lucide-react";
 import { UserProfile } from "../types";
 
@@ -35,6 +36,7 @@ interface SettingsScreenProps {
   onToggleDataSaver?: () => void;
   triggerHaptic?: (duration?: number) => void;
   isOnline?: boolean;
+  onSubscribeToPush?: () => Promise<boolean>;
   [key: string]: any;
 }
 
@@ -53,7 +55,9 @@ export function SettingsScreen({
   onToggleDataSaver,
   triggerHaptic,
   isOnline = true,
+  onSubscribeToPush,
 }: SettingsScreenProps) {
+  const [pushEnrollStatus,setPushEnrollStatus]=useState<"idle"|"loading"|"enabled"|"unavailable">("idle");
   const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
   const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
 
@@ -138,6 +142,39 @@ export function SettingsScreen({
                 />
               </button>
             </div>
+
+            {/* Pickup notifications: request browser permission only from a
+                direct tap, and show enabled only after the API confirmed it. */}
+            {onSubscribeToPush && (
+              <div className="p-4 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+                    <Bell className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">Pickup order alerts</h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {pushEnrollStatus==="enabled"
+                        ? "Notifications enabled for this account and device."
+                        : pushEnrollStatus==="unavailable"
+                        ? "Alerts could not be enabled. Check browser permissions and try again."
+                        : "Get an alert when the shop marks your order Ready."}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" disabled={pushEnrollStatus==="loading"}
+                  onClick={async()=>{
+                    setPushEnrollStatus("loading");
+                    try {
+                      const enabled=await onSubscribeToPush();
+                      setPushEnrollStatus(enabled ? "enabled" : "unavailable");
+                    } catch {setPushEnrollStatus("unavailable");}
+                  }}
+                  className="shrink-0 min-h-10 px-3 py-2 rounded-xl text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50">
+                  {pushEnrollStatus==="loading" ? "Checking..." : pushEnrollStatus==="enabled" ? "Enabled" : "Enable"}
+                </button>
+              </div>
+            )}
 
             {/* Data Saver Mode */}
             {onToggleDataSaver && (
