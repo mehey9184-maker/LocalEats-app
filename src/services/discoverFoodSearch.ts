@@ -12,7 +12,7 @@ export type DiscoverSearchSuggestion={
 const words=(query:string)=>query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
 const includesWords=(haystack:string,terms:string[])=>terms.every(word=>haystack.toLocaleLowerCase().includes(word));
 const validItem=(item:MenuItem):boolean=>
- item?.is_available!==false &&
+ !!item && typeof item==="object" && item.is_available!==false &&
  typeof item.id==="string" && item.id.trim().length>0 &&
  typeof item.name==="string" && item.name.trim().length>0 &&
  typeof item.price==="number" && Number.isFinite(item.price) && item.price>=0;
