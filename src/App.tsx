@@ -3332,13 +3332,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && visibleShops.some(s=>String(s.id)===String(selectedStoreId)) && (
+              {currentScreen === "store-info" && (visibleShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId))!}
+                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
+                  readOnlyClosed={!visibleShops.some(s=>String(s.id)===String(selectedStoreId))}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -8430,9 +8431,11 @@ function StoreInfoScreen({
   setCurrentScreen,
   isOnline,
   onScanFlyer,
+  readOnlyClosed = false,
 }: {
   onBack: () => void;
   shop: Shop;
+  readOnlyClosed?: boolean;
   isFavorite: boolean;
   onToggleFavorite: () => void;
   userProfile: UserProfile | null;
@@ -8563,46 +8566,81 @@ function StoreInfoScreen({
 
 
   const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
+  const [closedMenuError,setClosedMenuError] = useState<string|null>(null);
 
   useEffect(() => {
     if (!shop?.id) return;
     let isMounted = true;
     const fetchMenu = async () => {
       setIsMenuLoading(true);
+      setApiMenu(null);
+      setClosedMenuError(null);
       try {
-        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && isMounted) {
-            // Remap keys if necessary to match MenuItem interface
-            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
-              id: String(m.id),
-              name: m.name,
-              price: Number(m.price),
-              displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-              description: m.description || "",
-              category: m.category || "Main Course",
-              is_available: m.is_available !== false,
-              customizations: m.customizations || [],
-            }));
-            setApiMenu(formattedMenu);
+        if (readOnlyClosed) {
+          // Only the public LocalEats API supplies real menu items. A closed
+          // shop never enters the orderable catalog, cart, or quote flow.
+          const response = await customerPickupApi.menu(shop.id);
+          if (!Array.isArray(response.menu_items)) throw new Error("Menu unavailable");
+          const validMenu: MenuItem[] = response.menu_items.map((item: any) => {
+            const price = Number(item.price);
+            if (!item || typeof item.id !== "string" || !item.id ||
+              typeof item.name !== "string" || !item.name.trim() ||
+              (typeof item.price !== "number" && typeof item.price !== "string") ||
+              String(item.price).trim() === "" || !Number.isFinite(price) || price < 0)
+              throw new Error("Menu information is unavailable");
+            return {
+              id:item.id, name:item.name, price,
+              displayPrice:`R ${price.toFixed(2)}`,
+              image:typeof item.image_url === "string" ? item.image_url : "",
+              description:typeof item.description === "string" ? item.description : "",
+              category:typeof item.category === "string" ? item.category : "Menu",
+              is_available:false, // Read only: never offer ordering from a closed shop.
+              customizations:[],
+            };
+          });
+          if (isMounted) setApiMenu(validMenu);
+        } else {
+          // Preserve the original open-shop menu path.
+          const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && isMounted) {
+              const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
+                id: String(m.id),
+                name: m.name,
+                price: Number(m.price),
+                displayPrice: `R${Number(m.price).toFixed(2)}`,
+                image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
+                description: m.description || "",
+                category: m.category || "Main Course",
+                is_available: m.is_available !== false,
+                customizations: m.customizations || [],
+              }));
+              setApiMenu(formattedMenu);
+            }
           }
         }
       } catch (err) {
-        console.warn("Failed to fetch shop menu from API:", err);
+        if (isMounted && readOnlyClosed) {
+          setApiMenu([]);
+          setClosedMenuError("The shop's menu couldn't load. Please try again later.");
+        } else {
+          console.warn("Failed to fetch shop menu from API:",err);
+        }
       } finally {
         if (isMounted) setIsMenuLoading(false);
       }
     };
-    fetchMenu();
+    void fetchMenu();
     return () => { isMounted = false; };
-  }, [shop?.id]);
+  }, [shop?.id,readOnlyClosed]);
 
   const storeStatus = getStoreStatus();
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    // Do not invent fallback dishes for a closed shop, even while loading.
+    if (readOnlyClosed) return apiMenu ?? [];
     if (apiMenu !== null) {
       if (apiMenu.length > 0) return apiMenu;
       // If API succeeded but returned 0 items, respect it, don't fall back to fakes
@@ -8700,7 +8738,7 @@ function StoreInfoScreen({
         },
       ];
     }
-  }, [shop]);
+  }, [shop,apiMenu,readOnlyClosed]);
 
   const filteredMenu = useMemo(() => {
     let items = shopMenu.filter((item) =>
@@ -9062,7 +9100,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {shop.delivery_eta || "30-45 mins"}
+                {readOnlyClosed ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -9190,6 +9228,12 @@ function StoreInfoScreen({
                 </div>
               )}
 
+              {readOnlyClosed && (
+                <div role="status" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Closed right now · You can browse the real menu, but ordering is unavailable.
+                  {shop.opening_time && <span className="block text-xs text-slate-500 mt-1">Opens {shop.opening_time}</span>}
+                </div>
+              )}
               {/* Search & Price Sort Bar */}
               <div id="store-menu-search" className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
                 <div className="relative flex-1 group">
@@ -9393,7 +9437,7 @@ function StoreInfoScreen({
                                     key={item.id}
                                     item={item}
                                     shop={shop}
-                                    onSelect={(item) =>
+                                    onSelect={readOnlyClosed ? undefined : (item) =>
                                       setSelectedItemForQuantity(item)
                                     }
                                     showAlert={showAlert}
@@ -9426,10 +9470,10 @@ function StoreInfoScreen({
                         <SearchX className="w-8 h-8" />
                       </div>
                       <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        No items found
+                        {readOnlyClosed ? (closedMenuError || (searchQuery ? "No matching dishes" : "No menu items available")) : "No items found"}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Try searching for something else
+                        {readOnlyClosed ? "Menu browsing only. Ordering resumes when the shop is open." : "Try searching for something else"}
                       </p>
                     </div>
                   )}
@@ -9813,9 +9857,10 @@ function StoreInfoScreen({
 
       <QuantityModal
         item={selectedItemForQuantity}
-        isOpen={!!selectedItemForQuantity}
+        isOpen={!readOnlyClosed && !!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (readOnlyClosed) return;
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,
