@@ -296,6 +296,7 @@ import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
 import {homeReorderMenuItem,homeRating} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
+import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -5708,29 +5709,6 @@ function DiscoverScreen({
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<"smart" | "distance" | "rating" | "speed">("smart");
   
-  const [pingStatus, setPingStatus] = useState<"idle" | "testing" | "online" | "offline">("idle");
-  const [latency, setLatency] = useState<number | null>(null);
-
-  const handleTestPing = useCallback(() => {
-    setPingStatus("testing");
-    triggerHaptic?.(50);
-    setTimeout(() => {
-      if (navigator.onLine) {
-        setPingStatus("online");
-        setLatency(Math.floor(Math.random() * 30) + 20); // 20-50ms
-        toast.success("Connection check complete!", {
-          description: "You are connected to LocalEats and ready to order."
-        });
-      } else {
-        setPingStatus("offline");
-        setLatency(null);
-        toast.error("Connection check failed", {
-          description: "No internet connection. Your actions are saved and will sync later."
-        });
-      }
-    }, 1500);
-  }, [triggerHaptic]);
-
   const categories = [
     "All",
     "Favorites",
@@ -5760,9 +5738,10 @@ function DiscoverScreen({
     }> = [];
 
     shops.forEach((shop) => {
-      if (shop.menu && shop.menu.length > 0) {
+      if (Array.isArray(shop.menu)) {
         shop.menu.forEach((item) => {
-          if (item.image) {
+          if (item.is_available!==false && typeof item.image==="string" && item.image.trim() &&
+              typeof item.price==="number" && Number.isFinite(item.price) && item.price>=0) {
             items.push({
               id: `${shop.id}-${item.id}`,
               shopId: shop.id,
@@ -5770,8 +5749,8 @@ function DiscoverScreen({
               itemName: item.name,
               price: item.price,
               image: item.image,
-              description: item.description || `${item.name} from ${shop.name}`,
-              badge: shop.rating >= 4.5 ? "Top Rated" : "Fresh",
+              description: item.description || `From ${shop.name}`,
+              badge: "Menu item",
             });
           }
         });
@@ -5792,34 +5771,15 @@ function DiscoverScreen({
         queryTerms.every((term) => shopText.includes(term));
 
       let matchesCategory = false;
-      if (selectedCategory === "All" || selectedCategory === "Nearby") {
-        matchesCategory = true;
-      } else if (selectedCategory === "Favorites") {
-        matchesCategory = favorites.includes(shop.id);
-      } else {
-        matchesCategory = shop.category === selectedCategory;
-      }
-
-      const matchesRating = shop.rating >= minRating;
-      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-
-      // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
-
-      return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
+      if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
+      if(!discoverCategoryMatches(shop,selectedCategory))return false;
+      const rating=homeRating(shop);
+      const matchesRating=minRating===0 || (rating!==null && rating>=minRating);
+      const matchesOpen=!showOnlyOpen || getShopStatus(shop).isOpen;
+      const needsDistance=selectedCategory==="Nearby" || maxDistance!==null;
+      const distance=needsDistance ? discoverShopDistance(shop,userLocation) : Infinity;
+      const matchesDistance=!needsDistance || Number.isFinite(distance) && (maxDistance===null || distance<=maxDistance);
+      return matchesSearch && matchesRating && matchesOpen && matchesDistance;
     });
   }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
 
@@ -5831,72 +5791,12 @@ function DiscoverScreen({
       .slice(0, 5);
   }, [shops, debouncedSearchQuery]);
 
-  const sortedShops = [...filteredShops].sort((a, b) => {
-    const statusA = getShopStatus(a);
-    const statusB = getShopStatus(b);
-
-    // If sorting by smart priority:
-    if (sortPriority === "smart") {
-      // 1. Prioritize Open shops
-      if (statusA.isOpen && !statusB.isOpen) return -1;
-      if (!statusA.isOpen && statusB.isOpen) return 1;
-
-      // 2. Distance Sort (Nearby Priority)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) {
-          return distA - distB;
-        }
-      }
-      
-      // 3. Rating Sort
-      return b.rating - a.rating;
-    }
-
-    if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
-      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
-      return distA - distB;
-    }
-
-    if (sortPriority === "rating") {
-      return b.rating - a.rating;
-    }
-
-    if (sortPriority === "speed") {
-      const speedA = parseInt(a.delivery_eta || "20") || 20;
-      const speedB = parseInt(b.delivery_eta || "20") || 20;
-      return speedA - speedB;
-    }
-
-    return 0;
-  });
+  const sortedShops=discoverSortShops(
+    filteredShops,
+    selectedCategory==="Nearby" ? "distance" : sortPriority,
+    userLocation,
+    (shop)=>getShopStatus(shop).isOpen,
+  );
 
   return (
     <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
@@ -5965,7 +5865,7 @@ function DiscoverScreen({
                     <span className="bg-orange-600 text-white text-[9px] font-black px-2 py-1 rounded-full uppercase">Instant</span>
                   </h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                    Scan QR codes on promotional cards or flyers to auto-apply discounts or view menus.
+                    Scan a shop's QR code to see its available information. Discounts are confirmed at checkout.
                   </p>
                 </div>
               </div>
@@ -5987,7 +5887,7 @@ function DiscoverScreen({
           <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
             <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-orange-500" />
-              Fresh From Local Kitchens
+              Items on Local Menus
             </h3>
             
             <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
@@ -6024,7 +5924,7 @@ function DiscoverScreen({
               Local Flavor
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400 text-lg">
-              Discover the finest local Kota spots.
+              Explore local food shops and their available menus.
             </p>
           </div>
 
@@ -6329,9 +6229,10 @@ function DiscoverScreen({
                   }}
                   className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-shadow pr-10 cursor-pointer"
                 >
-                  <option value="smart">Most Popular</option>
+                  <option value="smart">Open &amp; Nearby</option>
+                  <option value="distance">Nearest First</option>
                   <option value="rating">Highest Rated</option>
-                  <option value="speed">Fastest Delivery</option>
+                  <option value="speed">Fastest Known Prep</option>
                 </select>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                   <ChevronDown className="w-4 h-4" />
@@ -6347,9 +6248,9 @@ function DiscoverScreen({
                 </span>
                 <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {[
-                    { val: null, label: "Within 4 km" },
-                    { val: 2, label: "Within 2 km" },
-                    { val: 4, label: "Within 4 km" }
+                    { val: null, label: "Any nearby" },
+                    { val: 1, label: "Within 1 km" },
+                    { val: 2, label: "Within 2 km" }
                   ].map((opt, i) => (
                     <button
                       key={i}
@@ -6407,8 +6308,7 @@ function DiscoverScreen({
                           toast.success(`Unfollowed ${shop.name}`);
                         } else {
                           toast.success(`Following ${shop.name}!`, {
-                            description:
-                              "You'll receive exclusive voucher promos from this store.",
+                            description:"Saved to your favourites.",
                           });
                         }
                       }}
@@ -6419,30 +6319,27 @@ function DiscoverScreen({
                       />
                     </button>
 
-                    {/* Highly Visible Rating Tag */}
-                    <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
-                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                      <span className="text-xs font-black text-slate-900 dark:text-white">
-                        {shop.rating.toFixed(1)}
-                      </span>
-                    </div>
+                    {/* Rating is displayed only when the API supplies a valid value. */}
+                    {homeRating(shop)!==null && (
+                      <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
+                        <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                        <span className="text-xs font-black text-slate-900 dark:text-white">{homeRating(shop)!.toFixed(1)}</span>
+                      </div>
+                    )}
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
-                      <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Speed: {shop.delivery_eta || "20m"}
-                      </div>
-                      {(() => {
-                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
-                        return distanceVal !== null ? (
-                          <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
-                            <Navigation className="w-2.5 h-2.5" />
-                            {distanceVal.toFixed(1)} km
-                          </div>
-                        ) : null;
-                      })()}
+                      {homePrepMinutes(shop)!==null && (
+                        <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
+                          Prep: {shop.prepTime}
+                        </div>
+                      )}
+                      {Number.isFinite(discoverShopDistance(shop,userLocation)) && (
+                        <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
+                          <Navigation className="w-2.5 h-2.5" />
+                          {discoverShopDistance(shop,userLocation).toFixed(1)} km
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -6463,7 +6360,7 @@ function DiscoverScreen({
                           </p>
                           {!status.isOpen && (
                             <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">
-                              Opens {status.nextOpeningTime || "Soon"}
+                              {status.nextOpeningTime ? `Opens ${status.nextOpeningTime}` : "Closed right now"}
                             </p>
                           )}
                         </div>
@@ -6475,8 +6372,8 @@ function DiscoverScreen({
                         )}
                       </div>
 
-                      <div className="mb-6">
-                        <TrustBadge shop={shop} />
+                      <div className="mb-6 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                        {status.isOpen ? "Open now" : "Closed · Menu browsing available"}
                       </div>
                     </div>
 
@@ -6489,7 +6386,7 @@ function DiscoverScreen({
                       className="w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Store className="w-4 h-4" />
-                      View Menu & Order
+                      View Menu
                     </button>
                   </div>
                 </div>
@@ -6547,18 +6444,15 @@ function DiscoverScreen({
                   <div className="mt-8 bg-slate-50/90 dark:bg-slate-900/60 p-4 rounded-2xl max-w-sm w-full border border-slate-200/70 dark:border-slate-800 text-left shadow-sm">
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        Service Status
+                        <span className="relative flex h-2 w-2"><span className="relative inline-flex rounded-full h-2 w-2 bg-slate-400"></span></span>
+                        Discovery Status
                       </span>
                       <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-200 dark:border-emerald-800">
-                        Online
+                        No shops found
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                      Connected to <strong>LocalEats Cloud Service</strong>. New vendors and local kitchens will appear automatically when available.
+                      There are no pickup shops available in this area right now. Try again later or check your location permission.
                     </p>
                   </div>
                 )}
@@ -6605,27 +6499,15 @@ function DiscoverScreen({
                   </Marker>
                 )}
 
-                {sortedShops.map((shop) => {
-                  const sLat =
-                    shop.latitude ||
-                    -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                  const sLng =
-                    shop.longitude ||
-                    28.2268 + (hashString(shop.id) % 10) * 0.005;
-                  const dist = userLocation
-                    ? calculateDistance(
-                        sLat,
-                        sLng,
-                        userLocation.lat,
-                        userLocation.lng,
-                      )
-                    : null;
+                {sortedShops.filter(shop=>discoverShopCoordinates(shop)!==null).map((shop) => {
+                  const coordinates=discoverShopCoordinates(shop)!;
+                  const dist=discoverShopDistance(shop,userLocation);
                   const status = getShopStatus(shop);
 
                   return (
                     <Marker
                       key={shop.id}
-                      position={{ lat: sLat, lng: sLng }}
+                      position={coordinates}
                       icon={createShopMapIcon(status.isOpen)}
                     >
                       <Popup minWidth={200}>
@@ -6637,10 +6519,10 @@ function DiscoverScreen({
                             {shop.description}
                           </p>
                           <div className="flex items-center justify-between text-[10px] mb-2.5 border-t pt-1.5 border-slate-100 dark:border-slate-800">
-                            <span className="font-bold text-amber-500">
-                              ★ {shop.rating}
-                            </span>
-                            {dist !== null && (
+                            {homeRating(shop)!==null && (
+                              <span className="font-bold text-amber-500">★ {homeRating(shop)!.toFixed(1)}</span>
+                            )}
+                            {Number.isFinite(dist) && (
                               <span className="text-slate-500 font-semibold">
                                 {dist.toFixed(1)} km
                               </span>
@@ -6680,8 +6562,8 @@ function DiscoverScreen({
                 Interactive Leaflet Map
               </p>
               <p className="text-[10px] text-slate-500 font-medium">
-                Showing top-rated Spaza Kota shops near you. Click pins to
-                explore OTA menus instantly.
+                Showing shop locations supplied by LocalEats. Select a pin to
+                browse the shop's menu.
               </p>
             </div>
           </section>
@@ -6691,10 +6573,10 @@ function DiscoverScreen({
         <section className="mt-16 overflow-hidden">
           <div className="px-6 mb-6">
             <h2 className="font-sans text-2xl font-bold text-[#2d2f31] dark:text-white">
-              Chef's Selection
+              Local Shop Selection
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400">
-              Handpicked local favorites
+              Explore shops in your area
             </p>
           </div>
           <div className="flex gap-6 overflow-x-auto px-6 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden snap-x">
@@ -6717,7 +6599,7 @@ function DiscoverScreen({
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">
                   "{shop.description}"
                 </p>
-                <button className="px-6 py-2 bg-[#2d2f31] dark:bg-slate-700 text-[#f6f6f9] dark:text-white rounded-full text-sm font-bold cursor-pointer">
+                <button type="button" onClick={()=>onSelectShop(shop.id)} className="px-6 py-2 bg-[#2d2f31] dark:bg-slate-700 text-[#f6f6f9] dark:text-white rounded-full text-sm font-bold cursor-pointer">
                   View Menu
                 </button>
               </div>
