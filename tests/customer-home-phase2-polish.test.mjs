@@ -68,7 +68,7 @@ test("Only the existing Home is changed: no fake speed match or keyword halal st
  assert.doesNotMatch(home,/shopText.includes\("halal"\)/);
  assert.match(home,/aria-pressed=\{isSelected\}/);
  assert.match(home,/aria-controls="home-search-suggestions"/);
- assert.match(home,/event\.key/);
+ assert.match(home,/e\.key === "Escape"/);
  const card=readFileSync(new URL("../src/components/ShopCard.tsx",import.meta.url),"utf8");
  assert.match(card,/role="button"/);
  assert.match(card,/tabIndex=\{0\}/);
