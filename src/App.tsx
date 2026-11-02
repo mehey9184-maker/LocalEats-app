@@ -6317,7 +6317,7 @@ function DiscoverScreen({
               );
             }) // close map
             )} // close ternary
-            {filteredShops.length === 0 && (
+            {!loadingShops && filteredShops.length === 0 && (
               <div className="col-span-full py-16 px-4 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-6 duration-500 max-w-lg mx-auto">
                 <div className="relative mb-6">
                   <div className="absolute inset-0 bg-orange-500/10 dark:bg-orange-500/20 rounded-full scale-150 blur-2xl opacity-70"></div>
@@ -6330,13 +6330,13 @@ function DiscoverScreen({
                 </div>
 
                 <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">
-                  {shops.length === 0 ? "No Shops Found" : "No matches found"}
+                  {shops.length===0 ? (userLocation ? "No pickup shops nearby" : "Location needed") : "No matching shops or food"}
                 </h3>
                 
                 <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
-                  {shops.length === 0
-                    ? "No approved, available pickup shops found within 4 km of your real location."
-                    : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
+                  {shops.length===0
+                    ? (userLocation ? "No approved pickup shops are available in your current 4 km area. Try again later." : "Allow location access and retry to find eligible pickup shops nearby.")
+                    : debouncedSearchQuery.trim() ? "No shops or currently available menu items match this search and your filters. Try another food name or clear filters." : "No shops match these filters. Try another category or clear filters."}
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-xs">
@@ -6376,7 +6376,7 @@ function DiscoverScreen({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                      There are no pickup shops available in this area right now. Try again later or check your location permission.
+                      {userLocation ? "No verified pickup shops are available in your area right now." : "Location access is required to find nearby pickup shops."}
                     </p>
                   </div>
                 )}
@@ -6399,6 +6399,13 @@ function DiscoverScreen({
                 >
                   View List Instead
                 </button>
+              </div>
+            )}
+            {sortedShops.length>0 && !sortedShops.some(shop=>discoverShopCoordinates(shop)!==null) && (
+              <div className="absolute top-4 left-4 right-4 z-[1000] bg-white/95 dark:bg-slate-900/95 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg">
+                <p className="text-xs font-bold text-slate-800 dark:text-white">No verified shop map pins yet</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">These shops can still be browsed in the list.</p>
+                <button type="button" onClick={()=>setViewMode("list")} className="min-h-10 text-xs font-bold text-orange-600 dark:text-orange-400 underline underline-offset-2">View shops as a list</button>
               </div>
             )}
             <div className="h-full w-full relative z-10">
@@ -6494,11 +6501,11 @@ function DiscoverScreen({
         )}
 
         {/* Real Menu Items Feed from Active Shops */}
-        {realFreshItems.length > 0 && (
+        {!debouncedSearchQuery.trim() && realFreshItems.length > 0 && (
           <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
             <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-orange-500" />
-              Items on Local Menus
+              Food from available menus
             </h3>
             
             <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
@@ -6506,15 +6513,16 @@ function DiscoverScreen({
                 <div
                   key={feed.id}
                   onClick={() => onSelectShop(feed.shopId)}
-                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
+                  role="button" tabIndex={0} onKeyDown={(event)=>{if(event.target!==event.currentTarget)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();onSelectShop(feed.shopId);}}} aria-label={`Browse ${feed.itemName} at ${feed.shopName}`}
+                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-orange-500"
                 >
                   <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
-                    <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
+                    {feed.image ? <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" /> : <Store className="w-8 h-8 text-slate-400" aria-hidden="true" />}
                     <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
-                      {feed.badge}
+                      {feed.open ? "On menu" : "Closed"}
                     </div>
                     <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
-                      R{feed.price}
+                      R{feed.price.toFixed(2)}
                     </div>
                   </div>
                   <div className="p-3">
@@ -6529,17 +6537,17 @@ function DiscoverScreen({
         )}
 
         {/* Chef's Selection Carousel */}
-        <section className="mt-16 overflow-hidden">
+        {nearbyShops.length>0 && !debouncedSearchQuery.trim() && <section className="mt-16 overflow-hidden">
           <div className="px-6 mb-6">
             <h2 className="font-sans text-2xl font-bold text-[#2d2f31] dark:text-white">
-              Local Shop Selection
+              Shops Near You
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400">
               Explore shops in your area
             </p>
           </div>
           <div className="flex gap-6 overflow-x-auto px-6 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden snap-x">
-            {shops.slice(0, 2).map((shop) => (
+            {nearbyShops.map((shop) => (
               <div
                 key={shop.id}
                 className="flex-none w-[85vw] max-w-[320px] snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center"
@@ -6564,7 +6572,7 @@ function DiscoverScreen({
               </div>
             ))}
           </div>
-        </section>
+        </section>}
       </main>
     </div>
   );
