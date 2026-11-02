@@ -1580,6 +1580,25 @@ export default function App() {
     }
   },[session?.user?.id]);
 
+  // Both Settings and Profile use the same real logout, including best-effort
+  // revocation of the outgoing account's API-owned push subscription.
+  const logoutCustomer=useCallback(async()=>{
+    const uid=session?.user?.id;
+    const installation=uid ? existingPickupInstallationId(uid) : null;
+    if(installation && pickupOrderingEnabled()) {
+      await Promise.race([
+        customerPickupApi.revoke(installation).catch(()=>{}),
+        new Promise<void>(resolve=>setTimeout(resolve,2000))
+      ]);
+    }
+    await supabase.auth.signOut();
+    for(const key of ["remember_me_secure_token","cart","userProfile","favorites","pending_review"])
+      localStorage.removeItem(key);
+    setCart([]);setFavorites([]);setOrders([]);setNotifications([]);setNotificationOwnerId(null);
+    setUserProfile({fullName:"",email:"",phone:"",city:"",address:"",country:"South Africa",role:"user"});
+    setCurrentScreen("splash");
+  },[session?.user?.id,setCurrentScreen]);
+
   // Called at session bootstrap: never pop an unsolicited permission prompt.
   const requestNotificationPermission = useCallback(() => {
     const uid=session?.user?.id;
@@ -3393,7 +3412,7 @@ export default function App() {
                   forcedTheme={forcedTheme}
                   onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onLogout={() => setCurrentScreen("splash")}
+                  onLogout={logoutCustomer}
                   onProfile={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("profile");
@@ -3504,38 +3523,7 @@ export default function App() {
                   }}
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={async () => {
-                    // Revoke this account's API-owned device subscription before
-                    // signing out, to avoid delivering its orders to a later user
-                    // of the same browser. Never block sign-out indefinitely.
-                    const logoutUid=session?.user?.id;
-                    const installation=logoutUid ? existingPickupInstallationId(logoutUid) : null;
-                    if(installation && pickupOrderingEnabled()) {
-                      await Promise.race([
-                        customerPickupApi.revoke(installation).catch(()=>{}),
-                        new Promise<void>(resolve=>setTimeout(resolve,2000))
-                      ]);
-                    }
-                    await supabase.auth.signOut();
-                    // Clear sensitive data on logout
-                    localStorage.removeItem("remember_me_secure_token");
-                    localStorage.removeItem("cart");
-                    localStorage.removeItem("userProfile");
-                    localStorage.removeItem("favorites");
-                    localStorage.removeItem("pending_review");
-                    setCart([]);
-                    setFavorites([]);
-                    setUserProfile({
-                      fullName: "",
-                      email: "",
-                      phone: "",
-                      city: "",
-                      address: "",
-                      country: "South Africa",
-                      role: "user",
-                    });
-                    setCurrentScreen("splash");
-                  }}
+                  onLogout={logoutCustomer}
                   setNotification={setNotification}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
