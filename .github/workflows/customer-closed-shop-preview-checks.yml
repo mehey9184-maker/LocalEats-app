@@ -1,7 +1,7 @@
 name: Nearby closed pickup storefront preview checks
 on:
   push:
-    branches: [repair/show-nearby-closed-shops-01, repair/restore-original-closed-shop-card-01]
+    branches: [repair/show-nearby-closed-shops-01, repair/restore-original-closed-shop-card-01, repair/browse-closed-shop-menu-01]
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,7 +19,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Closed preview isolation and pilot regressions
-        run: node --experimental-strip-types --test tests/customer-closed-pickup-previews.test.mjs tests/original-pickup.test.mjs tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs tests/customer-collection-tracking.test.mjs
+        run: node --experimental-strip-types --test tests/customer-closed-pickup-previews.test.mjs tests/customer-closed-menu-browsing.test.mjs tests/original-pickup.test.mjs tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs tests/customer-collection-tracking.test.mjs
       - name: Type check
         run: npm run lint
       - name: Vite build
