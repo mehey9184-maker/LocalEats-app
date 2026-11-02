@@ -33,8 +33,8 @@ export const ShopCard = memo(
     onStoreInfo: (id: string) => void;
     triggerHaptic: (pattern?: number | number[]) => void;
     dataSaverEnabled?: boolean;
-    /** Display an approved but currently unavailable shop with the ORIGINAL card;
-     *  it cannot navigate to menus, cart, checkout or order actions. */
+    /** Display an approved, unavailable shop using the ORIGINAL card.
+     *  The card may open a read-only menu; no cart or order actions are enabled. */
     readOnlyClosed?: boolean;
   }) => {
     const status = readOnlyClosed
@@ -100,14 +100,14 @@ export const ShopCard = memo(
             },
           },
         }}
-        whileHover={readOnlyClosed ? undefined : { y: -4, transition: { duration: 0.2 } }}
-        whileTap={readOnlyClosed ? undefined : { scale: 0.98 }}
-        onClick={readOnlyClosed ? undefined : () => {
+        whileHover={{ y: -4, transition: { duration: 0.2 } }}
+        whileTap={{ scale: 0.98 }}
+        onClick={() => {
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        aria-label={readOnlyClosed ? `${shop.name} is closed. Ordering unavailable.` : undefined}
-        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${readOnlyClosed ? "cursor-default" : "cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98]"} ${
+        aria-label={readOnlyClosed ? `${shop.name} is closed. View menu; ordering unavailable.` : undefined}
+        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${"cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98]"} ${
           !status.isOpen ? "opacity-80" : ""
         }`}
       >
