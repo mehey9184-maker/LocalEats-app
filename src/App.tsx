@@ -5807,7 +5807,8 @@ function DiscoverScreen({
           <div className="flex items-center gap-4">
             <button
               onClick={onHome}
-              className="text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
+              aria-label="Back to Home"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-orange-500 text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
@@ -5831,7 +5832,9 @@ function DiscoverScreen({
             )}
             <button
               onClick={() => setViewMode(viewMode === "list" ? "map" : "list")}
-              className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
+              aria-label={viewMode==="list"?"Show shops on a map":"Show shops as a list"}
+              aria-pressed={viewMode==="map"}
+              className="min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
             >
               {viewMode === "list" ? (
                 <MapIcon className="w-5 h-5" />
@@ -5867,7 +5870,9 @@ function DiscoverScreen({
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
             </div>
+            <label htmlFor="discover-search-input" className="sr-only">Search local food shops</label>
             <input
+              id="discover-search-input" aria-controls="discover-search-suggestions" aria-expanded={showSuggestions} autoComplete="off"
               className="w-full h-14 pl-12 pr-10 bg-[#ffffff] dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-[0_8px_32px_rgba(45,47,49,0.04)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none transition-all"
               placeholder="Search stores nearby..."
               type="text"
@@ -5880,7 +5885,7 @@ function DiscoverScreen({
                 setTimeout(() => setShowSuggestions(false), 200);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                if(e.key==="Escape"){setShowSuggestions(false);e.currentTarget.blur();} else if (e.key === "Enter" && searchQuery.trim().length >= 2) {
                   saveRecentSearch(searchQuery.trim());
                   setShowSuggestions(false);
                 }
@@ -5896,7 +5901,7 @@ function DiscoverScreen({
                   setSearchQuery("");
                   setShowSuggestions(true);
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
+                className="absolute right-1 top-1/2 -translate-y-1/2 min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
                 aria-label="Clear search text"
               >
                 <X className="w-4 h-4" />
@@ -5906,7 +5911,7 @@ function DiscoverScreen({
             {/* Float Suggestions relative to search bar */}
             {showSuggestions && (
               <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-40">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
+                <div id="discover-search-suggestions" role="region" aria-label="Discover search suggestions" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
                   {debouncedSearchQuery.length < 2 ? (
                     <>
                       {/* Recent Searches */}
@@ -5919,7 +5924,7 @@ function DiscoverScreen({
                             </span>
                             <button
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setRecentSearches([]);
                                 try {
@@ -5938,7 +5943,7 @@ function DiscoverScreen({
                             >
                               <button
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -5982,7 +5987,7 @@ function DiscoverScreen({
                             <button
                               key={`sugg-${idx}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setSearchQuery(s);
                                 setShowSuggestions(false);
@@ -6007,7 +6012,7 @@ function DiscoverScreen({
                               <button
                                 key={`recent-match-${idx}`}
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -6032,6 +6037,7 @@ function DiscoverScreen({
             <div className="grid grid-cols-2 gap-3 h-[200px]">
               {/* Primary Category (Kotas) */}
               <div 
+                role="button" tabIndex={0} aria-pressed={selectedCategory==="Kotas"} aria-label="Browse Kotas" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Kotas");triggerHaptic(5);}}}
                 onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
                 className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
               >
@@ -6048,7 +6054,8 @@ function DiscoverScreen({
               <div className="grid grid-rows-2 gap-3">
                 {/* Top Row */}
                 <div 
-                  onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
+                  role="button" tabIndex={0} aria-pressed={selectedCategory==="Burgers"} aria-label="Browse Burgers" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Burgers");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
                   className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
                 >
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
@@ -6060,14 +6067,16 @@ function DiscoverScreen({
                 {/* Bottom Row (Split) */}
                 <div className="grid grid-cols-2 gap-3">
                   <div 
-                    onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="Drinks"} aria-label="Browse Drinks" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Drinks");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
                     className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
                   >
                     <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
                     <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
                   </div>
                   <div 
-                    onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="All"} aria-label="Browse all food categories" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("All");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
                     className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
                   >
                     <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
@@ -6143,7 +6152,7 @@ function DiscoverScreen({
                     ? "bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400"
                     : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
                 }`}>
-                <ListFilter className="w-4 h-4" />
+                <List className="w-4 h-4" />
                 More filters{minRating>0 || maxDistance!==null ? ` (${Number(minRating>0)+Number(maxDistance!==null)})` : ""}
               </button>
             </div>
@@ -6218,7 +6227,9 @@ function DiscoverScreen({
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
+                  onKeyDown={(e)=>{if(e.target!==e.currentTarget)return;if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelectShop(shop.id);}}}
+                  role="button" tabIndex={0} aria-label={`Browse ${shop.name} menu`}
+                  className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
@@ -6229,7 +6240,9 @@ function DiscoverScreen({
                     />
 
                     {/* Floating Heart Follow Badge */}
-                    <button
+                    <button type="button"
+                      aria-label={isFollowing ? `Remove ${shop.name} from favourites` : `Add ${shop.name} to favourites`}
+                      aria-pressed={isFollowing}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleFavorite(shop.id);
@@ -6307,7 +6320,7 @@ function DiscoverScreen({
                       </div>
                     </div>
 
-                    <button
+                    <button type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectShop(shop.id);
@@ -6525,8 +6538,8 @@ function DiscoverScreen({
                   </div>
                   <div className="p-3">
                     <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
-                    <p className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
-                    <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
+                    <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
                   </div>
                 </div>
               ))}
