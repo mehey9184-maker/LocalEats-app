@@ -44,17 +44,12 @@ test("Home hides only circled Set Address; pickup area and real GPS protections 
 test("Push subscriptions are tied to an authenticated account and stable installation UUID",()=>{
  const map=new Map();
  const store={getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v)};
- const original=crypto.randomUUID;
- // Avoid reliance on platform-generated UUID in deterministic fixture.
- const id="123e4567-e89b-42d3-a456-426614174000";
- crypto.randomUUID=()=>id;
- try {
-   assert.equal(pickupInstallationId("customerA",store),id);
-   assert.equal(existingPickupInstallationId("customerA",store),id);
-   assert.equal(pickupInstallationId("customerA",store),id);
-   assert.equal(existingPickupInstallationId("customerB",store),null);
-   assert.throws(()=>pickupInstallationId("",store));
- }finally{crypto.randomUUID=original;}
+ const id=pickupInstallationId("customerA",store);
+ assert.match(id,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+ assert.equal(existingPickupInstallationId("customerA",store),id);
+ assert.equal(pickupInstallationId("customerA",store),id);
+ assert.equal(existingPickupInstallationId("customerB",store),null);
+ assert.throws(()=>pickupInstallationId("",store));
 });
 test("Pickup push requires a manual permission action and a confirmed API subscription",()=>{
  assert.match(app,/onSubscribeToPush=\{pickupOrderingEnabled\(\) \? subscribeToPushNotifications : undefined\}/);
