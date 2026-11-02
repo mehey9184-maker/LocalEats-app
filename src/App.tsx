@@ -8431,9 +8431,11 @@ function StoreInfoScreen({
   setCurrentScreen,
   isOnline,
   onScanFlyer,
+  readOnlyClosed = false,
 }: {
   onBack: () => void;
   shop: Shop;
+  readOnlyClosed?: boolean;
   isFavorite: boolean;
   onToggleFavorite: () => void;
   userProfile: UserProfile | null;
@@ -8564,46 +8566,81 @@ function StoreInfoScreen({
 
 
   const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
+  const [closedMenuError,setClosedMenuError] = useState<string|null>(null);
 
   useEffect(() => {
     if (!shop?.id) return;
     let isMounted = true;
     const fetchMenu = async () => {
       setIsMenuLoading(true);
+      setApiMenu(null);
+      setClosedMenuError(null);
       try {
-        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && isMounted) {
-            // Remap keys if necessary to match MenuItem interface
-            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
-              id: String(m.id),
-              name: m.name,
-              price: Number(m.price),
-              displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-              description: m.description || "",
-              category: m.category || "Main Course",
-              is_available: m.is_available !== false,
-              customizations: m.customizations || [],
-            }));
-            setApiMenu(formattedMenu);
+        if (readOnlyClosed) {
+          // Only the public LocalEats API supplies real menu items. A closed
+          // shop never enters the orderable catalog, cart, or quote flow.
+          const response = await customerPickupApi.menu(shop.id);
+          if (!Array.isArray(response.menu_items)) throw new Error("Menu unavailable");
+          const validMenu: MenuItem[] = response.menu_items.map((item: any) => {
+            const price = Number(item.price);
+            if (!item || typeof item.id !== "string" || !item.id ||
+              typeof item.name !== "string" || !item.name.trim() ||
+              (typeof item.price !== "number" && typeof item.price !== "string") ||
+              String(item.price).trim() === "" || !Number.isFinite(price) || price < 0)
+              throw new Error("Menu information is unavailable");
+            return {
+              id:item.id, name:item.name, price,
+              displayPrice:`R ${price.toFixed(2)}`,
+              image:typeof item.image_url === "string" ? item.image_url : "",
+              description:typeof item.description === "string" ? item.description : "",
+              category:typeof item.category === "string" ? item.category : "Menu",
+              is_available:false, // Read only: never offer ordering from a closed shop.
+              customizations:[],
+            };
+          });
+          if (isMounted) setApiMenu(validMenu);
+        } else {
+          // Preserve the original open-shop menu path.
+          const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && isMounted) {
+              const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
+                id: String(m.id),
+                name: m.name,
+                price: Number(m.price),
+                displayPrice: `R${Number(m.price).toFixed(2)}`,
+                image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
+                description: m.description || "",
+                category: m.category || "Main Course",
+                is_available: m.is_available !== false,
+                customizations: m.customizations || [],
+              }));
+              setApiMenu(formattedMenu);
+            }
           }
         }
       } catch (err) {
-        console.warn("Failed to fetch shop menu from API:", err);
+        if (isMounted && readOnlyClosed) {
+          setApiMenu([]);
+          setClosedMenuError("The shop's menu couldn't load. Please try again later.");
+        } else {
+          console.warn("Failed to fetch shop menu from API:",err);
+        }
       } finally {
         if (isMounted) setIsMenuLoading(false);
       }
     };
-    fetchMenu();
+    void fetchMenu();
     return () => { isMounted = false; };
-  }, [shop?.id]);
+  }, [shop?.id,readOnlyClosed]);
 
   const storeStatus = getStoreStatus();
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    // Do not invent fallback dishes for a closed shop, even while loading.
+    if (readOnlyClosed) return apiMenu ?? [];
     if (apiMenu !== null) {
       if (apiMenu.length > 0) return apiMenu;
       // If API succeeded but returned 0 items, respect it, don't fall back to fakes
@@ -8701,7 +8738,7 @@ function StoreInfoScreen({
         },
       ];
     }
-  }, [shop]);
+  }, [shop,apiMenu,readOnlyClosed]);
 
   const filteredMenu = useMemo(() => {
     let items = shopMenu.filter((item) =>
