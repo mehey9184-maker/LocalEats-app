@@ -10024,7 +10024,7 @@ function ExploreScreen({
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
             <Suspense fallback={null}>
               <QuickReorderWidget
-                orders={orders || []}
+                orders={[]}
                 shops={shops}
                 favorites={favorites}
                 showQuickReorder={false}
@@ -10256,7 +10256,7 @@ function ExploreScreen({
               <MapLegend
                 userLocation={userLocation}
                 activeFilter={legendFilter}
-                onSelectFilter={(f) => setLegendFilter(f)}
+                onSelectFilter={(filter)=>{if(filter!=="rider")setLegendFilter(filter);}}
                 shopCount={mappedShops.length}
                 showRiders={false}
                 riderCount={0}
