@@ -2001,7 +2001,6 @@ export default function App() {
       (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
                key === "supabase.auth.token"
     );
-    const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
     const cachedProfile = safeLocalStorageGet("userProfile", null);
     const hasCachedUser = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
 
@@ -2116,6 +2115,7 @@ export default function App() {
             }
           }
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       }).catch((err) => {
         if (!active) return;
@@ -2134,6 +2134,7 @@ export default function App() {
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       });
     }
@@ -2701,7 +2702,7 @@ export default function App() {
     // is resolved. Do not flash Splash, Login, or unverified customer data.
     return (
       <div aria-busy="true" aria-label="Loading LocalEats home" className="min-h-screen relative">
-        <AppSkeletonLoader userProfile={userProfile} />
+        <AppSkeletonLoader userProfile={{fullName:"",city:"",address:""}} />
         {authRestoreSlow && (
           <div role="status" className="fixed bottom-24 inset-x-4 z-50 max-w-sm mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-4 text-center">
             <p className="text-sm font-semibold">Checking your account is taking longer than usual.</p>
