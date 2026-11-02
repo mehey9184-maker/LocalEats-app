@@ -64,7 +64,8 @@ test("Pickup push requires a manual permission action and a confirmed API subscr
  assert.match(firebase,/navigator\.serviceWorker\.register\("\/sw\.js", \{type:"module"\}\)/);
 });
 test("FCM is a wake-up signal: confirmed API events and order history refresh on foreground and resume",()=>{
- assert.match(app,/payload\.data\?\.type!=="pickup_ready"/);
+ assert.match(app,/type==="pickup_ready"/);
+ assert.match(app,/type==="pickup_status"/);
  assert.match(app,/window\.dispatchEvent\(new Event\("localeats-pickup-ready"\)\)/);
  assert.match(app,/window\.addEventListener\("localeats-pickup-ready",onRealtimeWake\)/);
  assert.match(app,/window\.addEventListener\("focus",onRealtimeWake\)/);
