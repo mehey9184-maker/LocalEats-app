@@ -8,6 +8,7 @@ export interface MapLegendProps {
   onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'closed_shop' | 'rider') => void;
   shopCount?: number;
   riderCount?: number;
+  showRiders?: boolean;
   onFocusCustomer?: () => void;
   onFocusShop?: () => void;
   onFocusRider?: () => void;
@@ -20,6 +21,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
   onSelectFilter,
   shopCount,
   riderCount,
+  showRiders=false,
   onFocusCustomer,
   onFocusShop,
   onFocusRider,
@@ -32,7 +34,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       id: 'customer' as const,
       title: 'Customer Location',
       badge: 'Blue Pin',
-      desc: userLocation ? 'Your verified live delivery spot' : 'Tap locate to display your spot',
+      desc: userLocation ? 'Your device location' : 'Allow location to display your position',
       color: 'bg-blue-600',
       borderColor: 'border-blue-500',
       lightBg: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
@@ -50,7 +52,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       id: 'shop' as const,
       title: 'Open Kitchen / Shop',
       badge: shopCount !== undefined ? `${shopCount} Stores` : 'Orange Pin',
-      desc: 'Orange Pins — Active food vendors ready for orders',
+      desc: 'Orange pins — Shop location with open status',
       color: 'bg-orange-600',
       borderColor: 'border-orange-500',
       lightBg: 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300',
@@ -68,7 +70,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       id: 'closed_shop' as const,
       title: 'Closed Kitchen',
       badge: 'Gray Pin',
-      desc: 'Muted Slate Pins — Vendors currently offline/closed',
+      desc: 'Gray pins — Shops currently closed; menus may be browsed',
       color: 'bg-slate-500',
       borderColor: 'border-slate-400',
       lightBg: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
@@ -100,7 +102,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       ),
       action: onFocusRider,
     },
-  ];
+  ].filter(item=>showRiders || item.id!=="rider");
 
   return (
     <div className={`relative z-[1000] select-none ${className}`}>
