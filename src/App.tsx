@@ -290,7 +290,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
-import {nearbyClosedPickupShops, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
+import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -1198,24 +1198,17 @@ export default function App() {
       loadedCatalogLocation.current=userLocation;
       setShops(result);
       saveDisplayCatalog(userLocation,result);
-      // The pickup API is authoritative for ORDERABLE shops. Only when it
-      // returns no available shops, load approved nearby closed shop metadata
-      // for an explicitly non-interactive, no-checkout display.
-      if(result.length===0){
-        setClosedPickupShopsLoading(true);
-        try{
-          const publicCatalog=await customerPickupApi.approvedShops();
-          if(generation===catalogGeneration.current)
-            setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
-        }catch{
-          if(generation===catalogGeneration.current)setClosedPickupShops([]);
-        }finally{
-          if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
-        }
-      }else{
-        setClosedPickupShops([]);
-        setClosedPickupShopsLoading(false);
-      }
+      // Orderable shops remain API-authoritative. Closed metadata is only
+      // for a read-only version of the original visual ShopCard.
+      setClosedPickupShopsLoading(true);
+      void customerPickupApi.approvedShops().then(publicCatalog=>{
+        if(generation===catalogGeneration.current)
+          setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
+      }).catch(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShops([]);
+      }).finally(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
+      });
       // A genuinely empty authoritative pickup result still means zero orderable shops.
     } catch(error) {
       if(generation===catalogGeneration.current) {
@@ -4398,6 +4391,27 @@ function HomeScreen({
     0,
   );
 
+  const matchingClosedShops = useMemo(() => {
+    if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
+    const query=debouncedSearchQuery.trim().toLowerCase();
+    const words=query ? query.split(/\s+/) : [];
+    const activeIds=new Set(shops.map(shop=>shop.id));
+    return closedPickupShops.filter(shop=>{
+      if(activeIds.has(shop.id))return false;
+      const text=[shop.name,shop.category,shop.description].join(" ").toLowerCase();
+      if(!words.every(term=>text.includes(term)))return false;
+      if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
+      if(!["All","Favorites","Nearby"].includes(selectedCategory)){
+        if(selectedCategory==="Kota" && !text.includes("kota") && !text.includes("spatlo"))return false;
+        if(selectedCategory==="Braai" && !text.includes("braai"))return false;
+        if(!["Kota","Braai"].includes(selectedCategory) && shop.category!==selectedCategory)return false;
+      }
+      if(selectedQuickFilter==="Top Rated" && (shop.rating===null || shop.rating<4.5))return false;
+      if(selectedQuickFilter==="Halal" && !text.includes("halal") && !text.includes("halaal"))return false;
+      return true;
+    });
+  }, [closedPickupShops,shops,debouncedSearchQuery,selectedCategory,selectedQuickFilter,favorites]);
+
   const renderedShopList = useMemo(() => {
     return (
       <motion.div
@@ -4425,9 +4439,20 @@ function HomeScreen({
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
+        {matchingClosedShops.map(preview=>(
+          <ShopCard
+            key={preview.id}
+            shop={closedPickupCardData(preview)}
+            readOnlyClosed
+            isFollowed={favorites.includes(preview.id)}
+            onStoreInfo={onStoreInfo}
+            triggerHaptic={triggerHaptic}
+            dataSaverEnabled={dataSaverEnabled}
+          />
+        ))}
       </motion.div>
     );
-  }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
+  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
   if (loadingShops && shops.length === 0) {
     return <AppSkeletonLoader userProfile={userProfile} />;
@@ -5210,7 +5235,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online
+                  {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
             </div>
@@ -5249,29 +5274,7 @@ function HomeScreen({
             Checking nearby shops outside trading hours...
           </div>
         )}
-        {shops.length === 0 && !loadingShops && closedPickupShops.length > 0 && (
-          <section aria-label="Nearby closed shops" className="mb-16 space-y-3">
-            <div>
-              <h3 className="text-xl font-black text-slate-900 dark:text-white">Nearby shops are closed right now</h3>
-              <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">These shops are listed for information only. Ordering is unavailable until the shop opens again.</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {closedPickupShops.map(shop=>(
-                <article key={shop.id} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 flex gap-3 items-center opacity-90">
-                  {shop.logo ? <img src={shop.logo} alt="" className="h-16 w-16 rounded-xl object-cover shrink-0" loading="lazy"/> :
-                    <div className="h-16 w-16 rounded-xl shrink-0 flex items-center justify-center bg-orange-50 dark:bg-slate-800 text-orange-600"><Store className="w-7 h-7"/></div>}
-                  <div className="min-w-0 flex-1">
-                    <h4 className="text-base font-extrabold text-slate-900 dark:text-white truncate">{shop.name}</h4>
-                    <span className="inline-flex bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-full px-2 py-0.5 mt-1">Closed · Orders unavailable</span>
-                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-2">{shop.openingTime && shop.closingTime ? `Hours: ${shop.openingTime}–${shop.closingTime}` : "Opening hours unavailable"}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{shop.distanceKm.toFixed(1)} km away</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {sortedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && closedPickupShops.length === 0 && (
+        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
