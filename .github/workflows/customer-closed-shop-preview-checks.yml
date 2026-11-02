@@ -1,7 +1,7 @@
 name: Nearby closed pickup storefront preview checks
 on:
   push:
-    branches: [repair/show-nearby-closed-shops-01]
+    branches: [repair/show-nearby-closed-shops-01, repair/restore-original-closed-shop-card-01]
   workflow_dispatch:
 permissions:
   contents: read
