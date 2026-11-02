@@ -1,5 +1,6 @@
 import type {Shop} from "../types";
-import {homePrepMinutes,homeRating} from "./homeDiscoveryPolicy.ts";
+import {homePrepMinutes} from "./homeDiscoveryPolicy.ts";
+import {homeRating} from "./homeTrustPolicy.ts";
 import {isRealHomePoint,nearestHomeDistance,type HomePoint} from "./homeProximity.ts";
 
 export type DiscoverSort="smart"|"distance"|"rating"|"speed";
