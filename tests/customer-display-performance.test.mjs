@@ -47,7 +47,7 @@ test("navigation does not reset live catalog or authenticated inbox",()=>{
  const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
  const notice=readFileSync(new URL("../src/screens/NotificationsScreen.tsx",import.meta.url),"utf8");
  assert.match(app,/const locationChanged=loadedCatalogLocation.current!==null/);
- assert.match(app,/if \(locationChanged\) setShops\(\[\]\)/);
+ assert.match(app,/if \(locationChanged\) \{setShops\(\[\]\);setClosedPickupShops\(\[\]\);\}/);
  assert.doesNotMatch(app,/setShops\(\[\]\); setLoadingShops\(true\)/);
  assert.match(app,/\}, \[session\?\.user\?\.id\]\);/);
  assert.doesNotMatch(app,/\[session\?\.user\?\.id,currentScreen\]/);
