@@ -10084,21 +10084,8 @@ function ExploreScreen({
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
 
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const distanceVal=mapShopDistance(shop,userLocation);
+                const hasMapPin=mapShopCoordinates(shop)!==null;
 
                 return (
                   <div
@@ -10118,7 +10105,7 @@ function ExploreScreen({
                       />
 
                       {/* Distance Float Indicator */}
-                      {distanceVal !== null && (
+                      {Number.isFinite(distanceVal) && (
                         <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
                           <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
                           <span>{distanceVal.toFixed(1)} km away</span>
@@ -10170,17 +10157,18 @@ function ExploreScreen({
 
                         {/* Stable Decision Metrics Row */}
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-bold mt-2.5 mb-2">
-                          <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
-                            <Star className="w-3 h-3 fill-current text-amber-500" />
-                            <span>{shop.rating.toFixed(1)}</span>
-                            <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
-                          </div>
+                          {homeRating(shop)!==null && (
+                            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
+                              <Star className="w-3 h-3 fill-current text-amber-500" />
+                              <span>{homeRating(shop)!.toFixed(1)}</span>
+                              {homeReviewCount(shop)!==null && <span className="text-[10px] font-medium opacity-80">({homeReviewCount(shop)})</span>}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1 mb-4 leading-relaxed font-semibold">
-                        {shop.description ||
-                          "Discover incredible local delicacies made with fresh ingredients and served warm."}
+                        {shop.description || "Browse this shop's available menu."}
                       </p>
 
                       <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
@@ -10193,16 +10181,19 @@ function ExploreScreen({
                           className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>View Menu</span>
                         </button>
 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            if(!hasMapPin)return;
                             setSelectedShopId(shop.id);
                             setLayoutMode("map");
                             triggerHaptic(10);
                           }}
+                          disabled={!hasMapPin}
+                          aria-label={hasMapPin ? `View ${shop.name} on the map` : `Map position not available for ${shop.name}`}
                           className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-white rounded-2xl active:scale-95 transition-all text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
                           title="View on Map"
                         >
@@ -10234,7 +10225,7 @@ function ExploreScreen({
               </h3>
               <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
                 Interactive maps require an active data connection to stream
-                tiles. Switch to List view to browse saved shops.
+                tiles. Switch to List view to browse the available shop list. Offline map tiles may not load.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
                 <button
@@ -10649,35 +10640,22 @@ function ExploreScreen({
                   <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">
                     {activeShop.category} • {activeShop.address}
                   </p>
-                  <div className="flex items-center mt-1">
-                    <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
-                    <span className="text-sm font-bold ml-1 dark:text-white">
-                      {activeShop.rating}
-                    </span>
-                    <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">
-                      (120+ reviews)
-                    </span>
-                    {userLocation && (
-                      <>
-                        <span className="text-gray-300 dark:text-slate-700 mx-2">
-                          •
-                        </span>
-                        <span className="text-xs text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-wide">
-                          📍{" "}
-                          {calculateDistance(
-                            activeShop.latitude ||
-                              -25.9964 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            activeShop.longitude ||
-                              28.2268 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            userLocation.lat,
-                            userLocation.lng,
-                          ).toFixed(1)}{" "}
-                          km away
-                        </span>
-                      </>
+                  <div className="flex items-center flex-wrap gap-2 mt-1">
+                    {homeRating(activeShop)!==null && (
+                      <span className="flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400">
+                        <Star className="w-3.5 h-3.5 fill-current" />
+                        {homeRating(activeShop)!.toFixed(1)}
+                        {homeReviewCount(activeShop)!==null && <span className="text-slate-400">({homeReviewCount(activeShop)} reviews)</span>}
+                      </span>
                     )}
+                    {Number.isFinite(mapShopDistance(activeShop,userLocation)) && (
+                      <span className="text-xs text-orange-600 dark:text-orange-400 font-bold">
+                        📍 {mapShopDistance(activeShop,userLocation).toFixed(1)} km away
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500 font-semibold">
+                      {getShopStatus(activeShop).isOpen?"Open now":"Closed · Menu browsing available"}
+                    </span>
                   </div>
                 </div>
               </div>
