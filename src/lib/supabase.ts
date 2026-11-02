@@ -148,23 +148,32 @@ export const supabase: any = {
       }
     },
     getSession: async () => {
-      const user = auth.currentUser;
-      const session = await formatSession(user);
+      // Firebase persists sessions asynchronously (usually in IndexedDB).
+      // Reading currentUser before authStateReady can falsely report a signed-out
+      // user and cause the splash page to flash on every reload.
+      await auth.authStateReady();
+      const session = await formatSession(auth.currentUser);
       return { data: { session }, error: null };
     },
     getUser: async () => {
+      await auth.authStateReady();
       const user = auth.currentUser;
       if (!user) return { data: { user: null }, error: null };
       const session = await formatSession(user);
       return { data: { user: session.user }, error: null };
     },
     onAuthStateChange: (listener) => {
+      let active = true;
       authStateListeners.push(listener);
-      // Immediately call with current state
-      formatSession(auth.currentUser).then(session => {
-         listener('INITIAL_SESSION', session);
+      // Do not emit a misleading INITIAL_SESSION(null) while Firebase is still
+      // restoring a valid user from persistence. Respect unsubscribed listeners.
+      void auth.authStateReady().then(() => formatSession(auth.currentUser)).then(session => {
+        if (active) listener('INITIAL_SESSION', session);
+      }).catch(() => {
+        // The App handles restoration failures without treating them as logout.
       });
       return { data: { subscription: { unsubscribe: () => {
+        active = false;
         authStateListeners = authStateListeners.filter(l => l !== listener);
       } } } };
     }
