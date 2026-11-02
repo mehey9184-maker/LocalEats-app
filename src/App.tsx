@@ -281,7 +281,9 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { auth as firebaseAuth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth as firebaseAuth, onForegroundMessage, requestNotificationPermissionAndGetToken, FirestoreService } from "./lib/firebase";
+import {pickupInstallationId,existingPickupInstallationId} from "./services/customerPushSubscription";
+import {nearestHomeDistance,shouldUpdateHomeLocation} from "./services/homeProximity";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -921,6 +923,7 @@ export default function App() {
     lng: number;
   } | null>(null);
   const locationAttemptRef = useRef(0);
+  const lastMovingLocationUpdateRef = useRef(0);
   const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibleShops = userLocation ? shops.filter(shop =>
     Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
@@ -1506,6 +1509,26 @@ export default function App() {
       locationTimeoutRef.current = null;
     };
   }, [requestLocation]);
+
+  // Watch real device movement only when Home is visible and location was
+  // previously granted. Ignore GPS jitter; no background tracking or prompts.
+  useEffect(() => {
+    if (currentScreen !== "home" || !userLocation || !navigator.geolocation?.watchPosition || document.hidden) return;
+    const watchId = navigator.geolocation.watchPosition(
+      ({coords}) => {
+        const next={lat:coords.latitude,lng:coords.longitude};
+        setUserLocation(previous => {
+          if (!shouldUpdateHomeLocation(previous,next,lastMovingLocationUpdateRef.current,Date.now())) return previous;
+          lastMovingLocationUpdateRef.current=Date.now();
+          return next;
+        });
+      },
+      () => { /* Keep last valid fix; retry is user initiated. */ },
+      {enableHighAccuracy:false,maximumAge:60000,timeout:12000},
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [currentScreen,Boolean(userLocation)]);
+
 
   useEffect(() => {
     if (searchQuery.length > 1) {
@@ -3113,7 +3136,6 @@ export default function App() {
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
-                  onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
                   onOpenCart={() => setIsCartDrawerOpen(true)}
                 />
               )}
@@ -3833,7 +3855,6 @@ function HomeScreen({
   changeToDelivery,
   dataSaverEnabled,
   isSyncing = false,
-  onOpenAddressSwitcher,
   onOpenCart,
 }: {
   userProfile: UserProfile;
@@ -3880,7 +3901,6 @@ function HomeScreen({
   changeToDelivery: (orderId: string) => void;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
-  onOpenAddressSwitcher?: () => void;
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
@@ -4196,17 +4216,10 @@ function HomeScreen({
 
       // Default 'recommended' ordering: genuine distance, no fabricated GPS.
       if (userLocation) {
-        const knownDistance=(shop:Shop):number => {
-          if (typeof shop.distance==="number" && Number.isFinite(shop.distance) && shop.distance>=0 && shop.distance<=4)
-            return shop.distance;
-          if (typeof shop.latitude==="number" && Number.isFinite(shop.latitude) && Math.abs(shop.latitude)<=90 &&
-              typeof shop.longitude==="number" && Number.isFinite(shop.longitude) && Math.abs(shop.longitude)<=180)
-            return distanceKm({lat:shop.latitude,lng:shop.longitude},userLocation);
-          return Number.POSITIVE_INFINITY;
-        };
+        const knownDistance=(shop:Shop):number => nearestHomeDistance(shop,userLocation);
         const distA=knownDistance(a), distB=knownDistance(b);
         if(Number.isFinite(distA)!==Number.isFinite(distB))return Number.isFinite(distA)?-1:1;
-        if(Number.isFinite(distA)&&Number.isFinite(distB)&&Math.abs(distA-distB)>0.1)
+        if(Number.isFinite(distA)&&Number.isFinite(distB)&&Math.abs(distA-distB)>0.01)
           return distA-distB;
       }
 
@@ -4360,23 +4373,7 @@ function HomeScreen({
           <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             <LocalEatsLogo width={105} height={26} className="shrink-0 scale-100 origin-left" />
             
-            {onOpenAddressSwitcher && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (triggerHaptic) triggerHaptic(8);
-                  onOpenAddressSwitcher();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800/90 hover:bg-orange-50 dark:hover:bg-orange-950/40 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-all cursor-pointer max-w-[120px] xs:max-w-[160px] sm:max-w-[220px] truncate group"
-                title={pickupOrderingEnabled() ? "Choose your pickup discovery area" : "Change delivery address"}
-              >
-                <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] sm:text-xs font-bold truncate">
-                  {userProfile.address ? userProfile.address.split(",")[0] : "Set Address"}
-                </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
-              </button>
-            )}
+
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
