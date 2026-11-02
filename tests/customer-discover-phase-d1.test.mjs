@@ -71,5 +71,6 @@ test("Discover preserves design, navigation and current pickup API source withou
  assert.doesNotMatch(discover,/Math\.random\(\)|20-35 min|4\.8.*Verified|Connected to <strong>LocalEats Cloud Service/);
  assert.match(discover,/onClick=\{\(\)=>onSelectShop\(shop\.id\)\}/);
  assert.match(discover,/status\.nextOpeningTime \?/);
- assert.match(discover,/shop\.menu\.forEach/);
+ assert.match(discover,/discoverFoodPreviews\(/);
+ assert.match(discover,/discoverMatchesShopOrFood\(/);
 });
