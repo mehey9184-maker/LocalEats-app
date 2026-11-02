@@ -72,4 +72,6 @@ test("FCM is a wake-up signal: confirmed API events and order history refresh on
  assert.match(app,/const newlyConfirmed=hasServerInbox/);
  assert.match(app,/if\(newlyConfirmed\)toast\.success\("Pickup ready"/);
  assert.match(app,/customerPickupApi\.revoke\(installation\)/);
+ assert.equal((app.match(/onLogout=\{logoutCustomer\}/g)||[]).length,2);
+ assert.match(app,/await supabase\.auth\.signOut\(\)/);
 });
