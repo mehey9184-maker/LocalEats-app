@@ -99,8 +99,17 @@ export const ShopCard = memo(
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        aria-label={readOnlyClosed ? `${shop.name} is closed. View menu; ordering unavailable.` : undefined}
-        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${"cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98]"} ${
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            triggerHaptic();
+            onStoreInfo(shop.id);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={readOnlyClosed ? `${shop.name} is closed. View menu; ordering unavailable.` : `View ${shop.name} menu`}
+        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${"cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"} ${
           !status.isOpen ? "opacity-80" : ""
         }`}
       >
