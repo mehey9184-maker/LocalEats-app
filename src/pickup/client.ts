@@ -57,6 +57,9 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
  };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
+  // Read-only browsing metadata for shops outside active trading hours.
+  // NEVER use this list to create orders or bypass pickup-shops eligibility.
+  approvedShops:()=>request("/api/v1/catalog/shops","GET",undefined,true),
   menu:(id:string)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true),
   quote:(intent:unknown)=>request("/api/v1/orders/quote","POST",intent),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
