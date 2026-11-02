@@ -291,7 +291,8 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
-import {homeReorderMenuItem} from "./services/homeTrustPolicy";
+import {homeReorderMenuItem,homeRating} from "./services/homeTrustPolicy";
+import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -4076,13 +4077,10 @@ function HomeScreen({
       .slice(0, 3);
   }, [orders, shops]);
 
-  const suggestions = useMemo(() => {
-    if (debouncedSearchQuery.length < 2) return [];
-    return shops
-      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
-      .map((s) => s.name)
-      .slice(0, 5);
-  }, [shops, debouncedSearchQuery]);
+  const suggestions = useMemo(
+    () => homeSearchSuggestions(shops, closedPickupShops, debouncedSearchQuery),
+    [shops, closedPickupShops, debouncedSearchQuery],
+  );
 
   const activeOrders = useMemo(
     () =>
@@ -4118,27 +4116,20 @@ function HomeScreen({
     { id: "open_now", label: "Open Now", type: "quickFilter" as const, value: "Open Now", icon: Activity },
     { id: "top_rated", label: "Top Rated", type: "quickFilter" as const, value: "Top Rated", icon: Star },
     { id: "fastest", label: "Fastest", type: "quickFilter" as const, value: "Fastest", icon: Zap },
-    { id: "halal", label: "Halal", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck },
-  ], []);
+    // Dietary tags identify item options, not halal certification for the shop.
+    ...(shops.some(homeHasHalalOptions) ? [{ id: "halal", label: "Halal options", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck }] : []),
+  ], [shops]);
 
-  // Pre-calculate search index map for lightning-fast search matches on low-end devices
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category} ${shop.cuisine_type || ""}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
+  const fastestShopIds = useMemo(
+    () => homeFastestShopIds(shops.filter(shop => getShopStatus(shop).isOpen)),
+    [shops],
+  );
 
   const filteredShops = useMemo(() => {
-    const query = debouncedSearchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
+    const query = debouncedSearchQuery.trim();
     return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
+      const shopText = [shop.name,shop.description,shop.category,shop.cuisine_type].filter(Boolean).join(" ").toLowerCase();
+      const matchesSearch = homeSearchMatches(shop, query);
 
       let matchesCategory = false;
       if (selectedCategory === "All") {
@@ -4165,25 +4156,21 @@ function HomeScreen({
 
       let matchesQuickFilter = true;
       if (selectedQuickFilter === "Top Rated") {
-        matchesQuickFilter = shop.rating !== undefined && shop.rating >= 4.5;
+        matchesQuickFilter = (homeRating(shop) ?? 0) >= 4.5;
       } else if (selectedQuickFilter === "Fastest") {
-        matchesQuickFilter = shop.prepTime === "15-20 min" || shop.prepTime === "10-15 min";
+        matchesQuickFilter = fastestShopIds.has(shop.id);
       } else if (selectedQuickFilter === "Open Now") {
         matchesQuickFilter = getShopStatus(shop).isOpen;
       } else if (selectedQuickFilter === "Halal") {
-        matchesQuickFilter = shopText.includes("halal") || shopText.includes("halaal");
+        matchesQuickFilter = homeHasHalalOptions(shop);
       }
 
       return matchesSearch && matchesCategory && matchesQuickFilter;
     });
-  }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, selectedQuickFilter, fastestShopIds]);
 
   const sortedShops = useMemo(() => {
-    const getMinPrepTime = (shop: Shop): number => {
-      if (!shop.prepTime) return 99;
-      const match = shop.prepTime.match(/\d+/);
-      return match ? parseInt(match[0], 10) : 99;
-    };
+    const getMinPrepTime = (shop: Shop): number => homePrepMinutes(shop) ?? Number.POSITIVE_INFINITY;
 
     const getPopularity = (shop: Shop): number => {
       return (shop.reviewCount || 0) + (shop.rating || 0) * 10;
@@ -4290,13 +4277,12 @@ function HomeScreen({
 
   const matchingClosedShops = useMemo(() => {
     if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
-    const query=debouncedSearchQuery.trim().toLowerCase();
-    const words=query ? query.split(/\s+/) : [];
+    const query=debouncedSearchQuery.trim();
     const activeIds=new Set(shops.map(shop=>shop.id));
     return closedPickupShops.filter(shop=>{
       if(activeIds.has(shop.id))return false;
       const text=[shop.name,shop.category,shop.description].join(" ").toLowerCase();
-      if(!words.every(term=>text.includes(term)))return false;
+      if(!homeSearchMatches(shop,query))return false;
       if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
       if(!["All","Favorites","Nearby"].includes(selectedCategory)){
         if(selectedCategory==="Kota" && !text.includes("kota") && !text.includes("spatlo"))return false;
@@ -4304,7 +4290,8 @@ function HomeScreen({
         if(!["Kota","Braai"].includes(selectedCategory) && shop.category!==selectedCategory)return false;
       }
       if(selectedQuickFilter==="Top Rated" && (shop.rating===null || shop.rating<4.5))return false;
-      if(selectedQuickFilter==="Halal" && !text.includes("halal") && !text.includes("halaal"))return false;
+      // Closed previews contain no authoritative menu dietary tags.
+      if(selectedQuickFilter==="Halal")return false;
       return true;
     });
   }, [closedPickupShops,shops,debouncedSearchQuery,selectedCategory,selectedQuickFilter,favorites]);
@@ -4428,6 +4415,8 @@ function HomeScreen({
               }`} />
               <input
                 id="header-search-input"
+                aria-controls="home-search-suggestions"
+                aria-expanded={showSuggestions && isHeaderSearching}
                 className="w-full bg-transparent border-none outline-none py-2.5 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-300 transform focus:scale-[1.01] focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 focus:shadow-[0_0_8px_rgba(249,115,22,0.4)] rounded-lg"
                 placeholder="Search local kitchens..."
                 value={searchQuery}
@@ -4443,7 +4432,11 @@ function HomeScreen({
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                  if (e.key === "Escape") {
+                    setShowSuggestions(false);
+                    setIsHeaderSearching(false);
+                    setSearchQuery("");
+                  } else if (e.key === "Enter" && searchQuery.trim().length >= 2) {
                     saveRecentSearch(searchQuery.trim());
                     setShowSuggestions(false);
                   }
@@ -4485,14 +4478,14 @@ function HomeScreen({
                   triggerHaptic(10);
                   setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
                 }}
-                className="w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Search stores"
               >
                 <Search className="w-4.5 h-4.5" />
               </button>
               <button
                 onClick={onNotifications}
-                className="relative w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Notifications"
               >
                 <Bell className="w-4.5 h-4.5" />
@@ -4513,7 +4506,7 @@ function HomeScreen({
                   aria-label="Settings and account menu"
                   aria-haspopup="true"
                   aria-expanded={isSettingsOpen}
-                  className={`w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all cursor-pointer ${
+                  className={`relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500 ${
                     isSettingsOpen
                       ? "bg-white dark:bg-slate-700 shadow-sm ring-2 ring-orange-500/40 text-orange-600 dark:text-orange-400"
                       : "hover:bg-white dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
@@ -4629,7 +4622,7 @@ function HomeScreen({
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1"
             >
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+              <div id="home-search-suggestions" role="region" aria-label="Search suggestions" className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
                 {/* Clickable Horizontal Recent Searches Pills */}
                 {recentSearches.length > 0 && (
                   <div className="px-4 py-2 bg-slate-50/90 dark:bg-slate-950/70 border-b border-slate-100 dark:border-slate-800/80 flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -4640,7 +4633,7 @@ function HomeScreen({
                       <button
                         key={`recent-pill-${idx}`}
                         type="button"
-                        onMouseDown={(e) => {
+                        onClick={(e) => {
                           e.preventDefault();
                           setSearchQuery(term);
                           saveRecentSearch(term);
@@ -4653,7 +4646,7 @@ function HomeScreen({
                     ))}
                     <button
                       type="button"
-                      onMouseDown={(e) => {
+                      onClick={(e) => {
                         e.preventDefault();
                         setRecentSearches([]);
                         try {
@@ -4684,7 +4677,7 @@ function HomeScreen({
                             transition={{ duration: 0.15, delay: idx * 0.03 }}
                             key={`frequent-${shop.id}`}
                             type="button"
-                            onMouseDown={(e) => {
+                            onClick={(e) => {
                               e.preventDefault();
                               onStoreInfo(shop.id);
                               setIsHeaderSearching(false);
@@ -4713,7 +4706,7 @@ function HomeScreen({
                           </span>
                           <button
                             type="button"
-                            onMouseDown={(e) => {
+                            onClick={(e) => {
                               e.preventDefault();
                               setRecentSearches([]);
                               try {
@@ -4735,7 +4728,7 @@ function HomeScreen({
                           >
                             <button
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setSearchQuery(s);
                                 setShowSuggestions(false);
@@ -4792,7 +4785,7 @@ function HomeScreen({
                               transition={{ duration: 0.15, delay: idx * 0.03 }}
                               key={`frequent-match-${shop.id}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 onStoreInfo(shop.id);
                                 setIsHeaderSearching(false);
@@ -4818,28 +4811,27 @@ function HomeScreen({
                         <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
                           🔍 Stores Found
                         </div>
-                        {suggestions.map((name, idx) => {
-                          const shop = shops.find(s => s.name === name);
+                        {suggestions.map((suggestion, idx) => { 
                           return (
                             <motion.button
                               initial={{ opacity: 0, scale: 0.96, y: 4 }}
                               animate={{ opacity: 1, scale: 1, y: 0 }}
                               transition={{ duration: 0.15, delay: idx * 0.035 }}
-                              key={`store-${idx}`}
+                              key={`store-${suggestion.id}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              aria-label={`${suggestion.name}${suggestion.closed ? " (Closed, browse menu)" : ""}`}
+                              onClick={(e) => {
                                 e.preventDefault();
-                                if (shop) {
-                                  onStoreInfo(shop.id);
-                                  setIsHeaderSearching(false);
-                                  setSearchQuery("");
-                                  setShowSuggestions(false);
-                                }
+                                onStoreInfo(suggestion.id);
+                                setIsHeaderSearching(false);
+                                setSearchQuery("");
+                                setShowSuggestions(false);
                               }}
                               className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
                             >
                               <Store className="w-3.5 h-3.5 text-orange-500" />
-                              {name}
+                              <span>{suggestion.name}</span>
+                              {suggestion.closed && <span className="ml-auto text-xs text-slate-500 dark:text-slate-400 font-semibold">Closed</span>}
                             </motion.button>
                           );
                         })}
@@ -4864,7 +4856,7 @@ function HomeScreen({
                             >
                               <button
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -4945,7 +4937,8 @@ function HomeScreen({
                               setSelectedQuickFilter((prev) => (prev === chip.value ? null : chip.value));
                             }
                           }}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1.5 shrink-0 select-none ${
+                          aria-pressed={isSelected}
+                          className={`px-3 py-1.5 min-h-[40px] rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1.5 shrink-0 select-none focus-visible:outline-2 focus-visible:outline-orange-500 ${
                             isSelected
                               ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs"
                               : "bg-slate-100/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -5074,12 +5067,12 @@ function HomeScreen({
               {loadingShops ? (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-full border border-amber-100 dark:border-amber-900/40">
                   <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
-                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest animate-pulse">
+                  <span className="text-xs font-black text-amber-600 uppercase tracking-widest animate-pulse">
                     Syncing...
                   </span>
                 </div>
               ) : (
-                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
+                <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
                   {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
@@ -5096,7 +5089,7 @@ function HomeScreen({
                   setSortBy(e.target.value as 'recommended' | 'popular' | 'rating' | 'fastest');
                   triggerHaptic(5);
                 }}
-                className="bg-transparent border-none text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer focus:ring-0 pr-1"
+                className="bg-transparent border-none text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-orange-500 min-h-10 pr-1"
                 aria-label="Sort shops"
               >
                 <option value="recommended" className="dark:bg-slate-900">✨ Recommended</option>
@@ -5146,7 +5139,11 @@ function HomeScreen({
                 ? (fetchError || "No approved, available pickup shops found within 4 km of your real location.")
                 : searchQuery
                 ? `No merchants matching "${searchQuery}". Try a different keyword.`
-                : `No kitchens currently open in "${selectedCategory}".`}
+                : selectedQuickFilter === "Fastest"
+                ? "No confirmed preparation times are available for these shops."
+                : selectedQuickFilter === "Halal"
+                ? "No shops have tagged available Halal menu options."
+                : "No kitchens match the selected category or filters."}
             </p>
 
             {/* Quick popular suggestion tags when search yields 0 results */}
