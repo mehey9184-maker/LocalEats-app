@@ -4,7 +4,7 @@ import type {HomePoint} from "./homeProximity.ts";
 
 export type DiscoverFoodPreview={
  id:string;shopId:string;shopName:string;itemName:string;price:number;
- image:string;description:string;distance:number;open:boolean;
+ image:string|null;description:string;distance:number;open:boolean;
 };
 export type DiscoverSearchSuggestion={
  key:string;label:string;shopName?:string;query:string;kind:"shop"|"food";
@@ -86,7 +86,7 @@ export function discoverFoodPreviews(
   open:isOpen(shop),
   items:discoverAvailableMenuItems(shop).filter(item=>
    (!searching || discoverItemMatches(item,query)) &&
-   typeof item.image==="string" && /^(?:https?:\/\/|\/(?!\/))/i.test(item.image.trim())
+   (searching || typeof item.image==="string" && /^(?:https?:\/\/|\/(?!\/))/i.test(item.image.trim()))
   )
  }));
  const result:DiscoverFoodPreview[]=[];
@@ -101,7 +101,7 @@ export function discoverFoodPreviews(
    taken.add(id);
    result.push({
     id,shopId:group.shop.id,shopName:group.shop.name,itemName:item.name,
-    price:item.price,image:item.image.trim(),
+    price:item.price,image:typeof item.image==="string" && /^(?:https?:\/\/|\/(?!\/))/i.test(item.image.trim())?item.image.trim():null,
     description:item.description?.trim() || `From ${group.shop.name}`,
     distance:group.distance,open:group.open,
    });
