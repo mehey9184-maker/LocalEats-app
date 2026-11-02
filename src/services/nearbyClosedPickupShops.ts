@@ -1,0 +1,48 @@
+import {distanceKm} from "./pickupDisplayCache";
+
+type Point={lat:number;lng:number};
+export type ClosedPickupShopPreview={
+ id:string;name:string;logo:string;address:string;distanceKm:number;
+ openingTime:string|null;closingTime:string|null;
+};
+
+function pilotArea(location:unknown):boolean {
+ return typeof location==="string" && /\b(?:tembisa|thembisa|ivory\s+park)\b/i.test(location);
+}
+function realPoint(point:Point|null):point is Point {
+ return Boolean(point && Number.isFinite(point.lat) && Math.abs(point.lat)<=90 &&
+  Number.isFinite(point.lng) && Math.abs(point.lng)<=180);
+}
+function cleanHours(value:unknown):string|null {
+ return typeof value==="string" && /^\d{2}:\d{2}(?::\d{2})?$/.test(value) ? value.slice(0,5) : null;
+}
+// For a READ-ONLY storefront preview. This must never be fed into cart,
+// checkout, quote, price calculation or pickup order submission.
+export function nearbyClosedPickupShops(rows:unknown,location:Point|null):ClosedPickupShopPreview[] {
+ if(!realPoint(location) || !Array.isArray(rows))return [];
+ const seen=new Set<string>();
+ const closed:ClosedPickupShopPreview[]=[];
+ for(const candidate of rows){
+  if(!candidate || typeof candidate!=="object" || Array.isArray(candidate))continue;
+  const shop=candidate as Record<string,unknown>;
+  // Only previously approved records returned by the public catalog can enter
+  // here; manual/permanently disabled stores must never be marketed as open-soon.
+  if(shop.stored_is_active!==true || shop.effective_is_active!==false ||
+     shop.is_active!==false || !pilotArea(shop.location) ||
+     typeof shop.id!=="string" || !shop.id || typeof shop.name!=="string" || !shop.name)continue;
+  const lat=shop.lat ?? shop.latitude,lng=shop.lng ?? shop.longitude;
+  if(typeof lat!=="number" || typeof lng!=="number" ||
+     !Number.isFinite(lat) || !Number.isFinite(lng) ||
+     Math.abs(lat)>90 || Math.abs(lng)>180)continue;
+  const km=distanceKm(location,{lat,lng});
+  if(km>4 || seen.has(shop.id))continue;
+  seen.add(shop.id);
+  closed.push({
+   id:shop.id,name:shop.name,
+   logo:typeof shop.logo_url==="string" && /^https:\/\//.test(shop.logo_url)?shop.logo_url:"",
+   address:shop.location as string,distanceKm:km,
+   openingTime:cleanHours(shop.opening_time),closingTime:cleanHours(shop.closing_time),
+  });
+ }
+ return closed.sort((a,b)=>a.distanceKm-b.distanceKm).slice(0,30);
+}
