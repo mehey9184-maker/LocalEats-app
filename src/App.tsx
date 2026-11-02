@@ -313,7 +313,7 @@ import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
 import { CookieConsentBanner } from "./components/CookieConsentBanner";
 import { BottomNavigation } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
-import { ShopFeedSkeleton } from "./components/ShopFeedSkeleton";
+
 import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
@@ -4298,35 +4298,23 @@ function HomeScreen({
 
   const renderedShopList = useMemo(() => {
     return (
-      <motion.div
-        layout
-        initial="hidden"
-        animate="show"
-        variants={{
-          hidden: { opacity: 0 },
-          show: {
-            opacity: 1,
-            transition: {
-              staggerChildren: 0.1,
-            },
-          },
-        }}
-        className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate"
-      >
-        {sortedShops.map((shop) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
+        {sortedShops.map((shop,index) => (
           <ShopCard
             key={shop.id}
             shop={shop}
+            priorityImage={index === 0}
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
-        {matchingClosedShops.map(preview=>(
+        {matchingClosedShops.map((preview,index)=>(
           <ShopCard
             key={preview.id}
             shop={closedPickupCardData(preview)}
+            priorityImage={sortedShops.length === 0 && index === 0}
             readOnlyClosed
             isFollowed={favorites.includes(preview.id)}
             onStoreInfo={onStoreInfo}
@@ -4334,11 +4322,13 @@ function HomeScreen({
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
-      </motion.div>
+      </div>
     );
   }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
-  if (loadingShops && shops.length === 0) {
+  // Show the same Home-shaped shell during initial discovery only. If the
+  // approved read-only closed catalog already arrived, let customers browse it.
+  if (loadingShops && shops.length === 0 && closedPickupShops.length === 0 && !fetchError) {
     return <AppSkeletonLoader userProfile={userProfile} />;
   }
 
@@ -5100,11 +5090,7 @@ function HomeScreen({
             </div>
           </div>
 
-          {loadingShops && shops.length === 0 ? (
-            <ShopFeedSkeleton count={6} />
-          ) : (
-            renderedShopList
-          )}
+          {renderedShopList}
         </section>
 
         {shops.length === 0 && !loadingShops && closedPickupShopsLoading && !fetchError && (
