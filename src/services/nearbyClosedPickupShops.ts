@@ -1,4 +1,4 @@
-import {distanceKm} from "./pickupDisplayCache";
+import {distanceKm} from "./pickupDisplayCache.ts";
 
 type Point={lat:number;lng:number};
 export type ClosedPickupShopPreview={
