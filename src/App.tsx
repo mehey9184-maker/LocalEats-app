@@ -5244,7 +5244,34 @@ function HomeScreen({
           )}
         </section>
 
-        {sortedShops.length === 0 && !loadingShops && (
+        {shops.length === 0 && !loadingShops && closedPickupShopsLoading && !fetchError && (
+          <div role="status" aria-live="polite" className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-sm text-slate-600 dark:text-slate-300">
+            Checking nearby shops outside trading hours...
+          </div>
+        )}
+        {shops.length === 0 && !loadingShops && closedPickupShops.length > 0 && (
+          <section aria-label="Nearby closed shops" className="mb-16 space-y-3">
+            <div>
+              <h3 className="text-xl font-black text-slate-900 dark:text-white">Nearby shops are closed right now</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">These shops are listed for information only. Ordering is unavailable until the shop opens again.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {closedPickupShops.map(shop=>(
+                <article key={shop.id} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 flex gap-3 items-center opacity-90">
+                  {shop.logo ? <img src={shop.logo} alt="" className="h-16 w-16 rounded-xl object-cover shrink-0" loading="lazy"/> :
+                    <div className="h-16 w-16 rounded-xl shrink-0 flex items-center justify-center bg-orange-50 dark:bg-slate-800 text-orange-600"><Store className="w-7 h-7"/></div>}
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-base font-extrabold text-slate-900 dark:text-white truncate">{shop.name}</h4>
+                    <span className="inline-flex bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-full px-2 py-0.5 mt-1">Closed · Orders unavailable</span>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-2">{shop.openingTime && shop.closingTime ? `Hours: ${shop.openingTime}–${shop.closingTime}` : "Opening hours unavailable"}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{shop.distanceKm.toFixed(1)} km away</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+        {sortedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && closedPickupShops.length === 0 && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
