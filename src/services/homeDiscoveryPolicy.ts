@@ -62,6 +62,6 @@ export function homeHasHalalOptions(shop: Pick<Shop, "menu">): boolean {
   return Array.isArray(shop.menu) && shop.menu.some((item) =>
     item.is_available !== false &&
     Array.isArray(item.dietary_tags) &&
-    item.dietary_tags.some((tag) => typeof tag === "string" && /^halaal?$/i.test(tag.trim()))
+    item.dietary_tags.some((tag) => typeof tag === "string" && /^(?:halal|halaal)$/i.test(tag.trim()))
   );
 }
