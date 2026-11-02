@@ -1614,8 +1614,16 @@ export default function App() {
     let active=true;
     let unsubscribe:(()=>void)|void;
     void onForegroundMessage(payload => {
-      if(payload.data?.type!=="pickup_ready" || typeof payload.data?.event_id!=="string")return;
-      window.dispatchEvent(new Event("localeats-pickup-ready"));
+      const type=payload.data?.type;
+      if(type==="pickup_ready" && typeof payload.data?.event_id==="string"){
+        window.dispatchEvent(new Event("localeats-pickup-ready"));return;
+      }
+      // A lifecycle wake only triggers an authenticated API refresh; no
+      // order status is ever trusted from the FCM payload itself.
+      if(type==="pickup_status" && ["preparing","completed","cancelled"].includes(payload.data?.status??"") &&
+        typeof payload.data?.order_id==="string"){
+        window.dispatchEvent(new Event("localeats-pickup-ready"));
+      }
     }).then(unsub=>{
       if(active)unsubscribe=unsub;
       else if(typeof unsub==="function")unsub();
