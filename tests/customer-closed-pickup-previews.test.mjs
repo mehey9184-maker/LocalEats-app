@@ -38,7 +38,8 @@ test("Closed previews render the ORIGINAL ShopCard in the normal grid with no or
  const grid=app.slice(app.indexOf("const renderedShopList = useMemo"),app.indexOf("}, [sortedShops, matchingClosedShops"));
  assert.match(grid,/className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3/);
  assert.match(grid,/<ShopCard[\s\S]*shop=\{shop\}/);
- assert.match(grid,/matchingClosedShops\.map\(preview=>\(/);
+ assert.match(grid,/matchingClosedShops\.map\(\(preview,index\)=>\(/);
+ assert.match(grid,/priorityImage=\{sortedShops\.length === 0 && index === 0\}/);
  assert.match(grid,/<ShopCard[\s\S]*shop=\{closedPickupCardData\(preview\)\}[\s\S]*readOnlyClosed/);
  assert.doesNotMatch(app,/Nearby shops are closed right now/);
  assert.match(card,/onClick=\{\(\) => \{/);
