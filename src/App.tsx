@@ -9100,7 +9100,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {shop.delivery_eta || "30-45 mins"}
+                {readOnlyClosed ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -9228,6 +9228,12 @@ function StoreInfoScreen({
                 </div>
               )}
 
+              {readOnlyClosed && (
+                <div role="status" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Closed right now · You can browse the real menu, but ordering is unavailable.
+                  {shop.opening_time && <span className="block text-xs text-slate-500 mt-1">Opens {shop.opening_time}</span>}
+                </div>
+              )}
               {/* Search & Price Sort Bar */}
               <div id="store-menu-search" className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
                 <div className="relative flex-1 group">
@@ -9431,7 +9437,7 @@ function StoreInfoScreen({
                                     key={item.id}
                                     item={item}
                                     shop={shop}
-                                    onSelect={(item) =>
+                                    onSelect={readOnlyClosed ? undefined : (item) =>
                                       setSelectedItemForQuantity(item)
                                     }
                                     showAlert={showAlert}
@@ -9464,10 +9470,10 @@ function StoreInfoScreen({
                         <SearchX className="w-8 h-8" />
                       </div>
                       <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        No items found
+                        {readOnlyClosed ? (closedMenuError || (searchQuery ? "No matching dishes" : "No menu items available")) : "No items found"}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Try searching for something else
+                        {readOnlyClosed ? "Menu browsing only. Ordering resumes when the shop is open." : "Try searching for something else"}
                       </p>
                     </div>
                   )}
@@ -9851,9 +9857,10 @@ function StoreInfoScreen({
 
       <QuantityModal
         item={selectedItemForQuantity}
-        isOpen={!!selectedItemForQuantity}
+        isOpen={!readOnlyClosed && !!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (readOnlyClosed) return;
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,
