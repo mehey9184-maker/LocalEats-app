@@ -26,14 +26,20 @@ export const ShopCard = memo(
     onStoreInfo,
     triggerHaptic,
     dataSaverEnabled,
+    readOnlyClosed = false,
   }: {
     shop: Shop;
     isFollowed: boolean;
     onStoreInfo: (id: string) => void;
     triggerHaptic: (pattern?: number | number[]) => void;
     dataSaverEnabled?: boolean;
+    /** Display an approved but currently unavailable shop with the ORIGINAL card;
+     *  it cannot navigate to menus, cart, checkout or order actions. */
+    readOnlyClosed?: boolean;
   }) => {
-    const status = getShopStatus(shop);
+    const status = readOnlyClosed
+      ? {isOpen:false,nextOpeningTime:shop.opening_time || null}
+      : getShopStatus(shop);
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
@@ -94,13 +100,14 @@ export const ShopCard = memo(
             },
           },
         }}
-        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-        whileTap={{ scale: 0.98 }}
-        onClick={() => {
+        whileHover={readOnlyClosed ? undefined : { y: -4, transition: { duration: 0.2 } }}
+        whileTap={readOnlyClosed ? undefined : { scale: 0.98 }}
+        onClick={readOnlyClosed ? undefined : () => {
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 w-full h-full active:scale-[0.98] transform ${
+        aria-label={readOnlyClosed ? `${shop.name} is closed. Ordering unavailable.` : undefined}
+        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${readOnlyClosed ? "cursor-default" : "cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98]"} ${
           !status.isOpen ? "opacity-80" : ""
         }`}
       >
@@ -135,7 +142,7 @@ export const ShopCard = memo(
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 bg-black/60 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md">
-                {priceTier} • {shop.category || "Local Spot"}
+                {readOnlyClosed ? (shop.category || "Local Spot") : `${priceTier} • ${shop.category || "Local Spot"}`}
               </span>
             )}
           </div>
@@ -164,7 +171,7 @@ export const ShopCard = memo(
           <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-white text-[11px] font-bold z-10 drop-shadow-sm">
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <Clock className="w-3 h-3 text-orange-400" />
-              <span>{etaStr}</span>
+              <span>{readOnlyClosed ? (shop.opening_time ? `Opens ${shop.opening_time}` : "Currently closed") : etaStr}</span>
             </div>
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <MapPin className="w-3 h-3 text-amber-400" />
@@ -186,13 +193,17 @@ export const ShopCard = memo(
 
           {/* Social Proof & Rating Metrics */}
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-bold">
-            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
-              <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span className="font-black">{shop.rating || "4.8"}</span>
-              <span className="text-[10px] font-semibold opacity-75">
-                ({shop.reviewCount || 24})
-              </span>
-            </div>
+            {(!readOnlyClosed || shop.rating > 0) && (
+              <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
+                <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                <span className="font-black">{readOnlyClosed ? shop.rating : (shop.rating || "4.8")}</span>
+                {(!readOnlyClosed || (shop.reviewCount !== undefined && shop.reviewCount > 0)) && (
+                  <span className="text-[10px] font-semibold opacity-75">
+                    ({readOnlyClosed ? shop.reviewCount : (shop.reviewCount || 24)})
+                  </span>
+                )}
+              </div>
+            )}
 
             <span className="text-slate-300 dark:text-slate-700">•</span>
 
@@ -202,14 +213,14 @@ export const ShopCard = memo(
           </div>
 
           <div className="flex items-center gap-2 mt-auto pt-1 overflow-hidden flex-wrap">
-            {isShopAway(shop) && (
+            {!readOnlyClosed && isShopAway(shop) && (
               <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md animate-pulse border border-rose-200 dark:border-rose-900/40">
                 ⚠️ Temporarily Away
               </span>
             )}
             {!status.isOpen && (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                Opens {status.nextOpeningTime || "Soon"}
+                {readOnlyClosed ? "Closed right now · Orders unavailable" : `Opens ${status.nextOpeningTime || "Soon"}`}
               </span>
             )}
           </div>
