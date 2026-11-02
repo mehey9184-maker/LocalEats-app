@@ -290,6 +290,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
+import {nearbyClosedPickupShops, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
 import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
@@ -684,6 +685,8 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
+  const [closedPickupShops, setClosedPickupShops] = useState<ClosedPickupShopPreview[]>([]);
+  const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -1186,7 +1189,7 @@ export default function App() {
         loadedCatalogLocation.current=userLocation;
       }
     }
-    if (locationChanged) setShops([]);
+    if (locationChanged) {setShops([]);setClosedPickupShops([]);}
     setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
     setIsSyncing(true); setFetchError(null);
     try {
@@ -1195,7 +1198,25 @@ export default function App() {
       loadedCatalogLocation.current=userLocation;
       setShops(result);
       saveDisplayCatalog(userLocation,result);
-      // A genuinely empty authorized result stays empty; no fabricated shops.
+      // The pickup API is authoritative for ORDERABLE shops. Only when it
+      // returns no available shops, load approved nearby closed shop metadata
+      // for an explicitly non-interactive, no-checkout display.
+      if(result.length===0){
+        setClosedPickupShopsLoading(true);
+        try{
+          const publicCatalog=await customerPickupApi.approvedShops();
+          if(generation===catalogGeneration.current)
+            setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
+        }catch{
+          if(generation===catalogGeneration.current)setClosedPickupShops([]);
+        }finally{
+          if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
+        }
+      }else{
+        setClosedPickupShops([]);
+        setClosedPickupShopsLoading(false);
+      }
+      // A genuinely empty authoritative pickup result still means zero orderable shops.
     } catch(error) {
       if(generation===catalogGeneration.current) {
         setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
@@ -3078,6 +3099,8 @@ export default function App() {
                   session={session}
                   shops={visibleShops}
                   loadingShops={loadingShops}
+                  closedPickupShops={closedPickupShops}
+                  closedPickupShopsLoading={closedPickupShopsLoading}
                   fetchError={fetchError}
                   isOnline={isOnline}
                   onSettings={() => {
@@ -3812,6 +3835,8 @@ function HomeScreen({
   session,
   shops,
   loadingShops,
+  closedPickupShops,
+  closedPickupShopsLoading,
   fetchError,
   onSettings,
   onProfile,
@@ -3852,6 +3877,8 @@ function HomeScreen({
   session: Session | null;
   shops: Shop[];
   loadingShops: boolean;
+  closedPickupShops: ClosedPickupShopPreview[];
+  closedPickupShopsLoading: boolean;
   fetchError: string | null;
   onSettings: () => void;
   onProfile: () => void;
