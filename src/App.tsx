@@ -1510,25 +1510,38 @@ export default function App() {
     };
   }, [requestLocation]);
 
-  // Watch real device movement only when Home is visible and location was
-  // previously granted. Ignore GPS jitter; no background tracking or prompts.
+  // A single passive GPS watch runs only while Home is visible. Suspend it
+  // when the tab is hidden and restart on visibility without a second prompt.
   useEffect(() => {
-    if (currentScreen !== "home" || !userLocation || !navigator.geolocation?.watchPosition || document.hidden) return;
-    const watchId = navigator.geolocation.watchPosition(
-      ({coords}) => {
-        const next={lat:coords.latitude,lng:coords.longitude};
-        setUserLocation(previous => {
-          if (!shouldUpdateHomeLocation(previous,next,lastMovingLocationUpdateRef.current,Date.now())) return previous;
-          lastMovingLocationUpdateRef.current=Date.now();
-          return next;
-        });
-      },
-      () => { /* Keep last valid fix; retry is user initiated. */ },
-      {enableHighAccuracy:false,maximumAge:60000,timeout:12000},
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [currentScreen,Boolean(userLocation)]);
-
+    if (currentScreen!=="home" || !userLocation || !navigator.geolocation?.watchPosition)return;
+    let watchId:number|null=null;
+    const updateWatch=()=>{
+      if(document.hidden){
+        if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+        watchId=null;
+        return;
+      }
+      if(watchId!==null)return;
+      watchId=navigator.geolocation.watchPosition(
+        ({coords})=>{
+          const next={lat:coords.latitude,lng:coords.longitude};
+          setUserLocation(previous=>{
+            if(!shouldUpdateHomeLocation(previous,next,lastMovingLocationUpdateRef.current,Date.now()))return previous;
+            lastMovingLocationUpdateRef.current=Date.now();
+            return next;
+          });
+        },
+        ()=>{/* Preserve last real fix; explicit Retry remains available. */},
+        {enableHighAccuracy:false,maximumAge:60000,timeout:12000},
+      );
+    };
+    document.addEventListener("visibilitychange",updateWatch);
+    updateWatch();
+    return()=>{
+      document.removeEventListener("visibilitychange",updateWatch);
+      if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+    };
+  },[currentScreen,Boolean(userLocation)]);
 
   useEffect(() => {
     if (searchQuery.length > 1) {
