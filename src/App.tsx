@@ -1559,22 +1559,24 @@ export default function App() {
 
   // User-action enrollment only. Browser permission alone is not a usable
   // subscription: the authenticated pickup API must confirm the FCM token.
-  const subscribeToPushNotifications = useCallback(async (customUserId?: string) => {
+  const subscribeToPushNotifications = useCallback(async (customUserId?: string):Promise<boolean> => {
     const targetUserId=customUserId || session?.user?.id;
     if(!pickupOrderingEnabled() || !targetUserId || targetUserId!==session?.user?.id ||
-       firebaseAuth.currentUser?.uid!==targetUserId || !("Notification" in window)) return;
+       firebaseAuth.currentUser?.uid!==targetUserId || !("Notification" in window)) return false;
     try {
-      if(Notification.permission==="denied")return;
+      if(Notification.permission==="denied")return false;
       const permission=Notification.permission==="granted" ? "granted" : await Notification.requestPermission();
-      if(permission!=="granted")return;
+      if(permission!=="granted")return false;
       const token=await requestNotificationPermissionAndGetToken();
       if(!token) {
         console.info("[Pickup push] Background notifications are not available on this browser.");
-        return;
+        return false;
       }
-      await customerPickupApi.subscribe(pickupInstallationId(targetUserId),token);
+      const result=await customerPickupApi.subscribe(pickupInstallationId(targetUserId),token);
+      return result.success===true;
     } catch(err) {
       console.warn("[Pickup push] Enrollment was not confirmed:",err instanceof Error?err.message:"Unavailable");
+      return false;
     }
   },[session?.user?.id]);
 
@@ -3483,7 +3485,7 @@ export default function App() {
                   showConfirm={showConfirm}
                   showPasswordPrompt={showPasswordPrompt}
                   isOnline={isOnline}
-                  onSubscribeToPush={subscribeToPushNotifications}
+                  onSubscribeToPush={pickupOrderingEnabled() ? subscribeToPushNotifications : undefined}
                   onManualSync={handleManualSync}
                   stalenessThresholdMs={stalenessThresholdMs}
                   onUpdateStalenessThreshold={setStalenessThresholdMs}
