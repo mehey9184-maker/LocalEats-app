@@ -5705,6 +5705,7 @@ function DiscoverScreen({
 
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
+  const [showExtraFilters,setShowExtraFilters]=useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<"smart" | "distance" | "rating" | "speed">("smart");
@@ -5806,7 +5807,8 @@ function DiscoverScreen({
           <div className="flex items-center gap-4">
             <button
               onClick={onHome}
-              className="text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
+              aria-label="Back to Home"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-orange-500 text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
@@ -5830,7 +5832,9 @@ function DiscoverScreen({
             )}
             <button
               onClick={() => setViewMode(viewMode === "list" ? "map" : "list")}
-              className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
+              aria-label={viewMode==="list"?"Show shops on a map":"Show shops as a list"}
+              aria-pressed={viewMode==="map"}
+              className="min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
             >
               {viewMode === "list" ? (
                 <MapIcon className="w-5 h-5" />
@@ -5851,72 +5855,6 @@ function DiscoverScreen({
       </header>
 
       <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
-        {/* Dedicated Promo Code & Flyer Scanner Action Card */}
-        {onScanFlyer && (
-          <div className="px-6 pt-4 pb-1">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:to-slate-900 rounded-2xl border border-orange-500/20 shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-md shrink-0">
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>Scan Promo Codes & Flyers</span>
-                    <span className="bg-orange-600 text-white text-[9px] font-black px-2 py-1 rounded-full uppercase">Instant</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                    Scan a shop's QR code to see its available information. Discounts are confirmed at checkout.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  triggerHaptic(10);
-                  onScanFlyer();
-                }}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 self-start sm:self-auto"
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>Scan Promo Code</span>
-              </button>
-            </div>
-          </div>
-        )}
-        {/* Real Menu Items Feed from Active Shops */}
-        {realFreshItems.length > 0 && (
-          <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
-            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-orange-500" />
-              Items on Local Menus
-            </h3>
-            
-            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
-              {realFreshItems.map((feed) => (
-                <div
-                  key={feed.id}
-                  onClick={() => onSelectShop(feed.shopId)}
-                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
-                >
-                  <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
-                    <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
-                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
-                      {feed.badge}
-                    </div>
-                    <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
-                      R{feed.price}
-                    </div>
-                  </div>
-                  <div className="p-3">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
-                    <p className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
-                    <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
@@ -5928,64 +5866,13 @@ function DiscoverScreen({
             </p>
           </div>
 
-          {/* Bento Grid Categories */}
-          <div className="mb-8 max-w-xl mx-auto">
-            <div className="grid grid-cols-2 gap-3 h-[200px]">
-              {/* Primary Category (Kotas) */}
-              <div 
-                onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
-                className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-rose-500 transition-transform duration-500 group-hover:scale-105"></div>
-                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
-                <div className="absolute bottom-4 left-4 z-10">
-                  <h3 className="text-white font-black text-2xl tracking-tight drop-shadow-md">Kotas</h3>
-                  <p className="text-white/90 font-bold text-xs uppercase tracking-wider mt-1 drop-shadow-md">Local Legends</p>
-                </div>
-                <Store className="absolute top-4 right-4 w-6 h-6 text-white/50 z-10" />
-              </div>
-              
-              {/* Secondary Categories Stack */}
-              <div className="grid grid-rows-2 gap-3">
-                {/* Top Row */}
-                <div 
-                  onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
-                  className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
-                  <div className="absolute bottom-3 left-4 z-10">
-                    <h3 className="text-white font-black text-lg drop-shadow-md">Burgers</h3>
-                  </div>
-                </div>
-                
-                {/* Bottom Row (Split) */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div 
-                    onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
-                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
-                  >
-                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
-                    <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
-                  </div>
-                  <div 
-                    onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
-                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
-                  >
-                    <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
-                      <ArrowRight className="w-3 h-3 text-slate-900 dark:text-white" />
-                    </div>
-                    <span className="font-bold text-xs text-slate-700 dark:text-slate-300 z-10">See All</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div className="relative group mb-6 max-w-xl mx-auto z-30">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
             </div>
+            <label htmlFor="discover-search-input" className="sr-only">Search local food shops</label>
             <input
+              id="discover-search-input" aria-controls="discover-search-suggestions" aria-expanded={showSuggestions} autoComplete="off"
               className="w-full h-14 pl-12 pr-10 bg-[#ffffff] dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-[0_8px_32px_rgba(45,47,49,0.04)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none transition-all"
               placeholder="Search stores nearby..."
               type="text"
@@ -5998,7 +5885,7 @@ function DiscoverScreen({
                 setTimeout(() => setShowSuggestions(false), 200);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                if(e.key==="Escape"){setShowSuggestions(false);e.currentTarget.blur();} else if (e.key === "Enter" && searchQuery.trim().length >= 2) {
                   saveRecentSearch(searchQuery.trim());
                   setShowSuggestions(false);
                 }
@@ -6014,7 +5901,7 @@ function DiscoverScreen({
                   setSearchQuery("");
                   setShowSuggestions(true);
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
+                className="absolute right-1 top-1/2 -translate-y-1/2 min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
                 aria-label="Clear search text"
               >
                 <X className="w-4 h-4" />
@@ -6024,7 +5911,7 @@ function DiscoverScreen({
             {/* Float Suggestions relative to search bar */}
             {showSuggestions && (
               <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-40">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
+                <div id="discover-search-suggestions" role="region" aria-label="Discover search suggestions" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
                   {debouncedSearchQuery.length < 2 ? (
                     <>
                       {/* Recent Searches */}
@@ -6037,7 +5924,7 @@ function DiscoverScreen({
                             </span>
                             <button
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setRecentSearches([]);
                                 try {
@@ -6056,7 +5943,7 @@ function DiscoverScreen({
                             >
                               <button
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -6100,7 +5987,7 @@ function DiscoverScreen({
                             <button
                               key={`sugg-${idx}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setSearchQuery(s);
                                 setShowSuggestions(false);
@@ -6125,7 +6012,7 @@ function DiscoverScreen({
                               <button
                                 key={`recent-match-${idx}`}
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -6145,131 +6032,183 @@ function DiscoverScreen({
               </div>
             )}
           </div>
+          {/* Bento Grid Categories */}
+          <div className="mb-8 max-w-xl mx-auto">
+            <div className="grid grid-cols-2 gap-3 h-[200px]">
+              {/* Primary Category (Kotas) */}
+              <div 
+                role="button" tabIndex={0} aria-pressed={selectedCategory==="Kotas"} aria-label="Browse Kotas" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Kotas");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
+                className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-rose-500 transition-transform duration-500 group-hover:scale-105"></div>
+                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
+                <div className="absolute bottom-4 left-4 z-10">
+                  <h3 className="text-white font-black text-2xl tracking-tight drop-shadow-md">Kotas</h3>
+                  <p className="text-white/90 font-bold text-xs uppercase tracking-wider mt-1 drop-shadow-md">Local Legends</p>
+                </div>
+                <Store className="absolute top-4 right-4 w-6 h-6 text-white/50 z-10" />
+              </div>
+              
+              {/* Secondary Categories Stack */}
+              <div className="grid grid-rows-2 gap-3">
+                {/* Top Row */}
+                <div 
+                  role="button" tabIndex={0} aria-pressed={selectedCategory==="Burgers"} aria-label="Browse Burgers" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Burgers");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
+                  className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
+                  <div className="absolute bottom-3 left-4 z-10">
+                    <h3 className="text-white font-black text-lg drop-shadow-md">Burgers</h3>
+                  </div>
+                </div>
+                
+                {/* Bottom Row (Split) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div 
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="Drinks"} aria-label="Browse Drinks" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Drinks");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
+                  >
+                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
+                    <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
+                  </div>
+                  <div 
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="All"} aria-label="Browse all food categories" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("All");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
+                  >
+                    <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
+                      <ArrowRight className="w-3 h-3 text-slate-900 dark:text-white" />
+                    </div>
+                    <span className="font-bold text-xs text-slate-700 dark:text-slate-300 z-10">See All</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </section>
 
-        {/* Category Chips */}
-        <section className="mb-10">
-          <div className="flex flex-col gap-4">
-            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* Category chips and compact Discover controls */}
+        <section className="mb-8" aria-label="Discover filters">
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-2.5 overflow-x-auto px-4 sm:px-6 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Food categories">
               {categories.map((category) => (
                 <button
                   key={category}
+                  type="button"
+                  aria-pressed={selectedCategory===category}
                   onClick={() => setSelectedCategory(category)}
-                  className={`whitespace-nowrap px-6 py-3 rounded-full font-semibold text-sm transition-all cursor-pointer ${
+                  className={`min-h-11 whitespace-nowrap px-5 py-2.5 rounded-full font-semibold text-sm transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 ${
                     selectedCategory === category
                       ? "bg-orange-600 text-white shadow-md shadow-orange-500/10"
                       : "bg-[#e1e2e6] dark:bg-slate-800 text-[#2d2f31] dark:text-slate-300 hover:bg-[#dbdde0] dark:hover:bg-slate-700"
                   }`}
                 >
-                  {category === "Nearby" && (
-                    <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />
-                  )}
-                  {getCategorySlang(category, language)}
+                  {category==="Nearby" && <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />}
+                  {getCategorySlang(category,language)}
                 </button>
               ))}
             </div>
 
-            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                onClick={() => setShowOnlyOpen(!showOnlyOpen)}
-                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+            <div className="flex flex-wrap items-center gap-2 px-4 sm:px-6">
+              <button type="button"
+                aria-pressed={showOnlyOpen}
+                onClick={() => setShowOnlyOpen(value=>!value)}
+                className={`min-h-11 px-3.5 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border focus-visible:outline-2 focus-visible:outline-orange-500 ${
                   showOnlyOpen
                     ? "bg-green-100/90 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-300 dark:border-green-800/80 shadow-sm"
                     : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                }`}
-              >
-                <Clock
-                  className={`w-3 h-3 ${showOnlyOpen ? "fill-current text-green-600 dark:text-green-400" : ""}`}
-                />
-                Open Now
+                }`}>
+                <Clock className="w-3.5 h-3.5" /> Open Now
               </button>
-              
-              <button
-                onClick={() => setSortPriority(sortPriority === "distance" ? "smart" : "distance")}
-                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
-                  sortPriority === "distance"
-                    ? "bg-blue-100/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-800/80 shadow-sm"
-                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                }`}
-              >
-                <Navigation
-                  className={`w-3 h-3 ${sortPriority === "distance" ? "text-blue-600 dark:text-blue-400" : ""}`}
-                />
-                Sort by Distance
-              </button>
-              {[0, 3, 4, 4.5].map((rating) => (
-                <button
-                  key={rating}
-                  onClick={() => setMinRating(rating)}
-                  className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
-                    minRating === rating
-                      ? "bg-yellow-100/90 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/80 shadow-sm"
-                      : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                  }`}
-                >
-                  <Star
-                    className={`w-3 h-3 ${minRating === rating ? "fill-current text-yellow-500" : ""}`}
-                  />
-                  {rating === 0 ? "All Ratings" : `${rating}+ Stars`}
-                </button>
-              ))}
-            </div>
 
-            {/* Sort Priority Section */}
-            <div className="flex flex-col gap-1.5 px-6">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Sort By
-              </span>
-              <div className="relative w-full max-w-xs">
+              <div className="relative min-w-0 flex-1 sm:flex-none sm:w-52">
+                <label htmlFor="discover-sort" className="sr-only">Sort discovered shops</label>
                 <select
-                  value={sortPriority}
-                  onChange={(e) => {
-                    setSortPriority(e.target.value as any);
-                    triggerHaptic?.(10);
-                  }}
-                  className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-shadow pr-10 cursor-pointer"
+                  id="discover-sort"
+                  value={selectedCategory==="Nearby"?"distance":sortPriority}
+                  disabled={selectedCategory==="Nearby"}
+                  onChange={(e) => {setSortPriority(e.target.value as "smart"|"distance"|"rating"|"speed");triggerHaptic(10);}}
+                  className="w-full min-h-11 appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl pl-3 pr-8 py-2 font-bold text-xs outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-shadow disabled:opacity-75 cursor-pointer"
+                  aria-label="Sort shops"
                 >
                   <option value="smart">Open &amp; Nearby</option>
                   <option value="distance">Nearest First</option>
                   <option value="rating">Highest Rated</option>
                   <option value="speed">Fastest Known Prep</option>
                 </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                  <ChevronDown className="w-4 h-4" />
-                </div>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none w-4 h-4 text-slate-400" />
               </div>
+
+              <button type="button"
+                aria-expanded={showExtraFilters}
+                aria-controls="discover-extra-filters"
+                onClick={()=>setShowExtraFilters(value=>!value)}
+                className={`min-h-11 px-3.5 py-2 rounded-xl border font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                  showExtraFilters || minRating>0 || maxDistance!==null
+                    ? "bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400"
+                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                }`}>
+                <List className="w-4 h-4" />
+                More filters{minRating>0 || maxDistance!==null ? ` (${Number(minRating>0)+Number(maxDistance!==null)})` : ""}
+              </button>
             </div>
 
-            {/* Pickup Radius Section */}
-            {userLocation && (
-              <div className="flex flex-col gap-1.5 px-6">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                  Pickup Radius
-                </span>
-                <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {[
-                    { val: null, label: "Any nearby" },
-                    { val: 1, label: "Within 1 km" },
-                    { val: 2, label: "Within 2 km" }
-                  ].map((opt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setMaxDistance(opt.val);
-                        triggerHaptic?.(10);
-                      }}
-                      className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border ${
-                        maxDistance === opt.val
-                          ? "bg-orange-600 border-orange-600 text-white shadow-sm"
-                          : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+            {selectedCategory==="Nearby" && (
+              <p className="px-4 sm:px-6 text-xs text-slate-500 dark:text-slate-400" role="status">Nearby shows verified distances, nearest first.</p>
+            )}
+
+            {showExtraFilters && (
+              <div id="discover-extra-filters" className="mx-4 sm:mx-6 p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">Minimum rating</p>
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Minimum rating">
+                    {[0,3,4,4.5].map(rating=>(
+                      <button key={rating} type="button" aria-pressed={minRating===rating} onClick={()=>setMinRating(rating)}
+                        className={`min-h-11 px-3 py-2 rounded-xl border text-xs font-bold focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                          minRating===rating ? "bg-yellow-100/90 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/80" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                        }`}>
+                        {rating===0?"All ratings":`${rating}+ stars`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {userLocation && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">Pickup distance</p>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Maximum pickup distance">
+                      {[
+                        {val:null,label:"Any nearby"},
+                        {val:1,label:"Within 1 km"},
+                        {val:2,label:"Within 2 km"}
+                      ].map(option=>(
+                        <button key={option.label} type="button" aria-pressed={maxDistance===option.val}
+                          onClick={()=>{setMaxDistance(option.val);triggerHaptic(10);}}
+                          className={`min-h-11 px-3 py-2 rounded-xl border text-xs font-bold focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                            maxDistance===option.val ? "bg-orange-600 border-orange-600 text-white" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                          }`}>
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
+            <div className="px-4 sm:px-6 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
+              <span>{loadingShops ? "Finding nearby shops..." : `Showing ${sortedShops.length} ${sortedShops.length===1?"shop":"shops"}`}</span>
+              {(minRating>0 || maxDistance!==null || showOnlyOpen || selectedCategory!=="All" || searchQuery.trim()) && (
+                <button type="button" onClick={()=>{
+                  setMinRating(0);setMaxDistance(null);setShowOnlyOpen(false);
+                  setSelectedCategory("All");setSearchQuery("");
+                }} className="min-h-10 text-orange-600 dark:text-orange-400 font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-orange-500">
+                  Clear filters
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
@@ -6288,7 +6227,9 @@ function DiscoverScreen({
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
+                  onKeyDown={(e)=>{if(e.target!==e.currentTarget)return;if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelectShop(shop.id);}}}
+                  role="button" tabIndex={0} aria-label={`Browse ${shop.name} menu`}
+                  className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
@@ -6299,7 +6240,9 @@ function DiscoverScreen({
                     />
 
                     {/* Floating Heart Follow Badge */}
-                    <button
+                    <button type="button"
+                      aria-label={isFollowing ? `Remove ${shop.name} from favourites` : `Add ${shop.name} to favourites`}
+                      aria-pressed={isFollowing}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleFavorite(shop.id);
@@ -6377,7 +6320,7 @@ function DiscoverScreen({
                       </div>
                     </div>
 
-                    <button
+                    <button type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectShop(shop.id);
@@ -6565,6 +6508,41 @@ function DiscoverScreen({
                 Showing shop locations supplied by LocalEats. Select a pin to
                 browse the shop's menu.
               </p>
+            </div>
+          </section>
+        )}
+
+        {/* Real Menu Items Feed from Active Shops */}
+        {realFreshItems.length > 0 && (
+          <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
+            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-orange-500" />
+              Items on Local Menus
+            </h3>
+            
+            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
+              {realFreshItems.map((feed) => (
+                <div
+                  key={feed.id}
+                  onClick={() => onSelectShop(feed.shopId)}
+                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
+                >
+                  <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
+                    <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
+                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
+                      {feed.badge}
+                    </div>
+                    <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
+                      R{feed.price}
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
+                    <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}
