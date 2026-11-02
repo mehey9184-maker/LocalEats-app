@@ -1,0 +1,26 @@
+name: Nearby closed pickup storefront preview checks
+on:
+  push:
+    branches: [repair/show-nearby-closed-shops-01]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Closed preview isolation and pilot regressions
+        run: node --experimental-strip-types --test tests/customer-closed-pickup-previews.test.mjs tests/original-pickup.test.mjs tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs tests/customer-collection-tracking.test.mjs
+      - name: Type check
+        run: npm run lint
+      - name: Vite build
+        run: npm run build
