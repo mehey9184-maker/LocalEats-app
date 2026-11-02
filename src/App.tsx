@@ -4391,6 +4391,27 @@ function HomeScreen({
     0,
   );
 
+  const matchingClosedShops = useMemo(() => {
+    if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
+    const query=debouncedSearchQuery.trim().toLowerCase();
+    const words=query ? query.split(/\s+/) : [];
+    const activeIds=new Set(shops.map(shop=>shop.id));
+    return closedPickupShops.filter(shop=>{
+      if(activeIds.has(shop.id))return false;
+      const text=[shop.name,shop.category,shop.description].join(" ").toLowerCase();
+      if(!words.every(term=>text.includes(term)))return false;
+      if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
+      if(!["All","Favorites","Nearby"].includes(selectedCategory)){
+        if(selectedCategory==="Kota" && !text.includes("kota") && !text.includes("spatlo"))return false;
+        if(selectedCategory==="Braai" && !text.includes("braai"))return false;
+        if(!["Kota","Braai"].includes(selectedCategory) && shop.category!==selectedCategory)return false;
+      }
+      if(selectedQuickFilter==="Top Rated" && (shop.rating===null || shop.rating<4.5))return false;
+      if(selectedQuickFilter==="Halal" && !text.includes("halal") && !text.includes("halaal"))return false;
+      return true;
+    });
+  }, [closedPickupShops,shops,debouncedSearchQuery,selectedCategory,selectedQuickFilter,favorites]);
+
   const renderedShopList = useMemo(() => {
     return (
       <motion.div
@@ -4418,9 +4439,20 @@ function HomeScreen({
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
+        {matchingClosedShops.map(preview=>(
+          <ShopCard
+            key={preview.id}
+            shop={closedPickupCardData(preview)}
+            readOnlyClosed
+            isFollowed={favorites.includes(preview.id)}
+            onStoreInfo={onStoreInfo}
+            triggerHaptic={triggerHaptic}
+            dataSaverEnabled={dataSaverEnabled}
+          />
+        ))}
       </motion.div>
     );
-  }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
+  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
   if (loadingShops && shops.length === 0) {
     return <AppSkeletonLoader userProfile={userProfile} />;
