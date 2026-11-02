@@ -170,8 +170,9 @@ export function MapFocusTracker({
   });
 
   const handleReturnToLocation = () => {
-    if (activeCoords) {
-      map.flyTo({ lat: activeCoords.lat, lng: activeCoords.lng }, 16, {
+    const destination = userLocation || activeCoords;
+    if (destination) {
+      map.flyTo({ lat: destination.lat, lng: destination.lng }, 16, {
         animate: true,
         duration: 0.8,
       });
