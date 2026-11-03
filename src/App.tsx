@@ -1352,40 +1352,32 @@ export default function App() {
       let data: any = null;
       let error: any = null;
 
-      // 1. Direct Firestore profile retrieval for real-time customer identity
+      // Only the authenticated API may supply persisted profile data.
+      // Direct Firestore reads are disabled until deployed security rules
+      // are independently verified and account isolation is proven.
+      if (auth.currentUser?.uid !== userId) return;
       try {
-        const firestoreProfile = await FirestoreService.getProfile(userId);
-        if (firestoreProfile) {
-          data = firestoreProfile;
+        const { getApiAuthHeaders } = await import("./lib/apiAuth");
+        const headers = await getApiAuthHeaders();
+        const response = await fetch(`/api/profiles/${encodeURIComponent(userId)}`, {
+          headers: { ...headers, Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!(response.headers.get("content-type") || "").toLowerCase().includes("application/json"))
+          throw new Error("Profile service returned an invalid response.");
+        const result = await response.json();
+        if (response.ok && result?.profile?.user_id === userId) {
+          data = result.profile;
+        } else if (response.ok) {
+          throw new Error("Profile service did not confirm this account's identity.");
+        } else {
+          error = new Error(response.status === 404
+            ? "No saved server profile exists for this account yet."
+            : "Profile service is unavailable. Your account profile was not confirmed.");
         }
-      } catch (fsErr) {
-        console.debug("[Profile] Firestore getProfile notice:", fsErr);
-      }
-
-      // 2. Primary attempt by user_id if not loaded from Firestore
-      if (!data) {
-        try {
-          const { getApiAuthHeaders } = await import("./lib/apiAuth");
-          const headers = await getApiAuthHeaders();
-          
-          const response = await fetch(`/api/profiles/${userId}`, {
-            headers: {
-              ...headers
-            }
-          });
-          
-          if (response.ok) {
-            const result = await response.json();
-            if (result.profile) {
-              data = result.profile;
-            }
-          } else {
-            error = new Error(`Failed to fetch profile: ${response.status}`);
-          }
-        } catch (apiErr) {
-          console.warn("[Profile] API fetch error:", apiErr);
-          error = apiErr;
-        }
+      } catch (apiErr) {
+        console.warn("[Profile] Authenticated API fetch notice:", apiErr);
+        error = apiErr;
       }
 
       const isTransientSchemaNotice =
@@ -1418,43 +1410,27 @@ export default function App() {
         if (data.favorites && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
         }
-      } else if (!error || error.code === "PGRST116" || !data) {
-        // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
-        // sync from current session metadata and auto-upsert to prevent empty state.
-        try {
-          const { data: authUserData } = await supabase.auth.getUser();
-          const authUser = authUserData?.user;
-          if (authUser && authUser.id === userId) {
-            const userMeta = authUser.user_metadata || {};
-            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
-            const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
-          }
-        } catch (authFetchErr) {
-          console.warn("[Profile Sync from Auth Notice]", authFetchErr);
-        }
+      } else if (auth.currentUser?.uid === userId) {
+        // Only the signed-in Firebase identity is used for a temporary
+        // display fallback. No automatic profile write and no privileged
+        // user_metadata role may be trusted.
+        const identity = auth.currentUser;
+        setUserProfile(prev => {
+          const sameAccount = prev.id === userId;
+          const name = identity.displayName || identity.email?.split("@")[0] || "";
+          return {
+            ...prev,
+            id: userId,
+            email: identity.email || (sameAccount ? prev.email : ""),
+            fullName: sameAccount ? (prev.fullName || name) : name,
+            phone: sameAccount ? prev.phone : "",
+            city: sameAccount ? prev.city : "Johannesburg",
+            address: sameAccount ? prev.address : "",
+            country: "South Africa",
+            role: "customer",
+            photoURL: sameAccount ? prev.photoURL : "",
+          };
+        });
       }
     } catch (err: any) {
       const errStr = (err?.message || String(err)).toLowerCase();
