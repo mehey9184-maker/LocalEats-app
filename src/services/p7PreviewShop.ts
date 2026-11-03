@@ -47,7 +47,11 @@ export function previewMyKotaShop(shop:unknown,items:unknown):Shop|null {
     description:typeof s.description==="string"?s.description:"",
     address:s.location,category:typeof s.category==="string"?s.category:"Local Food",
     latitude:lat,longitude:lng,menu,images:[],isOpen:true,is_active:true,
-    is_test_store:true,pickup_payment_methods:[],
+    opening_time:typeof s.opening_time==="string"?s.opening_time:undefined,
+    closing_time:typeof s.closing_time==="string"?s.closing_time:undefined,
+    is_test_store:true,pickup_payment_methods:Array.isArray(s.pickup_payment_methods)
+      ?s.pickup_payment_methods.filter(x=>x==="cash"||x==="card_machine") as ("cash"|"card_machine")[]
+      :[],
   };
 }
 
