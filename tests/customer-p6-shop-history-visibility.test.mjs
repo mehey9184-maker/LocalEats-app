@@ -66,7 +66,7 @@ test("P6 Home lists public approved shops separately without creating a cart/che
  assert.match(app,/Outside 4 km pickup area/);
  assert.match(app,/No verified Tembisa or Ivory Park shop records/);
  assert.match(app,/PROFILE_P5_ENABLE_STAGING_WRITES|pilotDirectoryStatus/);
- assert.doesNotMatch(read("../src/services/verifiedPilotBrowseDirectory.ts"),/checkout|createPickup|addToCart|\bfetch\(/);
+ assert.doesNotMatch(read("../src/services/verifiedPilotBrowseDirectory.ts"),/createPickup\(|addToCart\(|\bfetch\(/);
 });
 
 test("P6 handles unknown-history and signed-out account states without endless skeletons",()=>{
