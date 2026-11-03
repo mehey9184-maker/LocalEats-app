@@ -281,7 +281,7 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -1427,7 +1427,7 @@ export default function App() {
             city: sameAccount ? prev.city : "Johannesburg",
             address: sameAccount ? prev.address : "",
             country: "South Africa",
-            role: "customer",
+            role: "user",
             photoURL: sameAccount ? prev.photoURL : "",
           };
         });
