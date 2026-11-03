@@ -7007,7 +7007,7 @@ function ProfileScreen({
       await saveFunc({ photoURL: "" });
     }
     setPreviewUrl(null);
-    setNotification({ message: "Profile picture removed.", type: "info" });
+    setNotification({ message: "Profile photo removal confirmed by the account API.", type: "info" });
   };
 
   const handleUpdateProfile = async () => {
@@ -7065,7 +7065,7 @@ function ProfileScreen({
       setJustSaved(true);
       triggerHaptic?.([10, 30, 10]);
       setNotification({
-        message: "Profile saved & updated!",
+        message: "Profile update confirmed by the account API.",
         type: "success",
       });
       setTimeout(() => {
@@ -7167,6 +7167,7 @@ function ProfileScreen({
           </div>
 
           <div className="text-center mt-6">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">Photo changes are unavailable in this Preview until account-scoped uploads are supported.</p>
             {(userProfile.photoURL || previewUrl) && (
               <button
                 type="button"
@@ -7209,14 +7210,14 @@ function ProfileScreen({
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-wider">
-                        Profile Saved & Synchronized
+                        Account update confirmed
                       </p>
                       <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/80 px-2 py-0.5 rounded-full">
                         WhatsApp Style ✓
                       </span>
                     </div>
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-0.5">
-                      Your changes are saved locally and synced with your account.
+                      The account API returned your updated details.
                     </p>
                   </div>
                 </motion.div>
@@ -7256,11 +7257,11 @@ function ProfileScreen({
                   <div className="flex items-center gap-2.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                     <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                      All details verified & saved
+                      No unsaved profile changes
                     </p>
                   </div>
                   <span className="text-[10px] font-mono text-slate-400 font-medium">
-                    Synced to cloud
+                    Current details
                   </span>
                 </motion.div>
               )}
@@ -7292,13 +7293,13 @@ function ProfileScreen({
                   </span>
                 ) : fullName.trim() ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Saved
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Current
                   </span>
                 ) : null}
               </div>
             </div>
             <p className="text-[11px] text-slate-400 ml-1">
-              Visible to your drivers and restaurants on active orders.
+              Used for your account and confirmed pickup orders.
             </p>
           </div>
 
@@ -7325,13 +7326,13 @@ function ProfileScreen({
                   </span>
                 ) : validateSAPhone(phone) ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Verified
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Format valid
                   </span>
                 ) : null}
               </div>
             </div>
             <p className="text-[11px] text-slate-400 ml-1">
-              Used for WhatsApp tracking and driver calls on delivery.
+              A valid phone format does not verify ownership of this number.
             </p>
           </div>
 
@@ -7339,11 +7340,11 @@ function ProfileScreen({
           <div className="space-y-2">
             <div className="flex items-center justify-between ml-1">
               <label className="text-xs font-bold text-primary uppercase tracking-widest">
-                Delivery Address & Pin
+                Saved Address & Pin
               </label>
-              {latitude && longitude ? (
+              {Number.isFinite(latitude) && Number.isFinite(longitude) ? (
                 <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/40 flex items-center gap-1">
-                  <MapPin className="w-3 h-3 text-emerald-500" /> Pin Set ({latitude.toFixed(3)}, {longitude.toFixed(3)})
+                  <MapPin className="w-3 h-3 text-emerald-500" /> Pin selected
                 </span>
               ) : (
                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800/40">
@@ -7369,14 +7370,14 @@ function ProfileScreen({
               </Suspense>
             </WidgetErrorBoundary>
             <p className="text-[11px] text-slate-400 ml-1">
-              Pin accuracy ensures exact doorstep delivery to your house or workplace.
+              Saving an address does not enable delivery. Pickup discovery uses your current location.
             </p>
           </div>
 
           {/* City */}
           <div className="space-y-2 opacity-60">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
-              City (Current Service Zone)
+              City (Profile)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -7405,7 +7406,7 @@ function ProfileScreen({
               />
             </div>
             <p className="text-[10px] text-slate-400 ml-1">
-              Email is linked to your account and cannot be changed.
+              Email editing is not available on this screen.
             </p>
           </div>
         </div>
@@ -7414,7 +7415,7 @@ function ProfileScreen({
         <div className="pt-8 space-y-4">
           <button
             onClick={handleUpdateProfile}
-            disabled={isSaving || uploading}
+            disabled={isSaving || uploading || !isDirty}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
@@ -7426,12 +7427,12 @@ function ProfileScreen({
             {isSaving ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Saving to Account & Device...</span>
+                <span>Checking account update...</span>
               </>
             ) : justSaved ? (
               <>
                 <Check className="w-5 h-5 text-white stroke-[3] animate-in zoom-in" />
-                <span>Profile Saved ✓</span>
+                <span>Update Confirmed</span>
               </>
             ) : isDirty ? (
               <>
@@ -7441,7 +7442,7 @@ function ProfileScreen({
             ) : (
               <>
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                <span>Saved & Up to Date</span>
+                <span>No Unsaved Changes</span>
               </>
             )}
           </button>
