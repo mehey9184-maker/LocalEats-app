@@ -72,7 +72,7 @@ test("P3 Express endpoints use verified identity and never acknowledge writes wi
 
 test("P3 is isolated from real ordering and the static Vercel routing limitation remains an explicit release gate",()=>{
  const vercel=JSON.parse(readFileSync(new URL("../vercel.json",import.meta.url),"utf8"));
- assert.deepEqual(vercel.rewrites,[{source:"/(.*)",destination:"/index.html"}]);
+ assert.deepEqual(vercel.rewrites,[{source:"/:path((?!api/).*)",destination:"/index.html"}]);
  assert.match(server,/app\.post\("\/api\/orders"/);
  assert.doesNotMatch(route,/app\.post\("\/api\/orders"/);
 });
