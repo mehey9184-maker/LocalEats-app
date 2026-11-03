@@ -6772,7 +6772,7 @@ function ProfileScreen({
   const [fullName, setFullName] = useState(userProfile.fullName || "");
   const [phone, setPhone] = useState(formatSAPhone(userProfile.phone || ""));
   const [address, setAddress] = useState(userProfile.address || "");
-  const [city, setCity] = useState(userProfile.city || "Johannesburg");
+  const [city, setCity] = useState(userProfile.city || "");
   const [latitude, setLatitude] = useState<number | undefined>(
     userProfile.latitude,
   );
@@ -6784,19 +6784,21 @@ function ProfileScreen({
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const fullNameRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
-  const addressRef = useRef<HTMLInputElement>(null);
-
   const isFullNameDirty = fullName.trim() !== (userProfile.fullName || "").trim();
   const isPhoneDirty = phone.trim() !== formatSAPhone(userProfile.phone || "").trim();
   const isAddressDirty = address.trim() !== (userProfile.address || "").trim();
   const isLocationDirty = latitude !== userProfile.latitude || longitude !== userProfile.longitude;
   const isDirty = isFullNameDirty || isPhoneDirty || isAddressDirty || isLocationDirty;
+  const savedConfirmation=justSaved && !isDirty;
+  const confirmUnsavedExit=() => !isDirty || window.confirm("Discard your unsaved profile changes?");
+  const handleBack=() => {if(!isSaving && confirmUnsavedExit())onBack();};
+  const handleSignOut=() => {if(!isSaving && confirmUnsavedExit())onLogout();};
 
   useEffect(() => {
     setFullName(userProfile.fullName || "");
     setPhone(formatSAPhone(userProfile.phone || ""));
     setAddress(userProfile.address || "");
-    setCity(userProfile.city || "Johannesburg");
+    setCity(userProfile.city || "");
     setLatitude(userProfile.latitude);
     setLongitude(userProfile.longitude);
   }, [userProfile.fullName, userProfile.phone, userProfile.address, userProfile.city, userProfile.latitude, userProfile.longitude]);
@@ -6806,86 +6808,60 @@ function ProfileScreen({
   // Only the existing confirmed picture may be removed. New uploads require
   // a future authenticated API and must not expose legacy client storage.
   const handleDeletePhoto = async () => {
-    const saveFunc = onUpdateProfile || onSave;
-    if (!saveFunc) {
-      setNotification({message:"Profile updates are unavailable.",type:"error"});
-      return;
-    }
+    if(removingPhoto || isSaving || !userProfile.photoURL)return;
+    if(!window.confirm("Remove your current profile photo?"))return;
+    const saveFunc=onUpdateProfile || onSave;
+    if(!saveFunc){setNotification({message:"Profile updates are unavailable.",type:"error"});return;}
+    setRemovingPhoto(true);
     try {
-      await saveFunc({ photoURL: "" });
-      setPreviewUrl(null);
+      await saveFunc({photoURL:""});
       setNotification({message:"Profile photo removal confirmed by the account API.",type:"info"});
     } catch {
       setNotification({message:"Photo removal could not be confirmed. Your existing photo remains.",type:"error"});
+    } finally {
+      setRemovingPhoto(false);
     }
   };
 
   const handleUpdateProfile = async () => {
-    if (isSaving || uploading) return;
-
-    if (!isOnline) {
-      setNotification({
-        message: "No internet connection. Cannot save profile changes.",
-        type: "error",
-      });
+    if(isSaving || !isDirty)return;
+    if(!isOnline) {
+      setNotification({message:"You're offline. Connect to save profile changes.",type:"error"});
       return;
     }
-
-    if (!fullName.trim()) {
-      setNotification({ message: "Full Name cannot be empty.", type: "error" });
+    const errors:Record<string,string>={};
+    if(isFullNameDirty && !fullName.trim())errors.fullName="Enter your full name.";
+    if(isPhoneDirty && !validateSAPhone(phone))errors.phone="Enter a valid South African mobile number.";
+    if(Object.keys(errors).length){
+      setFormErrors(errors);
+      (errors.fullName?fullNameRef:phoneRef).current?.focus();
       return;
     }
-
-    if (!phone.trim()) {
-      setNotification({ message: "Phone Number cannot be empty.", type: "error" });
+    const updateData:Partial<UserProfile>={};
+    if(isFullNameDirty)updateData.fullName=fullName.trim();
+    if(isPhoneDirty)updateData.phone=phone.trim();
+    if(isAddressDirty)updateData.address=address.trim();
+    if(isLocationDirty && typeof latitude==="number" && typeof longitude==="number" &&
+       Number.isFinite(latitude) && Number.isFinite(longitude)){
+      updateData.latitude=latitude;
+      updateData.longitude=longitude;
+    }
+    if(!Object.keys(updateData).length)return;
+    const saveFunc=onUpdateProfile || onSave;
+    if(!saveFunc){
+      setNotification({message:"Profile updates are unavailable.",type:"error"});
       return;
     }
-
-    if (!validateSAPhone(phone)) {
-      setNotification({
-        message: "Invalid South African phone format. Please use a valid number like 071 234 5678 or +27 71 234 5678.",
-        type: "error",
-      });
-      return;
-    }
-
-    if (!address.trim()) {
-      setNotification({
-        message: "Delivery address cannot be empty.",
-        type: "error",
-      });
-      return;
-    }
-
     setIsSaving(true);
+    setJustSaved(false);
     try {
-      const updateData: Partial<UserProfile> = {
-        fullName: fullName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
-        city: city.trim() || "Johannesburg",
-        latitude,
-        longitude,
-      };
-
-      const saveFunc = onUpdateProfile || onSave;
-      if(!saveFunc)throw new Error("Profile updates are unavailable.");
-      await saveFunc(updateData, true);
+      await saveFunc(updateData,true);
       setJustSaved(true);
-      triggerHaptic?.([10, 30, 10]);
-      setNotification({
-        message: "Profile update confirmed by the account API.",
-        type: "success",
-      });
-      setTimeout(() => {
-        setJustSaved(false);
-      }, 3500);
-    } catch (error: any) {
-      console.error("Error updating profile:", error);
-      setNotification({
-        message: error?.message || "Failed to update profile. Please try again.",
-        type: "error",
-      });
+      setFormErrors({});
+      triggerHaptic?.([10,30,10]);
+      setNotification({message:"Profile update confirmed by the account API.",type:"success"});
+    } catch {
+      setNotification({message:"Profile changes could not be confirmed. Check your connection and try again.",type:"error"});
     } finally {
       setIsSaving(false);
     }
