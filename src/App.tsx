@@ -9750,6 +9750,15 @@ function ExploreScreen({
   const activeShop=shops.find(shop=>shop.id===selectedShopId);
   const mapCenter=mapInitialCenter(activeShop,userLocation,sortedShops);
   const mappedShops=sortedShops.filter(shop=>mapShopCoordinates(shop)!==null);
+  const openMappedShops=mappedShops.filter(shop=>getShopStatus(shop).isOpen);
+  const closedMappedShops=mappedShops.filter(shop=>!getShopStatus(shop).isOpen);
+  const activeFiltersCount=Number(!!searchQuery.trim())+Number(selectedCategory!=="All")+
+    Number(showOnlyOpen)+Number(minRating>0)+Number(maxDistance!==null);
+  const clearMapFilters=()=>{
+    setSearchQuery("");setSelectedCategory("All");setShowOnlyOpen(false);
+    setMinRating(0);setMaxDistance(null);
+    setLegendFilter("all");
+  };
 
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-xl overflow-hidden">
@@ -9759,8 +9768,10 @@ function ExploreScreen({
           <div className="max-w-lg md:mx-auto w-full">
             <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
               <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
+              <label htmlFor="localeats-map-list-search" className="sr-only">Search shops, menu food, or streets</label>
               <input
-                type="text"
+                id="localeats-map-list-search"
+                type="search"
                 placeholder="Filter by name, food, or street..."
                 className="flex-grow outline-none text-sm font-bold bg-transparent dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                 value={searchQuery}
@@ -9772,22 +9783,30 @@ function ExploreScreen({
                     setLayoutMode("map");
                     triggerHaptic(10);
                   }}
-                  className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer"
+                  type="button"
+                  aria-label="Show shops on map"
+                  className="min-w-11 min-h-11 inline-flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500"
                   title="Switch to Map View"
                 >
                   <MapIcon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setIsFilterOpen(!isFilterOpen)}
-                  className={`p-2 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
+                  aria-label="Show or hide list filters"
+                  aria-expanded={isFilterOpen}
+                  aria-controls="localeats-map-list-filters"
+                  className={`min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
                 >
                   <SlidersHorizontal className="w-4 h-4" />
                 </button>
                 <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                 <button
-                  className="text-orange-500 active:scale-95 transition-transform p-1.5 hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
-                  onClick={onRequestLocation}
+                  type="button"
+                  aria-label="Locate me on the map"
+                  className="text-orange-500 min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 active:scale-95 transition-transform hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
+                  onClick={()=>{setSelectedShopId(null);onRequestLocation();}}
                 >
                   {userLocation ? (
                     <LocateFixed className="w-6 h-6" />
@@ -9853,6 +9872,9 @@ function ExploreScreen({
                 height: isFilterOpen ? "auto" : 0,
                 opacity: isFilterOpen ? 1 : 0,
               }}
+              id="localeats-map-list-filters"
+              aria-hidden={!isFilterOpen}
+              inert={!isFilterOpen}
               className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-xl border border-gray-100 dark:border-slate-800"
             >
               <div className="p-6 flex flex-col gap-6 max-h-[70vh] overflow-y-auto">
@@ -10039,14 +10061,12 @@ function ExploreScreen({
 
             <div className="flex justify-between items-center px-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Found {sortedShops.length} local spots
+                {loadingShops?"Finding local spots...":`Found ${sortedShops.length} local ${sortedShops.length===1?"shop":"shops"}`}
               </span>
               <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 dark:text-orange-400">
-                {sortPriority === "rating"
+                {selectedCategory==="Nearby" ? "Nearest First" : sortPriority === "rating"
                   ? "Highest Rating"
-                  : sortPriority === "distance"
-                    ? "Nearest First"
-                    : "Alphabetical"}
+                  : sortPriority === "distance" ? "Nearest First" : "Alphabetical"}
               </span>
             </div>
 
@@ -10066,14 +10086,7 @@ function ExploreScreen({
                   selection.
                 </p>
                 <button
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSelectedCategory("All");
-                    setMinRating(0);
-                    setMaxDistance(null);
-                    setShowOnlyOpen(false);
-                    triggerHaptic(10);
-                  }}
+                  onClick={() => {clearMapFilters();triggerHaptic(10);}}
                   className="mt-6 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 cursor-pointer"
                 >
                   Discover All Local Spots
@@ -10195,7 +10208,7 @@ function ExploreScreen({
                           disabled={!hasMapPin}
                           aria-label={hasMapPin ? `View ${shop.name} on the map` : `Map position not available for ${shop.name}`}
                           className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-white rounded-2xl active:scale-95 transition-all text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
-                          title="View on Map"
+                          title={hasMapPin ? "View on Map" : "Shop map location unavailable"}
                         >
                           <MapIcon className="w-4 h-4 shrink-0 text-orange-500" />
                           <span>On Map</span>
@@ -10257,22 +10270,19 @@ function ExploreScreen({
                 userLocation={userLocation}
                 activeFilter={legendFilter}
                 onSelectFilter={(filter)=>{if(filter!=="rider")setLegendFilter(filter);}}
-                shopCount={mappedShops.length}
+                shopCount={openMappedShops.length}
+                closedShopCount={closedMappedShops.length}
                 showRiders={false}
                 riderCount={0}
                 onFocusCustomer={() => {
-                  if (!userLocation) {
-                    onRequestLocation();
-                  } else {
-                    toast.success("Centering on your location");
-                  }
+                  setSelectedShopId(null);
+                  if (!userLocation)onRequestLocation();
                 }}
                 onFocusShop={() => {
-                  if (mappedShops.length > 0) {
-                    const s = mappedShops[0];
-                    setSelectedShopId(s.id);
-                    toast.info(`Focused on ${s.name}`);
-                  }
+                  if(openMappedShops.length>0)setSelectedShopId(openMappedShops[0].id);
+                }}
+                onFocusClosedShop={() => {
+                  if(closedMappedShops.length>0)setSelectedShopId(closedMappedShops[0].id);
                 }}
 
               />
@@ -10291,6 +10301,8 @@ function ExploreScreen({
                     ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/30 ring-2 ring-orange-400/50"
                     : "bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 border-slate-200/60 dark:border-slate-800/60 hover:border-orange-500"
                 }`}
+                aria-label={isMapFullscreen ? "Exit fullscreen map" : "Expand map"}
+                aria-pressed={isMapFullscreen}
                 title={isMapFullscreen ? "Exit Fullscreen Mode" : "Expand Fullscreen Mode"}
               >
                 {isMapFullscreen ? (
@@ -10329,7 +10341,11 @@ function ExploreScreen({
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             {/* Auto-focus on geolocation & Return to My Location button */}
-            <ExploreMapUserTracker userLocation={userLocation} center={mapCenter} />
+            <ExploreMapUserTracker
+              coords={activeShop ? mapShopCoordinates(activeShop) : null}
+              userLocation={userLocation}
+              center={mapCenter}
+            />
 
             {/* Distance Radius Filter Circle */}
             {userLocation && maxDistance !== null && (
@@ -10397,11 +10413,15 @@ function ExploreScreen({
                 setIsMapOverlayMenuOpen(true);
                 triggerHaptic(10);
               }}
+              aria-label="Open map search and filters"
+              aria-haspopup="dialog"
+              aria-expanded={isMapOverlayMenuOpen}
               className="bg-slate-900/95 dark:bg-slate-900/95 text-white backdrop-blur-xl px-4 py-3 rounded-full shadow-xl flex items-center gap-2 border border-slate-700/60 font-black text-xs active:scale-95 transition-all cursor-pointer pointer-events-auto hover:bg-slate-800"
             >
               <Search className="w-4 h-4 text-orange-400 shrink-0" />
               <span>Search & Filters</span>
-              {(searchQuery || selectedCategory !== "All" || showOnlyOpen || maxDistance !== null) && (
+              <span className="sr-only">{activeFiltersCount} active search filters</span>
+              {activeFiltersCount>0 && (
                 <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse border border-white"></span>
               )}
             </button>
@@ -10415,6 +10435,7 @@ function ExploreScreen({
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Switch to shop list"
                 title="Switch to List View"
               >
                 <List className="w-4.5 h-4.5 text-orange-600 dark:text-orange-400" />
@@ -10422,10 +10443,12 @@ function ExploreScreen({
               <button
                 type="button"
                 onClick={() => {
+                  setSelectedShopId(null);
                   onRequestLocation();
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Center map on my location"
                 title="Center My Location"
               >
                 <LocateFixed className="w-4.5 h-4.5 text-blue-500" />
@@ -10437,6 +10460,7 @@ function ExploreScreen({
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Return to Home"
                 title="Return Home"
               >
                 <Home className="w-4.5 h-4.5 text-slate-600 dark:text-slate-300" />
@@ -10447,24 +10471,31 @@ function ExploreScreen({
           {/* Compact Map Overlay Drawer Modal */}
           <AnimatePresence>
             {isMapOverlayMenuOpen && (
-              <div className="fixed inset-0 z-[2000] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200">
+              <div className="fixed inset-0 z-[2000] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200"
+                onClick={event=>{if(event.target===event.currentTarget)setIsMapOverlayMenuOpen(false);}}
+                onKeyDown={event=>{if(event.key==="Escape")setIsMapOverlayMenuOpen(false);}}
+              >
                 <motion.div
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 40, scale: 0.95 }}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="localeats-map-filter-title"
                   className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-[32px] p-5 shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2">
                       <SlidersHorizontal className="w-4 h-4 text-orange-500" />
-                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-tight">
+                      <h3 id="localeats-map-filter-title" className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-tight">
                         Map Filters & Search
                       </h3>
                     </div>
                     <button
                       type="button"
                       onClick={() => setIsMapOverlayMenuOpen(false)}
-                      className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all cursor-pointer"
+                      aria-label="Close map search and filters"
+                      className="min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all cursor-pointer"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -10473,8 +10504,10 @@ function ExploreScreen({
                   {/* Search Input */}
                   <div className="bg-slate-100 dark:bg-slate-800/80 rounded-2xl flex items-center px-4 py-3 border border-slate-200/60 dark:border-slate-700/60">
                     <Search className="w-4 h-4 text-orange-500 mr-2.5 shrink-0" />
+                    <label htmlFor="localeats-map-dialog-search" className="sr-only">Search food, street or shop name</label>
                     <input
-                      type="text"
+                      id="localeats-map-dialog-search"
+                      type="search"
                       placeholder="Search food, street, or spot name..."
                       className="w-full bg-transparent outline-none text-xs font-bold dark:text-white placeholder:text-slate-400"
                       value={searchQuery}
@@ -10484,7 +10517,8 @@ function ExploreScreen({
                       <button
                         type="button"
                         onClick={() => setSearchQuery("")}
-                        className="text-xs text-slate-400 hover:text-slate-600 font-bold ml-1"
+                        aria-label="Clear map search"
+                        className="min-h-11 px-2 text-xs text-slate-400 hover:text-slate-600 font-bold ml-1 focus-visible:outline-2 focus-visible:outline-orange-500"
                       >
                         Clear
                       </button>
@@ -10505,7 +10539,8 @@ function ExploreScreen({
                             setSelectedCategory(cat);
                             triggerHaptic(10);
                           }}
-                          className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+                          aria-pressed={selectedCategory===cat}
+                          className={`min-h-11 px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
                             selectedCategory === cat
                               ? "bg-orange-600 text-white border-orange-500 shadow-md"
                               : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
@@ -10534,7 +10569,8 @@ function ExploreScreen({
                             setMaxDistance(dist);
                             triggerHaptic(10);
                           }}
-                          className={`py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border text-center ${
+                          aria-pressed={maxDistance===dist}
+                          className={`min-h-11 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border text-center ${
                             maxDistance === dist
                               ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900"
                               : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
@@ -10554,7 +10590,8 @@ function ExploreScreen({
                         setShowOnlyOpen(!showOnlyOpen);
                         triggerHaptic(10);
                       }}
-                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                      aria-pressed={showOnlyOpen}
+                      className={`min-h-11 py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
                         showOnlyOpen
                           ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
                           : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
@@ -10569,7 +10606,8 @@ function ExploreScreen({
                         setMinRating(minRating > 0 ? 0 : 4);
                         triggerHaptic(10);
                       }}
-                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                      aria-pressed={minRating>0}
+                      className={`min-h-11 py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
                         minRating > 0
                           ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
                           : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
@@ -10580,13 +10618,19 @@ function ExploreScreen({
                     </button>
                   </div>
 
+                  {activeFiltersCount>0 && (
+                    <button type="button" onClick={clearMapFilters}
+                      className="min-h-11 text-xs font-bold text-orange-600 dark:text-orange-400 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-orange-500">
+                      Clear all filters ({activeFiltersCount})
+                    </button>
+                  )}
                   {/* Apply / Close Button */}
                   <button
                     type="button"
                     onClick={() => setIsMapOverlayMenuOpen(false)}
                     className="w-full py-3.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer mt-1"
                   >
-                    View Map Results ({filteredShops.length} spots)
+                    View Map Results ({mappedShops.length} {mappedShops.length===1?"pin":"pins"})
                   </button>
                 </motion.div>
               </div>
@@ -10603,6 +10647,8 @@ function ExploreScreen({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            role="region"
+            aria-label={`${activeShop.name} details`}
             className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-slate-950 rounded-t-[32px] bottom-sheet p-6 pb-24"
           >
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
@@ -10612,7 +10658,8 @@ function ExploreScreen({
               ></div>
               <button
                 onClick={() => setSelectedShopId(null)}
-                className="absolute -top-2 -right-2 p-2 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors cursor-pointer"
+                aria-label="Close shop details"
+                className="absolute -top-2 -right-2 min-w-11 min-h-11 inline-flex items-center justify-center bg-gray-100 dark:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -10660,13 +10707,21 @@ function ExploreScreen({
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => toggleFavorite(activeShop.id)}
-                className={`p-2 rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? "bg-red-50 dark:bg-red-500/10 text-red-500" : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500"}`}
+                aria-label={favorites.includes(activeShop.id) ? `Remove ${activeShop.name} from favourites` : `Save ${activeShop.name} to favourites`}
+                aria-pressed={favorites.includes(activeShop.id)}
+                className={`min-w-11 min-h-11 inline-flex items-center justify-center rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? "bg-red-50 dark:bg-red-500/10 text-red-500" : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500"}`}
               >
-                <Heart
-                  className={`w-5 h-5 ${favorites.includes(activeShop.id) ? "text-red-500 fill-current" : ""}`} />
+                <Heart className={`w-5 h-5 ${favorites.includes(activeShop.id) ? "text-red-500 fill-current" : ""}`} />
               </button>
             </div>
+            <button type="button"
+              onClick={() => onStoreInfo(activeShop.id)}
+              className="mt-5 w-full min-h-12 inline-flex items-center justify-center gap-2 rounded-2xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm shadow-md focus-visible:outline-2 focus-visible:outline-orange-500">
+              <BookOpen className="w-4 h-4" />
+              View Menu
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
