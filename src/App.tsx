@@ -6772,7 +6772,7 @@ function ProfileScreen({
   const [fullName, setFullName] = useState(userProfile.fullName || "");
   const [phone, setPhone] = useState(formatSAPhone(userProfile.phone || ""));
   const [address, setAddress] = useState(userProfile.address || "");
-  const [city, setCity] = useState(userProfile.city || "Johannesburg");
+  const [city, setCity] = useState(userProfile.city || "");
   const [latitude, setLatitude] = useState<number | undefined>(
     userProfile.latitude,
   );
@@ -6784,309 +6784,84 @@ function ProfileScreen({
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const fullNameRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
-  const addressRef = useRef<HTMLInputElement>(null);
-
   const isFullNameDirty = fullName.trim() !== (userProfile.fullName || "").trim();
   const isPhoneDirty = phone.trim() !== formatSAPhone(userProfile.phone || "").trim();
   const isAddressDirty = address.trim() !== (userProfile.address || "").trim();
   const isLocationDirty = latitude !== userProfile.latitude || longitude !== userProfile.longitude;
   const isDirty = isFullNameDirty || isPhoneDirty || isAddressDirty || isLocationDirty;
+  const savedConfirmation=justSaved && !isDirty;
+  const confirmUnsavedExit=() => !isDirty || window.confirm("Discard your unsaved profile changes?");
+  const handleBack=() => {if(!isSaving && confirmUnsavedExit())onBack();};
+  const handleSignOut=() => {if(!isSaving && confirmUnsavedExit())onLogout();};
 
   useEffect(() => {
     setFullName(userProfile.fullName || "");
     setPhone(formatSAPhone(userProfile.phone || ""));
     setAddress(userProfile.address || "");
-    setCity(userProfile.city || "Johannesburg");
+    setCity(userProfile.city || "");
     setLatitude(userProfile.latitude);
     setLongitude(userProfile.longitude);
   }, [userProfile.fullName, userProfile.phone, userProfile.address, userProfile.city, userProfile.latitude, userProfile.longitude]);
-  const [uploading, setUploading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-  
-  const [showCropper, setShowCropper] = useState(false);
-  const [imageToCrop, setImageToCrop] = useState<string | null>(null);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+  const [removingPhoto,setRemovingPhoto]=useState(false);
+  const {t}=useTranslation();
 
-  // Camera API states
-  const [showCameraModal, setShowCameraModal] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [isCameraLoading, setIsCameraLoading] = useState(false);
-  const [capturedCameraPhoto, setCapturedCameraPhoto] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  // Confirmation Dialog states
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showGalleryModal, setShowGalleryModal] = useState(false);
-  const [croppedFileToConfirm, setCroppedFileToConfirm] = useState<File | null>(null);
-  const [croppedPreviewUrlToConfirm, setCroppedPreviewUrlToConfirm] = useState<string | null>(null);
-  const [croppedFileSizeKB, setCroppedFileSizeKB] = useState<number>(0);
-
-  // Avatar update animation pulse ring state
-  const [justSavedPhoto, setJustSavedPhoto] = useState(false);
-
-  const { t } = useTranslation();
-
-  const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      const file = event.target.files[0];
-      if (!file.type.startsWith("image/")) {
-        setNotification({ message: "Please select a valid image file.", type: "error" });
-        return;
-      }
-      
-      const localImageUrl = URL.createObjectURL(file);
-      setImageToCrop(localImageUrl);
-      setShowCropper(true);
-      if (event.target) event.target.value = "";
-    }
-  };
-
-  const handleCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
-    setCroppedAreaPixels(croppedAreaPixels);
-  }, []);
-
-  // Step 1 of Upload: Crop & proceed to Review Confirmation Dialog
-  const handleProceedToReview = async () => {
-    if (!imageToCrop || !croppedAreaPixels) return;
-    try {
-      setIsSaving(true);
-      const croppedFile = await getCroppedImg(imageToCrop, croppedAreaPixels);
-      const localPreviewUrl = URL.createObjectURL(croppedFile);
-      setCroppedFileToConfirm(croppedFile);
-      setCroppedPreviewUrlToConfirm(localPreviewUrl);
-      setCroppedFileSizeKB(Math.round(croppedFile.size / 1024));
-      setShowCropper(false);
-      setShowConfirmModal(true);
-    } catch (error: any) {
-      console.error("Error cropping image:", error);
-      setNotification({ message: "Failed to crop image. Please try again.", type: "error" });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Step 2 of Upload: User confirms in dialog -> Compresses (<200KB) & Uploads to Supabase
-  const handleConfirmUploadAndSave = async () => {
-    if (!croppedFileToConfirm) return;
-    if (!isOnline) {
-      setNotification({ message: "No internet connection. Cannot upload photo.", type: "error" });
-      return;
-    }
-    try {
-      setUploading(true);
-      setNotification({ message: "Compressing photo (<200KB) and uploading to Supabase Storage...", type: "info" });
-      setShowConfirmModal(false);
-      
-      setPreviewUrl(croppedPreviewUrlToConfirm);
-
-      const publicUrl = await uploadAvatar(croppedFileToConfirm, userProfile.id);
-      
-      const saveFunc = onUpdateProfile || onSave;
-      if (saveFunc) {
-        await saveFunc({ photoURL: publicUrl });
-      }
-
-      setJustSavedPhoto(true);
-      setNotification({ message: "Profile picture uploaded successfully! ✓", type: "success" });
-      triggerHaptic?.([10, 30, 10]);
-
-      setTimeout(() => {
-        setJustSavedPhoto(false);
-      }, 3500);
-
-      // Clean up
-      if (croppedPreviewUrlToConfirm) URL.revokeObjectURL(croppedPreviewUrlToConfirm);
-      if (imageToCrop) URL.revokeObjectURL(imageToCrop);
-      setCroppedFileToConfirm(null);
-      setCroppedPreviewUrlToConfirm(null);
-      setImageToCrop(null);
-      setPreviewUrl(publicUrl);
-    } catch (error: any) {
-      console.error("Error uploading avatar:", error);
-      let errorMsg = "Something went wrong uploading your photo. Please try again.";
-      if (error.message === "NETWORK_TIMEOUT" || error.message === "NETWORK_ERROR") errorMsg = "Network error. Please check your connection and try again.";
-      else if (error.message === "BUCKET_NOT_FOUND") errorMsg = "Storage is not configured yet. Please try again later.";
-      
-      setNotification({ message: errorMsg, type: "error" });
-      setPreviewUrl(null);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const cancelCrop = () => {
-    setShowCropper(false);
-    if (imageToCrop) URL.revokeObjectURL(imageToCrop);
-    setImageToCrop(null);
-  };
-
-  const handleCancelConfirmation = () => {
-    setShowConfirmModal(false);
-    if (croppedPreviewUrlToConfirm) URL.revokeObjectURL(croppedPreviewUrlToConfirm);
-    if (imageToCrop) URL.revokeObjectURL(imageToCrop);
-    setCroppedFileToConfirm(null);
-    setCroppedPreviewUrlToConfirm(null);
-    setImageToCrop(null);
-  };
-
-  // Camera Stream Controls
-  const stopCameraStream = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => track.stop());
-      setCameraStream(null);
-    }
-    setShowCameraModal(false);
-    setIsCameraLoading(false);
-    setCapturedCameraPhoto(null);
-  }, [cameraStream]);
-
-  const startCamera = async (mode: 'user' | 'environment' = 'user') => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      cameraInputRef.current?.click();
-      return;
-    }
-    setIsCameraLoading(true);
-    setShowCameraModal(true);
-    try {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: mode,
-          width: { ideal: 1080 },
-          height: { ideal: 1080 },
-        },
-      });
-      setCameraStream(stream);
-      setFacingMode(mode);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      console.warn("Camera getUserMedia failed or was rejected, using input fallback:", err);
-      setShowCameraModal(false);
-      setCameraStream(null);
-      setNotification({
-        message: "Opening native device camera...",
-        type: "info",
-      });
-      cameraInputRef.current?.click();
-    } finally {
-      setIsCameraLoading(false);
-    }
-  };
-
-  const capturePhotoFromCamera = () => {
-    if (!videoRef.current) return;
-    triggerHaptic?.(15);
-    const video = videoRef.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 720;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const file = new File([blob], `camera_photo_${Date.now()}.jpg`, { type: "image/jpeg" });
-          const localUrl = URL.createObjectURL(file);
-          setCapturedCameraPhoto(localUrl);
-        }
-        if (cameraStream) {
-          cameraStream.getTracks().forEach((track) => track.stop());
-          setCameraStream(null);
-        }
-      }, "image/jpeg", 0.9);
-    }
-  };
-
+  // Only the existing confirmed picture may be removed. New uploads require
+  // a future authenticated API and must not expose legacy client storage.
   const handleDeletePhoto = async () => {
-    const saveFunc = onUpdateProfile || onSave;
-    if (!saveFunc) {
-      setNotification({message:"Profile updates are unavailable.",type:"error"});
-      return;
-    }
+    if(removingPhoto || isSaving || !userProfile.photoURL)return;
+    if(!window.confirm("Remove your current profile photo?"))return;
+    const saveFunc=onUpdateProfile || onSave;
+    if(!saveFunc){setNotification({message:"Profile updates are unavailable.",type:"error"});return;}
+    setRemovingPhoto(true);
     try {
-      await saveFunc({ photoURL: "" });
-      setPreviewUrl(null);
+      await saveFunc({photoURL:""});
       setNotification({message:"Profile photo removal confirmed by the account API.",type:"info"});
     } catch {
       setNotification({message:"Photo removal could not be confirmed. Your existing photo remains.",type:"error"});
+    } finally {
+      setRemovingPhoto(false);
     }
   };
 
   const handleUpdateProfile = async () => {
-    if (isSaving || uploading) return;
-
-    if (!isOnline) {
-      setNotification({
-        message: "No internet connection. Cannot save profile changes.",
-        type: "error",
-      });
+    if(isSaving || !isDirty)return;
+    if(!isOnline) {
+      setNotification({message:"You're offline. Connect to save profile changes.",type:"error"});
       return;
     }
-
-    if (!fullName.trim()) {
-      setNotification({ message: "Full Name cannot be empty.", type: "error" });
+    const errors:Record<string,string>={};
+    if(isFullNameDirty && !fullName.trim())errors.fullName="Enter your full name.";
+    if(isPhoneDirty && !validateSAPhone(phone))errors.phone="Enter a valid South African mobile number.";
+    if(Object.keys(errors).length){
+      setFormErrors(errors);
+      (errors.fullName?fullNameRef:phoneRef).current?.focus();
       return;
     }
-
-    if (!phone.trim()) {
-      setNotification({ message: "Phone Number cannot be empty.", type: "error" });
+    const updateData:Partial<UserProfile>={};
+    if(isFullNameDirty)updateData.fullName=fullName.trim();
+    if(isPhoneDirty)updateData.phone=phone.trim();
+    if(isAddressDirty)updateData.address=address.trim();
+    if(isLocationDirty && typeof latitude==="number" && typeof longitude==="number" &&
+       Number.isFinite(latitude) && Number.isFinite(longitude)){
+      updateData.latitude=latitude;
+      updateData.longitude=longitude;
+    }
+    if(!Object.keys(updateData).length)return;
+    const saveFunc=onUpdateProfile || onSave;
+    if(!saveFunc){
+      setNotification({message:"Profile updates are unavailable.",type:"error"});
       return;
     }
-
-    if (!validateSAPhone(phone)) {
-      setNotification({
-        message: "Invalid South African phone format. Please use a valid number like 071 234 5678 or +27 71 234 5678.",
-        type: "error",
-      });
-      return;
-    }
-
-    if (!address.trim()) {
-      setNotification({
-        message: "Delivery address cannot be empty.",
-        type: "error",
-      });
-      return;
-    }
-
     setIsSaving(true);
+    setJustSaved(false);
     try {
-      const updateData: Partial<UserProfile> = {
-        fullName: fullName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
-        city: city.trim() || "Johannesburg",
-        latitude,
-        longitude,
-      };
-
-      const saveFunc = onUpdateProfile || onSave;
-      if(!saveFunc)throw new Error("Profile updates are unavailable.");
-      await saveFunc(updateData, true);
+      await saveFunc(updateData,true);
       setJustSaved(true);
-      triggerHaptic?.([10, 30, 10]);
-      setNotification({
-        message: "Profile update confirmed by the account API.",
-        type: "success",
-      });
-      setTimeout(() => {
-        setJustSaved(false);
-      }, 3500);
-    } catch (error: any) {
-      console.error("Error updating profile:", error);
-      setNotification({
-        message: error?.message || "Failed to update profile. Please try again.",
-        type: "error",
-      });
+      setFormErrors({});
+      triggerHaptic?.([10,30,10]);
+      setNotification({message:"Profile update confirmed by the account API.",type:"success"});
+    } catch {
+      setNotification({message:"Profile changes could not be confirmed. Check your connection and try again.",type:"error"});
     } finally {
       setIsSaving(false);
     }
@@ -7097,7 +6872,10 @@ function ProfileScreen({
       {/* Header */}
       <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10 pt-[calc(1rem+env(safe-area-inset-top))]">
         <button
-          onClick={onBack}
+          type="button"
+          aria-label="Back to previous page"
+          onClick={handleBack}
+          disabled={isSaving}
           className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
         >
           <ArrowLeft className="w-6 h-6" />
@@ -7107,95 +6885,35 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-7 pb-28">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
-          <input
-            type="file"
-            accept="image/*"
-            onChange={handleFileSelect}
-            disabled={uploading}
-            ref={fileInputRef}
-            className="hidden"
-          />
-          <input
-            type="file"
-            accept="image/*"
-            capture="user"
-            onChange={handleFileSelect}
-            disabled={uploading}
-            ref={cameraInputRef}
-            className="hidden"
-          />
-          <div className="relative group">
-            {/* Animated Pulse Ring on successful avatar update */}
-            <AnimatePresence>
-              {justSavedPhoto && (
-                <motion.div
-                  initial={{ scale: 0.85, opacity: 1 }}
-                  animate={{ scale: 1.3, opacity: 0 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 1.2, ease: "easeOut" }}
-                  className="absolute -inset-2 rounded-full border-4 border-emerald-500 pointer-events-none z-10"
-                />
-              )}
-            </AnimatePresence>
-            <motion.div
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
-              className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative cursor-pointer"
-              
-            >
-              <AnimatePresence mode="wait">
-                {previewUrl || userProfile.photoURL ? (
-                  <motion.img
-                    key={previewUrl || userProfile.photoURL}
-                    src={previewUrl || userProfile.photoURL}
-                    alt="Profile picture"
-                    className="w-full h-full object-cover absolute inset-0"
-                    referrerPolicy="no-referrer"
-                    initial={{opacity:0,scale:0.75}}
-                    animate={{opacity:1,scale:1}}
-                    exit={{opacity:0}}
-                  />
-                ) : (
-                  <span aria-label="No profile picture set" className="text-4xl font-black text-orange-600 dark:text-orange-400">
-                    {userProfile.fullName?.trim().charAt(0).toUpperCase() || "?"}
-                  </span>
-                )}
-              </AnimatePresence>
-              {uploading && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs flex flex-col items-center justify-center z-20 text-white gap-1.5 p-2 text-center"
-                >
-                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
-                  <span className="text-[10px] font-black tracking-widest uppercase text-emerald-400">
-                    Saving...
-                  </span>
-                </motion.div>
-              )}
-            </motion.div>
-            {/* Photo editing is unavailable until an account-scoped upload API exists. */}
+          <div className="w-28 h-28 rounded-full border-4 border-white dark:border-slate-800 shadow-xl bg-orange-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+            {userProfile.photoURL ? (
+              <img src={userProfile.photoURL} alt="Profile picture" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+            ) : (
+              <span aria-label="No profile picture set" className="text-4xl font-black text-orange-600 dark:text-orange-400">
+                {userProfile.fullName?.trim().charAt(0).toUpperCase() || "?"}
+              </span>
+            )}
           </div>
-
           <div className="text-center mt-6">
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">Photo changes are unavailable in this Preview until account-scoped uploads are supported.</p>
-            {(userProfile.photoURL || previewUrl) && (
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">Photo changes are unavailable in this Preview until account-scoped uploads are supported. You can remove an existing photo.</p>
+            {Boolean(userProfile.photoURL) && (
               <button
                 type="button"
                 onClick={handleDeletePhoto}
+                disabled={removingPhoto || isSaving || !isOnline}
+                aria-label="Remove existing profile picture"
                 className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors mb-2 cursor-pointer"
               >
-                Remove Photo
+                {removingPhoto ? "Removing..." : "Remove Photo"}
               </button>
             )}
             <p className="font-bold text-lg">
               {userProfile.fullName || "User"}
             </p>
-            <p className="text-xs text-slate-400 mb-2">{userProfile.email}</p>
+            <p className="text-xs text-slate-400 mb-2 break-all">{userProfile.email}</p>
           </div>
 
           {/* Only actual API-confirmed orders count; no unimplemented rewards. */}
@@ -7208,10 +6926,10 @@ function ProfileScreen({
 
         {/* Form Fields */}
         <div className="space-y-6">
-          {/* WhatsApp-Style Sync Status Card */}
-          <div className="-mt-2 mb-2">
+          {/* Accurate, nonpersistent profile edit state */}
+          <div className="-mt-2 mb-2" aria-live="polite">
             <AnimatePresence mode="wait">
-              {justSaved ? (
+              {savedConfirmation ? (
                 <motion.div
                   key="saved"
                   initial={{ opacity: 0, scale: 0.96 }}
@@ -7228,7 +6946,7 @@ function ProfileScreen({
                         Account update confirmed
                       </p>
                       <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/80 px-2 py-0.5 rounded-full">
-                        WhatsApp Style ✓
+                        Confirmed
                       </span>
                     </div>
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-0.5">
@@ -7285,7 +7003,7 @@ function ProfileScreen({
 
           {/* Full Name */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+            <label htmlFor="customer-profile-full-name" className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
               <span>Full Name</span>
               <span className="text-[10px] font-normal text-slate-400">Required</span>
             </label>
@@ -7293,14 +7011,19 @@ function ProfileScreen({
               <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
                 ref={fullNameRef}
+                id="customer-profile-full-name"
+                name="fullName"
+                autoComplete="name"
+                aria-invalid={Boolean(formErrors.fullName)}
+                aria-describedby={formErrors.fullName ? "profile-full-name-error" : undefined}
                 type="text"
                 value={fullName}
                 onChange={(e) => { setFullName(e.target.value); setFormErrors(prev => ({...prev, fullName: undefined})); }}
                 placeholder="Your full name"
-                disabled={isSaving || uploading}
+                disabled={isSaving}
                 className={`w-full pl-12 pr-24 py-4 bg-slate-50 dark:bg-slate-900 border ${formErrors.fullName ? 'border-red-500 focus:ring-red-500' : 'border-slate-100 dark:border-slate-800 focus:ring-primary/20'} rounded-2xl text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-50`}
               />
-              {formErrors.fullName && <p className="absolute -bottom-5 left-2 text-red-500 text-[10px] m-0">{formErrors.fullName}</p>}
+              {formErrors.fullName && <p id="profile-full-name-error" role="alert" className="absolute -bottom-5 left-2 text-red-500 text-[11px] m-0">{formErrors.fullName}</p>}
               <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
                 {isFullNameDirty ? (
                   <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -7320,19 +7043,26 @@ function ProfileScreen({
 
           {/* Phone Number */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+            <label htmlFor="customer-profile-phone" className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
               <span>Phone Number</span>
               <span className="text-[10px] font-normal text-slate-400">SA format (+27 / 07X)</span>
             </label>
             <div className="relative group">
               <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
+                ref={phoneRef}
+                id="customer-profile-phone"
+                name="phone"
                 type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                aria-invalid={Boolean(formErrors.phone)}
+                aria-describedby={formErrors.phone ? "profile-phone-error" : undefined}
                 value={phone}
-                onChange={(e) => setPhone(formatSAPhone(e.target.value))}
-                placeholder="e.g. 071 234 5678 or +27 71 234 5678"
-                disabled={isSaving || uploading}
-                className="w-full pl-12 pr-28 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono disabled:opacity-50"
+                onChange={(e) => {setPhone(formatSAPhone(e.target.value));setFormErrors(prev=>({...prev,phone:undefined}));}}
+                placeholder="+27 71 234 5678"
+                disabled={isSaving}
+                className={`w-full pl-12 pr-28 py-4 bg-slate-50 dark:bg-slate-900 border ${formErrors.phone ? "border-red-500" : "border-slate-100 dark:border-slate-800"} rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono disabled:opacity-50`}
               />
               <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
                 {isPhoneDirty ? (
@@ -7346,6 +7076,7 @@ function ProfileScreen({
                 ) : null}
               </div>
             </div>
+            {formErrors.phone && <p id="profile-phone-error" role="alert" className="text-[11px] text-red-600 dark:text-red-400">{formErrors.phone}</p>}
             <p className="text-[11px] text-slate-400 ml-1">
               A valid phone format does not verify ownership of this number.
             </p>
@@ -7363,7 +7094,7 @@ function ProfileScreen({
                 </span>
               ) : (
                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800/40">
-                  Pin Needed
+                  No pin selected
                 </span>
               )}
             </div>
@@ -7372,8 +7103,8 @@ function ProfileScreen({
                 <AddressSearch
                   initialAddress={address}
                   initialCoords={
-                    latitude && longitude
-                      ? { lat: latitude, lng: longitude }
+                    Number.isFinite(latitude) && Number.isFinite(longitude)
+                      ? { lat: latitude!, lng: longitude! }
                       : undefined
                   }
                   onSelect={(data) => {
@@ -7385,18 +7116,19 @@ function ProfileScreen({
               </Suspense>
             </WidgetErrorBoundary>
             <p className="text-[11px] text-slate-400 ml-1">
-              Saving an address does not enable delivery. Pickup discovery uses your current location.
+              Optional. Choose an address suggestion or map pin to update saved details; pickup discovery uses your current device location.
             </p>
           </div>
 
           {/* City */}
           <div className="space-y-2 opacity-60">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
+            <label htmlFor="customer-profile-city" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               City (Profile)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
+                id="customer-profile-city"
                 type="text"
                 value={city}
                 readOnly
@@ -7408,12 +7140,13 @@ function ProfileScreen({
 
           {/* Email (Readonly) */}
           <div className="space-y-2 opacity-60">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
+            <label htmlFor="customer-profile-email" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               Email Address (Primary)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
+                id="customer-profile-email"
                 type="email"
                 value={userProfile.email}
                 readOnly
@@ -7427,12 +7160,18 @@ function ProfileScreen({
         </div>
 
         {/* Buttons */}
-        <div className="pt-8 space-y-4">
+        <div className="pt-5 space-y-4">
+          {!isOnline && (
+            <div role="status" className="rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 px-3 py-3 text-xs">
+              You are offline. View your profile, but reconnect to save any edits.
+            </div>
+          )}
           <button
+            type="button"
             onClick={handleUpdateProfile}
-            disabled={isSaving || uploading || !isDirty}
+            disabled={isSaving || !isOnline || !isDirty}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
-              justSaved
+              savedConfirmation
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
                 : isDirty
                 ? "bg-primary text-white shadow-primary/20 hover:bg-primary/90 active:scale-95"
@@ -7444,7 +7183,7 @@ function ProfileScreen({
                 <Loader2 className="w-5 h-5 animate-spin" />
                 <span>Checking account update...</span>
               </>
-            ) : justSaved ? (
+            ) : savedConfirmation ? (
               <>
                 <Check className="w-5 h-5 text-white stroke-[3] animate-in zoom-in" />
                 <span>Update Confirmed</span>
@@ -7463,7 +7202,9 @@ function ProfileScreen({
           </button>
 
           <button
-            onClick={onLogout}
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSaving}
             className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
@@ -7474,252 +7215,6 @@ function ProfileScreen({
         {/* Developer-only diagnostics are not exposed to customers. */}
       </main>
 
-      {/* Cropper Modal */}
-      {showCropper && imageToCrop && (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col">
-          <div className="p-4 bg-slate-900/90 text-white flex items-center justify-between border-b border-slate-800">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Crop & Center Profile Photo
-            </span>
-            <button
-              onClick={cancelCrop}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="flex-1 relative">
-            <Cropper
-              image={imageToCrop}
-              crop={crop}
-              zoom={zoom}
-              aspect={1}
-              cropShape="round"
-              showGrid={false}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={handleCropComplete}
-            />
-            {/* Overlay instruction text */}
-            <div className="absolute top-6 left-0 right-0 text-center pointer-events-none z-10">
-              <span className="bg-black/50 backdrop-blur-md text-white text-xs font-bold px-4 py-2 rounded-full tracking-wide shadow-lg border border-white/20">
-                Drag and pinch to frame your perfect look
-              </span>
-            </div>
-          </div>
-          <div className="p-6 bg-slate-900 flex justify-between items-center gap-4 border-t border-slate-800">
-            <button
-              onClick={cancelCrop}
-              className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl active:scale-95 transition-all text-xs cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleProceedToReview}
-              className="flex-1 py-3 bg-primary hover:bg-primary/90 text-white font-bold rounded-xl active:scale-95 transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-primary/20"
-            >
-              <span>Review Photo</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Confirmation Dialog Modal before permanent Supabase upload */}
-      {showConfirmModal && croppedPreviewUrlToConfirm && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-xl flex flex-col items-center text-center space-y-5 relative">
-            <button
-              onClick={handleCancelConfirmation}
-              className="absolute right-4 top-4 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mt-2">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-
-            <div>
-              <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                Confirm Profile Photo
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Review your cropped preview before saving to Supabase Storage.
-              </p>
-            </div>
-
-            {/* Cropped Photo Preview */}
-            <div className="relative group">
-              <div className="w-28 h-28 rounded-full border-4 border-primary/30 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 relative">
-                <img
-                  src={croppedPreviewUrlToConfirm}
-                  alt="Cropped Preview"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white rounded-full p-1.5 shadow-md border-2 border-white dark:border-slate-900">
-                <Check className="w-4 h-4 stroke-[3]" />
-              </div>
-            </div>
-
-            {/* Specs / Storage details */}
-            <div className="w-full bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3.5 text-left space-y-2 border border-slate-100 dark:border-slate-800/80">
-              <div className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
-                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                <span>Auto-compressed under 200KB</span>
-              </div>
-              <div className="flex items-center gap-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
-                <Database className="w-4 h-4 text-emerald-500 shrink-0" />
-                <span>Saved to Supabase 'avatars' & database</span>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="w-full space-y-2.5 pt-1">
-              <button
-                onClick={handleConfirmUploadAndSave}
-                disabled={uploading}
-                className="w-full py-3.5 bg-gradient-to-r from-primary to-orange-600 hover:opacity-95 text-white font-bold rounded-2xl shadow-lg shadow-primary/20 active:scale-95 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Uploading to Supabase...</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-4 h-4" />
-                    <span>Upload & Save Photo</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  setShowConfirmModal(false);
-                  setShowCropper(true);
-                }}
-                disabled={uploading}
-                className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-xs cursor-pointer"
-              >
-                Adjust Crop
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Live Camera Viewfinder Modal */}
-      {showCameraModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col justify-between p-4 animate-in fade-in duration-200">
-          {/* Header */}
-          <div className="flex items-center justify-between z-10 pt-safe">
-            <p className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-              <Camera className="w-4 h-4 text-primary animate-pulse" />
-              Take Profile Photo
-            </p>
-            <button
-              onClick={stopCameraStream}
-              className="w-9 h-9 rounded-full bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Viewfinder Video / Preview Area */}
-          <div className="flex-1 flex flex-col items-center justify-center relative my-4">
-            <div className="w-72 h-72 sm:w-80 sm:h-80 rounded-full border-4 border-primary/60 overflow-hidden relative shadow-xl bg-slate-900 flex items-center justify-center">
-              {capturedCameraPhoto ? (
-                <img
-                  src={capturedCameraPhoto}
-                  alt="Captured"
-                  className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
-                />
-              ) : (
-                <>
-                  {isCameraLoading ? (
-                    <div className="flex flex-col items-center gap-2 text-white absolute inset-0 justify-center z-10">
-                      <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                      <span className="text-xs font-bold">Starting camera...</span>
-                    </div>
-                  ) : null}
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
-                  />
-                  {/* Circular framing overlay */}
-                  <div className="absolute inset-0 border-2 border-dashed border-white/40 rounded-full pointer-events-none" />
-                </>
-              )}
-            </div>
-            {!capturedCameraPhoto && (
-              <p className="text-xs text-slate-300 font-medium mt-4 text-center px-6">
-                Center your face inside the circle and press Quick Snap
-              </p>
-            )}
-          </div>
-
-          {/* Controls Footer */}
-          <div className="flex items-center justify-around pb-6 pt-2">
-            {capturedCameraPhoto ? (
-              <>
-                <button
-                  onClick={() => {
-                    setCapturedCameraPhoto(null);
-                    startCamera(facingMode);
-                  }}
-                  className="px-6 py-3 bg-slate-800 text-white font-bold rounded-xl active:scale-95 transition-all text-sm cursor-pointer"
-                >
-                  Retake
-                </button>
-                <button
-                  onClick={() => {
-                    setImageToCrop(capturedCameraPhoto);
-                    setShowCropper(true);
-                    setShowCameraModal(false);
-                    setCapturedCameraPhoto(null);
-                  }}
-                  className="px-8 py-3 bg-primary text-white font-bold rounded-xl active:scale-95 transition-all text-sm cursor-pointer shadow-lg shadow-primary/30 flex items-center gap-2"
-                >
-                  Use Photo <ArrowRight className="w-4 h-4" />
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => startCamera(facingMode === 'user' ? 'environment' : 'user')}
-                  disabled={isCameraLoading}
-                  className="p-3 bg-slate-800 text-slate-200 rounded-full hover:bg-slate-700 transition-colors cursor-pointer"
-                  title="Flip Camera"
-                >
-                  <RotateCcw className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={capturePhotoFromCamera}
-                  disabled={isCameraLoading}
-                  className="px-6 py-3 rounded-full bg-white text-slate-900 border-[3px] border-primary font-black uppercase tracking-wider flex items-center justify-center shadow-[0_0_20px_rgba(249,115,22,0.3)] hover:scale-105 active:scale-95 transition-all cursor-pointer gap-2"
-                  title="Quick Snap"
-                >
-                  <Camera className="w-5 h-5 text-primary" />
-                  Quick Snap
-                </button>
-                <button
-                  onClick={stopCameraStream}
-                  className="px-4 py-2 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* No fabricated recent-device images or unsupported avatar upload choices. */}
     </div>
   );
 }
