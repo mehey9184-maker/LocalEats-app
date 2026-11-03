@@ -22,6 +22,8 @@ jobs:
         run: npm ci
       - name: P0 trust, history and account isolation regressions
         run: node --experimental-strip-types --test tests/customer-prod-readiness-p0.test.mjs
+      - name: Same-origin authenticated profile contract regression
+        run: node --experimental-strip-types --test tests/customer-profile-function-p0.test.mjs
       - name: Existing pickup, pricing and checkout regressions
         run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
       - name: TypeScript
