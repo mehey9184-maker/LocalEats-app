@@ -1,4 +1,5 @@
 import {pickupQuoteAmounts} from "../services/pickupSummary";
+import {p7PreviewEnabled} from "../services/p7PreviewShop";
 import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -465,6 +466,11 @@ export function CheckoutScreen({
 
   const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
   const primaryShop = shops.find((s) => s.id === primaryShopId);
+  const isP7TestCheckout=p7PreviewEnabled(
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":(window.location?.hostname || ""),
+  ) && primaryShop?.is_test_store===true && !pickupOrderingEnabled();
+  const [p7TestCompleted,setP7TestCompleted]=useState(false);
 
   const shopRadiusLimit = useMemo(() => {
     if (primaryShop) {
@@ -885,6 +891,18 @@ export function CheckoutScreen({
     if(quoteLock.current)return;
     quoteLock.current=true;setLoading(true);setPickupQuoteError("");
     try {
+      if(isP7TestCheckout && primaryShop){
+        if (!getShopStatus(primaryShop).isOpen)
+          throw new Error("My-Kota is closed. You can still browse the menu.");
+        if(cart.length===0 || !cart.every(item=>item.shopId===primaryShopId && item.quantity>=1 &&
+          Number.isFinite(item.price) && item.price>=0))
+          throw new Error("Select a valid test item before simulating checkout.");
+        if(deliveryType!=="collection")throw new Error("The Preview test supports pickup only.");
+        // Explicitly no quote API, POST /orders, offline queue, payment or
+        // fake receipt. Cart stays visible for further UX testing.
+        setP7TestCompleted(true);
+        return;
+      }
       if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
       if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
@@ -1562,7 +1580,9 @@ export function CheckoutScreen({
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
-        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>}
+        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">{isP7TestCheckout
+          ? "My-Kota test checkout — the nearby listing is simulated. You can test the cart and checkout screens, but no real order, payment or merchant notification will be created."
+          : "Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted."}</p>}
         {!primaryShop && <p role="alert" className="text-sm text-orange-700 dark:text-orange-300">Your cart is preserved. Pickup shop details are unavailable. Return to browsing and reload shops before reviewing a quote.</p>}
         {/* Unified Card Container */}
         <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
@@ -3605,6 +3625,11 @@ export function CheckoutScreen({
             <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
             {pickupOrderingEnabled() && <button type="button" disabled={loading} onClick={async()=>{setLoading(true);try{await submitPickupQuote(null);setCart([]);onConfirm();}catch(e){setPickupQuoteError(e instanceof Error?e.message:"Submission remains unconfirmed.");}finally{setLoading(false);}}}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
+            {isP7TestCheckout && p7TestCompleted && (
+              <p role="status" className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-900">
+                Test flow completed. Nothing was submitted: no order ID, no database history, no merchant notification and no payment.
+              </p>
+            )}
             {pickupQuote && <>
               <ul>{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id}>{line.quantity} × {line.name}: R {(line.line_minor/100).toFixed(2)}</li>)}</ul>
               <p>Server total: R {(pickupQuote.quote.total_minor/100).toFixed(2)}</p>
@@ -3648,7 +3673,7 @@ export function CheckoutScreen({
                 distance !== null &&
                 distance > ZONE_B_LIMIT
                   ? "Out of Delivery Range"
-                  : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
+                  : isP7TestCheckout ? "Simulate test checkout · no order" : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
               </span>
             </button>
             <button
