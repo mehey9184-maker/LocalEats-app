@@ -40,7 +40,7 @@ export function buildCustomerProfilePatch(input:unknown):Record<string,unknown>{
   if(address!==undefined)patch.address=textField(address,500,"address");
   if(body.phone!==undefined){
     const raw=textField(body.phone,32,"phone");
-    const digits=raw?.replace(/\\D/g,"") ?? "";
+    const digits=raw?.replace(/\D/g,"") ?? "";
     if(!digits)patch.phone=null;
     else if(/^0[0-9]{9}$/.test(digits))patch.phone="+27"+digits.slice(1);
     else if(/^27[0-9]{9}$/.test(digits))patch.phone="+"+digits;
