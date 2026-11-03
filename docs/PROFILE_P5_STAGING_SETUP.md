@@ -16,6 +16,7 @@ The Firebase project named in the current P4 protection check is `localeats-5e26
    - `PROFILE_P5_STAGING_SUPABASE_URL` — exact `https://<new-ref>.supabase.co` URL
    - `PROFILE_P5_STAGING_SUPABASE_SECRET_KEY` — new staging-only server secret, never sent to browsers
    - `PROFILE_P5_STAGING_FIREBASE_PROJECT_ID` — different project from production Firebase
+   - `PROFILE_P5_STAGING_FIREBASE_WEB_API_KEY` — Web API key from that same staging Firebase project, used for project-specific REST token validation
    - `PROFILE_P5_STAGING_FIREBASE_WEB_API_KEY` — Web API key for that staging Firebase project
    - `PROFILE_P5_ENABLE_STAGING_WRITES` — leave unset/false until initial isolated smoke succeeds; then set `true` only for `repair/customer-profile-p5-staging-auth-readiness-01`
 5. The dedicated Vercel functions validate `VERCEL_ENV=preview` and exact branch name automatically. They return JSON 503 when disabled; do not try to reuse `SUPABASE_SERVICE_ROLE_KEY` or generic production settings.
