@@ -28,7 +28,7 @@ test("closed shop card opens original detail screen but never becomes an orderab
  assert.match(card,/onStoreInfo\(shop.id\)/);
  assert.match(app,/closedPickupShops\.some\(s=>String\(s.id\)===String\(selectedStoreId\)\)/);
  assert.match(app,/shop=\{(?:visibleShops|displayShops)\.find\([\s\S]*?\?\? closedPickupCardData\(/);
- assert.match(app,/readOnlyClosed=\{!visibleShops\.some\(/);
+ assert.match(app,/readOnlyClosed=\{!(?:visibleShops|displayShops)\.some\(/);
  assert.match(app,/const response = await customerPickupApi\.menu\(shop.id\)/);
  assert.match(app,/is_available:false, \/\/ Read only/);
  assert.match(app,/if \(readOnlyClosed\) return apiMenu \?\? \[\];/);
