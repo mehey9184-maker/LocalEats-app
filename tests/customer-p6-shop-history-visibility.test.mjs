@@ -57,21 +57,15 @@ test("P6 rejects malformed/unapproved-looking location and invalid geographic me
  assert.deepEqual(result.map(x=>x.id),["shop-my-kota-ivory-park","duplicate-2"]);
 });
 
-test("P6 Home lists public approved shops separately without creating a cart/checkout authority",()=>{
+test("P7 owner-requested original shop card restores Home UI without changing P6 read-only policy",()=>{
  assert.match(app,/customerPickupApi\.approvedShops\(\)/);
  assert.match(app,/setPilotDirectoryRows\(result\.shops\)/);
- assert.match(app,/verifiedPilotBrowseDirectory\(/);
- assert.match(app,/aria-label="Approved pilot shops browse only"/);
- assert.match(app,/Pilot shops in Tembisa & Ivory Park/);
- assert.match(app,/Browse only · no ordering/);
- assert.match(app,/Sign in for order history/);
- assert.match(app,/sortedShops\.length} In range/);
- // Visible directory is placed before the huge fallback, not below it.
- assert.ok(app.indexOf("Pilot shops in Tembisa & Ivory Park") < app.indexOf("No Shops Found"));
- assert.match(app,/pilotDirectoryStatus!=="loading" && browseOnlyPilotShops\.length===0/);
- assert.match(app,/Outside 4 km pickup area/);
- assert.match(app,/No verified Tembisa or Ivory Park shop records/);
- assert.match(app,/PROFILE_P5_ENABLE_STAGING_WRITES|pilotDirectoryStatus/);
+ assert.match(app,/previewDisplayShop\(visibleShops,p7TestShop\)/);
+ assert.match(app,/<ShopCard/);
+ assert.match(app,/shops=\{displayShops\}/);
+ assert.match(app,/Simulated nearby listing for Preview testing/);
+ assert.doesNotMatch(app,/Pilot shops in Tembisa & Ivory Park/);
+ assert.doesNotMatch(app,/Browse only · no ordering/);
  assert.doesNotMatch(read("../src/services/verifiedPilotBrowseDirectory.ts"),/createPickup\(|addToCart\(|\bfetch\(/);
 });
 
