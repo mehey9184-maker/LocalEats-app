@@ -294,7 +294,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
-import {verifiedPilotBrowseDirectory} from "./services/verifiedPilotBrowseDirectory";
+import {verifiedMyKotaPreviewPosition} from "./services/previewMyKotaTestLocation";
 import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
@@ -669,9 +669,13 @@ export default function App() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [closedPickupShops, setClosedPickupShops] = useState<ClosedPickupShopPreview[]>([]);
   const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
-  // This public, read-only directory is separate from the 4km orderable shops.
-  // Never pass these metadata records into cart/checkout or current prices.
+  // Approved public shop metadata validates the test location; no shop row moves.
   const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
+  const previewMyKotaPosition=useMemo(()=>verifiedMyKotaPreviewPosition(pilotDirectoryRows),[pilotDirectoryRows]);
+  const previewTestLocationAllowed=
+    import.meta.env.VITE_PREVIEW_MY_KOTA_TEST_LOCATION==="true" &&
+    !pickupOrderingEnabled() &&
+    /^project-x7cvt-[a-z0-9-]+-mehey9184-makers-projects\.vercel\.app$/.test(window.location.hostname);
   const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
   useEffect(()=>{
     let active=true;
@@ -941,12 +945,15 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  // A temporary simulated customer position, not real browser GPS or merchant location.
+  const [previewTestLocation,setPreviewTestLocation] = useState<{lat:number;lng:number}|null>(null);
+  const pickupDiscoveryLocation=previewTestLocation??userLocation;
   const locationAttemptRef = useRef(0);
   const lastMovingLocationUpdateRef = useRef(0);
   const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleShops = userLocation ? shops.filter(shop =>
+  const visibleShops = pickupDiscoveryLocation ? shops.filter(shop =>
     Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
-    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
+    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},pickupDiscoveryLocation)<=4
   ) : [];
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
@@ -1171,38 +1178,37 @@ export default function App() {
   const catalogGeneration=useRef(0);
   const loadedCatalogLocation=useRef<{lat:number;lng:number}|null>(null);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
-    // The pickup catalog must never be queried for an invented location.
-    // Missing-location loading is resolved by the bounded geolocation attempt,
-    // instead of repeatedly issuing unauthorized or location-less requests.
-    if (!userLocation) return;
+    // The Preview's explicit test switch may use a labelled simulated customer
+    // position for READ-ONLY catalog browsing only. Real orders stay disabled.
+    if (!pickupDiscoveryLocation) return;
     const generation=++catalogGeneration.current;
     const locationChanged=loadedCatalogLocation.current!==null &&
-      distanceKm(loadedCatalogLocation.current,userLocation)>0.15;
+      distanceKm(loadedCatalogLocation.current,pickupDiscoveryLocation)>0.15;
     // Keep verified shops visible on ordinary refresh, and use a short-lived
     // prior API response while refreshing after a tab reload.
     let cached:Shop[]|null=null;
     if (!locationChanged && loadedCatalogLocation.current===null) {
-      cached=readDisplayCatalog(userLocation);
+      cached=readDisplayCatalog(pickupDiscoveryLocation);
       if (cached!==null) {
         setShops(cached);
-        loadedCatalogLocation.current=userLocation;
+        loadedCatalogLocation.current=pickupDiscoveryLocation;
       }
     }
     if (locationChanged) {setShops([]);setClosedPickupShops([]);}
     setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
     setIsSyncing(true); setFetchError(null);
     try {
-      const result=await readPickupCatalog(userLocation);
+      const result=await readPickupCatalog(pickupDiscoveryLocation);
       if(generation!==catalogGeneration.current)return;
-      loadedCatalogLocation.current=userLocation;
+      loadedCatalogLocation.current=pickupDiscoveryLocation;
       setShops(result);
-      saveDisplayCatalog(userLocation,result);
+      saveDisplayCatalog(pickupDiscoveryLocation,result);
       // Orderable shops remain API-authoritative. Closed metadata is only
       // for a read-only version of the original visual ShopCard.
       setClosedPickupShopsLoading(true);
       void customerPickupApi.approvedShops().then(publicCatalog=>{
         if(generation===catalogGeneration.current)
-          setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
+          setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,pickupDiscoveryLocation));
       }).catch(()=>{
         if(generation===catalogGeneration.current)setClosedPickupShops([]);
       }).finally(()=>{
@@ -1216,7 +1222,7 @@ export default function App() {
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
-  }, [userLocation?.lat,userLocation?.lng]);
+  }, [pickupDiscoveryLocation?.lat,pickupDiscoveryLocation?.lng]);
 
   const syncOfflineOrders = useCallback(async (retryCount = 0) => {
     return; // Old saved intents must never be replayed as authoritative orders.
@@ -3189,8 +3195,22 @@ export default function App() {
                   loadingShops={loadingShops}
                   closedPickupShops={closedPickupShops}
                   closedPickupShopsLoading={closedPickupShopsLoading}
-                  pilotDirectoryRows={pilotDirectoryRows}
-                  pilotDirectoryStatus={pilotDirectoryStatus}
+                  previewTestLocationAllowed={previewTestLocationAllowed}
+                  previewTestLocationReady={previewMyKotaPosition!==null}
+                  previewTestLocationActive={previewTestLocation!==null}
+                  onTogglePreviewTestLocation={()=>{
+                    setShops([]);
+                    setClosedPickupShops([]);
+                    setLoadingShops(true);
+                    setFetchError(null);
+                    setCart([]);
+                    if(previewTestLocation){
+                      setPreviewTestLocation(null);
+                      requestLocation();
+                    }else if(previewTestLocationAllowed && previewMyKotaPosition){
+                      setPreviewTestLocation(previewMyKotaPosition);
+                    }
+                  }}
                   fetchError={fetchError}
                   isOnline={isOnline}
                   onSettings={() => {
@@ -3219,7 +3239,7 @@ export default function App() {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
                   }}
-                  onRetry={() => retryPickupDiscovery(userLocation, () => {setLoadingShops(true);setFetchError(null);requestLocation();}, () => {void fetchShopsData();})}
+                  onRetry={() => retryPickupDiscovery(pickupDiscoveryLocation, () => {setLoadingShops(true);setFetchError(null);requestLocation();}, () => {void fetchShopsData();})}
                   cart={cart}
                   addToCart={addToCart}
                   removeFromCart={removeFromCart}
@@ -3231,8 +3251,11 @@ export default function App() {
                   currentScreen={currentScreen}
                   favorites={favorites}
                   toggleFavorite={toggleFavorite}
-                  userLocation={userLocation}
-                  onRequestLocation={requestLocation}
+                  userLocation={pickupDiscoveryLocation}
+                  onRequestLocation={()=>{
+                    setPreviewTestLocation(null);
+                    requestLocation();
+                  }}
                   orders={orders}
                   showAlert={showAlert}
                   appVersion={appVersion}
@@ -3908,8 +3931,10 @@ function HomeScreen({
   loadingShops,
   closedPickupShops,
   closedPickupShopsLoading,
-  pilotDirectoryRows,
-  pilotDirectoryStatus,
+  previewTestLocationAllowed,
+  previewTestLocationReady,
+  previewTestLocationActive,
+  onTogglePreviewTestLocation,
   fetchError,
   onSettings,
   onProfile,
@@ -3951,8 +3976,10 @@ function HomeScreen({
   loadingShops: boolean;
   closedPickupShops: ClosedPickupShopPreview[];
   closedPickupShopsLoading: boolean;
-  pilotDirectoryRows: unknown[];
-  pilotDirectoryStatus: "loading"|"ready"|"error";
+  previewTestLocationAllowed: boolean;
+  previewTestLocationReady: boolean;
+  previewTestLocationActive: boolean;
+  onTogglePreviewTestLocation: () => void;
   fetchError: string | null;
   onSettings: () => void;
   onProfile: () => void;
@@ -4378,10 +4405,6 @@ function HomeScreen({
     0,
   );
 
-  const browseOnlyPilotShops = useMemo(()=>
-    verifiedPilotBrowseDirectory(
-      pilotDirectoryRows,userLocation,new Set(shops.map(shop=>shop.id)),
-    ),[pilotDirectoryRows,userLocation?.lat,userLocation?.lng,shops]);
   const matchingClosedShops = useMemo(() => {
     if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
     const query=debouncedSearchQuery.trim();
@@ -5154,7 +5177,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} In range{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
+                  {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
             </div>
@@ -5181,46 +5204,19 @@ function HomeScreen({
             </div>
           </div>
 
-          {!session && (
-            <div role="status" className="mb-3 rounded-xl border border-blue-100 dark:border-blue-900/70 bg-blue-50/70 dark:bg-blue-950/30 px-4 py-3 text-xs text-slate-700 dark:text-slate-200 flex flex-wrap items-center gap-2">
-              <span>Browsing as a guest on this Preview. Previous order history requires your original account.</span>
-              <button type="button" onClick={()=>setCurrentScreen("login")}
-                className="min-h-9 px-3 rounded-lg bg-slate-900 dark:bg-slate-700 text-white font-bold">
-                Sign in for order history
+          {previewTestLocationAllowed && (
+            <div role="status" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-200/80 dark:border-orange-900/60 bg-orange-50/50 dark:bg-orange-950/20 px-3 py-2 text-xs text-slate-700 dark:text-slate-200">
+              <span>
+                {previewTestLocationActive
+                  ? "TEST LOCATION: Simulating a customer near My-Kota in Ivory Park. This is not your real GPS. The shop address is unchanged, and real ordering is disabled."
+                  : "For testing the original shop cards, simulate browsing from My-Kota in Ivory Park. Real shop coordinates are unchanged."}
+              </span>
+              <button type="button" onClick={onTogglePreviewTestLocation}
+                disabled={!previewTestLocationActive && !previewTestLocationReady}
+                className="min-h-9 shrink-0 rounded-lg border border-orange-300 dark:border-orange-800 bg-white dark:bg-slate-800 px-3 font-bold text-orange-700 dark:text-orange-300 disabled:opacity-50">
+                {previewTestLocationActive?"Use my real location":previewTestLocationReady?"Test near My-Kota":"Checking My-Kota..."}
               </button>
             </div>
-          )}
-          {sortedShops.length===0 && matchingClosedShops.length===0 && (
-            <section aria-label="Approved pilot shops browse only"
-              className="mb-5 w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-base font-black text-slate-900 dark:text-white">Pilot shops in Tembisa & Ivory Park</h4>
-                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">Browse only · no ordering</span>
-              </div>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                These are approved, existing shops. A shop can be visible here even when pickup is unavailable
-                at your actual location. Only shops verified within 4 km can accept pickup orders.
-              </p>
-              {pilotDirectoryStatus==="loading" && <p role="status" className="mt-3 text-xs text-slate-500">Checking approved shops from the catalog...</p>}
-              {pilotDirectoryStatus==="error" && <p role="alert" className="mt-3 text-xs text-orange-700 dark:text-orange-300">The approved shop directory did not load. Please reload to retry. This does not mean your shops were deleted.</p>}
-              {pilotDirectoryStatus==="ready" && browseOnlyPilotShops.length===0 && <p className="mt-3 text-xs text-slate-500">No verified Tembisa or Ivory Park shop records could be listed.</p>}
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {browseOnlyPilotShops.map(shop=>(
-                  <article key={shop.id} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3">
-                    <div className="flex justify-between gap-2 items-start">
-                      <p className="font-black text-sm text-slate-900 dark:text-white">{shop.name}</p>
-                      <span className="shrink-0 text-[10px] font-bold text-orange-700 dark:text-orange-300">Browse only</span>
-                    </div>
-                    <p className="text-[11px] mt-1 text-slate-500 dark:text-slate-400">{shop.location}</p>
-                    <p className="mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      {shop.reason==="outside_radius"?"Outside 4 km pickup area":
-                       shop.reason==="not_accepting"?"Not accepting orders":"Pickup eligibility not confirmed"}
-                      {shop.distanceKm!==null && <span className="ml-2 font-normal">{shop.distanceKm.toFixed(1)} km from your location</span>}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </section>
           )}
 
           {renderedShopList}
@@ -5231,7 +5227,7 @@ function HomeScreen({
             Checking nearby shops outside trading hours...
           </div>
         )}
-        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && pilotDirectoryStatus!=="loading" && browseOnlyPilotShops.length===0 && (
+        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
