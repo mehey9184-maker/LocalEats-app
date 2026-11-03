@@ -67,7 +67,8 @@ test("P7 restores original Home ShopCards; demo test position is a separate opt-
  assert.match(app,/Use my real location/);
  assert.match(app,/TEST LOCATION: Simulating a customer near My-Kota/);
  assert.match(app,/const pickupDiscoveryLocation=previewTestLocation\?\?userLocation/);
- assert.match(app,/readPickupCatalog\(pickupDiscoveryLocation\)/);
+ assert.match(app,/readPickupCatalog\(previewTestLocation\)/);
+ assert.match(app,/readPickupCatalog\(userLocation\)/);
  assert.match(app,/setPreviewTestLocation\(previewMyKotaPosition\)/);
  assert.match(app,/sortedShops\.length} Online/);
  assert.match(app,/<ShopCard/);
