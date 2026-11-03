@@ -7,7 +7,7 @@ import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./ser
 
 // removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
-import { DiagnosticTool } from "./components/DiagnosticTool";
+// The legacy auth diagnostic panel is not exposed in Customer Profile.
 import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
@@ -286,6 +286,7 @@ import {pickupInstallationId,existingPickupInstallationId} from "./services/cust
 import {nearestHomeDistance,shouldUpdateHomeLocation} from "./services/homeProximity";
 import {customerOrderStatusNotices,type CustomerStatusOrder} from "./services/customerOrderStatusNotices";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import {saveConfirmedCustomerProfile} from "./services/customerProfilePolicy";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -1693,21 +1694,33 @@ export default function App() {
       }
 
       if (data) {
-        setUserProfile((prev) => ({
-          ...prev,
-          id: data.user_id || data.id || userId,
-          fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
-          email: data.email || prev.email || "",
-          phone: data.phone || prev.phone || "",
-          city: data.city || prev.city || "Johannesburg",
-          address: data.address || data.default_address || prev.address || "",
-          country: data.country || prev.country || "South Africa",
-          role: data.role || prev.role || "customer",
-          photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
-          latitude: data.current_latitude || data.latitude || prev.latitude,
-          longitude: data.current_longitude || data.longitude || prev.longitude,
-        }));
-        if (data.favorites && Array.isArray(data.favorites)) {
+        // Never rehydrate cached personal details from a different account.
+        const responseOwner=data.user_id || data.id;
+        if (responseOwner && String(responseOwner)!==userId) {
+          throw new Error("Profile response identity mismatch.");
+        }
+        if (firebaseAuth.currentUser?.uid!==userId) return;
+        setUserProfile((prev) => {
+          if (firebaseAuth.currentUser?.uid!==userId) return prev;
+          const safePrev:UserProfile=prev.id===userId?prev:{
+            id:userId,fullName:"",email:firebaseAuth.currentUser?.email||"",
+            phone:"",city:"",address:"",country:"South Africa",role:"user",
+          };
+          return {
+            ...safePrev,id:userId,
+            fullName:data.fullName??data.full_name??data.name??safePrev.fullName,
+            email:data.email??firebaseAuth.currentUser?.email??safePrev.email,
+            phone:data.phone??safePrev.phone,
+            city:data.city??safePrev.city,
+            address:data.address??data.default_address??safePrev.address,
+            country:data.country??safePrev.country,
+            role:data.role??safePrev.role,
+            photoURL:data.photo_url??data.avatar_url??data.photoURL??safePrev.photoURL,
+            latitude:data.current_latitude??data.latitude??safePrev.latitude,
+            longitude:data.current_longitude??data.longitude??safePrev.longitude,
+          };
+        });
+        if (firebaseAuth.currentUser?.uid===userId && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
         }
       } else if (!error || error.code === "PGRST116" || !data) {
@@ -1720,28 +1733,21 @@ export default function App() {
             const userMeta = authUser.user_metadata || {};
             const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
             const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
+            // A read must never silently create a record or grant a role
+            // derived from user-editable Firebase metadata.
+            setUserProfile((prev) => {
+              if(firebaseAuth.currentUser?.uid!==userId)return prev;
+              const safePrev:UserProfile=prev.id===userId?prev:{
+                id:userId,fullName:"",email:"",phone:"",
+                city:"",address:"",country:"South Africa",role:"user",
+              };
+              return {
+                ...safePrev,id:userId,
+                email:authUser.email||safePrev.email,
+                fullName:fallbackName||safePrev.fullName,
+                phone:fallbackPhone||safePrev.phone,
+                role:safePrev.role,
+              };
             });
           }
         } catch (authFetchErr) {
@@ -3557,20 +3563,27 @@ export default function App() {
                 />
               )}
               {currentScreen === "profile" && (
-                <ProfileScreen
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onSave={async (data) => {
-                    await handleUpdateProfile(data, true, () => {
-                      setCurrentScreen(previousScreen || "home");
-                    });
-                  }}
-                  userProfile={userProfile}
-                  completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={logoutCustomer}
-                  setNotification={setNotification}
-                  triggerHaptic={triggerHaptic}
-                  isOnline={isOnline}
-                />
+                session?.user?.id && userProfile?.id===session.user.id ? (
+                  <ProfileScreen
+                    onBack={() => setCurrentScreen(previousScreen || "home")}
+                    onSave={async (data) => {
+                      const uid=session.user.id;
+                      const confirmed=await saveConfirmedCustomerProfile(uid,firebaseAuth.currentUser,data);
+                      if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Account changed while saving your profile.");
+                      setUserProfile(prev=>prev.id===uid?{...prev,...confirmed}:prev);
+                    }}
+                    userProfile={userProfile}
+                    completedOrdersCount={orders.filter(o=>o.user_id===session.user.id && (o.status==="completed"||o.status==="delivered")).length}
+                    onLogout={logoutCustomer}
+                    setNotification={setNotification}
+                    triggerHaptic={triggerHaptic}
+                    isOnline={isOnline}
+                  />
+                ) : (
+                  <div role="status" className="max-w-md mx-auto min-h-screen bg-white dark:bg-slate-950 p-8 text-center text-sm text-slate-600 dark:text-slate-300">
+                    {session?.user?.id?"Loading this account's profile…":"Sign in to view and edit your profile."}
+                  </div>
+                )
               )}
               {currentScreen === "contact" && (
                 <ContactScreen
@@ -6995,11 +7008,17 @@ function ProfileScreen({
 
   const handleDeletePhoto = async () => {
     const saveFunc = onUpdateProfile || onSave;
-    if (saveFunc) {
-      await saveFunc({ photoURL: "" });
+    if (!saveFunc) {
+      setNotification({message:"Profile updates are unavailable.",type:"error"});
+      return;
     }
-    setPreviewUrl(null);
-    setNotification({ message: "Profile picture removed.", type: "info" });
+    try {
+      await saveFunc({ photoURL: "" });
+      setPreviewUrl(null);
+      setNotification({message:"Profile photo removal confirmed by the account API.",type:"info"});
+    } catch {
+      setNotification({message:"Photo removal could not be confirmed. Your existing photo remains.",type:"error"});
+    }
   };
 
   const handleUpdateProfile = async () => {
@@ -7051,13 +7070,12 @@ function ProfileScreen({
       };
 
       const saveFunc = onUpdateProfile || onSave;
-      if (saveFunc) {
-        await saveFunc(updateData, true);
-      }
+      if(!saveFunc)throw new Error("Profile updates are unavailable.");
+      await saveFunc(updateData, true);
       setJustSaved(true);
       triggerHaptic?.([10, 30, 10]);
       setNotification({
-        message: "Profile saved & updated!",
+        message: "Profile update confirmed by the account API.",
         type: "success",
       });
       setTimeout(() => {
@@ -7126,20 +7144,25 @@ function ProfileScreen({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative cursor-pointer"
-              onClick={() => setShowGalleryModal(true)}
+              
             >
               <AnimatePresence mode="wait">
-                <motion.img
-                  key={previewUrl || userProfile.photoURL || "placeholder"}
-                  src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
-                  alt="Profile Avatar"
-                  className="w-full h-full object-cover absolute inset-0"
-                  referrerPolicy="no-referrer"
-                  initial={{ opacity: 0, scale: 0.75, filter: "blur(4px)" }}
-                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, scale: 1.15, filter: "blur(4px)" }}
-                  transition={{ type: "spring", stiffness: 260, damping: 20 }}
-                />
+                {previewUrl || userProfile.photoURL ? (
+                  <motion.img
+                    key={previewUrl || userProfile.photoURL}
+                    src={previewUrl || userProfile.photoURL}
+                    alt="Profile picture"
+                    className="w-full h-full object-cover absolute inset-0"
+                    referrerPolicy="no-referrer"
+                    initial={{opacity:0,scale:0.75}}
+                    animate={{opacity:1,scale:1}}
+                    exit={{opacity:0}}
+                  />
+                ) : (
+                  <span aria-label="No profile picture set" className="text-4xl font-black text-orange-600 dark:text-orange-400">
+                    {userProfile.fullName?.trim().charAt(0).toUpperCase() || "?"}
+                  </span>
+                )}
               </AnimatePresence>
               {uploading && (
                 <motion.div
@@ -7155,38 +7178,11 @@ function ProfileScreen({
                 </motion.div>
               )}
             </motion.div>
-            {/* Action buttons for Gallery Upload and Live Camera */}
-            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex justify-center gap-2 z-10 w-max">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowGalleryModal(true);
-                }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
-                title="Choose photo from gallery"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <span className="text-[11px] font-black">Gallery</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  startCamera();
-                }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 border-emerald-500/30"
-                title="Take photo using camera"
-              >
-                <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-[11px] font-black">Take Photo</span>
-              </button>
-            </div>
+            {/* Photo editing is unavailable until an account-scoped upload API exists. */}
           </div>
 
           <div className="text-center mt-6">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">Photo changes are unavailable in this Preview until account-scoped uploads are supported.</p>
             {(userProfile.photoURL || previewUrl) && (
               <button
                 type="button"
@@ -7202,66 +7198,11 @@ function ProfileScreen({
             <p className="text-xs text-slate-400 mb-2">{userProfile.email}</p>
           </div>
 
-          {/* Loyalty Tier Badge */}
-          <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 flex flex-col items-center gap-3 shadow-sm mt-1">
-            {completedOrdersCount >= 10 ? (
-              // Gold Tier VIP
-              <div className="flex flex-col items-center w-full">
-                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-                  <div className="absolute inset-0 bg-amber-500/10 rounded-full blur-xl animate-pulse"></div>
-                  <div className="w-14 h-14 bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-300 rounded-2xl flex items-center justify-center border border-amber-400 shadow-lg relative z-10">
-                    <Award className="w-8 h-8 text-white drop-shadow-md" />
-                  </div>
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-amber-200 dark:border-amber-900/40">
-                    🏆 Gold VIP Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • Ultimate Local Eater!
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-amber-500 h-full rounded-full w-full"></div>
-                </div>
-              </div>
-            ) : completedOrdersCount >= 5 ? (
-              // Silver Tier
-              <div className="flex flex-col items-center w-full">
-                <div className="w-14 h-14 bg-gradient-to-tr from-slate-400 via-slate-100 to-slate-300 rounded-2xl flex items-center justify-center border border-slate-200 shadow-md">
-                  <Award className="w-8 h-8 text-slate-600 drop-shadow-sm" />
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700">
-                    ⭐ Silver Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • {10 - completedOrdersCount} more to Gold
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-slate-400 h-full rounded-full" style={{ width: `${(completedOrdersCount / 10) * 100}%` }}></div>
-                </div>
-              </div>
-            ) : (
-              // Bronze Tier
-              <div className="flex flex-col items-center w-full">
-                <div className="w-14 h-14 bg-gradient-to-tr from-amber-700 via-orange-500 to-amber-600 rounded-2xl flex items-center justify-center border border-orange-400 shadow-sm">
-                  <Award className="w-8 h-8 text-amber-100" />
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-orange-200 dark:border-orange-900/30">
-                    🥉 Bronze Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • {5 - completedOrdersCount} more to Silver
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-orange-500 h-full rounded-full" style={{ width: `${(completedOrdersCount / 5) * 100}%` }}></div>
-                </div>
-              </div>
-            )}
+          {/* Only actual API-confirmed orders count; no unimplemented rewards. */}
+          <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 text-center shadow-sm mt-1">
+            <p className="text-2xl font-black text-slate-900 dark:text-white">{completedOrdersCount}</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Collected orders in confirmed history</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Loyalty rewards are not active.</p>
           </div>
         </div>
 
@@ -7284,14 +7225,14 @@ function ProfileScreen({
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-wider">
-                        Profile Saved & Synchronized
+                        Account update confirmed
                       </p>
                       <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/80 px-2 py-0.5 rounded-full">
                         WhatsApp Style ✓
                       </span>
                     </div>
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-0.5">
-                      Your changes are saved locally and synced with your account.
+                      The account API returned your updated details.
                     </p>
                   </div>
                 </motion.div>
@@ -7331,11 +7272,11 @@ function ProfileScreen({
                   <div className="flex items-center gap-2.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
                     <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                      All details verified & saved
+                      No unsaved profile changes
                     </p>
                   </div>
                   <span className="text-[10px] font-mono text-slate-400 font-medium">
-                    Synced to cloud
+                    Current details
                   </span>
                 </motion.div>
               )}
@@ -7367,13 +7308,13 @@ function ProfileScreen({
                   </span>
                 ) : fullName.trim() ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Saved
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Current
                   </span>
                 ) : null}
               </div>
             </div>
             <p className="text-[11px] text-slate-400 ml-1">
-              Visible to your drivers and restaurants on active orders.
+              Used for your account and confirmed pickup orders.
             </p>
           </div>
 
@@ -7400,13 +7341,13 @@ function ProfileScreen({
                   </span>
                 ) : validateSAPhone(phone) ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Verified
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Format valid
                   </span>
                 ) : null}
               </div>
             </div>
             <p className="text-[11px] text-slate-400 ml-1">
-              Used for WhatsApp tracking and driver calls on delivery.
+              A valid phone format does not verify ownership of this number.
             </p>
           </div>
 
@@ -7414,11 +7355,11 @@ function ProfileScreen({
           <div className="space-y-2">
             <div className="flex items-center justify-between ml-1">
               <label className="text-xs font-bold text-primary uppercase tracking-widest">
-                Delivery Address & Pin
+                Saved Address & Pin
               </label>
-              {latitude && longitude ? (
+              {Number.isFinite(latitude) && Number.isFinite(longitude) ? (
                 <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800/40 flex items-center gap-1">
-                  <MapPin className="w-3 h-3 text-emerald-500" /> Pin Set ({latitude.toFixed(3)}, {longitude.toFixed(3)})
+                  <MapPin className="w-3 h-3 text-emerald-500" /> Pin selected
                 </span>
               ) : (
                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800/40">
@@ -7444,14 +7385,14 @@ function ProfileScreen({
               </Suspense>
             </WidgetErrorBoundary>
             <p className="text-[11px] text-slate-400 ml-1">
-              Pin accuracy ensures exact doorstep delivery to your house or workplace.
+              Saving an address does not enable delivery. Pickup discovery uses your current location.
             </p>
           </div>
 
           {/* City */}
           <div className="space-y-2 opacity-60">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
-              City (Current Service Zone)
+              City (Profile)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -7480,7 +7421,7 @@ function ProfileScreen({
               />
             </div>
             <p className="text-[10px] text-slate-400 ml-1">
-              Email is linked to your account and cannot be changed.
+              Email editing is not available on this screen.
             </p>
           </div>
         </div>
@@ -7489,7 +7430,7 @@ function ProfileScreen({
         <div className="pt-8 space-y-4">
           <button
             onClick={handleUpdateProfile}
-            disabled={isSaving || uploading}
+            disabled={isSaving || uploading || !isDirty}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
@@ -7501,12 +7442,12 @@ function ProfileScreen({
             {isSaving ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Saving to Account & Device...</span>
+                <span>Checking account update...</span>
               </>
             ) : justSaved ? (
               <>
                 <Check className="w-5 h-5 text-white stroke-[3] animate-in zoom-in" />
-                <span>Profile Saved ✓</span>
+                <span>Update Confirmed</span>
               </>
             ) : isDirty ? (
               <>
@@ -7516,7 +7457,7 @@ function ProfileScreen({
             ) : (
               <>
                 <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                <span>Saved & Up to Date</span>
+                <span>No Unsaved Changes</span>
               </>
             )}
           </button>
@@ -7530,8 +7471,7 @@ function ProfileScreen({
           </button>
         </div>
 
-        {/* Diagnostic Tool for debugging split-brain auth */}
-        <DiagnosticTool />
+        {/* Developer-only diagnostics are not exposed to customers. */}
       </main>
 
       {/* Cropper Modal */}
@@ -7779,65 +7719,7 @@ function ProfileScreen({
         </div>
       )}
 
-      {/* Mock Selection Gallery Overlay */}
-      {showGalleryModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex flex-col justify-end animate-in slide-in-from-bottom duration-300">
-          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 flex flex-col h-[70dvh] shadow-xl border-t border-slate-200 dark:border-slate-800">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white">Recent Images</h3>
-              <button onClick={() => setShowGalleryModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <div className="grid grid-cols-3 gap-2 pb-4">
-                {/* Mock recent images */}
-                {Array.from({ length: 15 }).map((_, i) => (
-                  <div 
-                    key={i} 
-                    onClick={() => {
-                      const canvas = document.createElement("canvas");
-                      canvas.width = 400;
-                      canvas.height = 400;
-                      const ctx = canvas.getContext("2d");
-                      if (ctx) {
-                        ctx.fillStyle = `hsl(${i * 25}, 70%, 60%)`;
-                        ctx.fillRect(0, 0, 400, 400);
-                        canvas.toBlob((blob) => {
-                          if (blob) {
-                            const file = new File([blob], `gallery_${i}.jpg`, { type: "image/jpeg" });
-                            const localUrl = URL.createObjectURL(file);
-                            setImageToCrop(localUrl);
-                            setShowCropper(true);
-                            setShowGalleryModal(false);
-                          }
-                        }, "image/jpeg");
-                      }
-                    }}
-                    className="aspect-square bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm hover:opacity-80 active:scale-95 transition-all cursor-pointer relative"
-                  >
-                    <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, hsl(${i * 25}, 70%, 60%), hsl(${i * 25 + 40}, 80%, 50%))` }} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2 shrink-0">
-              <button 
-                onClick={() => {
-                  setShowGalleryModal(false);
-                  fileInputRef.current?.click();
-                }}
-                className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition-all cursor-pointer shadow-sm"
-              >
-                <FolderOpen className="w-5 h-5" />
-                Browse Device Files
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* No fabricated recent-device images or unsupported avatar upload choices. */}
     </div>
   );
 }
