@@ -1,7 +1,7 @@
 import {cert,getApps,initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
 import {createClient} from "@supabase/supabase-js";
-import {normalizeProfileInput,ownerMatches,ProfileInputError} from "./profilePolicy";
+import {normalizeProfileInput,ownerMatches,ProfileInputError} from "./profilePolicy.js";
 
 const headers:Record<string,string>={
   "Cache-Control":"no-store",
