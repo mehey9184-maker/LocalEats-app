@@ -1,4 +1,4 @@
-import { FirestoreService } from './firebase';
+import { FirestoreService, auth } from './firebase';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -49,7 +49,8 @@ export function isPermanentSyncError(error: any): boolean {
     msg.includes("schema cache") ||
     msg.includes("column") && msg.includes("does not exist") ||
     msg.includes("Forbidden") ||
-    msg.includes("ID mismatch")
+    msg.includes("ID mismatch") ||
+    msg.includes("Profile account mismatch")
   );
 }
 
@@ -126,6 +127,11 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
   if (!profileData.user_id) {
     return { success: false, error: new Error("User ID is required") };
   }
+  // All profile writes and mirrored records must belong to the verified
+  // Firebase session. Never replay another account's cached profile.
+  if (!auth.currentUser || auth.currentUser.uid !== profileData.user_id) {
+    return { success: false, error: new Error("Profile account mismatch: sign in with the matching account.") };
+  }
 
   const sanitizedPhone = toDBPhone(profileData.phone);
   let synced = false;
@@ -141,7 +147,7 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
       fullName: profileData.fullName,
       email: profileData.email,
       phone: sanitizedPhone,
-      role: profileData.role || "user",
+      // Role is a server-owned authorization field; do not submit from UI.
       city: profileData.city || "",
       address: profileData.address || "",
       country: profileData.country || "South Africa",
@@ -182,7 +188,7 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
     city: profileData.city || null,
     address: profileData.address || null,
     country: profileData.country || "South Africa",
-    role: profileData.role || "user",
+    // Never mirror a client-controlled role into Firestore.
     avatar_url: profileData.photo_url || null,
     language: profileData.language || "en",
     favorites: profileData.favorites || []
@@ -201,6 +207,9 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
   if (!profileData.user_id) {
     return { data: null, error: new Error("User ID is required for profile upsert") };
   }
+  if (!auth.currentUser || auth.currentUser.uid !== profileData.user_id) {
+    return { data: null, error: new Error("Profile account mismatch: sign in with the matching account.") };
+  }
 
   const sanitizedPhone = toDBPhone(profileData.phone);
 
@@ -208,7 +217,9 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
   try {
     if (typeof window !== "undefined" && window.localStorage) {
       const cached = localStorage.getItem("userProfile");
-      const existing = cached ? JSON.parse(cached) : {};
+      const parsed = cached ? JSON.parse(cached) : null;
+      // Never merge profile fields cached by a previous signed-in account.
+      const existing = parsed && (parsed.user_id === profileData.user_id || parsed.id === profileData.user_id) ? parsed : {};
       const updated = {
         ...existing,
         id: profileData.user_id,
@@ -238,7 +249,7 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
   // 3. If offline, keep in queue and return cached success immediately
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     console.info("[Profile Service] Network is offline. Profile saved locally and queued for auto-sync.");
-    return { data: { cached: true, offline: true }, error: null };
+    return { data: { cached: true, offline: true }, error: new Error("Profile saved on this device only. Online account storage is not confirmed.") };
   }
 
   // 4. Attempt direct multi-channel sync
@@ -257,7 +268,7 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
       console.warn("[Profile Service] Database offline or unreachable. Scheduling exponential backoff retry...");
       queueProfileSync(profileData, result.error?.message || "Sync failed");
       scheduleProfileRetry(profileData, 0);
-      return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
+      return { data: { cached: true, offline: true, retryScheduled: true }, error: new Error("Profile saved locally; server save is not confirmed. Retry when available.") };
     }
   } catch (err: any) {
     if (isPermanentSyncError(err)) {
@@ -268,7 +279,7 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
     console.info("[Profile Service] Exception during profile sync:", err?.message || err);
     queueProfileSync(profileData, err?.message || "Sync exception");
     scheduleProfileRetry(profileData, 0);
-    return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
+    return { data: { cached: true, offline: true, retryScheduled: true }, error: new Error("Profile saved locally; server save is not confirmed. Retry when available.") };
   }
 }
 
@@ -294,6 +305,9 @@ export async function processOfflineProfileQueue() {
     const profileData = item.data || item;
     const userId = item.user_id || profileData?.user_id;
     if (!userId) continue;
+    // Queued data from a previous account must stay pending, not be sent under
+    // a different signed-in session or cleared as though it succeeded.
+    if (!auth.currentUser || auth.currentUser.uid !== userId) continue;
 
     try {
       const res = await syncProfileDirect(profileData);
