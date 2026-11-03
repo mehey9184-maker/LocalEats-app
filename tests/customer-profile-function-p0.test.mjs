@@ -39,10 +39,12 @@ test("server route verifies Firebase token, denies other UIDs and keeps DB keys 
  assert.match(server,/verifyIdToken\(match\[1\],true\)/);
  assert.match(server,/ownerMatches\(id,signed.uid\)/);
  assert.match(server,/\.eq\("user_id",signed\.uid\)/);
- assert.match(server,/PROFILE_API_WRITES_ENABLED!=="true"/);
- assert.match(server,/process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
- assert.match(server,/process\.env\.FIREBASE_PRIVATE_KEY/);
+ assert.match(server,/!config\?\.writesEnabled/);
+ assert.match(server,/stagingProfileConfig\(process\.env\)/);
+ assert.match(server,/config\.firebasePrivateKey/);
  assert.match(server,/upsert\(\{\.\.\.input,updated_at:/);
+ assert.doesNotMatch(server,/process\\.env\\.SUPABASE_SERVICE_ROLE_KEY/);
+ assert.doesNotMatch(server,/process\\.env\\.FIREBASE_PRIVATE_KEY/);
  assert.doesNotMatch(server,/"role"\s*:/);
  assert.doesNotMatch(server,/console\.log\(/);
  assert.match(handler,/getProfile\(request,id\)/);
