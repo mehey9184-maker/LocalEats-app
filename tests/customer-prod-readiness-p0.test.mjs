@@ -28,6 +28,7 @@ test("P0 profile save requires the active verified account and won't impersonate
   assert.match(profile,/const existing = parsed && \(parsed\.user_id === profileData\.user_id \|\| parsed\.id === profileData\.user_id\) \? parsed : \{\}/);
   assert.match(profile,/if \(!auth\.currentUser \|\| auth\.currentUser\.uid !== userId\) continue;/);
   assert.match(profile,/Profile account mismatch/);
+  assert.match(profile,/if \(!auth\.currentUser \|\| auth\.currentUser\.uid !== userId\) return;/);
 });
 
 test("P0 local profile draft isn't falsely reported as saved to the server",()=>{
