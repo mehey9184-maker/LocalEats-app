@@ -28,6 +28,8 @@ jobs:
         run: node --import tsx --test tests/customer-profile-route-runtime.test.mjs
       - name: Firebase/Supabase staging isolation and API-only profile tests
         run: node --experimental-strip-types --test tests/customer-profile-staging-isolation.test.mjs
+      - name: Validate two-account staging smoke syntax without executing writes
+        run: node --check scripts/customer-p0-staging-profile-smoke.mjs
       - name: Existing pickup, pricing and checkout regressions
         run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
       - name: TypeScript
