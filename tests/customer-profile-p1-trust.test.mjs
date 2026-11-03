@@ -58,6 +58,10 @@ test("P1 hides stale account profiles and avoids optimistic queue-based save in 
  assert.match(profile,/Format valid/);
  assert.match(profile,/No unsaved profile changes/);
  assert.match(profile,/Photo changes are unavailable in this Preview/);
+ assert.match(profile,/No profile picture set/);
+ assert.doesNotMatch(profile,/getAvatarUrl\(userProfile\.fullName\)/);
+ assert.doesNotMatch(profile,/mock recent images/i);
+ assert.match(profile,/Photo removal could not be confirmed/);
  assert.doesNotMatch(profile,/onClick=\{\(\) => setShowGalleryModal\(true\)\}/);
  assert.match(profile,/saved via API|confirmed by the account API|confirmed by the account API\./i);
 });
