@@ -294,6 +294,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
+import {verifiedPilotBrowseDirectory} from "./services/verifiedPilotBrowseDirectory";
 import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
@@ -668,6 +669,20 @@ export default function App() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [closedPickupShops, setClosedPickupShops] = useState<ClosedPickupShopPreview[]>([]);
   const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
+  // This public, read-only directory is separate from the 4km orderable shops.
+  // Never pass these metadata records into cart/checkout or current prices.
+  const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
+  const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
+  useEffect(()=>{
+    let active=true;
+    void customerPickupApi.approvedShops().then(result=>{
+      if(!Array.isArray(result.shops))throw new Error("Invalid approved catalog.");
+      if(active){setPilotDirectoryRows(result.shops);setPilotDirectoryStatus("ready");}
+    }).catch(()=>{
+      if(active){setPilotDirectoryRows([]);setPilotDirectoryStatus("error");}
+    });
+    return ()=>{active=false;};
+  },[]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -2356,12 +2371,15 @@ export default function App() {
           if(!active || request!==latestOrderFetch)return;
           if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Authenticated account changed.");
           if(!Array.isArray(data.orders) || data.orders.some(o=>
-            !o || o.user_id!==uid || o.delivery_type!=="collection" || typeof o.id!=="string"))
+            !o || o.user_id!==uid || typeof o.id!=="string"))
             throw new Error("Order history response did not match the authenticated account.");
-          const confirmed=data.orders as CustomerStatusOrder[];
+          // The API can return legacy deliveries. Ignore those for O1's
+          // confirmed-pickup-only history instead of hiding valid pickups.
+          const pickupOrders=data.orders.filter(o=>o.delivery_type==="collection");
+          const confirmed=pickupOrders as CustomerStatusOrder[];
           const notices=customerOrderStatusNotices(previousConfirmedOrders,confirmed,uid);
           previousConfirmedOrders=confirmed;
-          setOrders(data.orders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+          setOrders(pickupOrders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
           setOrdersLoadState({uid,status:"ready"});
           for(const notice of notices){
             toast.info(notice.title,{description:notice.message,duration:6500});
@@ -3171,6 +3189,8 @@ export default function App() {
                   loadingShops={loadingShops}
                   closedPickupShops={closedPickupShops}
                   closedPickupShopsLoading={closedPickupShopsLoading}
+                  pilotDirectoryRows={pilotDirectoryRows}
+                  pilotDirectoryStatus={pilotDirectoryStatus}
                   fetchError={fetchError}
                   isOnline={isOnline}
                   onSettings={() => {
@@ -3247,7 +3267,7 @@ export default function App() {
                       orders={orders}
                       shops={visibleShops}
                       selectedOrderId={selectedTrackingOrderId}
-                      loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                      loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
                       onBack={()=>{setSelectedTrackingOrderId(null);setCurrentScreen(previousScreen || "home");}}
                       onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                       onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
@@ -3622,7 +3642,7 @@ export default function App() {
                 <OrderHistoryScreen
                   ownerUid={session?.user?.id}
                   pickupOrders={orders}
-                  loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                  loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
                   onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   shops={visibleShops}
@@ -3888,6 +3908,8 @@ function HomeScreen({
   loadingShops,
   closedPickupShops,
   closedPickupShopsLoading,
+  pilotDirectoryRows,
+  pilotDirectoryStatus,
   fetchError,
   onSettings,
   onProfile,
@@ -3929,6 +3951,8 @@ function HomeScreen({
   loadingShops: boolean;
   closedPickupShops: ClosedPickupShopPreview[];
   closedPickupShopsLoading: boolean;
+  pilotDirectoryRows: unknown[];
+  pilotDirectoryStatus: "loading"|"ready"|"error";
   fetchError: string | null;
   onSettings: () => void;
   onProfile: () => void;
@@ -4354,6 +4378,10 @@ function HomeScreen({
     0,
   );
 
+  const browseOnlyPilotShops = useMemo(()=>
+    verifiedPilotBrowseDirectory(
+      pilotDirectoryRows,userLocation,new Set(shops.map(shop=>shop.id)),
+    ),[pilotDirectoryRows,userLocation?.lat,userLocation?.lng,shops]);
   const matchingClosedShops = useMemo(() => {
     if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
     const query=debouncedSearchQuery.trim();
@@ -5259,6 +5287,32 @@ function HomeScreen({
                   {pickupOrderingEnabled() ? "Pickup pilot. Use your real location. Pay at the shop; follow order status and Ready notifications in-app." : "Pickup development. Catalog reads require real location. Order submission and Ready notifications remain disabled until database activation."}
                 </p>
               </div>
+            )}
+            {shops.length===0 && (
+              <section aria-label="Approved pilot shops browse only"
+                className="mt-5 w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-left shadow-sm">
+                <h4 className="text-sm font-black text-slate-900 dark:text-white">Pilot shops · browse only</h4>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Approved shops remain listed even when they're outside your 4 km pickup area.
+                  This directory is read-only: it does not confirm current availability or allow ordering.
+                </p>
+                {pilotDirectoryStatus==="loading" && <p role="status" className="mt-3 text-xs text-slate-500">Checking the approved shop directory...</p>}
+                {pilotDirectoryStatus==="error" && <p role="alert" className="mt-3 text-xs text-orange-700 dark:text-orange-300">The shop directory could not load from the Preview API. Your shop has not been marked deleted. Check your connection and reopen the latest Preview.</p>}
+                {pilotDirectoryStatus==="ready" && browseOnlyPilotShops.length===0 && <p className="mt-3 text-xs text-slate-500">No verified Tembisa or Ivory Park shop records could be listed.</p>}
+                {browseOnlyPilotShops.map(shop=>(
+                  <div key={shop.id} className="mt-3 rounded-xl border border-slate-100 dark:border-slate-700 p-3">
+                    <p className="font-bold text-sm text-slate-900 dark:text-white">{shop.name}</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">{shop.location}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="text-orange-700 dark:text-orange-300 font-semibold">
+                        {shop.reason==="outside_radius"?"Outside 4 km pickup area":
+                         shop.reason==="not_accepting"?"Not accepting orders":"Pickup eligibility not confirmed"}
+                      </span>
+                      {shop.distanceKm!==null && <span className="text-slate-500">{shop.distanceKm.toFixed(1)} km from your location</span>}
+                    </div>
+                  </div>
+                ))}
+              </section>
             )}
           </motion.section>
         )}
