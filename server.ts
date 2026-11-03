@@ -1,4 +1,5 @@
 import {legacyOrderGuard} from "./legacyOrderGuards";
+import {ProfilePolicyError,requireProfileOwner,buildCustomerProfilePatch,createCustomerProfileRecord} from "./profileApiPolicy";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -64,7 +65,6 @@ app.get("/api/health", (req, res) => {
 
 // In-memory store for synced orders as resilient fallback
 const serverOrders: any[] = [];
-const serverProfiles: Record<string, any> = {};
 
 // Authentication Middleware with authoritative Firebase Admin ID token verification
 const authenticateJWT = async (req: any, res: any, next: any) => {
@@ -148,100 +148,64 @@ const authenticateJWT = async (req: any, res: any, next: any) => {
   return res.status(401).json({ error: 'Invalid or expired token' });
 };
 
-// API Endpoint for resilient Profile Sync
+// Profile API P3: verified account owner + strict allowlist + durable persistence.
+// Never allow the service-role DB connection to accept client-supplied roles.
 app.post("/api/profiles", authenticateJWT, async (req: any, res: any) => {
+  res.setHeader("Cache-Control","no-store");
   try {
-    const profile = req.body;
-    if (!profile || (!profile.user_id && !profile.id)) {
-      return res.status(400).json({ error: "user_id or id is required" });
-    }
-    const userId = profile.user_id || profile.id;
-
-    if (req.user?.id !== userId && req.user?.uid !== userId && req.user?.id !== 'anon') {
-      return res.status(403).json({ error: "Forbidden: user_id mismatch" });
+    const body=req.body;
+    const uid=requireProfileOwner(req.user?.id ?? req.user?.uid, body?.user_id ?? body?.id);
+    const changes=buildCustomerProfilePatch(body);
+    if(!supabaseAdmin){
+      return res.status(503).json({success:false,error:"Profile storage unavailable. Changes were not saved."});
     }
 
-    const upsertPayload: Record<string, any> = {
-      user_id: userId,
-      updated_at: new Date().toISOString()
-    };
-
-    // Map aliases to strict schema column names
-    const resolvedFullName = profile.fullName ?? profile.full_name ?? profile.name;
-    if (resolvedFullName !== undefined) upsertPayload.fullName = resolvedFullName;
-
-    const resolvedPhotoUrl = profile.photo_url ?? profile.avatar_url ?? profile.photoURL;
-    if (resolvedPhotoUrl !== undefined) upsertPayload.photo_url = resolvedPhotoUrl;
-
-    const resolvedAddress = profile.address ?? profile.default_address;
-    if (resolvedAddress !== undefined) upsertPayload.address = resolvedAddress;
-
-    // Include other valid schema columns if provided
-    for (const key of ['email', 'phone', 'city', 'country', 'role', 'language', 'latitude', 'longitude', 'favorites']) {
-      if (profile[key] !== undefined) {
-        upsertPayload[key] = profile[key];
-      }
+    // Preserve existing roles and verified email; never use an UPSERT that
+    // overwrites protected fields during an ordinary profile edit.
+    const {data:existing,error:lookupError}=await supabaseAdmin
+      .from("profiles").select("user_id").eq("user_id",uid).maybeSingle();
+    if(lookupError){
+      console.error("[Profile API] Read-before-write failed:",lookupError);
+      return res.status(503).json({success:false,error:"Unable to verify profile storage."});
     }
 
-    if (!supabaseAdmin) {
-      serverProfiles[userId] = {
-        ...serverProfiles[userId],
-        ...upsertPayload,
-      };
-      return res.json({ success: true, profile: serverProfiles[userId] });
+    const pending={...changes,updated_at:new Date().toISOString()};
+    const query=existing
+      ? supabaseAdmin.from("profiles").update(pending).eq("user_id",uid)
+      : supabaseAdmin.from("profiles").insert(createCustomerProfileRecord(uid,req.user?.email,pending));
+    const {data:stored,error:writeError}=await query.select("*").single();
+    if(writeError || !stored || String(stored.user_id)!==uid){
+      console.error("[Profile API] Durable write failed:",writeError);
+      return res.status(503).json({success:false,error:"Profile update could not be confirmed."});
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('profiles')
-      .upsert(upsertPayload, { onConflict: "user_id" })
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Supabase profile save error:", error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.json({ success: true, profile: data });
-  } catch (err: any) {
-    console.error("Profile save error:", err);
-    return res.status(500).json({ error: err.message || "Failed to save profile" });
+    return res.json({success:true,profile:stored});
+  } catch(err:unknown){
+    if(err instanceof ProfilePolicyError)return res.status(err.status).json({success:false,error:err.message});
+    console.error("[Profile API] Unexpected save failure:",err);
+    return res.status(500).json({success:false,error:"Profile update failed."});
   }
 });
 
-app.get("/api/profiles/:id", authenticateJWT, async (req: any, res: any) => {
+app.get("/api/profiles/:id",authenticateJWT,async(req:any,res:any)=>{
+  res.setHeader("Cache-Control","no-store");
   try {
-    const { id } = req.params;
-
-    if (req.user?.id !== id && req.user?.uid !== id && req.user?.id !== 'anon') {
-      return res.status(403).json({ error: "Forbidden: ID mismatch" });
+    const uid=requireProfileOwner(req.user?.id ?? req.user?.uid,req.params?.id);
+    if(!supabaseAdmin){
+      return res.status(503).json({error:"Profile storage unavailable."});
     }
-
-    if (!supabaseAdmin) {
-      const profile = serverProfiles[id];
-      if (!profile) {
-        return res.status(404).json({ error: "Profile not found" });
-      }
-      return res.json({ profile });
+    const {data:profile,error}=await supabaseAdmin.from("profiles")
+      .select("*").eq("user_id",uid).maybeSingle();
+    if(error){
+      console.error("[Profile API] Read failed:",error);
+      return res.status(503).json({error:"Unable to load profile."});
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('profiles')
-      .select('*')
-      .eq('user_id', id)
-      .maybeSingle();
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    if (!data) {
-      return res.status(404).json({ error: "Profile not found" });
-    }
-
-    return res.json({ profile: data });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || "Failed to get profile" });
+    if(!profile)return res.status(404).json({error:"Profile not found."});
+    if(String(profile.user_id)!==uid)return res.status(403).json({error:"Profile belongs to another account."});
+    return res.json({profile});
+  } catch(err:unknown){
+    if(err instanceof ProfilePolicyError)return res.status(err.status).json({error:err.message});
+    console.error("[Profile API] Unexpected read failure:",err);
+    return res.status(500).json({error:"Unable to load profile."});
   }
 });
 
