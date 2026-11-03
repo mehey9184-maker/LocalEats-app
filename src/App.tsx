@@ -258,7 +258,6 @@ import {
 import { useOfflineSync, processPendingCancellationsQueue } from "./hooks/useOfflineSync";
 import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
 import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
-import { processNetworkQueue } from "./lib/networkQueue";
 import {
   hashString,
   handleSupabaseError,
@@ -1350,22 +1349,23 @@ export default function App() {
     setIsSyncing(true);
     triggerHaptic?.([40, 40]);
     try {
-      await processNetworkQueue(async (req) => {
-        console.log("[NetworkQueue Processor] Processing queued item:", req.id, req.type);
-        return true;
-      });
+      // Do not discard legacy queued requests or claim they were sent:
+      // this Client does not have an authoritative replay contract.
+      const pendingOrders = safeLocalStorageGet("offline_orders_queue", []);
+      if (Array.isArray(pendingOrders) && pendingOrders.length > 0) {
+        toast.info("Old offline order drafts are still on this device. No order was sent. Contact LocalEats support before clearing them.", {
+          position: "top-center"
+        });
+      }
 
-      safeLocalStorageSet("offline_orders_queue", "[]");
-      localStorage.removeItem("offline_orders_queue");
-      
       if (navigator.onLine) {
-        await fetchShopsData(3, true); // Force fresh Supabase fetch
+        await fetchShopsData(3, true);
         await runHeartbeatPing();
-        toast.success("Manual sync completed! Queue processed & fresh backend data fetched. 🔄", {
+        toast.success("Shop data refreshed. Saved offline requests were NOT submitted.", {
           position: "top-center"
         });
       } else {
-        toast.info("Offline queue processed locally. Reconnect to internet for fresh Supabase fetch. 📶", {
+        toast.info("You're offline. Saved requests remain on this device and have NOT been submitted.", {
           position: "top-center"
         });
       }
@@ -1382,14 +1382,12 @@ export default function App() {
     const handleOnline = () => {
       setIsOnline(true);
       setNotification({
-        message: "Back online! Syncing saved offline requests... 🍟",
-        type: "success",
+        message: "Back online. Refreshing shops; saved offline requests have NOT been submitted.",
+        type: "info",
       });
       runHeartbeatPing();
-      processNetworkQueue(async (req) => {
-        console.log("[Auto Sync on Reconnect]", req);
-        return true;
-      });
+      // This release has no authorized replay executor for old queued data.
+      // Never mark pending requests complete or remove them on reconnect.
       fetchShopsData();
       syncOfflineOrders();
     };
