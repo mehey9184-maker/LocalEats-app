@@ -6,7 +6,7 @@ export class PickupApiError extends Error {
  status:number; code:string;
  constructor(status:number,code:string,message:string) {super(message);this.status=status;this.code=code;}
 }
-export type PickupQuote={lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;subtotal_minor:number;pricing_fingerprint:string};
+export type PickupQuote={lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;delivery_fee_minor?:number;discount_minor?:number;tip_minor?:number;subtotal_minor:number;pricing_fingerprint:string};
 type ApiResponse={success?:boolean;code?:string;error?:string;order?:PickupOrder;replayed?:boolean;orders?:PickupOrder[];
  shops?:{id:string;name:string;location:string;distance_km:number}[];
  menu_items?:{id:string;name:string;price:number;is_available:boolean}[];quote?:PickupQuote;

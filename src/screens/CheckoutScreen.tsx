@@ -1,4 +1,5 @@
-import {quotePickupCart, blockPickupSubmission} from "../services/customerPickup";
+import {pickupQuoteAmounts} from "../services/pickupSummary";
+import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -610,6 +611,10 @@ export function CheckoutScreen({
 
   // Promo Code Validation
   const handleApplyPromo = async (overrideCode?: string) => {
+    if(deliveryType === "collection") {
+      setAppliedPromo(null);setPromoStatus("invalid");
+      setPromoError("Pickup discounts require server validation and are not available yet. No discount has been applied.");return;
+    }
     setPromoError("");
     setPromoStatus("checking");
     const rawCode = overrideCode || promoCodeInput;
@@ -768,7 +773,7 @@ export function CheckoutScreen({
 
   // Dynamic promo discounts
   let discountAmount = 0;
-  if (appliedPromo) {
+  if (deliveryType === "delivery" && appliedPromo) {
     if (appliedPromo.type === "percent") {
       discountAmount = (subtotal * appliedPromo.value) / 100;
     } else if (appliedPromo.type === "fixed") {
@@ -781,20 +786,24 @@ export function CheckoutScreen({
   const expressFee = (deliveryType === "delivery" && deliveryScheduleMode === "express") ? 10.0 : 0;
   const baseDeliveryFee = deliveryType === "delivery" ? deliveryFee : 0;
   const activeDeliveryFee = baseDeliveryFee + expressFee;
-  const serviceFee = subtotal > 0 ? 2.50 : 0;
+  const quotedPickup = deliveryType === "collection" && pickupQuote ? pickupQuoteAmounts(pickupQuote.quote) : null;
+  const serviceFee = deliveryType === "collection" ? (quotedPickup?.serviceFee ?? 0) : subtotal > 0 ? 2.50 : 0;
 
   const tipAmount = useMemo(() => {
+    if(deliveryType === "collection")return 0;
     if (tipPercentage === "custom") {
       return parseFloat(customTipInput) || 0;
     }
     return (subtotal * tipPercentage) / 100;
-  }, [tipPercentage, customTipInput, subtotal]);
+  }, [tipPercentage, customTipInput, subtotal, deliveryType]);
 
+  if(deliveryType === "collection")discountAmount=quotedPickup?.discount ?? 0;
   const estimatedTotalAmount = Math.max(
     0,
     subtotal - discountAmount + activeDeliveryFee + serviceFee + tipAmount,
   );
-  const totalAmount=pickupQuote ? pickupQuote.quote.total_minor/100 : estimatedTotalAmount;
+  const summarySubtotal=quotedPickup?.subtotal ?? subtotal;
+  const totalAmount=quotedPickup?.total ?? estimatedTotalAmount;
   const totalSavings = discountAmount;
 
   // Psychological Price Anchoring Calculations:
@@ -871,7 +880,7 @@ export function CheckoutScreen({
     }
   }, [isCoaDisabled, paymentMethod, deliveryType]);
 
-  useEffect(()=>{setPickupQuote(null);setQuoteConsent(false);setPickupQuoteError("");},[cart,customerName,customerPhone,paymentMethod,userLocation?.lat,userLocation?.lng]);
+  useEffect(()=>{setPickupQuote(null);setQuoteConsent(false);setPickupQuoteError("");},[cart,customerName,customerPhone,paymentMethod,deliveryType,userLocation?.lat,userLocation?.lng]);
   const reviewPickupQuote = async () => {
     if(quoteLock.current)return;
     quoteLock.current=true;setLoading(true);setPickupQuoteError("");
@@ -879,7 +888,10 @@ export function CheckoutScreen({
       if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
       if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
-      if(pickupQuote && quoteConsent)blockPickupSubmission();
+      if(pickupQuote && quoteConsent){
+        if(!pickupOrderingEnabled())blockPickupSubmission();
+        await submitPickupQuote(pickupQuote); setCart([]); onConfirm(); return;
+      }
       const result=await quotePickupCart(cart,userLocation,customerName,customerPhone,paymentMethod);
       setPickupQuote(result);setQuoteConsent(false);
     } catch(error){setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");}
@@ -1550,7 +1562,7 @@ export function CheckoutScreen({
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
-        <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>
+        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>}
         {!primaryShop && <p role="alert" className="text-sm text-orange-700 dark:text-orange-300">Your cart is preserved. Pickup shop details are unavailable. Return to browsing and reload shops before reviewing a quote.</p>}
         {/* Unified Card Container */}
         <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
@@ -3458,10 +3470,10 @@ export function CheckoutScreen({
             <div className="flex items-center justify-between border-b border-dashed border-slate-800 pb-3">
               <div>
                 <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">
-                  Order Tax Invoice
+                  Order Summary
                 </h4>
                 <p className="text-[9px] font-mono text-slate-500 uppercase mt-0.5">
-                  LOCAL FOODS CORP • REG SECURED
+                  {deliveryType === "collection" ? "Pickup · Pay at shop" : "LocalEats"}
                 </p>
               </div>
               <QrCode className="w-8 h-8 text-slate-500" />
@@ -3471,7 +3483,8 @@ export function CheckoutScreen({
               {/* Items Breakdown */}
               <div className="flex flex-col gap-2 pb-2 border-b border-dashed border-slate-800 max-h-[220px] sm:max-h-[280px] overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-slate-800">
                 {cart.map((item, idx) => {
-                  const itemTotal = (item.price + (item.selectedCustomizations?.reduce((s, c) => s + c.price, 0) || 0)) * item.quantity;
+                  const serverLine=pickupQuote?.quote.lines.find(line=>line.menu_item_id===item.id);
+                  const itemTotal = serverLine ? serverLine.line_minor/100 : (item.price + (item.selectedCustomizations?.reduce((s, c) => s + c.price, 0) || 0)) * item.quantity;
                   return (
                     <div key={idx} className="flex justify-between items-start text-slate-300">
                       <div className="flex flex-col gap-0.5">
@@ -3492,18 +3505,18 @@ export function CheckoutScreen({
               
               <div className="flex justify-between items-center text-slate-400 pt-1">
                 <span className="uppercase tracking-wider">Subtotal</span>
-                <span className="font-mono">R {subtotal.toFixed(2)}</span>
+                <span className="font-mono">R {summarySubtotal.toFixed(2)}</span>
               </div>
 
               <div className="flex justify-between items-center text-slate-400/80 text-[11px]">
                 <span className="uppercase tracking-wider flex items-center gap-1">
                   <Percent className="w-3 h-3 text-orange-500/80" />
-                  Tax / VAT (15% Included)
+                  {deliveryType === "collection" ? "Additional LocalEats VAT" : "Tax / VAT (15% Included)"}
                 </span>
-                <span className="font-mono">R {((subtotal - discountAmount) * 15 / 115).toFixed(2)}</span>
+                <span className="font-mono">R {(deliveryType === "collection" ? 0 : (subtotal - discountAmount) * 15 / 115).toFixed(2)}</span>
               </div>
 
-              {appliedPromo && (
+              {deliveryType === "delivery" && appliedPromo && (
                 <div className="flex justify-between items-center text-emerald-400 bg-emerald-950/40 p-3 rounded-2xl border border-emerald-500/30 animate-pulse">
                   <span className="uppercase tracking-wider flex items-center gap-1.5 font-extrabold text-[10px]">
                     <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -3518,6 +3531,8 @@ export function CheckoutScreen({
                 </div>
               )}
 
+              {deliveryType === "collection" && <div className="flex justify-between items-center text-slate-400"><span>Pickup delivery fee</span><span className="font-mono">R 0.00</span></div>}
+              {deliveryType === "collection" && discountAmount > 0 && <div className="flex justify-between items-center text-emerald-400"><span>Server-validated discount</span><span className="font-mono">- R {discountAmount.toFixed(2)}</span></div>}
               {deliveryType === "delivery" && (
                 <div className="flex justify-between items-center text-orange-400">
                   <span className="uppercase tracking-wider flex items-center gap-1">
@@ -3545,7 +3560,7 @@ export function CheckoutScreen({
               <div className="flex justify-between items-center text-slate-400/80 text-[11px]">
                 <span className="uppercase tracking-wider flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
-                  Service & Packaging Fee
+                  {deliveryType === "collection" ? "Pickup service fee" : "Service & Packaging Fee"}
                 </span>
                 <span className="font-mono">R {serviceFee.toFixed(2)}</span>
               </div>
@@ -3572,7 +3587,7 @@ export function CheckoutScreen({
 
               <div className="border-t border-dashed border-slate-800 pt-3 flex justify-between items-center text-slate-100">
                 <span className="text-sm font-black uppercase tracking-widest">
-                  Grand Total Amount
+                  {deliveryType === "collection" ? (quotedPickup ? "Total payable at shop" : "Estimated pay at shop") : "Grand Total Amount"}
                 </span>
                 <span className="text-2xl font-black font-mono text-orange-500">
                   <AnimatedPrice value={totalAmount} />
@@ -3587,12 +3602,13 @@ export function CheckoutScreen({
 
           <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
             <p className="font-bold">Pickup · Pay at the shop</p>
-            <p>Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned.</p>
+            <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
+            {pickupOrderingEnabled() && <button type="button" disabled={loading} onClick={async()=>{setLoading(true);try{await submitPickupQuote(null);setCart([]);onConfirm();}catch(e){setPickupQuoteError(e instanceof Error?e.message:"Submission remains unconfirmed.");}finally{setLoading(false);}}}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
             {pickupQuote && <>
               <ul>{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id}>{line.quantity} × {line.name}: R {(line.line_minor/100).toFixed(2)}</li>)}</ul>
               <p>Server total: R {(pickupQuote.quote.total_minor/100).toFixed(2)}</p>
-              <p>Service fee: R {(pickupQuote.quote.service_fee_minor/100).toFixed(2)} · No delivery fee</p>
+              <p>Service fee: R {(pickupQuote.quote.service_fee_minor/100).toFixed(2)} · No delivery fee · Pay at shop</p>
               <label className="flex items-center gap-2"><input type="checkbox" checked={quoteConsent} onChange={e=>setQuoteConsent(e.target.checked)}/>I have reviewed this server quote. This does not place an order.</label>
             </>}
           </section>
@@ -3632,7 +3648,7 @@ export function CheckoutScreen({
                 distance !== null &&
                 distance > ZONE_B_LIMIT
                   ? "Out of Delivery Range"
-                  : pickupQuote && quoteConsent ? "Ordering not enabled yet" : "Review pickup quote"}
+                  : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
               </span>
             </button>
             <button

@@ -18,6 +18,7 @@ import { DEFAULT_MENU_IMAGE } from "../utils";
 
 interface CartDrawerProps {
   isOpen: boolean;
+  fulfillment?: "collection" | "delivery";
   onClose: () => void;
   cart: CartItem[];
   shops: Shop[];
@@ -41,6 +42,7 @@ interface CartDrawerProps {
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
+  fulfillment = "delivery",
   onClose,
   cart,
   shops,
@@ -59,8 +61,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   }, 0);
 
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const estDeliveryFee = 15.0;
-  const serviceFee = 2.5;
+  const estDeliveryFee = fulfillment === "collection" ? 0 : 15.0;
+  const serviceFee = fulfillment === "collection" ? 0 : 2.5;
   const estimatedTotal = subtotal > 0 ? subtotal + estDeliveryFee + serviceFee : 0;
 
   const handleCheckoutClick = () => {
@@ -258,7 +260,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span className="font-bold text-slate-900 dark:text-white">R {subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
-                  <span>Estimated Delivery</span>
+                  <span>{fulfillment === "collection" ? "Pickup delivery fee" : "Estimated Delivery"}</span>
                   <span className="font-bold text-slate-900 dark:text-white">R {estDeliveryFee.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
@@ -266,7 +268,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span className="font-bold text-slate-900 dark:text-white">R {serviceFee.toFixed(2)}</span>
                 </div>
                 <div className="border-t border-slate-200 dark:border-slate-700 pt-2 flex justify-between text-sm font-black text-slate-900 dark:text-white">
-                  <span>Est. Total</span>
+                  <span>{fulfillment === "collection" ? "Estimated pay at shop" : "Est. Total"}</span>
                   <span className="text-orange-600 dark:text-orange-400 font-mono">
                     R {estimatedTotal.toFixed(2)}
                   </span>

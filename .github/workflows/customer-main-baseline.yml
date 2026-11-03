@@ -1,0 +1,47 @@
+name: Customer Main Baseline Release Gate
+
+on:
+  push:
+    branches:
+      - release/customer-live-baseline-20261103
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  customer-baseline:
+    name: Customer baseline security, TypeScript and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Validate client pickup, checkout and pricing regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: Confirm experimental P7 simulation is absent from release
+        run: |
+          node --input-type=module <<'JS'
+          import {readFileSync, existsSync} from "node:fs";
+          import assert from "node:assert/strict";
+          assert.equal(existsSync("src/services/p7PreviewShop.ts"),false,"P7 test placement must not reach main");
+          for (const file of ["src/App.tsx","src/screens/CheckoutScreen.tsx","src/components/ShopCard.tsx"]) {
+            const source=readFileSync(file,"utf8");
+            for (const flag of ["VITE_P7_NEARBY_TEST_MODE","Simulate test checkout · no order","Pilot shops in Tembisa & Ivory Park"]) {
+              assert.equal(source.includes(flag),false,`${file}: test-only UI leaked: ${flag}`);
+            }
+          }
+          console.log("Safe baseline: no P7 simulated GPS, menu placement or fake checkout.");
+          JS
+      - name: TypeScript
+        run: npm run lint
+      - name: Full client build
+        run: npm run build
