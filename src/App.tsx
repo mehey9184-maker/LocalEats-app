@@ -686,7 +686,7 @@ export default function App() {
   const p7TestEnabled=p7PreviewEnabled(
     import.meta.env.VITE_P7_NEARBY_TEST_MODE,
     typeof window==="undefined"?"":window.location.hostname,
-  );
+  ) && !pickupOrderingEnabled();
   const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
   useEffect(()=>{
     if(!p7TestEnabled){setP7TestShop(null);return;}
