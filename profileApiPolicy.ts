@@ -18,7 +18,10 @@ export function requireProfileOwner(authenticatedId:unknown, requestedId:unknown
 }
 
 const textField=(value:unknown, max:number, name:string, allowBlank=true):string|null=>{
-  if(value===null) return null;
+  if(value===null) {
+    if(!allowBlank)throw new ProfilePolicyError(`Invalid ${name}.`);
+    return null;
+  }
   if(typeof value!=="string")throw new ProfilePolicyError(`Invalid ${name}.`);
   const text=value.trim();
   if(text.length>max || (!allowBlank&&!text))throw new ProfilePolicyError(`Invalid ${name}.`);
@@ -34,7 +37,15 @@ export function buildCustomerProfilePatch(input:unknown):Record<string,unknown>{
   if(fullName!==undefined)patch.fullName=textField(fullName,120,"full name",false);
   const address=body.address??body.default_address;
   if(address!==undefined)patch.address=textField(address,500,"address");
-  for(const [key,max] of [["phone",32],["city",120],["country",120],["language",12]] as const){
+  if(body.phone!==undefined){
+    const raw=textField(body.phone,32,"phone");
+    const digits=raw?.replace(/\\D/g,"") ?? "";
+    if(!digits)patch.phone=null;
+    else if(/^0[0-9]{9}$/.test(digits))patch.phone="+27"+digits.slice(1);
+    else if(/^27[0-9]{9}$/.test(digits))patch.phone="+"+digits;
+    else throw new ProfilePolicyError("Enter a valid South African phone number.");
+  }
+  for(const [key,max] of [["city",120],["country",120],["language",12]] as const){
     if(body[key]!==undefined)patch[key]=textField(body[key],max,key);
   }
   const photo=body.photo_url??body.avatar_url??body.photoURL;
