@@ -46,6 +46,15 @@ test("P1 refuses unconfirmed, fabricated, or mismatched save responses",async()=
  await assert.rejects(saveConfirmedCustomerProfile("ownerA",auth,{photoURL:"https://somewhere/picture.jpg"},async()=>response(true,{success:true})),/authenticated LocalEats upload/);
 });
 
+test("P1 ignores stale async profile responses and never auto-writes a fallback profile during reads",()=>{
+ const hydration=source.slice(source.indexOf("const fetchUserProfile = useCallback"),source.indexOf("// Resubscribe only a previously opted-in account"));
+ assert.match(hydration,/Profile response identity mismatch/);
+ assert.match(hydration,/firebaseAuth\.currentUser\?\.uid!==userId/);
+ assert.match(hydration,/safePrev:UserProfile=prev\.id===userId/);
+ assert.doesNotMatch(hydration,/Profile Auto-Upsert Notice/);
+ assert.doesNotMatch(hydration,/userMeta\.role/);
+});
+
 test("P1 hides stale account profiles and avoids optimistic queue-based save in profile route",()=>{
  assert.match(source,/userProfile\?\.id===session\.user\.id/);
  assert.match(source,/saveConfirmedCustomerProfile\(uid,firebaseAuth\.currentUser,data\)/);
