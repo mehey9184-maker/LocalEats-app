@@ -671,9 +671,18 @@ export default function App() {
   const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
   // This public, read-only directory is separate from the 4km orderable shops.
   // Never pass these metadata records into cart/checkout or current prices.
+  const p7TestEnabled=p7PreviewEnabled(
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":window.location.hostname,
+  ) && !pickupOrderingEnabled();
   const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
   const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
   useEffect(()=>{
+    // The public directory is ONLY necessary for the P7 owner test.
+    // Never make this extra API request in Production or normal Previews.
+    if(!p7TestEnabled){
+      setPilotDirectoryRows([]);setPilotDirectoryStatus("ready");return;
+    }
     let active=true;
     void customerPickupApi.approvedShops().then(result=>{
       if(!Array.isArray(result.shops))throw new Error("Invalid approved catalog.");
@@ -682,11 +691,7 @@ export default function App() {
       if(active){setPilotDirectoryRows([]);setPilotDirectoryStatus("error");}
     });
     return ()=>{active=false;};
-  },[]);
-  const p7TestEnabled=p7PreviewEnabled(
-    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
-    typeof window==="undefined"?"":window.location.hostname,
-  ) && !pickupOrderingEnabled();
+  },[p7TestEnabled]);
   const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
   useEffect(()=>{
     if(!p7TestEnabled){setP7TestShop(null);return;}
