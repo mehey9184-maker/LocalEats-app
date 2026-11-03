@@ -1180,7 +1180,11 @@ export default function App() {
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     // The Preview's explicit test switch may use a labelled simulated customer
     // position for READ-ONLY catalog browsing only. Real orders stay disabled.
-    if (!pickupDiscoveryLocation) return;
+    // Keep the original real-device GPS path intact by default.
+    // The opt-in P7 test position is permitted ONLY for catalog browsing.
+    if(!previewTestLocation){
+      if (!userLocation) return;
+    }
     const generation=++catalogGeneration.current;
     const locationChanged=loadedCatalogLocation.current!==null &&
       distanceKm(loadedCatalogLocation.current,pickupDiscoveryLocation)>0.15;
@@ -1198,7 +1202,9 @@ export default function App() {
     setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
     setIsSyncing(true); setFetchError(null);
     try {
-      const result=await readPickupCatalog(pickupDiscoveryLocation);
+      const result=previewTestLocation
+        ? await readPickupCatalog(previewTestLocation)
+        : await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
       loadedCatalogLocation.current=pickupDiscoveryLocation;
       setShops(result);
@@ -1222,7 +1228,7 @@ export default function App() {
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
-  }, [pickupDiscoveryLocation?.lat,pickupDiscoveryLocation?.lng]);
+  }, [pickupDiscoveryLocation?.lat,pickupDiscoveryLocation?.lng,Boolean(previewTestLocation)]);
 
   const syncOfflineOrders = useCallback(async (retryCount = 0) => {
     return; // Old saved intents must never be replayed as authoritative orders.
