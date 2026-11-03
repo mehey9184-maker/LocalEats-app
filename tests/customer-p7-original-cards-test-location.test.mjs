@@ -33,7 +33,8 @@ test("P7 keeps GPS independent and test switch session-only; original cards open
  assert.match(app,/setPreviewTestLocation\(previewMyKotaPosition\)/);
  assert.match(app,/setPreviewTestLocation\(null\)/);
  assert.match(app,/const visibleShops = pickupDiscoveryLocation \? shops\.filter/);
- assert.match(app,/readPickupCatalog\(pickupDiscoveryLocation\)/);
+ assert.match(app,/readPickupCatalog\(previewTestLocation\)/);
+ assert.match(app,/readPickupCatalog\(userLocation\)/);
  assert.match(app,/onStoreInfo=\{onStoreInfo\}/);
  assert.match(app,/<StoreInfoScreen/);
  assert.match(app,/shop=\{visibleShops\.find/);
