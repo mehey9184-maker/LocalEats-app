@@ -1,4 +1,4 @@
-import {getStagingProfileServices,handleProfileCollection} from "../src/server/previewProfileApi.ts";
+import {getStagingProfileServices,handleProfileCollection} from "../src/server/previewProfileApi.js";
 
 // Dedicated Vercel Node function. It NEVER imports the legacy Express server
 // or its unsafe historical /api/orders routes.
