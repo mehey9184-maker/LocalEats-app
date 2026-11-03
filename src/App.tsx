@@ -673,7 +673,7 @@ export default function App() {
   // Never pass these metadata records into cart/checkout or current prices.
   const p7TestEnabled=p7PreviewEnabled(
     import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
-    typeof window==="undefined"?"":window.location.hostname,
+    typeof window==="undefined"?"":(window.location?.hostname || ""),
   ) && !pickupOrderingEnabled();
   const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
   const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
