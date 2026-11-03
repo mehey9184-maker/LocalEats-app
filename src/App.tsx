@@ -7,7 +7,7 @@ import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./ser
 
 // removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
-import { DiagnosticTool } from "./components/DiagnosticTool";
+// The legacy auth diagnostic panel is not exposed in Customer Profile.
 import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
@@ -286,6 +286,7 @@ import {pickupInstallationId,existingPickupInstallationId} from "./services/cust
 import {nearestHomeDistance,shouldUpdateHomeLocation} from "./services/homeProximity";
 import {customerOrderStatusNotices,type CustomerStatusOrder} from "./services/customerOrderStatusNotices";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import {saveConfirmedCustomerProfile} from "./services/customerProfilePolicy";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -3557,20 +3558,27 @@ export default function App() {
                 />
               )}
               {currentScreen === "profile" && (
-                <ProfileScreen
-                  onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onSave={async (data) => {
-                    await handleUpdateProfile(data, true, () => {
-                      setCurrentScreen(previousScreen || "home");
-                    });
-                  }}
-                  userProfile={userProfile}
-                  completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={logoutCustomer}
-                  setNotification={setNotification}
-                  triggerHaptic={triggerHaptic}
-                  isOnline={isOnline}
-                />
+                session?.user?.id && userProfile?.id===session.user.id ? (
+                  <ProfileScreen
+                    onBack={() => setCurrentScreen(previousScreen || "home")}
+                    onSave={async (data) => {
+                      const uid=session.user.id;
+                      const confirmed=await saveConfirmedCustomerProfile(uid,firebaseAuth.currentUser,data);
+                      if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Account changed while saving your profile.");
+                      setUserProfile(prev=>prev.id===uid?{...prev,...confirmed}:prev);
+                    }}
+                    userProfile={userProfile}
+                    completedOrdersCount={orders.filter(o=>o.user_id===session.user.id && (o.status==="completed"||o.status==="delivered")).length}
+                    onLogout={logoutCustomer}
+                    setNotification={setNotification}
+                    triggerHaptic={triggerHaptic}
+                    isOnline={isOnline}
+                  />
+                ) : (
+                  <div role="status" className="max-w-md mx-auto min-h-screen bg-white dark:bg-slate-950 p-8 text-center text-sm text-slate-600 dark:text-slate-300">
+                    {session?.user?.id?"Loading this account's profile…":"Sign in to view and edit your profile."}
+                  </div>
+                )
               )}
               {currentScreen === "contact" && (
                 <ContactScreen
@@ -7126,7 +7134,7 @@ function ProfileScreen({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               className="w-32 h-32 rounded-full border-4 border-white dark:border-slate-800 shadow-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center relative cursor-pointer"
-              onClick={() => setShowGalleryModal(true)}
+              
             >
               <AnimatePresence mode="wait">
                 <motion.img
@@ -7155,35 +7163,7 @@ function ProfileScreen({
                 </motion.div>
               )}
             </motion.div>
-            {/* Action buttons for Gallery Upload and Live Camera */}
-            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex justify-center gap-2 z-10 w-max">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowGalleryModal(true);
-                }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
-                title="Choose photo from gallery"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <span className="text-[11px] font-black">Gallery</span>
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  startCamera();
-                }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 border-emerald-500/30"
-                title="Take photo using camera"
-              >
-                <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="text-[11px] font-black">Take Photo</span>
-              </button>
-            </div>
+            {/* Photo editing is unavailable until an account-scoped upload API exists. */}
           </div>
 
           <div className="text-center mt-6">
@@ -7202,66 +7182,11 @@ function ProfileScreen({
             <p className="text-xs text-slate-400 mb-2">{userProfile.email}</p>
           </div>
 
-          {/* Loyalty Tier Badge */}
-          <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 flex flex-col items-center gap-3 shadow-sm mt-1">
-            {completedOrdersCount >= 10 ? (
-              // Gold Tier VIP
-              <div className="flex flex-col items-center w-full">
-                <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-                  <div className="absolute inset-0 bg-amber-500/10 rounded-full blur-xl animate-pulse"></div>
-                  <div className="w-14 h-14 bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-300 rounded-2xl flex items-center justify-center border border-amber-400 shadow-lg relative z-10">
-                    <Award className="w-8 h-8 text-white drop-shadow-md" />
-                  </div>
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-amber-200 dark:border-amber-900/40">
-                    🏆 Gold VIP Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • Ultimate Local Eater!
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-amber-500 h-full rounded-full w-full"></div>
-                </div>
-              </div>
-            ) : completedOrdersCount >= 5 ? (
-              // Silver Tier
-              <div className="flex flex-col items-center w-full">
-                <div className="w-14 h-14 bg-gradient-to-tr from-slate-400 via-slate-100 to-slate-300 rounded-2xl flex items-center justify-center border border-slate-200 shadow-md">
-                  <Award className="w-8 h-8 text-slate-600 drop-shadow-sm" />
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-slate-200 dark:border-slate-700">
-                    ⭐ Silver Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • {10 - completedOrdersCount} more to Gold
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-slate-400 h-full rounded-full" style={{ width: `${(completedOrdersCount / 10) * 100}%` }}></div>
-                </div>
-              </div>
-            ) : (
-              // Bronze Tier
-              <div className="flex flex-col items-center w-full">
-                <div className="w-14 h-14 bg-gradient-to-tr from-amber-700 via-orange-500 to-amber-600 rounded-2xl flex items-center justify-center border border-orange-400 shadow-sm">
-                  <Award className="w-8 h-8 text-amber-100" />
-                </div>
-                <div className="mt-2.5 text-center">
-                  <span className="text-[10px] bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-orange-200 dark:border-orange-900/30">
-                    🥉 Bronze Tier
-                  </span>
-                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
-                    {completedOrdersCount} orders completed • {5 - completedOrdersCount} more to Silver
-                  </p>
-                </div>
-                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3">
-                  <div className="bg-orange-500 h-full rounded-full" style={{ width: `${(completedOrdersCount / 5) * 100}%` }}></div>
-                </div>
-              </div>
-            )}
+          {/* Only actual API-confirmed orders count; no unimplemented rewards. */}
+          <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 text-center shadow-sm mt-1">
+            <p className="text-2xl font-black text-slate-900 dark:text-white">{completedOrdersCount}</p>
+            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Collected orders in confirmed history</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Loyalty rewards are not active.</p>
           </div>
         </div>
 
@@ -7530,8 +7455,7 @@ function ProfileScreen({
           </button>
         </div>
 
-        {/* Diagnostic Tool for debugging split-brain auth */}
-        <DiagnosticTool />
+        {/* Developer-only diagnostics are not exposed to customers. */}
       </main>
 
       {/* Cropper Modal */}
@@ -7779,65 +7703,7 @@ function ProfileScreen({
         </div>
       )}
 
-      {/* Mock Selection Gallery Overlay */}
-      {showGalleryModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex flex-col justify-end animate-in slide-in-from-bottom duration-300">
-          <div className="bg-white dark:bg-slate-900 rounded-t-3xl p-6 flex flex-col h-[70dvh] shadow-xl border-t border-slate-200 dark:border-slate-800">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-black text-slate-900 dark:text-white">Recent Images</h3>
-              <button onClick={() => setShowGalleryModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <div className="grid grid-cols-3 gap-2 pb-4">
-                {/* Mock recent images */}
-                {Array.from({ length: 15 }).map((_, i) => (
-                  <div 
-                    key={i} 
-                    onClick={() => {
-                      const canvas = document.createElement("canvas");
-                      canvas.width = 400;
-                      canvas.height = 400;
-                      const ctx = canvas.getContext("2d");
-                      if (ctx) {
-                        ctx.fillStyle = `hsl(${i * 25}, 70%, 60%)`;
-                        ctx.fillRect(0, 0, 400, 400);
-                        canvas.toBlob((blob) => {
-                          if (blob) {
-                            const file = new File([blob], `gallery_${i}.jpg`, { type: "image/jpeg" });
-                            const localUrl = URL.createObjectURL(file);
-                            setImageToCrop(localUrl);
-                            setShowCropper(true);
-                            setShowGalleryModal(false);
-                          }
-                        }, "image/jpeg");
-                      }
-                    }}
-                    className="aspect-square bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm hover:opacity-80 active:scale-95 transition-all cursor-pointer relative"
-                  >
-                    <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, hsl(${i * 25}, 70%, 60%), hsl(${i * 25 + 40}, 80%, 50%))` }} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2 shrink-0">
-              <button 
-                onClick={() => {
-                  setShowGalleryModal(false);
-                  fileInputRef.current?.click();
-                }}
-                className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition-all cursor-pointer shadow-sm"
-              >
-                <FolderOpen className="w-5 h-5" />
-                Browse Device Files
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* No fabricated recent-device images or unsupported avatar upload choices. */}
     </div>
   );
 }
