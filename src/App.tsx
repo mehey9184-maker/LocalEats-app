@@ -294,7 +294,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
-import {verifiedPilotBrowseDirectory} from "./services/verifiedPilotBrowseDirectory";
+import {P7_MY_KOTA_ID,p7PreviewEnabled,previewMyKotaShop,previewDisplayShop} from "./services/p7PreviewShop";
 import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
@@ -683,6 +683,24 @@ export default function App() {
     });
     return ()=>{active=false;};
   },[]);
+  const p7TestEnabled=p7PreviewEnabled(
+    import.meta.env.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":window.location.hostname,
+  );
+  const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
+  useEffect(()=>{
+    if(!p7TestEnabled){setP7TestShop(null);return;}
+    const row=pilotDirectoryRows.find((s:any)=>s?.id===P7_MY_KOTA_ID);
+    if(!row){setP7TestShop(null);return;}
+    let current=true;
+    void customerPickupApi.menu(P7_MY_KOTA_ID)
+      .then(result=>{
+        const verified=previewMyKotaShop(row,result.menu_items);
+        if(current)setP7TestShop(verified);
+      })
+      .catch(()=>{if(current)setP7TestShop(null);});
+    return ()=>{current=false;};
+  },[p7TestEnabled,pilotDirectoryRows]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -948,6 +966,8 @@ export default function App() {
     Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
     distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
   ) : [];
+  // Display-only placement: original card/menu/address; not added to the API pickup catalog.
+  const displayShops=previewDisplayShop(visibleShops,p7TestShop);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -3185,12 +3205,10 @@ export default function App() {
                 <HomeScreen
                   userProfile={userProfile}
                   session={session}
-                  shops={visibleShops}
+                  shops={displayShops}
                   loadingShops={loadingShops}
                   closedPickupShops={closedPickupShops}
                   closedPickupShopsLoading={closedPickupShopsLoading}
-                  pilotDirectoryRows={pilotDirectoryRows}
-                  pilotDirectoryStatus={pilotDirectoryStatus}
                   fetchError={fetchError}
                   isOnline={isOnline}
                   onSettings={() => {
@@ -3384,7 +3402,7 @@ export default function App() {
               {currentScreen === "discover" && (
                 <DiscoverScreen
                   userProfile={userProfile}
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onExplore={() => {
                     setPreviousScreen("discover");
@@ -3408,7 +3426,7 @@ export default function App() {
               )}
               {currentScreen === "explore" && (
                 <ExploreScreen
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onDiscover={() => {
                     setPreviousScreen("explore");
@@ -3431,14 +3449,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && (visibleShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
+              {currentScreen === "store-info" && (displayShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
-                  readOnlyClosed={!visibleShops.some(s=>String(s.id)===String(selectedStoreId))}
+                  shop={displayShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
+                  readOnlyClosed={!displayShops.some(s=>String(s.id)===String(selectedStoreId))}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -3605,7 +3623,7 @@ export default function App() {
                     <CheckoutScreen
                       userProfile={userProfile}
                       session={session}
-                      shops={visibleShops}
+                      shops={displayShops}
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
@@ -3908,8 +3926,6 @@ function HomeScreen({
   loadingShops,
   closedPickupShops,
   closedPickupShopsLoading,
-  pilotDirectoryRows,
-  pilotDirectoryStatus,
   fetchError,
   onSettings,
   onProfile,
@@ -3951,8 +3967,6 @@ function HomeScreen({
   loadingShops: boolean;
   closedPickupShops: ClosedPickupShopPreview[];
   closedPickupShopsLoading: boolean;
-  pilotDirectoryRows: unknown[];
-  pilotDirectoryStatus: "loading"|"ready"|"error";
   fetchError: string | null;
   onSettings: () => void;
   onProfile: () => void;
@@ -4378,11 +4392,7 @@ function HomeScreen({
     0,
   );
 
-  const browseOnlyPilotShops = useMemo(()=>
-    verifiedPilotBrowseDirectory(
-      pilotDirectoryRows,userLocation,new Set(shops.map(shop=>shop.id)),
-    ),[pilotDirectoryRows,userLocation?.lat,userLocation?.lng,shops]);
-  const matchingClosedShops = useMemo(() => {
+removeBrowseMemo  const matchingClosedShops = useMemo(() => {
     if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
     const query=debouncedSearchQuery.trim();
     const activeIds=new Set(shops.map(shop=>shop.id));
@@ -5154,7 +5164,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} In range{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
+                  {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
             </div>
@@ -5181,48 +5191,12 @@ function HomeScreen({
             </div>
           </div>
 
-          {!session && (
-            <div role="status" className="mb-3 rounded-xl border border-blue-100 dark:border-blue-900/70 bg-blue-50/70 dark:bg-blue-950/30 px-4 py-3 text-xs text-slate-700 dark:text-slate-200 flex flex-wrap items-center gap-2">
-              <span>Browsing as a guest on this Preview. Previous order history requires your original account.</span>
-              <button type="button" onClick={()=>setCurrentScreen("login")}
-                className="min-h-9 px-3 rounded-lg bg-slate-900 dark:bg-slate-700 text-white font-bold">
-                Sign in for order history
-              </button>
-            </div>
+          {shops.some(shop=>shop.is_test_store===true) && (
+            <p role="status" className="mb-3 text-xs font-semibold text-orange-700 dark:text-orange-300">
+              Preview test location: My-Kota is shown here for UI testing only.
+              Its real shop remains in Ivory Park. No real order can be submitted.
+            </p>
           )}
-          {sortedShops.length===0 && matchingClosedShops.length===0 && (
-            <section aria-label="Approved pilot shops browse only"
-              className="mb-5 w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-base font-black text-slate-900 dark:text-white">Pilot shops in Tembisa & Ivory Park</h4>
-                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">Browse only · no ordering</span>
-              </div>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                These are approved, existing shops. A shop can be visible here even when pickup is unavailable
-                at your actual location. Only shops verified within 4 km can accept pickup orders.
-              </p>
-              {pilotDirectoryStatus==="loading" && <p role="status" className="mt-3 text-xs text-slate-500">Checking approved shops from the catalog...</p>}
-              {pilotDirectoryStatus==="error" && <p role="alert" className="mt-3 text-xs text-orange-700 dark:text-orange-300">The approved shop directory did not load. Please reload to retry. This does not mean your shops were deleted.</p>}
-              {pilotDirectoryStatus==="ready" && browseOnlyPilotShops.length===0 && <p className="mt-3 text-xs text-slate-500">No verified Tembisa or Ivory Park shop records could be listed.</p>}
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {browseOnlyPilotShops.map(shop=>(
-                  <article key={shop.id} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3">
-                    <div className="flex justify-between gap-2 items-start">
-                      <p className="font-black text-sm text-slate-900 dark:text-white">{shop.name}</p>
-                      <span className="shrink-0 text-[10px] font-bold text-orange-700 dark:text-orange-300">Browse only</span>
-                    </div>
-                    <p className="text-[11px] mt-1 text-slate-500 dark:text-slate-400">{shop.location}</p>
-                    <p className="mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      {shop.reason==="outside_radius"?"Outside 4 km pickup area":
-                       shop.reason==="not_accepting"?"Not accepting orders":"Pickup eligibility not confirmed"}
-                      {shop.distanceKm!==null && <span className="ml-2 font-normal">{shop.distanceKm.toFixed(1)} km from your location</span>}
-                    </p>
-                  </article>
-                ))}
-              </div>
-            </section>
-          )}
-
           {renderedShopList}
         </section>
 
@@ -5231,7 +5205,7 @@ function HomeScreen({
             Checking nearby shops outside trading hours...
           </div>
         )}
-        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && pilotDirectoryStatus!=="loading" && browseOnlyPilotShops.length===0 && (
+        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -8826,7 +8800,12 @@ function StoreInfoScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
-      <RestaurantSchema shop={shop} />
+      {!shop.is_test_store && <RestaurantSchema shop={shop} />}
+      {shop.is_test_store===true && (
+        <div role="status" className="bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-200 px-4 py-2 text-xs font-bold text-center">
+          Simulated nearby listing for Preview testing. Actual location: {shop.address}. No real order, payment or merchant notification.
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
