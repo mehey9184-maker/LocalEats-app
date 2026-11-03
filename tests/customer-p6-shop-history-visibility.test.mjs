@@ -62,7 +62,13 @@ test("P6 Home lists public approved shops separately without creating a cart/che
  assert.match(app,/setPilotDirectoryRows\(result\.shops\)/);
  assert.match(app,/verifiedPilotBrowseDirectory\(/);
  assert.match(app,/aria-label="Approved pilot shops browse only"/);
- assert.match(app,/Pilot shops · browse only/);
+ assert.match(app,/Pilot shops in Tembisa & Ivory Park/);
+ assert.match(app,/Browse only · no ordering/);
+ assert.match(app,/Sign in for order history/);
+ assert.match(app,/sortedShops\.length} In range/);
+ // Visible directory is placed before the huge fallback, not below it.
+ assert.ok(app.indexOf("Pilot shops in Tembisa & Ivory Park") < app.indexOf("No Shops Found"));
+ assert.match(app,/pilotDirectoryStatus!=="loading" && browseOnlyPilotShops\.length===0/);
  assert.match(app,/Outside 4 km pickup area/);
  assert.match(app,/No verified Tembisa or Ivory Park shop records/);
  assert.match(app,/PROFILE_P5_ENABLE_STAGING_WRITES|pilotDirectoryStatus/);
