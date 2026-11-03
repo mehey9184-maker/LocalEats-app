@@ -20,7 +20,9 @@ export function previewMyKotaShop(shop:unknown,items:unknown):Shop|null {
      typeof s.location!=="string" || !/ivory\s+park/i.test(s.location))return null;
   const lat=s.lat??s.latitude,lng=s.lng??s.longitude;
   if(typeof lat!=="number" || typeof lng!=="number" || !Number.isFinite(lat) ||
-     !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180)return null;
+     !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 ||
+     (typeof s.latitude==="number" && Math.abs(s.latitude-lat)>0.00001) ||
+     (typeof s.longitude==="number" && Math.abs(s.longitude-lng)>0.00001))return null;
   const menu:MenuItem[]=[];
   for(const raw of items) {
     if(!raw || typeof raw!=="object" || Array.isArray(raw))return null;
