@@ -5,7 +5,8 @@
  * Neither roles nor email addresses are ever copied from request bodies.
  */
 export class ProfilePolicyError extends Error {
-  constructor(message:string, public status=400){super(message);this.name="ProfilePolicyError";}
+  readonly status:number;
+  constructor(message:string,status=400){super(message);this.name="ProfilePolicyError";this.status=status;}
 }
 
 export function requireProfileOwner(authenticatedId:unknown, requestedId:unknown):string {
