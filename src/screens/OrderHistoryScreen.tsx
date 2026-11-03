@@ -61,7 +61,8 @@ export function OrderHistoryScreen({
           throw new Error("Sign in again to verify the account owning these orders.");
         const result=await customerPickupApi.orders();
         if(!Array.isArray(result.orders) || result.orders.some(o=>
-          !o || typeof o.id!=="string" || o.user_id!==ownerUid))
+          !o || typeof o.id!=="string" || o.user_id!==ownerUid ||
+          !Number.isFinite(Number(o.total_price)) || Number(o.total_price)<0))
           throw new Error("The history response was not confirmed for your signed-in account.");
         const pickups=result.orders.filter(o=>o.delivery_type==="collection");
         if(active){
@@ -101,7 +102,7 @@ export function OrderHistoryScreen({
       case "cancelled":
         return <span className="text-[10px] font-bold text-red-600 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded-full">Cancelled</span>;
       default:
-        return <span className="text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">{status || "Pending"}</span>;
+        return <span className="text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">{status || "Status unavailable"}</span>;
     }
   };
 
