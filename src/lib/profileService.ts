@@ -83,8 +83,11 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
 
   const timer = setTimeout(async () => {
     activeRetryTimers.delete(userId);
+    // A timer scheduled under an old account must never send OR discard that
+    // account's queued profile after logout/account switch.
+    if (!auth.currentUser || auth.currentUser.uid !== userId) return;
     if (!navigator.onLine) {
-      // Re-schedule when connection resumes
+      // Queue remains on device until this account reconnects.
       return;
     }
 
