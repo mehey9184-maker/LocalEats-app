@@ -1694,21 +1694,33 @@ export default function App() {
       }
 
       if (data) {
-        setUserProfile((prev) => ({
-          ...prev,
-          id: data.user_id || data.id || userId,
-          fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
-          email: data.email || prev.email || "",
-          phone: data.phone || prev.phone || "",
-          city: data.city || prev.city || "Johannesburg",
-          address: data.address || data.default_address || prev.address || "",
-          country: data.country || prev.country || "South Africa",
-          role: data.role || prev.role || "customer",
-          photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
-          latitude: data.current_latitude || data.latitude || prev.latitude,
-          longitude: data.current_longitude || data.longitude || prev.longitude,
-        }));
-        if (data.favorites && Array.isArray(data.favorites)) {
+        // Never rehydrate cached personal details from a different account.
+        const responseOwner=data.user_id || data.id;
+        if (responseOwner && String(responseOwner)!==userId) {
+          throw new Error("Profile response identity mismatch.");
+        }
+        if (firebaseAuth.currentUser?.uid!==userId) return;
+        setUserProfile((prev) => {
+          if (firebaseAuth.currentUser?.uid!==userId) return prev;
+          const safePrev:UserProfile=prev.id===userId?prev:{
+            id:userId,fullName:"",email:firebaseAuth.currentUser.email||"",
+            phone:"",city:"",address:"",country:"South Africa",role:"user",
+          };
+          return {
+            ...safePrev,id:userId,
+            fullName:data.fullName??data.full_name??data.name??safePrev.fullName,
+            email:data.email??firebaseAuth.currentUser.email??safePrev.email,
+            phone:data.phone??safePrev.phone,
+            city:data.city??safePrev.city,
+            address:data.address??data.default_address??safePrev.address,
+            country:data.country??safePrev.country,
+            role:data.role??safePrev.role,
+            photoURL:data.photo_url??data.avatar_url??data.photoURL??safePrev.photoURL,
+            latitude:data.current_latitude??data.latitude??safePrev.latitude,
+            longitude:data.current_longitude??data.longitude??safePrev.longitude,
+          };
+        });
+        if (firebaseAuth.currentUser?.uid===userId && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
         }
       } else if (!error || error.code === "PGRST116" || !data) {
@@ -1721,28 +1733,21 @@ export default function App() {
             const userMeta = authUser.user_metadata || {};
             const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
             const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
+            // A read must never silently create a record or grant a role
+            // derived from user-editable Firebase metadata.
+            setUserProfile((prev) => {
+              if(firebaseAuth.currentUser?.uid!==userId)return prev;
+              const safePrev:UserProfile=prev.id===userId?prev:{
+                id:userId,fullName:"",email:"",phone:"",
+                city:"",address:"",country:"South Africa",role:"user",
+              };
+              return {
+                ...safePrev,id:userId,
+                email:authUser.email||safePrev.email,
+                fullName:fallbackName||safePrev.fullName,
+                phone:fallbackPhone||safePrev.phone,
+                role:safePrev.role,
+              };
             });
           }
         } catch (authFetchErr) {
