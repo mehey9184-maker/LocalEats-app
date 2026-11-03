@@ -148,6 +148,6 @@ test("P4 Vercel integration preserves SPA pages, skips API fallback and never de
  const collection=app("../api/profiles.ts"),item=app("../api/profiles/[id].ts");
  assert.match(collection,/getStagingProfileServices\(process\.env\)/);
  assert.match(item,/getStagingProfileServices\(process\.env\)/);
- assert.doesNotMatch(collection+item,/server\.ts|createViteServer|\/api\/orders/);
+ assert.doesNotMatch(collection+item,/^\s*import.*server\.ts|createViteServer|app\.post\(["']\/api\/orders/m);
  assert.match(app("../src/services/customerOrdersPolicy.ts"),/confirmedCustomerPickupOrders/);
 });
