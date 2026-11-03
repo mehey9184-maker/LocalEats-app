@@ -16,12 +16,13 @@ const read=(id,headers={})=>new Request("https://preview.local/api/profiles/"+en
 });
 const staging={
   VERCEL_ENV:"preview",
-  VERCEL_GIT_COMMIT_REF:"repair/customer-profile-p4-safe-api-preview-01",
-  PROFILE_P4_ENABLE_STAGING_WRITES:"true",
-  PROFILE_P4_STAGING_SUPABASE_REF:"staging1234567",
-  PROFILE_P4_STAGING_SUPABASE_URL:"https://staging1234567.supabase.co",
-  PROFILE_P4_STAGING_SUPABASE_SECRET_KEY:"test-only-not-a-real-secret",
-  PROFILE_P4_STAGING_FIREBASE_PROJECT_ID:"localeats-staging-test",
+  VERCEL_GIT_COMMIT_REF:"repair/customer-profile-p5-staging-auth-readiness-01",
+  PROFILE_P5_ENABLE_STAGING_WRITES:"true",
+  PROFILE_P5_STAGING_SUPABASE_REF:"staging1234567",
+  PROFILE_P5_STAGING_SUPABASE_URL:"https://staging1234567.supabase.co",
+  PROFILE_P5_STAGING_SUPABASE_SECRET_KEY:"test-only-not-a-real-secret",
+  PROFILE_P5_STAGING_FIREBASE_PROJECT_ID:"localeats-staging-test",
+  PROFILE_P5_STAGING_FIREBASE_WEB_API_KEY:"test-only-not-a-real-api-key",
 };
 function makeServices(owner="ownerA",initial={}){
   const rows=new Map(Object.entries(initial));
@@ -40,12 +41,12 @@ test("P4 defaults closed, even when an existing Production Supabase or Firebase 
  assert.equal(previewProfileEnabled({...staging,VERCEL_ENV:"production"}),false);
  assert.equal(previewProfileEnabled({...staging,VERCEL_GIT_COMMIT_REF:"main"}),false);
  assert.equal(previewProfileEnabled({...staging,VERCEL_GIT_COMMIT_REF:"repair/customer-profile-p3-backend-security-01"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_ENABLE_STAGING_WRITES:"false"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_STAGING_FIREBASE_PROJECT_ID:"localeats-5e26e"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_STAGING_SUPABASE_REF:"phdjumtqkooyppxozqsi",PROFILE_P4_STAGING_SUPABASE_URL:"https://phdjumtqkooyppxozqsi.supabase.co"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_STAGING_SUPABASE_URL:"http://staging1234567.supabase.co"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_STAGING_SUPABASE_URL:"https://anotherproject.supabase.co"}),false);
- assert.equal(previewProfileEnabled({...staging,PROFILE_P4_STAGING_SUPABASE_SECRET_KEY:""}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_ENABLE_STAGING_WRITES:"false"}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_STAGING_FIREBASE_PROJECT_ID:"localeats-5e26e"}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_STAGING_SUPABASE_REF:"phdjumtqkooyppxozqsi",PROFILE_P5_STAGING_SUPABASE_URL:"https://phdjumtqkooyppxozqsi.supabase.co"}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_STAGING_SUPABASE_URL:"http://staging1234567.supabase.co"}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_STAGING_SUPABASE_URL:"https://anotherproject.supabase.co"}),false);
+ assert.equal(previewProfileEnabled({...staging,PROFILE_P5_STAGING_SUPABASE_SECRET_KEY:""}),false);
  assert.equal(previewProfileEnabled(staging),true);
 });
 
