@@ -468,7 +468,7 @@ export function CheckoutScreen({
   const primaryShop = shops.find((s) => s.id === primaryShopId);
   const isP7TestCheckout=p7PreviewEnabled(
     import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
-    typeof window==="undefined"?"":window.location.hostname,
+    typeof window==="undefined"?"":(window.location?.hostname || ""),
   ) && primaryShop?.is_test_store===true && !pickupOrderingEnabled();
   const [p7TestCompleted,setP7TestCompleted]=useState(false);
 
