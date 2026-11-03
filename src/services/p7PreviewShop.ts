@@ -16,7 +16,8 @@ export function previewMyKotaShop(shop:unknown,items:unknown):Shop|null {
   if(!shop || typeof shop!=="object" || Array.isArray(shop) || !Array.isArray(items))return null;
   const s=shop as Record<string,unknown>;
   if(s.id!==P7_MY_KOTA_ID || typeof s.name!=="string" || !s.name.trim() ||
-     s.stored_is_active!==true || s.effective_is_active!==true || s.is_active!==true ||
+     s.stored_is_active!==true || typeof s.effective_is_active!=="boolean" ||
+     s.is_active!==s.effective_is_active ||
      typeof s.location!=="string" || !/ivory\s+park/i.test(s.location))return null;
   const lat=s.lat??s.latitude,lng=s.lng??s.longitude;
   if(typeof lat!=="number" || typeof lng!=="number" || !Number.isFinite(lat) ||
@@ -31,6 +32,15 @@ export function previewMyKotaShop(shop:unknown,items:unknown):Shop|null {
        !item.name.trim() || typeof item.price!=="number" || !Number.isFinite(item.price) ||
        item.price<0)return null;
     if(item.shop_id!==undefined && item.shop_id!==s.id)return null;
+    const customizations: NonNullable<MenuItem["customizations"]> = [];
+    if (Array.isArray(item.customizations)) {
+      for (const option of item.customizations) {
+        if (typeof option?.name === "string" && option.name.trim() &&
+            typeof option.price === "number" && Number.isFinite(option.price) && option.price >= 0) {
+          customizations.push({ name: option.name, price: option.price });
+        }
+      }
+    }
     menu.push({
       id:item.id,name:item.name,price:item.price,
       displayPrice:`R ${item.price.toFixed(2)}`,
@@ -38,17 +48,17 @@ export function previewMyKotaShop(shop:unknown,items:unknown):Shop|null {
       description:typeof item.description==="string"?item.description:"",
       category:typeof item.category==="string"?item.category:"Menu",
       is_available:item.is_available===true,
-      customizations:[],
+      customizations,
     });
   }
-  if(!menu.some(item=>item.is_available))return null;
+  if(s.effective_is_active && !menu.some(item=>item.is_available))return null;
   return {
     id:P7_MY_KOTA_ID,name:s.name.trim(),logo:typeof s.logo_url==="string"?s.logo_url:"",
     logo_url:typeof s.logo_url==="string"?s.logo_url:"",
     rating:typeof s.rating==="number"&&Number.isFinite(s.rating)?s.rating:0,
     description:typeof s.description==="string"?s.description:"",
     address:s.location,category:typeof s.category==="string"?s.category:"Local Food",
-    latitude:lat,longitude:lng,menu,images:[],isOpen:true,is_active:true,
+    latitude:lat,longitude:lng,menu,images:[],is_active:s.effective_is_active,
     opening_time:typeof s.opening_time==="string"?s.opening_time:undefined,
     closing_time:typeof s.closing_time==="string"?s.closing_time:undefined,
     is_test_store:true,pickup_payment_methods:Array.isArray(s.pickup_payment_methods)

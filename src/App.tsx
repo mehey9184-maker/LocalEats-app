@@ -8356,6 +8356,10 @@ function StoreInfoScreen({
 
   useEffect(() => {
     if (!shop?.id) return;
+    if (shop.is_test_store) {
+      setIsMenuLoading(false);
+      return;
+    }
     let isMounted = true;
     const fetchMenu = async () => {
       setIsMenuLoading(true);
@@ -8419,12 +8423,14 @@ function StoreInfoScreen({
     };
     void fetchMenu();
     return () => { isMounted = false; };
-  }, [shop?.id,readOnlyClosed]);
+  }, [shop?.id,readOnlyClosed,shop.is_test_store]);
 
   const storeStatus = getStoreStatus();
+  const menuReadOnly = readOnlyClosed || (shop.is_test_store === true && !storeStatus.isOpen);
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    if (shop.is_test_store) return shop.menu;
     // Do not invent fallback dishes for a closed shop, even while loading.
     if (readOnlyClosed) return apiMenu ?? [];
     if (apiMenu !== null) {
@@ -8891,7 +8897,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {readOnlyClosed ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
+                {menuReadOnly ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -9019,7 +9025,7 @@ function StoreInfoScreen({
                 </div>
               )}
 
-              {readOnlyClosed && (
+              {menuReadOnly && (
                 <div role="status" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
                   Closed right now · You can browse the real menu, but ordering is unavailable.
                   {shop.opening_time && <span className="block text-xs text-slate-500 mt-1">Opens {shop.opening_time}</span>}
@@ -9228,7 +9234,7 @@ function StoreInfoScreen({
                                     key={item.id}
                                     item={item}
                                     shop={shop}
-                                    onSelect={readOnlyClosed ? undefined : (item) =>
+                                    onSelect={menuReadOnly ? undefined : (item) =>
                                       setSelectedItemForQuantity(item)
                                     }
                                     showAlert={showAlert}
@@ -9648,10 +9654,10 @@ function StoreInfoScreen({
 
       <QuantityModal
         item={selectedItemForQuantity}
-        isOpen={!readOnlyClosed && !!selectedItemForQuantity}
+        isOpen={!menuReadOnly && !!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
-          if (readOnlyClosed) return;
+          if (menuReadOnly) return;
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,

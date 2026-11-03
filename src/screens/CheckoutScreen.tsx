@@ -891,7 +891,9 @@ export function CheckoutScreen({
     if(quoteLock.current)return;
     quoteLock.current=true;setLoading(true);setPickupQuoteError("");
     try {
-      if(isP7TestCheckout){
+      if(isP7TestCheckout && primaryShop){
+        if (!getShopStatus(primaryShop).isOpen)
+          throw new Error("My-Kota is closed. You can still browse the menu.");
         if(cart.length===0 || !cart.every(item=>item.shopId===primaryShopId && item.quantity>=1 &&
           Number.isFinite(item.price) && item.price>=0))
           throw new Error("Select a valid test item before simulating checkout.");

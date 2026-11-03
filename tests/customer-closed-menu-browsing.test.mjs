@@ -32,9 +32,9 @@ test("closed shop card opens original detail screen but never becomes an orderab
  assert.match(app,/const response = await customerPickupApi\.menu\(shop.id\)/);
  assert.match(app,/is_available:false, \/\/ Read only/);
  assert.match(app,/if \(readOnlyClosed\) return apiMenu \?\? \[\];/);
- assert.match(app,/onSelect=\{readOnlyClosed \? undefined :/);
- assert.match(app,/isOpen=\{!readOnlyClosed && !!selectedItemForQuantity\}/);
- assert.match(app,/if \(readOnlyClosed\) return;/);
+ assert.match(app,/onSelect=\{menuReadOnly \? undefined :/);
+ assert.match(app,/isOpen=\{!menuReadOnly && !!selectedItemForQuantity\}/);
+ assert.match(app,/if \(menuReadOnly\) return;/);
  assert.match(app,/Closed right now · You can browse the real menu, but ordering is unavailable/);
  assert.doesNotMatch(app,/setShops\(.*closedPickupCardData/);
 });
