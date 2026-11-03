@@ -1,5 +1,5 @@
 import React from "react";
-import {ArrowLeft,RefreshCw,ShoppingBag,Clock,CheckCircle2,Store,BookOpen,MapPin} from "lucide-react";
+import {ArrowLeft,RefreshCw,ShoppingBag,Clock,CheckCircle2,BookOpen,MapPin} from "lucide-react";
 import type {Order,Shop} from "../types";
 import {confirmedCustomerPickupOrders,confirmedPickupDisplayStatus,confirmedPickupTotal,confirmedPickupPayment,confirmedPickupShopName} from "../services/customerOrdersPolicy";
 
