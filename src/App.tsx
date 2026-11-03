@@ -1,4 +1,5 @@
 import {retryPickupDiscovery} from "./services/pickupMapping";
+import {archiveLegacyOrderDrafts} from "./services/legacyOfflineDrafts";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
 /**
  * @license
@@ -1517,7 +1518,9 @@ export default function App() {
       localStorage.setItem("userProfile", JSON.stringify(freshProfile));
       localStorage.removeItem("cart");
       localStorage.removeItem("favorites");
-      localStorage.removeItem("offline_orders_queue");
+      // Preserve unsent drafts from the previous account without replaying
+      // or exposing them in the next user's normal order history.
+      archiveLegacyOrderDrafts(userProfile.id,localStorage);
       fetchUserProfile(session.user.id);
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
