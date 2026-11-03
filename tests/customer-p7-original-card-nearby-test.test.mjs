@@ -92,7 +92,7 @@ test("P7 checkout simulation never invokes API order creation or queues a fake s
  assert.match(checkout,/Test flow completed\. Nothing was submitted/);
  assert.match(checkout,/if\(isP7TestCheckout\)\{/);
  assert.match(checkout,/setP7TestCompleted\(true\)/);
- assert.match(checkout,/No real order, payment or merchant notification/);
+ assert.match(checkout,/no real order, payment or merchant notification/);
  assert.match(file("../src/services/customerPickup.ts"),/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
  assert.match(app,/readOnlyClosed=\{!displayShops\.some/);
 });
