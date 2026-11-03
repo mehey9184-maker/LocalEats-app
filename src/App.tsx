@@ -5154,7 +5154,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
+                  {sortedShops.length} In range{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
             </div>
@@ -5181,6 +5181,48 @@ function HomeScreen({
             </div>
           </div>
 
+          {!session && (
+            <div role="status" className="mb-3 rounded-xl border border-blue-100 dark:border-blue-900/70 bg-blue-50/70 dark:bg-blue-950/30 px-4 py-3 text-xs text-slate-700 dark:text-slate-200 flex flex-wrap items-center gap-2">
+              <span>Browsing as a guest on this Preview. Previous order history requires your original account.</span>
+              <button type="button" onClick={()=>setCurrentScreen("login")}
+                className="min-h-9 px-3 rounded-lg bg-slate-900 dark:bg-slate-700 text-white font-bold">
+                Sign in for order history
+              </button>
+            </div>
+          )}
+          {sortedShops.length===0 && matchingClosedShops.length===0 && (
+            <section aria-label="Approved pilot shops browse only"
+              className="mb-5 w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 sm:p-5 text-left shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-base font-black text-slate-900 dark:text-white">Pilot shops in Tembisa & Ivory Park</h4>
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-bold text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">Browse only · no ordering</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                These are approved, existing shops. A shop can be visible here even when pickup is unavailable
+                at your actual location. Only shops verified within 4 km can accept pickup orders.
+              </p>
+              {pilotDirectoryStatus==="loading" && <p role="status" className="mt-3 text-xs text-slate-500">Checking approved shops from the catalog...</p>}
+              {pilotDirectoryStatus==="error" && <p role="alert" className="mt-3 text-xs text-orange-700 dark:text-orange-300">The approved shop directory did not load. Please reload to retry. This does not mean your shops were deleted.</p>}
+              {pilotDirectoryStatus==="ready" && browseOnlyPilotShops.length===0 && <p className="mt-3 text-xs text-slate-500">No verified Tembisa or Ivory Park shop records could be listed.</p>}
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {browseOnlyPilotShops.map(shop=>(
+                  <article key={shop.id} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 p-3">
+                    <div className="flex justify-between gap-2 items-start">
+                      <p className="font-black text-sm text-slate-900 dark:text-white">{shop.name}</p>
+                      <span className="shrink-0 text-[10px] font-bold text-orange-700 dark:text-orange-300">Browse only</span>
+                    </div>
+                    <p className="text-[11px] mt-1 text-slate-500 dark:text-slate-400">{shop.location}</p>
+                    <p className="mt-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {shop.reason==="outside_radius"?"Outside 4 km pickup area":
+                       shop.reason==="not_accepting"?"Not accepting orders":"Pickup eligibility not confirmed"}
+                      {shop.distanceKm!==null && <span className="ml-2 font-normal">{shop.distanceKm.toFixed(1)} km from your location</span>}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
           {renderedShopList}
         </section>
 
@@ -5189,7 +5231,7 @@ function HomeScreen({
             Checking nearby shops outside trading hours...
           </div>
         )}
-        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && (
+        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && pilotDirectoryStatus!=="loading" && browseOnlyPilotShops.length===0 && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -5287,32 +5329,6 @@ function HomeScreen({
                   {pickupOrderingEnabled() ? "Pickup pilot. Use your real location. Pay at the shop; follow order status and Ready notifications in-app." : "Pickup development. Catalog reads require real location. Order submission and Ready notifications remain disabled until database activation."}
                 </p>
               </div>
-            )}
-            {shops.length===0 && (
-              <section aria-label="Approved pilot shops browse only"
-                className="mt-5 w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-left shadow-sm">
-                <h4 className="text-sm font-black text-slate-900 dark:text-white">Pilot shops · browse only</h4>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Approved shops remain listed even when they're outside your 4 km pickup area.
-                  This directory is read-only: it does not confirm current availability or allow ordering.
-                </p>
-                {pilotDirectoryStatus==="loading" && <p role="status" className="mt-3 text-xs text-slate-500">Checking the approved shop directory...</p>}
-                {pilotDirectoryStatus==="error" && <p role="alert" className="mt-3 text-xs text-orange-700 dark:text-orange-300">The shop directory could not load from the Preview API. Your shop has not been marked deleted. Check your connection and reopen the latest Preview.</p>}
-                {pilotDirectoryStatus==="ready" && browseOnlyPilotShops.length===0 && <p className="mt-3 text-xs text-slate-500">No verified Tembisa or Ivory Park shop records could be listed.</p>}
-                {browseOnlyPilotShops.map(shop=>(
-                  <div key={shop.id} className="mt-3 rounded-xl border border-slate-100 dark:border-slate-700 p-3">
-                    <p className="font-bold text-sm text-slate-900 dark:text-white">{shop.name}</p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">{shop.location}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                      <span className="text-orange-700 dark:text-orange-300 font-semibold">
-                        {shop.reason==="outside_radius"?"Outside 4 km pickup area":
-                         shop.reason==="not_accepting"?"Not accepting orders":"Pickup eligibility not confirmed"}
-                      </span>
-                      {shop.distanceKm!==null && <span className="text-slate-500">{shop.distanceKm.toFixed(1)} km from your location</span>}
-                    </div>
-                  </div>
-                ))}
-              </section>
             )}
           </motion.section>
         )}
