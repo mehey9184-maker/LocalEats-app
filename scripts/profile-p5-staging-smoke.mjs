@@ -54,6 +54,8 @@ const wrongWrite=await api("POST","/api/profiles",P5_TEST_ID_TOKEN_B,{
 });
 assert.equal(wrongWrite.status,403,"Account B must not edit A");
 console.log("PASS: staging account isolation before writes");
+const bBefore=await api("GET",bPath,P5_TEST_ID_TOKEN_B);
+assert.ok([200,404].includes(bBefore.status));
 
 const before=await api("GET",aPath,P5_TEST_ID_TOKEN_A);
 assert.ok([200,404].includes(before.status),"Account A's staging profile is readable or absent");
@@ -77,8 +79,6 @@ if(originalEmail!==undefined)assert.equal(after.data.profile?.email,originalEmai
 assert.notEqual(after.data.profile?.email,"forged@example.invalid");
 console.log("PASS: staging profile saved, read-back confirmed, protected fields intact");
 
-const bBefore=await api("GET",bPath,P5_TEST_ID_TOKEN_B);
-assert.ok([200,404].includes(bBefore.status));
 const bAfter=await api("GET",bPath,P5_TEST_ID_TOKEN_B);
 assert.deepEqual(bAfter.data,bBefore.data,"Account A must not mutate account B");
 console.log("PASS: Account B data unchanged");
