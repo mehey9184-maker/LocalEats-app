@@ -40,11 +40,13 @@ export function buildCustomerProfilePatch(input:unknown):Record<string,unknown>{
   if(address!==undefined)patch.address=textField(address,500,"address");
   if(body.phone!==undefined){
     const raw=textField(body.phone,32,"phone");
-    const digits=raw?.replace(/\D/g,"") ?? "";
-    if(!digits)patch.phone=null;
-    else if(/^0[0-9]{9}$/.test(digits))patch.phone="+27"+digits.slice(1);
-    else if(/^27[0-9]{9}$/.test(digits))patch.phone="+"+digits;
-    else throw new ProfilePolicyError("Enter a valid South African phone number.");
+    if(raw===null || raw==="")patch.phone=null;
+    else {
+      const digits=raw.replace(/\D/g,"");
+      if(/^0[0-9]{9}$/.test(digits))patch.phone="+27"+digits.slice(1);
+      else if(/^27[0-9]{9}$/.test(digits))patch.phone="+"+digits;
+      else throw new ProfilePolicyError("Enter a valid South African phone number.");
+    }
   }
   for(const [key,max] of [["city",120],["country",120],["language",12]] as const){
     if(body[key]!==undefined)patch[key]=textField(body[key],max,key);
