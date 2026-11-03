@@ -34,8 +34,8 @@ test("profile rejects cross-account updates and malformed fields",()=>{
 
 test("server route verifies Firebase token, denies other UIDs and keeps DB keys server-only",()=>{
  const server=source("../api/_lib/profileServer.ts");
- const get=source("../api/profiles/[id].ts");
- const post=source("../api/profiles/index.ts");
+ const handler=source("../api/profile.ts");
+ const vercel=JSON.parse(source("../vercel.json"));
  assert.match(server,/verifyIdToken\(match\[1\],true\)/);
  assert.match(server,/ownerMatches\(id,signed.uid\)/);
  assert.match(server,/\.eq\("user_id",signed\.uid\)/);
@@ -45,6 +45,9 @@ test("server route verifies Firebase token, denies other UIDs and keeps DB keys 
  assert.match(server,/upsert\(\{\.\.\.input,updated_at:/);
  assert.doesNotMatch(server,/"role"\s*:/);
  assert.doesNotMatch(server,/console\.log\(/);
- assert.match(get,/getProfile\(request,id\)/);
- assert.match(post,/putProfile\(request\)/);
+ assert.match(handler,/getProfile\(request,id\)/);
+ assert.match(handler,/putProfile\(request\)/);
+ assert.match(handler,/from "\.\/_lib\/profileServer\.js"/);
+ assert.ok(vercel.rewrites.some(r=>r.source==="/api/profiles/:uid" && r.destination==="/api/profile?uid=:uid"));
+ assert.ok(vercel.rewrites.some(r=>r.source==="/api/profiles" && r.destination==="/api/profile"));
 });
