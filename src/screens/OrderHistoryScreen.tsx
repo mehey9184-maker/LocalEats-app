@@ -46,20 +46,34 @@ export function OrderHistoryScreen({
       <p className="text-xs text-slate-500 dark:text-slate-400">Confirmed pickup order status and amounts</p>
      </div>
     </div>
-    <button type="button" onClick={onRefresh} aria-label="Refresh confirmed orders"
+    <button type="button" onClick={onRefresh} disabled={!ownerUid} aria-label="Refresh confirmed orders"
      className="min-w-11 min-h-11 inline-flex items-center justify-center rounded-xl text-orange-600 bg-orange-50 dark:bg-orange-950/30 focus-visible:outline-2 focus-visible:outline-orange-500">
      <RefreshCw className="w-5 h-5"/>
     </button>
    </div>
 
    <div className="max-w-2xl mx-auto p-4 space-y-4">
-    {error && (
+    <p className="text-xs text-slate-500 dark:text-slate-400">
+      This page displays only server-confirmed pickup orders for the signed-in account.
+      Older orders from previous LocalEats systems are not imported or deleted by this Preview.
+    </p>
+    {error && ownerUid && (
      <div role="alert" className="rounded-2xl border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/30 p-3 text-sm text-orange-800 dark:text-orange-200">
       Order history could not refresh. Check your connection and retry. Older confirmed information may be outdated.
       <button type="button" onClick={onRefresh} className="ml-2 underline underline-offset-2 font-bold">Retry</button>
      </div>
     )}
-    {loading ? (
+    {!ownerUid ? (
+     <div role="status" className="text-center rounded-2xl bg-white dark:bg-slate-800 p-6 border border-slate-200 dark:border-slate-700">
+      <h3 className="text-base font-bold text-slate-900 dark:text-white">Sign in to view pickup history</h3>
+      <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+       Order history belongs to a verified account. Nothing is assumed from an old cached profile.
+      </p>
+      <button type="button" onClick={onBack} className="mt-4 px-5 min-h-11 rounded-xl bg-orange-600 text-white font-bold text-xs">
+       Back to account
+      </button>
+     </div>
+    ) : loading ? (
      <div aria-label="Loading confirmed orders" className="space-y-4">
       {[1,2,3].map(n=>(
        <div key={n} className="p-4 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-sm animate-pulse space-y-3">
@@ -78,7 +92,7 @@ export function OrderHistoryScreen({
        {error?"Order history unavailable":"No confirmed pickup orders yet"}
       </h3>
       <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto mb-6">
-       {error?"The server has not confirmed your history. Retry to check.":"When the shop confirms a pickup order, you can review its status here."}
+       {error?"The server has not confirmed your history. Retry to check.":"No confirmed pickup orders were returned for this signed-in account. Older legacy orders are not included in this Preview."}
       </p>
       <button type="button" onClick={onBack}
        className="px-6 min-h-11 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs transition">
