@@ -26,7 +26,7 @@ export function verifiedPilotBrowseDirectory(
     const s=row as Record<string,unknown>;
     if(typeof s.id!=="string" || !s.id || typeof s.name!=="string" ||
        !s.name.trim() || typeof s.location!=="string" ||
-       !/\b(?:te[mh]bisa|ivory\s+(?:park|2))\b/i.test(s.location) ||
+       !/\b(?:(?:tembisa|thembisa)|ivory\s+(?:park|2))\b/i.test(s.location) ||
        seen.has(s.id) || orderableIds.has(s.id))continue;
     const lat=s.lat??s.latitude,lng=s.lng??s.longitude;
     if(typeof lat!=="number" || typeof lng!=="number" ||
