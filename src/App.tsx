@@ -218,7 +218,7 @@ import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 
 import { CheckoutScreen } from "./screens/CheckoutScreen";
-import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
+import {CustomerPickupTrackingScreen} from "./screens/CustomerPickupTrackingScreen";
 import { RiderHandshakeInstructionPrompt } from "./components/SecureDeliveryHandshake";
 
 import {
@@ -937,6 +937,8 @@ export default function App() {
   const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoadState,setOrdersLoadState]=useState<{uid:string|null;status:"loading"|"ready"|"error"}>({uid:null,status:"loading"});
+  const [selectedTrackingOrderId,setSelectedTrackingOrderId]=useState<string|null>(null);
   const ordersRef = useRef<Order[]>(orders);
   useEffect(() => {
     ordersRef.current = orders;
@@ -2331,9 +2333,11 @@ export default function App() {
     let active=true;
     const uid=session?.user?.id;
     if(!uid){
-      setOrders([]);setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
+      setOrders([]);setOrdersLoadState({uid:null,status:"ready"});setSelectedTrackingOrderId(null);
+      setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
       return;
     }
+    setOrders([]);setOrdersLoadState({uid,status:"loading"});setSelectedTrackingOrderId(null);
     let hasServerInbox=false;
     let seenReadyIds=new Set<string>();
     let previousConfirmedOrders:CustomerStatusOrder[]|null=null;
@@ -2350,15 +2354,24 @@ export default function App() {
         try {
           const data=await customerPickupApi.orders();
           if(!active || request!==latestOrderFetch)return;
-          if(!Array.isArray(data.orders))throw new Error("Orders response missing");
+          if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Authenticated account changed.");
+          if(!Array.isArray(data.orders) || data.orders.some(o=>
+            !o || o.user_id!==uid || o.delivery_type!=="collection" || typeof o.id!=="string"))
+            throw new Error("Order history response did not match the authenticated account.");
           const confirmed=data.orders as CustomerStatusOrder[];
           const notices=customerOrderStatusNotices(previousConfirmedOrders,confirmed,uid);
           previousConfirmedOrders=confirmed;
           setOrders(data.orders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+          setOrdersLoadState({uid,status:"ready"});
           for(const notice of notices){
             toast.info(notice.title,{description:notice.message,duration:6500});
           }
-        }catch{if(active && request===latestOrderFetch)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});}
+        }catch{
+          if(active && request===latestOrderFetch){
+            setOrdersLoadState({uid,status:"error"});
+            setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});
+          }
+        }
       })();
       if (pickupOrderingEnabled()) {
         void (async()=>{
@@ -2388,11 +2401,13 @@ export default function App() {
     // alerts still require deployed server push; no hidden-tab polling.
     refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},15000);
     window.addEventListener("localeats-pickup-ready",onRealtimeWake);
+    window.addEventListener("localeats-orders-refresh",onRealtimeWake);
     window.addEventListener("focus",onRealtimeWake);
     document.addEventListener("visibilitychange",onRealtimeWake);
     return()=>{
       active=false;clearInterval(timer);
       window.removeEventListener("localeats-pickup-ready",onRealtimeWake);
+      window.removeEventListener("localeats-orders-refresh",onRealtimeWake);
       window.removeEventListener("focus",onRealtimeWake);
       document.removeEventListener("visibilitychange",onRealtimeWake);
     };
@@ -3227,12 +3242,15 @@ export default function App() {
               {currentScreen === "order-tracking" && (
                 <WidgetErrorBoundary fallbackName="Order Tracking">
                   <Suspense fallback={<div className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading map...</div>}>
-                    <OrderTrackingScreen
+                    <CustomerPickupTrackingScreen
+                      ownerUid={session?.user?.id}
                       orders={orders}
                       shops={visibleShops}
-                      showAlert={showAlert}
-                      onBack={() => setCurrentScreen(previousScreen || "home")}
-                      triggerHaptic={triggerHaptic}
+                      selectedOrderId={selectedTrackingOrderId}
+                      loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                      onBack={()=>{setSelectedTrackingOrderId(null);setCurrentScreen(previousScreen || "home");}}
+                      onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
+                      onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
                     />
                   </Suspense>
                 </WidgetErrorBoundary>
@@ -3602,19 +3620,15 @@ export default function App() {
               )}
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
-                  session={session}
+                  ownerUid={session?.user?.id}
                   pickupOrders={orders}
+                  loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                  onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
-                  userProfile={userProfile}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  isOnline={isOnline}
                   shops={visibleShops}
-                  addToCart={addToCart}
-                  setCart={setCart}
-                  setCurrentScreen={setCurrentScreen}
+                  onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
+                  onViewOrder={id=>{setSelectedTrackingOrderId(id);setPreviousScreen("order-history");setCurrentScreen("order-tracking");}}
                   triggerHaptic={triggerHaptic}
-                  onScanFlyer={() => setShowQRScanner(true)}
                 />
               )}
             </motion.div>
@@ -3743,7 +3757,8 @@ export default function App() {
             orders={orders}
             shops={shops}
             currentScreen={currentScreen}
-            onOpenTracking={(_orderId) => {
+            onOpenTracking={(orderId) => {
+              setSelectedTrackingOrderId(orderId);
               setPreviousScreen(currentScreen);
               setCurrentScreen("order-tracking");
             }}
@@ -3759,6 +3774,7 @@ export default function App() {
           <BottomNavigation
             currentScreen={currentScreen}
             onNavigate={(targetScreen) => {
+              if(targetScreen==="order-tracking")setSelectedTrackingOrderId(null);
               setPreviousScreen(currentScreen);
               setCurrentScreen(targetScreen);
             }}
