@@ -79,6 +79,8 @@ test("P7 preserves ORIGINAL ShopCard and original StoreInfo/Cart UI",()=>{
  assert.match(app,/shop=\{displayShops\.find/);
  assert.match(app,/readOnlyClosed=\{!displayShops\.some/);
  assert.match(app,/customerPickupApi\.menu\(P7_MY_KOTA_ID\)/);
+ assert.match(app,/if\(!p7TestEnabled\)\{/);
+ assert.match(app,/\},\[p7TestEnabled\]\);/);
  assert.match(app,/No real order can be submitted/);
  assert.match(app,/!pickupOrderingEnabled\(\)/);
  assert.doesNotMatch(app,/Pilot shops in Tembisa & Ivory Park/);
@@ -88,6 +90,7 @@ test("P7 preserves ORIGINAL ShopCard and original StoreInfo/Cart UI",()=>{
 
 test("P7 checkout simulation never invokes API order creation or queues a fake success",()=>{
  assert.match(checkout,/isP7TestCheckout/);
+ assert.match(checkout,/const isP7TestCheckout=p7PreviewEnabled\(/);
  assert.match(checkout,/Simulate test checkout · no order/);
  assert.match(checkout,/Test flow completed\. Nothing was submitted/);
  assert.match(checkout,/if\(isP7TestCheckout\)\{/);
