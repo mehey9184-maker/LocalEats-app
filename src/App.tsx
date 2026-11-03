@@ -3196,7 +3196,8 @@ export default function App() {
                   closedPickupShops={closedPickupShops}
                   closedPickupShopsLoading={closedPickupShopsLoading}
                   previewTestLocationAllowed={previewTestLocationAllowed}
-                  previewTestLocationReady={previewMyKotaPosition!==null}
+                  previewTestLocationReady={pilotDirectoryStatus==="ready" && previewMyKotaPosition!==null}
+                  previewTestLocationStatus={pilotDirectoryStatus}
                   previewTestLocationActive={previewTestLocation!==null}
                   onTogglePreviewTestLocation={()=>{
                     setShops([]);
@@ -3933,6 +3934,7 @@ function HomeScreen({
   closedPickupShopsLoading,
   previewTestLocationAllowed,
   previewTestLocationReady,
+  previewTestLocationStatus,
   previewTestLocationActive,
   onTogglePreviewTestLocation,
   fetchError,
@@ -3978,6 +3980,7 @@ function HomeScreen({
   closedPickupShopsLoading: boolean;
   previewTestLocationAllowed: boolean;
   previewTestLocationReady: boolean;
+  previewTestLocationStatus: "loading"|"ready"|"error";
   previewTestLocationActive: boolean;
   onTogglePreviewTestLocation: () => void;
   fetchError: string | null;
@@ -5214,7 +5217,7 @@ function HomeScreen({
               <button type="button" onClick={onTogglePreviewTestLocation}
                 disabled={!previewTestLocationActive && !previewTestLocationReady}
                 className="min-h-9 shrink-0 rounded-lg border border-orange-300 dark:border-orange-800 bg-white dark:bg-slate-800 px-3 font-bold text-orange-700 dark:text-orange-300 disabled:opacity-50">
-                {previewTestLocationActive?"Use my real location":previewTestLocationReady?"Test near My-Kota":"Checking My-Kota..."}
+                {previewTestLocationActive?"Use my real location":previewTestLocationReady?"Test near My-Kota":previewTestLocationStatus==="error"?"Test location unavailable":previewTestLocationStatus==="loading"?"Checking My-Kota...":"My-Kota unavailable"}
               </button>
             </div>
           )}
