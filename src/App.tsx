@@ -6872,7 +6872,10 @@ function ProfileScreen({
       {/* Header */}
       <div className="flex items-center p-4 border-b border-primary/5 sticky top-0 bg-white dark:bg-slate-950 z-10 pt-[calc(1rem+env(safe-area-inset-top))]">
         <button
-          onClick={onBack}
+          type="button"
+          aria-label="Back to previous page"
+          onClick={handleBack}
+          disabled={isSaving}
           className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
         >
           <ArrowLeft className="w-6 h-6" />
@@ -6882,7 +6885,7 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-7 pb-28">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
           <div className="w-28 h-28 rounded-full border-4 border-white dark:border-slate-800 shadow-xl bg-orange-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
@@ -6900,7 +6903,7 @@ function ProfileScreen({
               <button
                 type="button"
                 onClick={handleDeletePhoto}
-                disabled={removingPhoto}
+                disabled={removingPhoto || isSaving || !isOnline}
                 aria-label="Remove existing profile picture"
                 className="text-xs font-bold text-rose-500 hover:text-rose-600 transition-colors mb-2 cursor-pointer"
               >
@@ -6910,7 +6913,7 @@ function ProfileScreen({
             <p className="font-bold text-lg">
               {userProfile.fullName || "User"}
             </p>
-            <p className="text-xs text-slate-400 mb-2">{userProfile.email}</p>
+            <p className="text-xs text-slate-400 mb-2 break-all">{userProfile.email}</p>
           </div>
 
           {/* Only actual API-confirmed orders count; no unimplemented rewards. */}
@@ -6923,10 +6926,10 @@ function ProfileScreen({
 
         {/* Form Fields */}
         <div className="space-y-6">
-          {/* WhatsApp-Style Sync Status Card */}
-          <div className="-mt-2 mb-2">
+          {/* Accurate, nonpersistent profile edit state */}
+          <div className="-mt-2 mb-2" aria-live="polite">
             <AnimatePresence mode="wait">
-              {justSaved ? (
+              {savedConfirmation ? (
                 <motion.div
                   key="saved"
                   initial={{ opacity: 0, scale: 0.96 }}
@@ -6943,7 +6946,7 @@ function ProfileScreen({
                         Account update confirmed
                       </p>
                       <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/80 px-2 py-0.5 rounded-full">
-                        WhatsApp Style ✓
+                        Confirmed
                       </span>
                     </div>
                     <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-0.5">
@@ -7000,7 +7003,7 @@ function ProfileScreen({
 
           {/* Full Name */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+            <label htmlFor="customer-profile-full-name" className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
               <span>Full Name</span>
               <span className="text-[10px] font-normal text-slate-400">Required</span>
             </label>
@@ -7008,14 +7011,19 @@ function ProfileScreen({
               <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
                 ref={fullNameRef}
+                id="customer-profile-full-name"
+                name="fullName"
+                autoComplete="name"
+                aria-invalid={Boolean(formErrors.fullName)}
+                aria-describedby={formErrors.fullName ? "profile-full-name-error" : undefined}
                 type="text"
                 value={fullName}
                 onChange={(e) => { setFullName(e.target.value); setFormErrors(prev => ({...prev, fullName: undefined})); }}
                 placeholder="Your full name"
-                disabled={isSaving || uploading}
+                disabled={isSaving}
                 className={`w-full pl-12 pr-24 py-4 bg-slate-50 dark:bg-slate-900 border ${formErrors.fullName ? 'border-red-500 focus:ring-red-500' : 'border-slate-100 dark:border-slate-800 focus:ring-primary/20'} rounded-2xl text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-50`}
               />
-              {formErrors.fullName && <p className="absolute -bottom-5 left-2 text-red-500 text-[10px] m-0">{formErrors.fullName}</p>}
+              {formErrors.fullName && <p id="profile-full-name-error" role="alert" className="absolute -bottom-5 left-2 text-red-500 text-[11px] m-0">{formErrors.fullName}</p>}
               <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
                 {isFullNameDirty ? (
                   <span className="text-[10px] font-black text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -7035,19 +7043,26 @@ function ProfileScreen({
 
           {/* Phone Number */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
+            <label htmlFor="customer-profile-phone" className="text-xs font-bold text-primary uppercase tracking-widest ml-1 flex items-center justify-between">
               <span>Phone Number</span>
               <span className="text-[10px] font-normal text-slate-400">SA format (+27 / 07X)</span>
             </label>
             <div className="relative group">
               <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-primary transition-colors" />
               <input
+                ref={phoneRef}
+                id="customer-profile-phone"
+                name="phone"
                 type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                aria-invalid={Boolean(formErrors.phone)}
+                aria-describedby={formErrors.phone ? "profile-phone-error" : undefined}
                 value={phone}
-                onChange={(e) => setPhone(formatSAPhone(e.target.value))}
-                placeholder="e.g. 071 234 5678 or +27 71 234 5678"
-                disabled={isSaving || uploading}
-                className="w-full pl-12 pr-28 py-4 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono disabled:opacity-50"
+                onChange={(e) => {setPhone(formatSAPhone(e.target.value));setFormErrors(prev=>({...prev,phone:undefined}));}}
+                placeholder="+27 71 234 5678"
+                disabled={isSaving}
+                className={`w-full pl-12 pr-28 py-4 bg-slate-50 dark:bg-slate-900 border ${formErrors.phone ? "border-red-500" : "border-slate-100 dark:border-slate-800"} rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono disabled:opacity-50`}
               />
               <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
                 {isPhoneDirty ? (
@@ -7061,6 +7076,7 @@ function ProfileScreen({
                 ) : null}
               </div>
             </div>
+            {formErrors.phone && <p id="profile-phone-error" role="alert" className="text-[11px] text-red-600 dark:text-red-400">{formErrors.phone}</p>}
             <p className="text-[11px] text-slate-400 ml-1">
               A valid phone format does not verify ownership of this number.
             </p>
@@ -7078,7 +7094,7 @@ function ProfileScreen({
                 </span>
               ) : (
                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800/40">
-                  Pin Needed
+                  No pin selected
                 </span>
               )}
             </div>
@@ -7087,8 +7103,8 @@ function ProfileScreen({
                 <AddressSearch
                   initialAddress={address}
                   initialCoords={
-                    latitude && longitude
-                      ? { lat: latitude, lng: longitude }
+                    Number.isFinite(latitude) && Number.isFinite(longitude)
+                      ? { lat: latitude!, lng: longitude! }
                       : undefined
                   }
                   onSelect={(data) => {
@@ -7100,18 +7116,19 @@ function ProfileScreen({
               </Suspense>
             </WidgetErrorBoundary>
             <p className="text-[11px] text-slate-400 ml-1">
-              Saving an address does not enable delivery. Pickup discovery uses your current location.
+              Optional. Choose an address suggestion or map pin to update saved details; pickup discovery uses your current device location.
             </p>
           </div>
 
           {/* City */}
           <div className="space-y-2 opacity-60">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
+            <label htmlFor="customer-profile-city" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               City (Profile)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Navigation2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
+                id="customer-profile-city"
                 type="text"
                 value={city}
                 readOnly
@@ -7123,12 +7140,13 @@ function ProfileScreen({
 
           {/* Email (Readonly) */}
           <div className="space-y-2 opacity-60">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
+            <label htmlFor="customer-profile-email" className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">
               Email Address (Primary)
             </label>
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
+                id="customer-profile-email"
                 type="email"
                 value={userProfile.email}
                 readOnly
@@ -7142,10 +7160,16 @@ function ProfileScreen({
         </div>
 
         {/* Buttons */}
-        <div className="pt-8 space-y-4">
+        <div className="pt-5 space-y-4">
+          {!isOnline && (
+            <div role="status" className="rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 px-3 py-3 text-xs">
+              You are offline. View your profile, but reconnect to save any edits.
+            </div>
+          )
           <button
+            type="button"
             onClick={handleUpdateProfile}
-            disabled={isSaving || uploading || !isDirty}
+            disabled={isSaving || !isOnline || !isDirty}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
@@ -7159,7 +7183,7 @@ function ProfileScreen({
                 <Loader2 className="w-5 h-5 animate-spin" />
                 <span>Checking account update...</span>
               </>
-            ) : justSaved ? (
+            ) : savedConfirmation ? (
               <>
                 <Check className="w-5 h-5 text-white stroke-[3] animate-in zoom-in" />
                 <span>Update Confirmed</span>
@@ -7178,7 +7202,9 @@ function ProfileScreen({
           </button>
 
           <button
-            onClick={onLogout}
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSaving}
             className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
