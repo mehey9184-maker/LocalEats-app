@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
+import {archiveLegacyOrderDrafts,LEGACY_ORDER_QUEUE_KEY} from "../src/services/legacyOfflineDrafts.ts";
 
 const src=p=>readFileSync(new URL(p,import.meta.url),"utf8");
 const app=src("../src/App.tsx");
@@ -19,6 +20,7 @@ test("P0 reconnect and manual refresh cannot acknowledge or erase unsent queued 
   assert.match(app,/saved offline requests have NOT been submitted/);
   assert.match(app,/Old offline order drafts are still on this device/);
   assert.doesNotMatch(app,/const syncOfflineOrders/,"Legacy order replay has been removed");
+  assert.match(app,/archiveLegacyOrderDrafts\(userProfile\.id,localStorage\)/);
 });
 
 test("P0 profile save requires the active verified account and won't impersonate previous user",()=>{
@@ -54,4 +56,31 @@ test("P0 old order prices cannot be copied into a new cart or presented as a new
   assert.match(history,/Number\(order\.total_price\)\.toFixed\(2\)/);
   assert.doesNotMatch(history,/Track Live/);
   assert.match(pickup,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
+});
+
+test("P0 account switch archives unsent drafts under prior account, without data loss",()=>{
+  const values=new Map([[LEGACY_ORDER_QUEUE_KEY,JSON.stringify([{id:"old-intent",amount:25}])]]);
+  const storage={
+    getItem:k=>values.get(k)??null,
+    setItem:(k,v)=>values.set(k,v),
+    removeItem:k=>values.delete(k),
+  };
+  assert.equal(archiveLegacyOrderDrafts("firebase-user-A",storage),true);
+  assert.equal(storage.getItem(LEGACY_ORDER_QUEUE_KEY),null);
+  const archived=JSON.parse(storage.getItem("localeats_unsent_order_drafts_firebase-user-A"));
+  assert.deepEqual(archived,[{id:"old-intent",amount:25}]);
+  assert.equal(storage.getItem("localeats_unsent_order_drafts_firebase-user-B"),null);
+});
+
+test("P0 failed archive storage never deletes original order drafts",()=>{
+  const values=new Map([[LEGACY_ORDER_QUEUE_KEY,JSON.stringify([{id:"old-intent"}])]]);
+  const storage={
+    getItem:k=>values.get(k)??null,
+    setItem:()=>{throw new Error("quota exceeded");},
+    removeItem:k=>values.delete(k),
+  };
+  assert.equal(archiveLegacyOrderDrafts("firebase-user-A",storage),false);
+  assert.ok(storage.getItem(LEGACY_ORDER_QUEUE_KEY));
+  assert.equal(archiveLegacyOrderDrafts("../other",storage),false);
+  assert.ok(storage.getItem(LEGACY_ORDER_QUEUE_KEY));
 });
