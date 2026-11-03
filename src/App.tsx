@@ -4392,7 +4392,7 @@ function HomeScreen({
     0,
   );
 
-removeBrowseMemo  const matchingClosedShops = useMemo(() => {
+  const matchingClosedShops = useMemo(() => {
     if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
     const query=debouncedSearchQuery.trim();
     const activeIds=new Set(shops.map(shop=>shop.id));
