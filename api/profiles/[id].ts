@@ -1,4 +1,4 @@
-import {getStagingProfileServices,handleProfileItem} from "../../src/server/previewProfileApi.ts";
+import {getStagingProfileServices,handleProfileItem} from "../../src/server/previewProfileApi.js";
 
 // Account-specific read endpoint, verified against the bearer token's Firebase UID.
 export default {
