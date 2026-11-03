@@ -1186,13 +1186,18 @@ export default function App() {
       if (!userLocation) return;
     }
     const generation=++catalogGeneration.current;
-    const locationChanged=loadedCatalogLocation.current!==null &&
-      distanceKm(loadedCatalogLocation.current,pickupDiscoveryLocation)>0.15;
+    const locationChanged=loadedCatalogLocation.current!==null && (
+      previewTestLocation
+        ? distanceKm(loadedCatalogLocation.current,previewTestLocation)>0.15
+        : userLocation ? distanceKm(loadedCatalogLocation.current,userLocation)>0.15 : true
+    );
     // Keep verified shops visible on ordinary refresh, and use a short-lived
     // prior API response while refreshing after a tab reload.
     let cached:Shop[]|null=null;
     if (!locationChanged && loadedCatalogLocation.current===null) {
-      cached=readDisplayCatalog(pickupDiscoveryLocation);
+      cached=previewTestLocation
+        ? readDisplayCatalog(previewTestLocation)
+        : userLocation ? readDisplayCatalog(userLocation) : null;
       if (cached!==null) {
         setShops(cached);
         loadedCatalogLocation.current=pickupDiscoveryLocation;
@@ -1208,7 +1213,8 @@ export default function App() {
       if(generation!==catalogGeneration.current)return;
       loadedCatalogLocation.current=pickupDiscoveryLocation;
       setShops(result);
-      saveDisplayCatalog(pickupDiscoveryLocation,result);
+      if(previewTestLocation)saveDisplayCatalog(previewTestLocation,result);
+      else if(userLocation)saveDisplayCatalog(userLocation,result);
       // Orderable shops remain API-authoritative. Closed metadata is only
       // for a read-only version of the original visual ShopCard.
       setClosedPickupShopsLoading(true);
