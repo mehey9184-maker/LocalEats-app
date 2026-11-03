@@ -57,22 +57,26 @@ test("P6 rejects malformed/unapproved-looking location and invalid geographic me
  assert.deepEqual(result.map(x=>x.id),["shop-my-kota-ivory-park","duplicate-2"]);
 });
 
-test("P6 Home lists public approved shops separately without creating a cart/checkout authority",()=>{
+test("P7 restores original Home ShopCards; demo test position is a separate opt-in Preview control",()=>{
  assert.match(app,/customerPickupApi\.approvedShops\(\)/);
  assert.match(app,/setPilotDirectoryRows\(result\.shops\)/);
- assert.match(app,/verifiedPilotBrowseDirectory\(/);
- assert.match(app,/aria-label="Approved pilot shops browse only"/);
- assert.match(app,/Pilot shops in Tembisa & Ivory Park/);
- assert.match(app,/Browse only · no ordering/);
- assert.match(app,/Sign in for order history/);
- assert.match(app,/sortedShops\.length} In range/);
- // Visible directory is placed before the huge fallback, not below it.
- assert.ok(app.indexOf("Pilot shops in Tembisa & Ivory Park") < app.indexOf("No Shops Found"));
- assert.match(app,/pilotDirectoryStatus!=="loading" && browseOnlyPilotShops\.length===0/);
- assert.match(app,/Outside 4 km pickup area/);
- assert.match(app,/No verified Tembisa or Ivory Park shop records/);
- assert.match(app,/PROFILE_P5_ENABLE_STAGING_WRITES|pilotDirectoryStatus/);
- assert.doesNotMatch(read("../src/services/verifiedPilotBrowseDirectory.ts"),/createPickup\(|addToCart\(|\bfetch\(/);
+ assert.match(app,/verifiedMyKotaPreviewPosition\(pilotDirectoryRows\)/);
+ assert.match(app,/previewTestLocationAllowed/);
+ assert.match(app,/onTogglePreviewTestLocation/);
+ assert.match(app,/Test near My-Kota/);
+ assert.match(app,/Use my real location/);
+ assert.match(app,/TEST LOCATION: Simulating a customer near My-Kota/);
+ assert.match(app,/const pickupDiscoveryLocation=previewTestLocation\?\?userLocation/);
+ assert.match(app,/readPickupCatalog\(previewTestLocation\)/);
+ assert.match(app,/readPickupCatalog\(userLocation\)/);
+ assert.match(app,/setPreviewTestLocation\(previewMyKotaPosition\)/);
+ assert.match(app,/sortedShops\.length} Online/);
+ assert.match(app,/<ShopCard/);
+ assert.doesNotMatch(app,/Pilot shops in Tembisa & Ivory Park/);
+ assert.doesNotMatch(app,/aria-label="Approved pilot shops browse only"/);
+ assert.doesNotMatch(app,/Browse only · no ordering/);
+ assert.match(app,/!pickupOrderingEnabled\(\)/);
+ assert.match(pickup,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
 });
 
 test("P6 handles unknown-history and signed-out account states without endless skeletons",()=>{
