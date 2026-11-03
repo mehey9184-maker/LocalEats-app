@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/api/profiles/:uid",
+      "destination": "/api/profile?uid=:uid"
+    },
+    {
+      "source": "/api/profiles",
+      "destination": "/api/profile"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
