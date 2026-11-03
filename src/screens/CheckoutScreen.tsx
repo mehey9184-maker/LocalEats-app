@@ -1,4 +1,5 @@
 import {pickupQuoteAmounts} from "../services/pickupSummary";
+import {p7PreviewEnabled} from "../services/p7PreviewShop";
 import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
 import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -465,8 +466,10 @@ export function CheckoutScreen({
 
   const primaryShopId = cart.length > 0 ? cart[0].shopId : shops[0]?.id || "";
   const primaryShop = shops.find((s) => s.id === primaryShopId);
-  const isP7TestCheckout=import.meta.env?.VITE_P7_NEARBY_TEST_MODE==="true" &&
-    primaryShop?.is_test_store===true && !pickupOrderingEnabled();
+  const isP7TestCheckout=p7PreviewEnabled(
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":window.location.hostname,
+  ) && primaryShop?.is_test_store===true && !pickupOrderingEnabled();
   const [p7TestCompleted,setP7TestCompleted]=useState(false);
 
   const shopRadiusLimit = useMemo(() => {
