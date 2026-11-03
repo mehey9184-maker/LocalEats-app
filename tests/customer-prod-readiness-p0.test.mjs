@@ -18,8 +18,7 @@ test("P0 reconnect and manual refresh cannot acknowledge or erase unsent queued 
   assert.match(app,/Saved offline requests were NOT submitted/);
   assert.match(app,/saved offline requests have NOT been submitted/);
   assert.match(app,/Old offline order drafts are still on this device/);
-  assert.match(app,/const syncOfflineOrders = useCallback\(async \(retryCount = 0\) => \{\s*return;/,
-    "Legacy order replay remains disabled");
+  assert.doesNotMatch(app,/const syncOfflineOrders/,"Legacy order replay has been removed");
 });
 
 test("P0 profile save requires the active verified account and won't impersonate previous user",()=>{
