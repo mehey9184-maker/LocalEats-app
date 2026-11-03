@@ -7003,11 +7003,17 @@ function ProfileScreen({
 
   const handleDeletePhoto = async () => {
     const saveFunc = onUpdateProfile || onSave;
-    if (saveFunc) {
-      await saveFunc({ photoURL: "" });
+    if (!saveFunc) {
+      setNotification({message:"Profile updates are unavailable.",type:"error"});
+      return;
     }
-    setPreviewUrl(null);
-    setNotification({ message: "Profile photo removal confirmed by the account API.", type: "info" });
+    try {
+      await saveFunc({ photoURL: "" });
+      setPreviewUrl(null);
+      setNotification({message:"Profile photo removal confirmed by the account API.",type:"info"});
+    } catch {
+      setNotification({message:"Photo removal could not be confirmed. Your existing photo remains.",type:"error"});
+    }
   };
 
   const handleUpdateProfile = async () => {
@@ -7059,9 +7065,8 @@ function ProfileScreen({
       };
 
       const saveFunc = onUpdateProfile || onSave;
-      if (saveFunc) {
-        await saveFunc(updateData, true);
-      }
+      if(!saveFunc)throw new Error("Profile updates are unavailable.");
+      await saveFunc(updateData, true);
       setJustSaved(true);
       triggerHaptic?.([10, 30, 10]);
       setNotification({
@@ -7137,17 +7142,22 @@ function ProfileScreen({
               
             >
               <AnimatePresence mode="wait">
-                <motion.img
-                  key={previewUrl || userProfile.photoURL || "placeholder"}
-                  src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
-                  alt="Profile Avatar"
-                  className="w-full h-full object-cover absolute inset-0"
-                  referrerPolicy="no-referrer"
-                  initial={{ opacity: 0, scale: 0.75, filter: "blur(4px)" }}
-                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, scale: 1.15, filter: "blur(4px)" }}
-                  transition={{ type: "spring", stiffness: 260, damping: 20 }}
-                />
+                {previewUrl || userProfile.photoURL ? (
+                  <motion.img
+                    key={previewUrl || userProfile.photoURL}
+                    src={previewUrl || userProfile.photoURL}
+                    alt="Profile picture"
+                    className="w-full h-full object-cover absolute inset-0"
+                    referrerPolicy="no-referrer"
+                    initial={{opacity:0,scale:0.75}}
+                    animate={{opacity:1,scale:1}}
+                    exit={{opacity:0}}
+                  />
+                ) : (
+                  <span aria-label="No profile picture set" className="text-4xl font-black text-orange-600 dark:text-orange-400">
+                    {userProfile.fullName?.trim().charAt(0).toUpperCase() || "?"}
+                  </span>
+                )}
               </AnimatePresence>
               {uploading && (
                 <motion.div
