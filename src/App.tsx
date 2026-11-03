@@ -684,7 +684,7 @@ export default function App() {
     return ()=>{active=false;};
   },[]);
   const p7TestEnabled=p7PreviewEnabled(
-    import.meta.env.VITE_P7_NEARBY_TEST_MODE,
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
     typeof window==="undefined"?"":window.location.hostname,
   ) && !pickupOrderingEnabled();
   const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
