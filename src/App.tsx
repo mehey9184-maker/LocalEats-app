@@ -7165,13 +7165,13 @@ function ProfileScreen({
             <div role="status" className="rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 px-3 py-3 text-xs">
               You are offline. View your profile, but reconnect to save any edits.
             </div>
-          )
+          )}
           <button
             type="button"
             onClick={handleUpdateProfile}
             disabled={isSaving || !isOnline || !isDirty}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
-              justSaved
+              savedConfirmation
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
                 : isDirty
                 ? "bg-primary text-white shadow-primary/20 hover:bg-primary/90 active:scale-95"
