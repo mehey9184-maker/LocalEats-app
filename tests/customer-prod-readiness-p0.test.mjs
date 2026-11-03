@@ -44,6 +44,8 @@ test("P0 order history cannot show mock database empty results as confirmed hist
   assert.match(history,/customerPickupApi\.orders\(\)/);
   assert.match(history,/auth\.currentUser\?\.uid!==ownerUid/);
   assert.match(history,/o\.user_id!==ownerUid/);
+  assert.match(history,/!Number\.isFinite\(Number\(o\.total_price\)\)/);
+  assert.match(history,/Status unavailable/);
   assert.match(history,/o\.delivery_type==="collection"/);
   assert.match(history,/historyError \?/);
   assert.match(history,/No confirmed pickup orders returned/);
