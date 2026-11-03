@@ -2,6 +2,7 @@ import {cert,getApps,initializeApp} from "firebase-admin/app";
 import {getAuth} from "firebase-admin/auth";
 import {createClient} from "@supabase/supabase-js";
 import {normalizeProfileInput,ownerMatches,ProfileInputError} from "./profilePolicy.js";
+import {stagingProfileConfig,type ProfileStagingConfig} from "./profileRuntimeConfig.js";
 
 const headers:Record<string,string>={
   "Cache-Control":"no-store",
@@ -16,18 +17,16 @@ function unavailable():Response {
   return json(503,{success:false,error:"Profile service is temporarily unavailable."});
 }
 type Authenticated={uid:string;email?:string};
-async function verifiedUser(request:Request):Promise<Authenticated|Response>{
+async function verifiedUser(request:Request,config:ProfileStagingConfig|null):Promise<Authenticated|Response>{
   const raw=request.headers.get("authorization")??"";
   const match=/^Bearer fb-([A-Za-z0-9_\-.]+)$/.exec(raw);
   if(!match)return json(401,{success:false,error:"Sign in again to access your profile."});
-  // Fail closed without server-only credentials; never permit a browser secret.
-  const projectId=process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
-  const email=process.env.FIREBASE_CLIENT_EMAIL;
-  const key=process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g,"\n");
-  if(!projectId || !email || !key)return unavailable();
+  if(!config)return unavailable();
   try{
     if(!getApps().length)initializeApp({credential:cert({
-      projectId,clientEmail:email,privateKey:key,
+      projectId:config.firebaseProjectId,
+      clientEmail:config.firebaseClientEmail,
+      privateKey:config.firebasePrivateKey,
     })});
     const decoded=await getAuth().verifyIdToken(match[1],true);
     if(!decoded.uid || decoded.firebase?.sign_in_provider==="anonymous")
@@ -37,12 +36,9 @@ async function verifiedUser(request:Request):Promise<Authenticated|Response>{
     return json(401,{success:false,error:"Your sign-in has expired. Please sign in again."});
   }
 }
-function database(){
-  const url=process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceRole=process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if(!url || !/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(url) ||
-     !serviceRole)return null;
-  return createClient(url,serviceRole,{
+function database(config:ProfileStagingConfig|null){
+  if(!config)return null;
+  return createClient(config.supabaseUrl,config.supabaseServiceRoleKey,{
     auth:{persistSession:false,autoRefreshToken:false},
   });
 }
@@ -50,12 +46,13 @@ function isResponse(o:Authenticated|Response):o is Response{
   return o instanceof Response;
 }
 export async function getProfile(request:Request,id:string):Promise<Response>{
-  const signed=await verifiedUser(request);
+  const config=stagingProfileConfig(process.env);
+  const signed=await verifiedUser(request,config);
   if(isResponse(signed))return signed;
   if(!ownerMatches(id,signed.uid))return json(403,{
     success:false,error:"You cannot read another account's profile.",
   });
-  const db=database();
+  const db=database(config);
   if(!db)return unavailable();
   try{
     const {data,error}=await db.from("profiles")
@@ -71,13 +68,14 @@ export async function getProfile(request:Request,id:string):Promise<Response>{
 export async function putProfile(request:Request):Promise<Response>{
   if(request.headers.get("content-type")?.split(";")[0].trim()!=="application/json")
     return json(415,{success:false,error:"Send JSON to update your profile."});
-  const signed=await verifiedUser(request);
+  const config=stagingProfileConfig(process.env);
+  const signed=await verifiedUser(request,config);
   if(isResponse(signed))return signed;
-  const db=database();
+  const db=database(config);
   if(!db)return unavailable();
   // Never accidentally switch on writes when deploying a Preview.
   // Deliberate Production activation and own-account acceptance are separate gates.
-  if(process.env.PROFILE_API_WRITES_ENABLED!=="true")
+  if(!config?.writesEnabled)
     return json(503,{success:false,error:"Profile saving has not been activated."});
   try{
     if(Number(request.headers.get("content-length")||0)>16384)
