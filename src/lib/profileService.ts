@@ -1,4 +1,4 @@
-import { FirestoreService, auth } from './firebase';
+import { auth } from './firebase';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -183,21 +183,8 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
     lastError = sbErr;
   }
 
-  // Channel 2: Firestore (Non-blocking secondary mirror for compatibility)
-  FirestoreService.saveProfile(profileData.user_id, {
-    full_name: profileData.fullName || null,
-    email: profileData.email || null,
-    phone: sanitizedPhone,
-    city: profileData.city || null,
-    address: profileData.address || null,
-    country: profileData.country || "South Africa",
-    // Never mirror a client-controlled role into Firestore.
-    avatar_url: profileData.photo_url || null,
-    language: profileData.language || "en",
-    favorites: profileData.favorites || []
-  }).catch((fsErr: any) => {
-    console.debug("[Profile Sync] Firestore mirror notice:", fsErr?.message || fsErr);
-  });
+  // No direct Firestore profile mirror: its live rules are not verified.
+  // An API failure must never trigger a second unaudited write.
 
   return { success: synced, error: synced ? null : lastError };
 }
