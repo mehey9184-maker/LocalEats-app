@@ -1703,13 +1703,13 @@ export default function App() {
         setUserProfile((prev) => {
           if (firebaseAuth.currentUser?.uid!==userId) return prev;
           const safePrev:UserProfile=prev.id===userId?prev:{
-            id:userId,fullName:"",email:firebaseAuth.currentUser.email||"",
+            id:userId,fullName:"",email:firebaseAuth.currentUser?.email||"",
             phone:"",city:"",address:"",country:"South Africa",role:"user",
           };
           return {
             ...safePrev,id:userId,
             fullName:data.fullName??data.full_name??data.name??safePrev.fullName,
-            email:data.email??firebaseAuth.currentUser.email??safePrev.email,
+            email:data.email??firebaseAuth.currentUser?.email??safePrev.email,
             phone:data.phone??safePrev.phone,
             city:data.city??safePrev.city,
             address:data.address??data.default_address??safePrev.address,
