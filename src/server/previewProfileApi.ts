@@ -1,4 +1,4 @@
-import {buildCustomerProfilePatch,createCustomerProfileRecord,ProfilePolicyError,requireProfileOwner} from "../../profileApiPolicy.ts";
+import {buildCustomerProfilePatch,createCustomerProfileRecord,ProfilePolicyError,requireProfileOwner} from "../../profileApiPolicy.js";
 
 export type PreviewProfileRow=Record<string,unknown> & {user_id:string};
 export type PreviewIdentity={uid:string;email?:string};
