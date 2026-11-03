@@ -2523,10 +2523,10 @@ export default function App() {
               >
                 <span>⚠️ {syncError}</span>
                 <button 
-                  onClick={() => syncOfflineOrders(0)}
+                  onClick={() => {void handleManualSync();}}
                   className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-xs ml-2 transition-colors"
                 >
-                  Retry Now
+                  Refresh shops only
                 </button>
                 <button
                   onClick={() => setSyncError(null)}
