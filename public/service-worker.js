@@ -11,7 +11,7 @@
  */
 
 const CACHE_NAME_APP_SHELL = 'localeats-app-shell-v2';
-const CACHE_NAME_API = 'localeats-api-v2';
+// Legacy private API cache is intentionally retired; never persist authenticated responses.
 
 // Standard assets constituting the core App Shell structure
 const STATIC_ASSETS = [
@@ -36,7 +36,7 @@ self.addEventListener('install', (event) => {
 
 // Activate Event: Claim clients and clean up stale legacy caches
 self.addEventListener('activate', (event) => {
-  const activeCacheNames = [CACHE_NAME_APP_SHELL, CACHE_NAME_API];
+  const activeCacheNames = [CACHE_NAME_APP_SHELL];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -61,7 +61,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 1. API Requests Strategy: Network-First with Graceful Offline Fallback
+  // Private API/auth/orders responses must never be cached or replayed offline.
+  // Public catalog caching belongs in the app's bounded, separately validated cache.
   const isApiRequest =
     url.pathname.includes('/rest/v1') ||
     url.pathname.includes('/auth/v1') ||
@@ -70,41 +71,10 @@ self.addEventListener('fetch', (event) => {
 
   if (isApiRequest) {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // If successful (status 200), clone and save response to the API cache
-          if (response && response.status === 200) {
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME_API).then((cache) => {
-              cache.put(request, responseToCache);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          // Network connection failed or timed out. Attempt to return from cache.
-          return caches.match(request).then((cachedResponse) => {
-            if (cachedResponse) {
-              console.log('[Service Worker] Serving API response from local cache fallback:', url.pathname);
-              return cachedResponse;
-            }
-            
-            // Standard JSON fallback structure if no cache exists for this endpoint
-            return new Response(
-              JSON.stringify({
-                error: 'Offline mode active',
-                message: 'You are currently browsing offline. Live menus or order states may be delayed.',
-                offline: true,
-                timestamp: Date.now()
-              }),
-              {
-                headers: { 'Content-Type': 'application/json' },
-                status: 503,
-                statusText: 'Service Unavailable (Offline)'
-              }
-            );
-          });
-        })
+      fetch(request, { cache: 'no-store' }).catch(() => new Response(
+        JSON.stringify({ error: 'Connection unavailable', offline: true }),
+        { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, status: 503 }
+      ))
     );
     return;
   }
