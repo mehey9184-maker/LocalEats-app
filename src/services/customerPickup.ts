@@ -42,6 +42,13 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  const pending=stored ? JSON.parse(stored) : payload;
  if(!pending)throw new Error("Review a quote before submitting.");
  if(stored && payload && JSON.stringify(pending)!==JSON.stringify(payload))throw new Error("A previous order outcome is unresolved. Use Retry previous submission first.");
+ // A recovered order must match the same original amount and payment choice.
+ // Keep the unresolved request if its consent or response cannot be verified.
+ const consentTotalMinor=pending?.consent?.total_minor;
+ const consentPaymentMethod=pending?.payment_method;
+ if(!Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
+    !["cash","card_machine"].includes(consentPaymentMethod))
+  throw new Error("The pending pickup request has invalid consent or payment details.");
  sessionStorage.setItem(key,JSON.stringify(pending));
  let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
  try{result=await customerPickupApi.create(pending);}catch(error){
@@ -49,6 +56,10 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
   throw error;
  }
  if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
+ const persistedTotalMinor=result.order.total_price == null ? NaN : Math.round(Number(result.order.total_price)*100);
+ if(!Number.isSafeInteger(persistedTotalMinor) || persistedTotalMinor!==consentTotalMinor ||
+    result.order.payment_method!==consentPaymentMethod)
+  throw new Error("The API returned an order that does not match the confirmed total or payment choice.");
  sessionStorage.removeItem(key);
  return result.order;
 }
