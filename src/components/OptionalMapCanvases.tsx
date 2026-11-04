@@ -221,7 +221,7 @@ export function AddressPickerMapCanvas({markerPos,setMarkerPos,onLocationChange}
 
 export function ExploreMapCanvas({mapCenter,isMapFullscreen,userLocation,maxDistance,
   activeProximityRiders,legendFilter,filteredShops,favorites,setSelectedShopId,triggerHaptic}:{
-  mapCenter:Point|[number,number];isMapFullscreen:boolean;userLocation:Point|null;maxDistance:number|null;
+  mapCenter:[number,number];isMapFullscreen:boolean;userLocation:Point|null;maxDistance:number|null;
   activeProximityRiders:any[]|null|undefined;legendFilter:string;filteredShops:Shop[];favorites:string[];
   setSelectedShopId:(id:string|null)=>void;triggerHaptic:(pattern?:number|number[])=>void;
 }) {
