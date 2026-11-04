@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'src/App.tsx'
+      - 'src/screens/auth/CompleteProfileScreen.tsx'
       - 'src/components/OptionalMapCanvases.tsx'
       - 'tests/customer-map-on-demand-main.test.mjs'
       - '.github/workflows/customer-map-on-demand-main.yml'
