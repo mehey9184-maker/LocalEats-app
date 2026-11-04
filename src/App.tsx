@@ -1,5 +1,6 @@
 import {retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
+import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -683,7 +684,6 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
-  const visibleShops = shops;
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -942,6 +942,11 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  const displayedCatalogKeyRef=useRef<string|null>(null);
+  const noVisibleShops=useMemo<Shop[]>(()=>[],[]);
+  // A moved device never displays the previous location's shops.
+  const visibleShops=userLocation && nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
+    ? shops : noVisibleShops;
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const ordersRef = useRef<Order[]>(orders);
@@ -1154,14 +1159,29 @@ export default function App() {
   const catalogGeneration=useRef(0);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     const generation=++catalogGeneration.current;
-    setShops([]); setLoadingShops(true); setIsSyncing(true); setFetchError(null);
+    const key=nearbyCatalogKey(userLocation);
+    const sameLocation=!!key && key===displayedCatalogKeyRef.current;
+
+    // Keep the previous verified cards visible during same-location refreshes,
+    // avoiding a blank/flash every minute. Location changes always fail closed.
+    if(!sameLocation){displayedCatalogKeyRef.current=null;setShops([]);setLoadingShops(true);}
+    setIsSyncing(true);
+    setFetchError(null);
     try {
-      const result=await readPickupCatalog(userLocation);
+      const result=_force
+        ? await readPickupCatalog(userLocation,{force:true})
+        : await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
+      displayedCatalogKeyRef.current=key;
       setShops(result);
-      // A successful empty result is not a network or authentication error.
+      // A successful empty catalog is not a network failure.
     } catch(error) {
-      if(generation===catalogGeneration.current)setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      if(generation===catalogGeneration.current){
+        // Never keep outdated open/available/price claims after failed refresh.
+        displayedCatalogKeyRef.current=null;
+        setShops([]);
+        setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      }
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
