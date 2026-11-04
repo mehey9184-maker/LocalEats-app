@@ -1,7 +1,7 @@
 import {pickupQuoteAmounts} from "./pickupSummary";
 import {auth} from "../lib/firebase";
 import {createPickupApi} from "../pickup/client";
-import {pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
+import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
 import {createNearbyCatalogReader} from "./nearbyCatalogCache";
 import type {CartItem, Shop} from "../types";
 
@@ -11,7 +11,7 @@ export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_AP
   return user.getIdToken();
 },fetch,{requireExplicitHttps:import.meta.env.PROD});
 
-const readVerifiedNearbyCatalog=createNearbyCatalogReader(customerPickupApi);
+const readVerifiedNearbyCatalog=createNearbyCatalogReader(customerPickupApi,mapPickupShop);
 export async function readPickupCatalog(location:{lat:number;lng:number}|null,options:{force?:boolean}={}):Promise<Shop[]> {
   return readVerifiedNearbyCatalog(location,options);
 }
