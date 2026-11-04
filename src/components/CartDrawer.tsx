@@ -10,7 +10,8 @@ import {
   Store, 
   Sparkles, 
   MessageSquare,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import { BottomSheet } from "./BottomSheet";
 import { CartItem, Shop } from "../types";
@@ -460,7 +461,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 disabled={fulfillment === "collection" && (!pickupQuote || !quoteConsent || !customerName.trim() || !validPickupPhone || !isSignedIn || !pickupOrderingEnabled() || placingPickupOrder || !onPickupOrderPlaced)}
                 aria-busy={placingPickupOrder}
                 className={`client-tap-spring ${placingPickupOrder ? "w-14 h-14 mx-auto px-0 justify-center" : "w-full px-5 justify-between"} py-4 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-700 hover:to-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/30 flex items-center transition-[width,transform] duration-300 cursor-pointer`}>
-                {placingPickupOrder ? <span role="status" aria-label="Submitting pickup order to server" className="inline-flex"><ShoppingBag className="w-5 h-5 animate-pulse motion-reduce:animate-none" /></span> : <>
+                {placingPickupOrder ? <span role="status" aria-label="Submitting pickup order to server" className="inline-flex"><Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none" /></span> : <>
                 <div className="flex items-center gap-2">
                   <span className="bg-white/20 px-2 py-0.5 rounded-md text-[11px]">
                     {totalItemsCount}
