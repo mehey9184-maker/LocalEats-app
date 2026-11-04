@@ -14,12 +14,14 @@ const notices = read("src/screens/NotificationsScreen.tsx");
 const checkout = read("src/screens/CheckoutScreen.tsx");
 const css = read("src/index.css");
 
-test("M1: original ShopCard remains and 70ms row cascade never changes shop locations", () => {
+test("M1: original Home ShopCard remains instantly visible; cascade only low-stakes secondary lists", () => {
  assert.match(app, /import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
  assert.match(app, /<ShopCard[\s\S]*?shop=\{shop\}/);
  assert.match(app, /<ShopCard[\s\S]*?readOnlyClosed/);
- assert.match(app, /Math\.min\(index \* 0\.07, 0\.42\)/);
- assert.match(app, /reduceCustomerMotion \? false : \{ opacity: 0, y: 12 \}/);
+ assert.doesNotMatch(app, /staggerChildren|reduceCustomerMotion|<motion\.div key=\{shop\.id\}/);
+ assert.match(cart, /Math\.min\(idx \* 0\.07, 0\.42\)/);
+ assert.match(history, /Math\.min\(index \* 0\.07, 0\.42\)/);
+ assert.match(notices, /Math\.min\(index \* 0\.07, 0\.42\)/);
  assert.doesNotMatch(app, /shop\.latitude\s*=|shop\.longitude\s*=/);
 });
 
