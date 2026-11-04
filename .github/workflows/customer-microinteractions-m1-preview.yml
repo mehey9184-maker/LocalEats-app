@@ -1,0 +1,26 @@
+name: Customer M1 Contextual Micro-Interactions Preview
+on:
+  push:
+    branches: [preview/customer-microinteractions-m1-20261104]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-motion-m1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Micro-interactions, P7 original UI, P6/P5 security and Customer regressions
+        run: node --import tsx --test tests/customer-home-header-stability.test.mjs tests/customer-microinteractions-m1.test.mjs tests/customer-p7-original-card-nearby-test.test.mjs tests/customer-p6-shop-history-visibility.test.mjs tests/customer-profile-p5-staging-auth.test.mjs tests/customer-profile-p4-safe-api.test.mjs tests/customer-profile-p3-backend-security.test.mjs tests/customer-orders-o1-authority.test.mjs tests/customer-map-m2-usability.test.mjs tests/customer-map-m1-trust-privacy.test.mjs tests/customer-discover-phase-d3.test.mjs tests/customer-discover-phase-d2.test.mjs tests/customer-discover-phase-d1.test.mjs tests/customer-background-status-fcm.test.mjs tests/customer-confirmed-order-status-alerts.test.mjs tests/customer-home-live-location-and-push.test.mjs tests/customer-home-phase3-performance.test.mjs tests/customer-home-phase2-polish.test.mjs tests/customer-home-phase1-polish.test.mjs tests/customer-startup-auth-routing.test.mjs tests/customer-closed-menu-browsing.test.mjs tests/customer-closed-pickup-previews.test.mjs tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs tests/customer-collection-tracking.test.mjs tests/original-pickup.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: TypeScript validation
+        run: npm run lint
+      - name: Full Customer build
+        run: npm run build

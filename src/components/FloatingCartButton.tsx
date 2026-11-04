@@ -2,6 +2,7 @@ import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ShoppingBag, ArrowRight } from "lucide-react";
 import { CartItem, Screen, Shop } from "../types";
+import { CustomerRollingAmount } from "./CustomerRollingAmount";
 
 interface FloatingCartButtonProps {
   cart: CartItem[];
@@ -55,15 +56,20 @@ export const FloatingCartButton: React.FC<FloatingCartButtonProps> = ({
             if (triggerHaptic) triggerHaptic(12);
             onOpenCart();
           }}
-          className="w-full py-3 px-4 bg-slate-900/95 dark:bg-slate-950/95 hover:bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-700/80 backdrop-blur-md flex items-center justify-between gap-3 active:scale-[0.98] transition-all cursor-pointer group ring-1 ring-white/10"
+          data-customer-cart-target
+          className="client-tap-spring w-full py-3 px-4 bg-slate-900/95 dark:bg-slate-950/95 hover:bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-700/80 backdrop-blur-md flex items-center justify-between gap-3 transition-all cursor-pointer group ring-1 ring-white/10"
           aria-label="View shopping cart"
         >
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="relative w-8 h-8 rounded-xl bg-orange-600 flex items-center justify-center text-white shrink-0 shadow-sm group-hover:scale-105 transition-transform">
               <ShoppingBag className="w-4 h-4" />
-              <span className="absolute -top-1 -right-1 bg-white text-orange-600 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
+              <motion.span key={totalCount}
+                initial={{ scale: 0.7 }}
+                animate={{ scale: [0.7, 1.24, 1] }}
+                transition={{ duration: 0.35, ease: "easeOut" }}
+                className="absolute -top-1 -right-1 bg-white text-orange-600 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
                 {totalCount}
-              </span>
+              </motion.span>
             </div>
             <div className="text-left min-w-0">
               <p className="text-xs font-black text-white truncate">
@@ -77,7 +83,7 @@ export const FloatingCartButton: React.FC<FloatingCartButtonProps> = ({
 
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-xs font-mono font-black text-white bg-white/10 px-2.5 py-1 rounded-lg">
-              R {subtotal.toFixed(2)}
+              <CustomerRollingAmount value={subtotal} />
             </span>
             <div className="w-6 h-6 rounded-full bg-orange-600 flex items-center justify-center text-white group-hover:translate-x-0.5 transition-transform">
               <ArrowRight className="w-3.5 h-3.5" />

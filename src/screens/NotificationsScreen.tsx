@@ -1,4 +1,5 @@
 import React from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Bell, Trash2, CheckCircle2, ShoppingBag, Info, AlertTriangle } from "lucide-react";
 
 interface NotificationItem {
@@ -26,6 +27,7 @@ export function NotificationsScreen({
   onRead,
   onDelete,
 }: NotificationsScreenProps) {
+  const reduceMotion = useReducedMotion();
   const getIcon = (type?: string) => {
     switch (type) {
       case "order":
@@ -95,9 +97,20 @@ export function NotificationsScreen({
             </p>
           </div>
         ) : (
-          notifications.map((n) => (
-            <div
+          notifications.map((n, index) => (
+            <motion.div
               key={n.id}
+              initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.28, delay: reduceMotion ? 0 : Math.min(index * 0.07, 0.42) }}
+              drag={n.read && !reduceMotion ? "x" : false}
+              dragConstraints={{ left: -150, right: 150 }}
+              dragElastic={0.16}
+              whileDrag={{ rotate: 5, scale: 1.02 }}
+              onDragEnd={(_, info) => {
+                // Dismissal is destructive; only already-read alerts can be swiped away.
+                if (n.read && Math.abs(info.offset.x) > 100) onDelete(n.id);
+              }}
               onClick={() => onRead(n.id)}
               className={`p-4 rounded-2xl border transition duration-200 flex items-start gap-3.5 relative overflow-hidden ${
                 n.read
@@ -134,7 +147,7 @@ export function NotificationsScreen({
               >
                 <Trash2 className="w-4 h-4" />
               </button>
-            </div>
+            </motion.div>
           ))
         )}
       </div>
