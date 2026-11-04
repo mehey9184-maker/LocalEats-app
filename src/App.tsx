@@ -26,7 +26,7 @@ import {
   lazy,
   Suspense,
 } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { Toaster, toast } from "sonner";
 import L from "leaflet";
 import {
@@ -4020,7 +4020,6 @@ function HomeScreen({
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
-  const reduceCustomerMotion = useReducedMotion();
   const currentTownship = useMemo(() => {
     return detectTownship(userLocation?.lat, userLocation?.lng, userProfile?.address);
   }, [userLocation, userProfile?.address]);
@@ -4430,10 +4429,6 @@ function HomeScreen({
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
         {sortedShops.map((shop,index) => (
-          <motion.div key={shop.id}
-            initial={reduceCustomerMotion ? false : { opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut", delay: reduceCustomerMotion ? 0 : Math.min(index * 0.07, 0.42) }}>
           <ShopCard
             key={shop.id}
             shop={shop}
@@ -4443,13 +4438,8 @@ function HomeScreen({
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
-          </motion.div>
         ))}
         {matchingClosedShops.map((preview,index)=>(
-          <motion.div key={preview.id}
-            initial={reduceCustomerMotion ? false : { opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, ease: "easeOut", delay: reduceCustomerMotion ? 0 : Math.min((sortedShops.length + index) * 0.07, 0.42) }}>
           <ShopCard
             key={preview.id}
             shop={closedPickupCardData(preview)}
@@ -4460,11 +4450,10 @@ function HomeScreen({
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
-          </motion.div>
         ))}
       </div>
     );
-  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled, reduceCustomerMotion]);
+  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
   // Show the same Home-shaped shell during initial discovery only. If the
   // approved read-only closed catalog already arrived, let customers browse it.
