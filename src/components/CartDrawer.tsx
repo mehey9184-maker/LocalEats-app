@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import { CustomerRollingAmount } from "./CustomerRollingAmount";
 import { 
   ShoppingBag, 
   Trash2, 
@@ -65,6 +66,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   isSignedIn = false,
   onPickupOrderPlaced,
 }) => {
+  const reducedMotion = useReducedMotion();
   const activeShopId = cart.length > 0 ? cart[0].shopId : null;
   const activeShop = shops.find((s) => s.id === activeShopId);
 
@@ -264,10 +266,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   return (
                     <motion.div
                       key={`${item.id}-${idx}`}
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={reducedMotion ? false : { opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, height: 0 }}
-                      transition={{ duration: 0.2 }}
+                      exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95, height: 0 }}
+                      transition={{ duration: reducedMotion ? 0 : 0.3, delay: reducedMotion ? 0 : Math.min(idx * 0.07, 0.42), ease: "easeOut" }}
                       className="bg-white dark:bg-slate-800/80 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-700/80 shadow-xs flex items-start gap-3 relative"
                     >
                       {/* Item Thumbnail */}
@@ -331,7 +333,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                                   item.selectedCustomizations
                                 );
                               }}
-                              className="w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
+                              className="client-tap-spring w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
                               aria-label="Decrease quantity"
                             >
                               {item.quantity === 1 ? (
@@ -357,7 +359,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                                   item.selectedCustomizations
                                 );
                               }}
-                              className="w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
+                              className="client-tap-spring w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
                               aria-label="Increase quantity"
                                                           disabled={fulfillment === "collection" && item.quantity >= 20}
                             >
@@ -431,7 +433,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200/60 dark:border-slate-700/60 space-y-2 mt-4">
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
                   <span>Subtotal ({totalItemsCount} {totalItemsCount === 1 ? "item" : "items"})</span>
-                  <span className="font-bold text-slate-900 dark:text-white">R {subtotal.toFixed(2)}</span>
+                  <span className="font-bold text-slate-900 dark:text-white"><CustomerRollingAmount value={subtotal} /></span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
                   <span>{fulfillment === "collection" ? "Pickup fee" : "Estimated Delivery"}</span>
@@ -456,7 +458,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0">
               <button type="button" onClick={fulfillment === "collection" ? () => void placePickupOrder() : handleCheckoutClick}
                 disabled={fulfillment === "collection" && (!pickupQuote || !quoteConsent || !customerName.trim() || !validPickupPhone || !isSignedIn || !pickupOrderingEnabled() || placingPickupOrder || !onPickupOrderPlaced)}
-                className="w-full py-4 px-5 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-700 hover:to-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/30 flex items-center justify-between active:scale-[0.98] transition-all cursor-pointer">
+                aria-busy={placingPickupOrder}
+                className={`client-tap-spring ${placingPickupOrder ? "w-14 h-14 mx-auto px-0 justify-center" : "w-full px-5 justify-between"} py-4 bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-700 hover:to-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-orange-600/30 flex items-center transition-[width,transform] duration-300 cursor-pointer`}>
+                {placingPickupOrder ? <span role="status" aria-label="Submitting pickup order to server" className="inline-flex"><ShoppingBag className="w-5 h-5 animate-pulse motion-reduce:animate-none" /></span> : <>
                 <div className="flex items-center gap-2">
                   <span className="bg-white/20 px-2 py-0.5 rounded-md text-[11px]">
                     {totalItemsCount}
@@ -467,6 +471,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   {fulfillment !== "collection" && <span>R {estimatedTotal.toFixed(2)}</span>}
                   {fulfillment !== "collection" && <ArrowRight className="w-4 h-4" />}
                 </div>
+                </>}
               </button>
               {fulfillment === "collection" && !isSignedIn && <button type="button" onClick={onProceedToCheckout} className="mt-2 w-full py-2 text-xs font-bold text-orange-700 underline">Sign in to place pickup order</button>}
               {fulfillment === "collection" && !pickupOrderingEnabled() && <p className="text-center text-[10px] text-slate-500 mt-2">Production ordering stays unavailable until separately enabled.</p>}
