@@ -34,7 +34,25 @@ test("legacy worker copies stay identical and retire private API caches", () => 
   assert.equal(worker, workerAlias);
   assert.doesNotMatch(worker, /CACHE_NAME_API|cache\.put\(request, responseToCache\).*API/s);
   assert.match(worker, /fetch\(request, \{ cache: 'no-store' \}\)/);
-  assert.match(worker, /const activeCacheNames = \[CACHE_NAME_APP_SHELL\]/);
+  assert.match(worker, /name\.startsWith\('localeats-api-'\)/);
+  assert.match(worker, /name\.startsWith\('localeats-app-shell-'\)/);
+  assert.doesNotMatch(worker, /!activeCacheNames\.includes/);
+});
+
+test("old API caches are evicted without deleting Workbox or unrelated caches", async () => {
+  const handlers = new Map();
+  const deleted = [];
+  const self = {
+    location: {origin:"https://localeatssa.co.za"},
+    addEventListener:(type,fn)=>handlers.set(type,fn),
+    clients:{claim:async()=>{}}
+  };
+  const caches = {keys:async()=>["localeats-api-v2","localeats-app-shell-v1","workbox-precache-v1","localeats-app-shell-v2","other"],delete:async(name)=>{deleted.push(name);return true;}};
+  vm.runInNewContext(worker,{self,caches,fetch:async()=>{},console:{log(){}},Request,Response,URL,Date});
+  let promise;
+  handlers.get("activate")({waitUntil:p=>{promise=p;}});
+  await promise;
+  assert.deepEqual(deleted.sort(),["localeats-api-v2","localeats-app-shell-v1"]);
 });
 
 test("offline private API GET fails closed instead of replaying another account's cached response", async () => {
