@@ -26,7 +26,7 @@ import {
   lazy,
   Suspense,
 } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Toaster, toast } from "sonner";
 import L from "leaflet";
 import {
@@ -325,6 +325,7 @@ import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
+import { CartFlightFeedback, CustomerNotificationBell, notifyLocalCartAdded } from "./components/CustomerMicroMotion";
 import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
@@ -2611,6 +2612,7 @@ export default function App() {
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             triggerHaptic([100, 50, 100]); // Stronger pulse for clear
             setCart([buildCartItemNode(quantity)]);
+            notifyLocalCartAdded(item.image || "");
             setNotification({
               message: `Started new cart with ${item.name}`,
               type: "success",
@@ -2667,6 +2669,8 @@ export default function App() {
           buildCartItemNode(quantity),
         ];
       });
+      // Visual feedback reflects the accepted local-cart mutation only — not an order.
+      notifyLocalCartAdded(item.image || "");
       // Notification removed for cleaner UI
     },
     [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
@@ -3677,6 +3681,9 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
 
+          {/* Decorative fly-to-cart arc after accepted local-cart actions only. */}
+          <CartFlightFeedback />
+
           {/* Interactive Floating Cart Button */}
           <FloatingCartButton
             cart={cart}
@@ -4013,6 +4020,7 @@ function HomeScreen({
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
+  const reduceCustomerMotion = useReducedMotion();
   const currentTownship = useMemo(() => {
     return detectTownship(userLocation?.lat, userLocation?.lng, userProfile?.address);
   }, [userLocation, userProfile?.address]);
@@ -4422,6 +4430,10 @@ function HomeScreen({
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
         {sortedShops.map((shop,index) => (
+          <motion.div key={shop.id}
+            initial={reduceCustomerMotion ? false : { opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut", delay: reduceCustomerMotion ? 0 : Math.min(index * 0.07, 0.42) }}>
           <ShopCard
             key={shop.id}
             shop={shop}
@@ -4431,8 +4443,13 @@ function HomeScreen({
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
+          </motion.div>
         ))}
         {matchingClosedShops.map((preview,index)=>(
+          <motion.div key={preview.id}
+            initial={reduceCustomerMotion ? false : { opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut", delay: reduceCustomerMotion ? 0 : Math.min((sortedShops.length + index) * 0.07, 0.42) }}>
           <ShopCard
             key={preview.id}
             shop={closedPickupCardData(preview)}
@@ -4443,10 +4460,11 @@ function HomeScreen({
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
+          </motion.div>
         ))}
       </div>
     );
-  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
+  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled, reduceCustomerMotion]);
 
   // Show the same Home-shaped shell during initial discovery only. If the
   // approved read-only closed catalog already arrived, let customers browse it.
@@ -4584,12 +4602,7 @@ function HomeScreen({
                 className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Notifications"
               >
-                <Bell className="w-4.5 h-4.5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[10px] whitespace-nowrap font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
-                    {unreadCount > 9 ? "9+" : unreadCount}
-                  </span>
-                )}
+                <CustomerNotificationBell unreadCount={unreadCount} />
               </button>
               <div className="relative">
                 <button
