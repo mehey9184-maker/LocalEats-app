@@ -6,6 +6,7 @@ import { customerPullDistance } from "../src/hooks/useCustomerPullToRefresh.ts";
 const read = path => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 const app = read("src/App.tsx");
 const cart = read("src/components/CartDrawer.tsx");
+const bottomSheet = read("src/components/BottomSheet.tsx");
 const floatCart = read("src/components/FloatingCartButton.tsx");
 const micro = read("src/components/CustomerMicroMotion.tsx");
 const rolling = read("src/components/CustomerRollingAmount.tsx");
@@ -58,6 +59,13 @@ test("M1: totals roll only as locally estimated, not confirmed payments", () => 
  assert.match(cart, /<CustomerRollingAmount value=\{subtotal\}/);
  assert.match(cart, /Est\. Total/);
  assert.match(cart, /Server-confirmed total/);
+});
+
+test("M1: Food Cart expands with 350ms ease-out without changing other sheet defaults", () => {
+ assert.match(cart, /<BottomSheet[\\s\\S]*?easeOutMotion/);
+ assert.match(bottomSheet, /easeOutMotion = false/);
+ assert.match(bottomSheet, /easeOutMotion \\? \\{ duration: 0\\.35, ease: \\[0\\.22, 1, 0\\.36, 1\\] \\}/);
+ assert.match(bottomSheet, /reduceMotion \\? \\{ duration: 0 \\}/);
 });
 
 test("M1: only read notifications can swipe to dismiss; the bell only swings on increase", () => {
