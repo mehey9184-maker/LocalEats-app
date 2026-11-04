@@ -1,0 +1,49 @@
+name: Customer Deferred Map Canvases Main Release Gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'src/screens/auth/CompleteProfileScreen.tsx'
+      - 'src/components/OptionalMapCanvases.tsx'
+      - 'tests/customer-map-on-demand-main.test.mjs'
+      - '.github/workflows/customer-map-on-demand-main.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client-map-on-demand:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Map deferral, original client UI, 4km discovery, pickup and caching regressions
+        run: node --experimental-strip-types --test tests/customer-map-on-demand-main.test.mjs tests/customer-page-splitting-main.test.mjs tests/customer-deferred-modules-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs tests/pickup-activation.test.mjs tests/original-pickup.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Full Client build
+        run: npm run build
+      - name: Verify isolated map chunk and lower entrypoint bytes
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readdirSync,statSync,readFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          import assert from 'node:assert/strict';
+          const dir='dist/assets';
+          const files=readdirSync(dir).filter(n=>n.endsWith('.js')).map(n=>({name:n,bytes:statSync(join(dir,n)).size}));
+          files.sort((a,b)=>b.bytes-a.bytes);
+          for(const file of files)console.log((file.bytes/1024).toFixed(1)+' KiB  '+file.name);
+          assert.ok(files.some(f=>f.name.startsWith('OptionalMapCanvases-')),'Missing on-demand map chunk');
+          const main=files.filter(f=>/^index-[^-]+\.js$/.test(f.name)).sort((a,b)=>b.bytes-a.bytes)[0];
+          assert.ok(main,'Missing main entry bundle');
+          console.log('Main entry bytes:',main.bytes);
+          // Last successful production before map extraction: 2,192,054 uncompressed bytes
+          assert.ok(main.bytes<2_192_054,'No main bundle size reduction after lazy map extraction');
+          NODE

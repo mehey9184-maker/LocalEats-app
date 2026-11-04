@@ -39,5 +39,10 @@ test("pickup remains review-only and map discovery plus QR and cropper lazy path
   assert.match(app,/import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
   assert.match(app,/const DeferredProfileCropper = lazy\(/);
   assert.match(app,/await import\("html5-qrcode"\)/);
-  assert.match(app,/<MapContainer/);
+  // The MapContainer stays in the deferred map module instead of forcing Leaflet
+  // into the initial Home/Discover JavaScript bundle.
+  const optionalMaps=readFileSync(new URL("../src/components/OptionalMapCanvases.tsx",import.meta.url),"utf8");
+  assert.match(app,/const DiscoverMapCanvas = lazy\(/);
+  assert.match(app,/const ExploreMapCanvas = lazy\(/);
+  assert.match(optionalMaps,/<MapContainer/);
 });

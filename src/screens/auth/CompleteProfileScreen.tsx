@@ -1,4 +1,4 @@
-import React, { useState, useRef, ChangeEvent, Suspense } from "react";
+import React, { useState, useRef, ChangeEvent, Suspense, lazy } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -14,7 +14,10 @@ import {
 import { UserProfile, NotificationState } from "../../types";
 import { SUPPORTED_CITIES, formatSAPhone, validateSAPhone } from "../../utils";
 import { getAvatarUrl, uploadAvatar } from "../../utils/imageUtils";
-import { AddressSearch, LocationPickerMap } from "../../components/MapComponents";
+// These are only displayed during precise-location editing. Retain the existing
+// Suspense placeholders and original map controls without eager Leaflet loading.
+const AddressSearch = lazy(() => import("../../components/MapComponents").then(({AddressSearch}) => ({default:AddressSearch})));
+const LocationPickerMap = lazy(() => import("../../components/MapComponents").then(({LocationPickerMap}) => ({default:LocationPickerMap})));
 import { WidgetErrorBoundary } from "../../components/WidgetErrorBoundary";
 
 export interface CompleteProfileScreenProps {
