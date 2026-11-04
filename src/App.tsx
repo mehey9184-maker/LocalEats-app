@@ -75,7 +75,7 @@ import {
   Legend,
 } from "recharts";
 
-import { Html5Qrcode } from "html5-qrcode";
+import type { Html5Qrcode } from "html5-qrcode";
 
 let DefaultIcon = L.icon({
   iconUrl: icon,
@@ -301,7 +301,8 @@ import {
   TownshipConfig,
 } from "./lib/townshipHelper";
 import { BlurUpImage } from "./components/BlurUpImage";
-import Cropper from "react-easy-crop";
+// Photo editing is optional; do not parse the cropper on Home/Discover startup.
+const DeferredProfileCropper = lazy(() => import("react-easy-crop"));
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
 import { OnboardingTour } from "./components/OnboardingTour";
@@ -5489,6 +5490,9 @@ function QRScannerModal({
     const startScanner = async () => {
       try {
         setErrorMsg(null);
+        // Load the camera scanner only after the QR modal is opened.
+        const { Html5Qrcode } = await import("html5-qrcode");
+        if (!isMounted) return;
         const html5QrCode = new Html5Qrcode(scannerId);
         scannerRef.current = html5QrCode;
 
@@ -5508,6 +5512,11 @@ function QRScannerModal({
             // benign logs
           }
         );
+        // Closing the modal while camera permission is pending must not
+        // leave an active scanner behind.
+        if (!isMounted && html5QrCode.isScanning) {
+          await html5QrCode.stop().catch(console.error);
+        }
       } catch (err: any) {
         console.warn("QR start error:", err);
         if (isMounted) {
@@ -7704,7 +7713,8 @@ function ProfileScreen({
             </button>
           </div>
           <div className="flex-1 relative">
-            <Cropper
+            <Suspense fallback={<div className="w-full h-full bg-black" aria-label="Loading photo editor" />}>
+              <DeferredProfileCropper
               image={imageToCrop}
               crop={crop}
               zoom={zoom}
@@ -7714,7 +7724,8 @@ function ProfileScreen({
               onCropChange={setCrop}
               onZoomChange={setZoom}
               onCropComplete={handleCropComplete}
-            />
+              />
+            </Suspense>
             {/* Overlay instruction text */}
             <div className="absolute top-6 left-0 right-0 text-center pointer-events-none z-10">
               <span className="bg-black/50 backdrop-blur-md text-white text-xs font-bold px-4 py-2 rounded-full tracking-wide shadow-lg border border-white/20">
