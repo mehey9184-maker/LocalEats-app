@@ -5,12 +5,11 @@
  * availability to browser storage. The authoritative server still owns the
  * current catalog and every checkout quote.
  */
-import {mapPickupShop, requireRealLocation} from "./pickupMapping";
 import type {Shop} from "../types";
 
 type Point={lat:number;lng:number};
 type PublicSource={
-  shops:(point:Point)=>Promise<{shops?:Array<{id:string;[key:string]:unknown}>}>;
+  shops:(point:Point)=>Promise<{shops?:Array<{id:string}>}>;
   menu:(id:string)=>Promise<{menu_items?:unknown[]}>;
 };
 export const NEARBY_CATALOG_TTL_MS=15_000;
@@ -26,14 +25,16 @@ export function nearbyCatalogKey(point:Point|null):string|null {
 
 export function createNearbyCatalogReader(
   source:PublicSource,
+  mapShop:(shop:any,menu:any[])=>Shop,
   now:()=>number=()=>Date.now(),
 ) {
   const verified=new Map<string,{time:number;shops:Shop[]}>();
   const pending=new Map<string,Promise<Shop[]>>();
 
   return async (location:Point|null, options:{force?:boolean}={}):Promise<Shop[]> => {
-    const point=requireRealLocation(location);
-    const key=nearbyCatalogKey(point)!;
+    const key=nearbyCatalogKey(location);
+    if(!key || !location)throw new Error("Allow your real location to find available pickup shops within 4 km.");
+    const point=location;
     const cached=verified.get(key);
     const age=cached ? now()-cached.time : Infinity;
     if(cached && (age<0 || age>=NEARBY_CATALOG_TTL_MS))verified.delete(key);
@@ -50,7 +51,7 @@ export function createNearbyCatalogReader(
         if(!shop || typeof shop.id!=="string" || !shop.id)throw new Error("The shop service returned an invalid shop.");
         const menu=await source.menu(shop.id);
         if(!Array.isArray(menu.menu_items))throw new Error("The menu service returned an invalid menu.");
-        return mapPickupShop(shop,menu.menu_items);
+        return mapShop(shop,menu.menu_items);
       }));
       verified.delete(key);
       verified.set(key,{time:now(),shops:result});
