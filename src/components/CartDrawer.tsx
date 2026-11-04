@@ -194,6 +194,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   return (
     <BottomSheet
       isOpen={isOpen}
+      easeOutMotion
       onClose={onClose}
       title="Your Food Cart"
       subtitle={activeShop ? `Ordering from ${activeShop.name}` : undefined}
