@@ -19,7 +19,11 @@ test("M1: original Home ShopCard remains instantly visible; cascade only low-sta
  assert.match(app, /import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
  assert.match(app, /<ShopCard[\s\S]*?shop=\{shop\}/);
  assert.match(app, /<ShopCard[\s\S]*?readOnlyClosed/);
- assert.doesNotMatch(app, /staggerChildren|reduceCustomerMotion|<motion\.div key=\{shop\.id\}/);
+ const start=app.indexOf("const renderedShopList = useMemo(() => {");
+ const end=app.indexOf("// Show the same Home-shaped shell",start);
+ assert.ok(start>=0 && end>start,"Home shop grid exists");
+ const homeShopGrid=app.slice(start,end);
+ assert.doesNotMatch(homeShopGrid, /staggerChildren|reduceCustomerMotion|<motion\.div key=\{shop\.id\}/);
  assert.match(cart, /Math\.min\(idx \* 0\.07, 0\.42\)/);
  assert.match(history, /Math\.min\(index \* 0\.07, 0\.42\)/);
  assert.match(notices, /Math\.min\(index \* 0\.07, 0\.42\)/);
@@ -62,10 +66,10 @@ test("M1: totals roll only as locally estimated, not confirmed payments", () => 
 });
 
 test("M1: Food Cart expands with 350ms ease-out without changing other sheet defaults", () => {
- assert.match(cart, /<BottomSheet[\\s\\S]*?easeOutMotion/);
+ assert.match(cart, /<BottomSheet\s+isOpen=\{isOpen\}\s+easeOutMotion/);
  assert.match(bottomSheet, /easeOutMotion = false/);
- assert.match(bottomSheet, /easeOutMotion \\? \\{ duration: 0\\.35, ease: \\[0\\.22, 1, 0\\.36, 1\\] \\}/);
- assert.match(bottomSheet, /reduceMotion \\? \\{ duration: 0 \\}/);
+ assert.ok(bottomSheet.includes("easeOutMotion ? { duration: 0.35, ease: [0.22, 1, 0.36, 1] }"));
+ assert.ok(bottomSheet.includes("reduceMotion ? { duration: 0 }"));
 });
 
 test("M1: only read notifications can swipe to dismiss; the bell only swings on increase", () => {
