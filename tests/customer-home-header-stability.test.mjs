@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+const pickup = readFileSync(new URL("../src/services/customerPickup.ts", import.meta.url), "utf8");
 const start = app.indexOf("function HomeScreen(");
 const end = app.indexOf("const parseCardDetailsFromInstructions", start);
 assert.ok(start >= 0 && end > start, "the original HomeScreen exists");
@@ -46,5 +47,5 @@ test("Retain P7 original Home shop cards and cart motion independently of stable
   assert.match(home, /<ShopCard[\s\S]*?readOnlyClosed/);
   assert.match(app, /previewDisplayShop\(visibleShops,p7TestShop\)/);
   assert.match(app, /<CartFlightFeedback \/>/);
-  assert.match(app, /if\(!pickupOrderingEnabled\(\)\)/);
+  assert.match(pickup, /if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
 });
