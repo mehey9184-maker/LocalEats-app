@@ -7,9 +7,12 @@ export interface MapLegendProps {
   activeFilter?: 'all' | 'customer' | 'shop' | 'closed_shop' | 'rider';
   onSelectFilter?: (filter: 'all' | 'customer' | 'shop' | 'closed_shop' | 'rider') => void;
   shopCount?: number;
+  closedShopCount?: number;
   riderCount?: number;
+  showRiders?: boolean;
   onFocusCustomer?: () => void;
   onFocusShop?: () => void;
+  onFocusClosedShop?: () => void;
   onFocusRider?: () => void;
   className?: string;
 }
@@ -19,9 +22,12 @@ export const MapLegend: React.FC<MapLegendProps> = ({
   activeFilter = 'all',
   onSelectFilter,
   shopCount,
+  closedShopCount,
   riderCount,
+  showRiders=false,
   onFocusCustomer,
   onFocusShop,
+  onFocusClosedShop,
   onFocusRider,
   className = '',
 }) => {
@@ -32,7 +38,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       id: 'customer' as const,
       title: 'Customer Location',
       badge: 'Blue Pin',
-      desc: userLocation ? 'Your verified live delivery spot' : 'Tap locate to display your spot',
+      desc: userLocation ? 'Your device location' : 'Allow location to display your position',
       color: 'bg-blue-600',
       borderColor: 'border-blue-500',
       lightBg: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
@@ -48,9 +54,9 @@ export const MapLegend: React.FC<MapLegendProps> = ({
     },
     {
       id: 'shop' as const,
-      title: 'Open Kitchen / Shop',
-      badge: shopCount !== undefined ? `${shopCount} Stores` : 'Orange Pin',
-      desc: 'Orange Pins — Active food vendors ready for orders',
+      title: 'Open Shops',
+      badge: shopCount !== undefined ? `${shopCount} Open` : 'Orange Pin',
+      desc: 'Orange pins — Shop location with open status',
       color: 'bg-orange-600',
       borderColor: 'border-orange-500',
       lightBg: 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300',
@@ -66,9 +72,9 @@ export const MapLegend: React.FC<MapLegendProps> = ({
     },
     {
       id: 'closed_shop' as const,
-      title: 'Closed Kitchen',
-      badge: 'Gray Pin',
-      desc: 'Muted Slate Pins — Vendors currently offline/closed',
+      title: 'Closed Shops',
+      badge: closedShopCount !== undefined ? `${closedShopCount} Closed` : 'Gray Pin',
+      desc: 'Gray pins — Shops currently closed; menus may be browsed',
       color: 'bg-slate-500',
       borderColor: 'border-slate-400',
       lightBg: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
@@ -80,7 +86,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
           <span className="absolute -bottom-0.5 w-1.5 h-1.5 bg-slate-500 rounded-full"></span>
         </div>
       ),
-      action: onFocusShop,
+      action: onFocusClosedShop,
     },
     {
       id: 'rider' as const,
@@ -100,7 +106,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
       ),
       action: onFocusRider,
     },
-  ];
+  ].filter(item=>showRiders || item.id!=="rider");
 
   return (
     <div className={`relative z-[1000] select-none ${className}`}>
@@ -110,6 +116,9 @@ export const MapLegend: React.FC<MapLegendProps> = ({
         onClick={() => setIsOpen(!isOpen)}
         className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl hover:shadow-2xl text-slate-800 dark:text-slate-100 transition-all flex items-center gap-2 cursor-pointer active:scale-95 group"
         title="Toggle Map Pin Legend"
+        aria-label="Toggle map pin legend"
+        aria-expanded={isOpen}
+        aria-controls="localeats-map-legend-options"
       >
         <div className="p-1.5 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400 group-hover:scale-110 transition-transform">
           <Layers className="w-4 h-4" />
@@ -138,6 +147,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.96 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
+            id="localeats-map-legend-options"
             className="absolute top-full left-0 mt-2 w-72 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-2xl p-3 z-50 overflow-hidden"
           >
             <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
@@ -163,8 +173,11 @@ export const MapLegend: React.FC<MapLegendProps> = ({
               {legendItems.map((item) => {
                 const isSelected = activeFilter === item.id;
                 return (
-                  <div
+                  <button
                     key={item.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={`Show ${item.title.toLowerCase()} on map`}
                     onClick={() => {
                       if (onSelectFilter) {
                         onSelectFilter(isSelected ? 'all' : item.id);
@@ -204,7 +217,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({
                       )}
                       {isSelected && <Check className="w-3.5 h-3.5 text-emerald-500" />}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>

@@ -1,0 +1,28 @@
+name: Customer Home location loading regression
+on:
+  push:
+    branches: [repair/customer-home-location-loading-01]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Location and catalog loading tests
+        run: node --experimental-strip-types --test tests/customer-home-location-loading.test.mjs tests/customer-display-performance.test.mjs
+      - name: Existing pickup and collection tests
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/customer-collection-tracking.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Customer build
+        run: npm run build

@@ -882,7 +882,15 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
       return null;
     }
 
-    const registration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js").catch(() => null);
+    // Use the app's VitePWA worker, which contains the pickup_ready FCM
+    // background handler. The legacy firebase-messaging-sw.js has incomplete
+    // config and must not be selected for new subscriptions.
+    let registration = await navigator.serviceWorker.getRegistration("/").catch(() => null);
+    if (!registration || !(registration.active?.scriptURL.endsWith("/sw.js") ||
+      registration.installing?.scriptURL.endsWith("/sw.js") ||
+      registration.waiting?.scriptURL.endsWith("/sw.js"))) {
+      registration = await navigator.serviceWorker.register("/sw.js", {type:"module"}).catch(() => null);
+    }
     if (!registration) return null;
 
     const messaging = await getFirebaseMessaging().catch(() => null);

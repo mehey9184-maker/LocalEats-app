@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Shop, MenuItem } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
+import {homeRating,homeReviewCount,homeDistance,homeDeliveryEta} from "../services/homeTrustPolicy";
 import {
   getShopStatus,
   isShopAway,
@@ -26,14 +27,23 @@ export const ShopCard = memo(
     onStoreInfo,
     triggerHaptic,
     dataSaverEnabled,
+    priorityImage = false,
+    readOnlyClosed = false,
   }: {
     shop: Shop;
     isFollowed: boolean;
     onStoreInfo: (id: string) => void;
     triggerHaptic: (pattern?: number | number[]) => void;
     dataSaverEnabled?: boolean;
+    /** Prioritize only the first visible Home hero; remaining cards stay lazy. */
+    priorityImage?: boolean;
+    /** Display an approved, unavailable shop using the ORIGINAL card.
+     *  The card may open a read-only menu; no cart or order actions are enabled. */
+    readOnlyClosed?: boolean;
   }) => {
-    const status = getShopStatus(shop);
+    const status = readOnlyClosed
+      ? {isOpen:false,nextOpeningTime:shop.opening_time || null}
+      : getShopStatus(shop);
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
@@ -42,16 +52,6 @@ export const ShopCard = memo(
       if (avg < 45) return "R";
       if (avg < 80) return "RR";
       return "RRR";
-    };
-
-    // Stable distance calculation or fallback
-    const getShopDistance = (s: Shop) => {
-      if (s.distance !== undefined && s.distance !== null) {
-        return `${s.distance.toFixed(1)} km`;
-      }
-      const num = s.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const km = 0.4 + (num % 18) * 0.1;
-      return `${km.toFixed(1)} km`;
     };
 
     // Appetizing food cover photo based on category or menu items
@@ -74,12 +74,13 @@ export const ShopCard = memo(
 
     const heroImage = getShopHeroImage(shop);
     const priceTier = getPriceTier(shop);
-    const distanceStr = getShopDistance(shop);
-    const etaStr = shop.delivery_eta || "20-35 min";
+    const distanceStr = homeDistance(shop);
+    const ratingValue = homeRating(shop);
+    const reviewCount = homeReviewCount(shop);
+    const etaStr = homeDeliveryEta(shop);
 
     return (
       <motion.div
-        layout
         layoutId={`shop-card-${shop.id}`}
         variants={{
           hidden: { opacity: 0, y: 15, scale: 0.98 },
@@ -100,7 +101,17 @@ export const ShopCard = memo(
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 w-full h-full active:scale-[0.98] transform ${
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            triggerHaptic();
+            onStoreInfo(shop.id);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={readOnlyClosed ? `${shop.name} is closed. View menu; ordering unavailable.` : `View ${shop.name} menu`}
+        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 relative group border border-slate-200/80 dark:border-slate-800 shadow-sm w-full h-full transform ${"cursor-pointer hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"} ${
           !status.isOpen ? "opacity-80" : ""
         }`}
       >
@@ -118,6 +129,7 @@ export const ShopCard = memo(
             <BlurUpImage
               src={heroImage}
               alt={shop.name}
+              priority={priorityImage}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
             />
@@ -135,7 +147,7 @@ export const ShopCard = memo(
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 bg-black/60 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md">
-                {priceTier} • {shop.category || "Local Spot"}
+                {readOnlyClosed || !shop.menu?.length ? (shop.category || "Local Spot") : `${priceTier} • ${shop.category || "Local Spot"}`}
               </span>
             )}
           </div>
@@ -164,12 +176,14 @@ export const ShopCard = memo(
           <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-white text-[11px] font-bold z-10 drop-shadow-sm">
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <Clock className="w-3 h-3 text-orange-400" />
-              <span>{etaStr}</span>
+              <span>{readOnlyClosed ? (shop.opening_time ? `Opens ${shop.opening_time}` : "Currently closed") : (etaStr || "Pickup available")}</span>
             </div>
-            <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
-              <MapPin className="w-3 h-3 text-amber-400" />
-              <span>{distanceStr}</span>
-            </div>
+            {distanceStr && (
+              <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
+                <MapPin className="w-3 h-3 text-amber-400" />
+                <span>{distanceStr}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -178,23 +192,22 @@ export const ShopCard = memo(
           <div className="flex justify-between items-start gap-2">
             <h4 className="text-base font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
-              <div className="bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Verified Township Kitchen">
-                <ShieldCheck className="w-4 h-4" />
-              </div>
+
             </h4>
           </div>
 
           {/* Social Proof & Rating Metrics */}
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-bold">
-            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
-              <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span className="font-black">{shop.rating || "4.8"}</span>
-              <span className="text-[10px] font-semibold opacity-75">
-                ({shop.reviewCount || 24})
-              </span>
-            </div>
-
-            <span className="text-slate-300 dark:text-slate-700">•</span>
+            {ratingValue !== null && (
+              <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
+                <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                <span className="font-black">{ratingValue.toFixed(1)}</span>
+                {reviewCount !== null && (
+                  <span className="text-[10px] font-semibold opacity-75">({reviewCount})</span>
+                )}
+              </div>
+            )}
+            {ratingValue !== null && <span className="text-slate-300 dark:text-slate-700">•</span>}
 
             <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 truncate">
               {shop.address || "Local Kitchen"}
@@ -202,14 +215,14 @@ export const ShopCard = memo(
           </div>
 
           <div className="flex items-center gap-2 mt-auto pt-1 overflow-hidden flex-wrap">
-            {isShopAway(shop) && (
+            {!readOnlyClosed && isShopAway(shop) && (
               <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md animate-pulse border border-rose-200 dark:border-rose-900/40">
                 ⚠️ Temporarily Away
               </span>
             )}
             {!status.isOpen && (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                Opens {status.nextOpeningTime || "Soon"}
+                {readOnlyClosed ? "Closed right now · Orders unavailable" : `Opens ${status.nextOpeningTime || "Soon"}`}
               </span>
             )}
           </div>

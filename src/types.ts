@@ -39,6 +39,8 @@ export type Order = {
   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled' | 'delivered';
   is_delivery?: boolean;
   order_type?: 'delivery' | 'collection' | string;
+  delivery_type?: 'delivery' | 'collection' | string;
+  payment_status?: 'unpaid' | 'paid' | string;
   delivery_pin?: string;
   delivery_fee?: number;
   rider_id?: string;
@@ -123,6 +125,7 @@ export type Shop = {
   images?: string[];
   delivery_radius_km?: number;
   cash_trust_enabled?: boolean;
+  pickup_payment_methods?: ("cash" | "card_machine")[];
   localeats_cash_trust?: boolean;
   allow_external_riders?: boolean;
   auto_look_for_rider?: boolean;

@@ -32,10 +32,24 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
    const bearer=publicRead ? "" : await token();
    if(!publicRead && !bearer) throw new PickupApiError(401,"UNAUTHORIZED","Sign in again to continue.");
    let response:Response;
-   try {response=await transport(origin+path,{method,cache:"no-store",
-     headers:{"Content-Type":"application/json",...(bearer ? {Authorization:"Bearer fb-"+bearer} : {})},
-     ...(body===undefined ? {} : {body:JSON.stringify(body)})});}
-   catch {throw new PickupApiError(0,"CONNECTION_LOST","Connection lost. The outcome may be unknown. Retry the same request.");}
+   // Only public read-only catalog calls have a timeout; mutations retain
+   // their existing idempotent retry and unknown-outcome handling.
+   const controller=publicRead ? new AbortController() : null;
+   let catalogTimedOut=false;
+   const timeout=controller ? setTimeout(()=>{catalogTimedOut=true;controller.abort();},12000) : null;
+   try {
+     response=await transport(origin+path,{method,cache:"no-store",
+       headers:{"Content-Type":"application/json",...(bearer ? {Authorization:"Bearer fb-"+bearer} : {})},
+       ...(controller ? {signal:controller.signal} : {}),
+       ...(body===undefined ? {} : {body:JSON.stringify(body)})});
+   } catch {
+     if(catalogTimedOut)throw new PickupApiError(0,"CATALOG_TIMEOUT","Shops took too long to load. Please retry.");
+     throw new PickupApiError(0,"CONNECTION_LOST",publicRead
+       ? "Shop information could not be loaded. Please retry."
+       : "Connection lost. The outcome may be unknown. Retry the same request.");
+   } finally {
+     if(timeout!==null)clearTimeout(timeout);
+   }
    let result:ApiResponse;
    try {result=await response.json();} catch {throw new PickupApiError(response.status,"INVALID_RESPONSE","The service returned an invalid response.");}
    if(!response.ok || result?.success!==true) throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.");
@@ -43,6 +57,9 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
  };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
+  // Read-only browsing metadata for shops outside active trading hours.
+  // NEVER use this list to create orders or bypass pickup-shops eligibility.
+  approvedShops:()=>request("/api/v1/catalog/shops","GET",undefined,true),
   menu:(id:string)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true),
   quote:(intent:unknown)=>request("/api/v1/orders/quote","POST",intent),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{

@@ -17,6 +17,7 @@ import {
   Dispatch,
   SetStateAction,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -218,7 +219,7 @@ import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 
 import { CheckoutScreen } from "./screens/CheckoutScreen";
-import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
+import {CustomerPickupTrackingScreen} from "./screens/CustomerPickupTrackingScreen";
 import { RiderHandshakeInstructionPrompt } from "./components/SecureDeliveryHandshake";
 
 import {
@@ -281,7 +282,10 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth as firebaseAuth, onForegroundMessage, requestNotificationPermissionAndGetToken, FirestoreService } from "./lib/firebase";
+import {pickupInstallationId,existingPickupInstallationId} from "./services/customerPushSubscription";
+import {nearestHomeDistance,shouldUpdateHomeLocation} from "./services/homeProximity";
+import {customerOrderStatusNotices,type CustomerStatusOrder} from "./services/customerOrderStatusNotices";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -290,6 +294,14 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
+import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
+import {P7_MY_KOTA_ID,p7PreviewEnabled,previewMyKotaShop,previewDisplayShop} from "./services/p7PreviewShop";
+import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
+import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
+import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
+import {discoverMatchesShopOrFood,discoverFoodPreviews,discoverFoodSuggestions} from "./services/discoverFoodSearch";
+import {mapShopCoordinates,mapShopDistance,mapVisibleShops,mapInitialCenter} from "./services/customerMapTrust";
+import { distanceKm, readDisplayCatalog, saveDisplayCatalog, readDisplayInbox, saveDisplayInbox } from "./services/pickupDisplayCache";
 import { OrderRating } from "./screens/OrderRating";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { ContactScreen } from "./screens/ContactScreen";
@@ -309,11 +321,12 @@ import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
 import { CookieConsentBanner } from "./components/CookieConsentBanner";
 import { BottomNavigation } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
-import { ShopFeedSkeleton } from "./components/ShopFeedSkeleton";
+
 import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
+import { CartFlightFeedback, CustomerNotificationBell, notifyLocalCartAdded } from "./components/CustomerMicroMotion";
 import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
@@ -391,28 +404,9 @@ const getShopCategoryIcon = (category: string) => {
 // Storage utilities and cache cleaners outsourced to ./utils
 
 export default function App() {
-  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(() => {
-    try {
-      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-        const hasSupabaseToken = Object.keys(localStorage).some(
-          (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
-                   key === "supabase.auth.token"
-        );
-        const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
-        const hasSessionToken = !!localStorage.getItem("localeats_session") || !!sessionStorage.getItem("localeats_session");
-        
-        // Only initialize straight to home if genuine auth tokens or verified session tokens exist.
-        // We avoid jumping to home solely on raw unverified userProfile cache, preventing stale profile loops after database wipes.
-        if (hasSupabaseToken || (hasRememberToken && hasSessionToken)) {
-          console.info("[Auth Init] Active auth session token found. Initializing on Home screen while verifying session.");
-          return ["home"];
-        }
-      }
-    } catch (e) {
-      console.warn("Auth screen initialization error:", e);
-    }
-    return ["splash"];
-  });
+  // Screen selection is deferred until Firebase finishes restoring its
+  // persisted session. Never infer sign-in from legacy cached token keys.
+  const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(["splash"]);
   const currentScreen = currentScreenStack[currentScreenStack.length - 1];
   const previousScreen = currentScreenStack.length > 1 ? currentScreenStack[currentScreenStack.length - 2] : null;
 
@@ -541,18 +535,10 @@ export default function App() {
     }
   }, [userProfile]);
 
-  const [isRestoringSession, setIsRestoringSession] = useState(() => {
-    try {
-      const hasToken = Object.keys(localStorage).some(
-        (key) => key.startsWith("sb-") && key.endsWith("-auth-token")
-      );
-      const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
-      return hasToken || hasRememberToken;
-    } catch {
-      return false;
-    }
-  });
-
+  // Always hold the first render until Firebase knows whether this is a
+  // returning customer or a guest; IndexedDB auth is not synchronous.
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [authRestoreSlow, setAuthRestoreSlow] = useState(false);
   const [favorites, setFavorites] = useState<string[]>(() => {
     return safeLocalStorageGet("favorites", []);
   });
@@ -683,7 +669,45 @@ export default function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [shops, setShops] = useState<Shop[]>([]);
-  const visibleShops = shops;
+  const [closedPickupShops, setClosedPickupShops] = useState<ClosedPickupShopPreview[]>([]);
+  const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
+  // This public, read-only directory is separate from the 4km orderable shops.
+  // Never pass these metadata records into cart/checkout or current prices.
+  const p7TestEnabled=p7PreviewEnabled(
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":(window.location?.hostname || ""),
+  ) && !pickupOrderingEnabled();
+  const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
+  const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
+  useEffect(()=>{
+    // The public directory is ONLY necessary for the P7 owner test.
+    // Never make this extra API request in Production or normal Previews.
+    if(!p7TestEnabled){
+      setPilotDirectoryRows([]);setPilotDirectoryStatus("ready");return;
+    }
+    let active=true;
+    void customerPickupApi.approvedShops().then(result=>{
+      if(!Array.isArray(result.shops))throw new Error("Invalid approved catalog.");
+      if(active){setPilotDirectoryRows(result.shops);setPilotDirectoryStatus("ready");}
+    }).catch(()=>{
+      if(active){setPilotDirectoryRows([]);setPilotDirectoryStatus("error");}
+    });
+    return ()=>{active=false;};
+  },[p7TestEnabled]);
+  const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
+  useEffect(()=>{
+    if(!p7TestEnabled){setP7TestShop(null);return;}
+    const row=pilotDirectoryRows.find((s:any)=>s?.id===P7_MY_KOTA_ID);
+    if(!row){setP7TestShop(null);return;}
+    let current=true;
+    void customerPickupApi.menu(P7_MY_KOTA_ID)
+      .then(result=>{
+        const verified=previewMyKotaShop(row,result.menu_items);
+        if(current)setP7TestShop(verified);
+      })
+      .catch(()=>{if(current)setP7TestShop(null);});
+    return ()=>{current=false;};
+  },[p7TestEnabled,pilotDirectoryRows]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -942,8 +966,21 @@ export default function App() {
     lat: number;
     lng: number;
   } | null>(null);
+  const locationAttemptRef = useRef(0);
+  const lastMovingLocationUpdateRef = useRef(0);
+  const locationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleShops = userLocation ? shops.filter(shop =>
+    Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
+    distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
+  ) : [];
+  // Display-only placement: original card/menu/address; not added to the API pickup catalog.
+  const displayShops=previewDisplayShop(visibleShops,p7TestShop);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoadState,setOrdersLoadState]=useState<{uid:string|null;status:"loading"|"ready"|"error"}>({uid:null,status:"loading"});
+  const [selectedTrackingOrderId,setSelectedTrackingOrderId]=useState<string|null>(null);
   const ordersRef = useRef<Order[]>(orders);
   useEffect(() => {
     ordersRef.current = orders;
@@ -1019,9 +1056,16 @@ export default function App() {
     safeLocalStorageSet("favorites", JSON.stringify(favorites));
   }, [favorites]);
 
+  // Inbox entries belong to one authenticated account. Do not persist them in
+  // the legacy global localStorage key shared across logins.
   useEffect(() => {
-    safeLocalStorageSet("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+    try {localStorage.removeItem("app_notifications");} catch {}
+  }, []);
+  useEffect(() => {
+    if (notificationOwnerId && notificationOwnerId === session?.user?.id) {
+      saveDisplayInbox(notificationOwnerId, notifications);
+    }
+  }, [notifications, notificationOwnerId, session?.user?.id]);
 
   useEffect(() => {
     safeLocalStorageSet("order_again_enabled", String(orderAgainEnabled));
@@ -1152,16 +1196,50 @@ export default function App() {
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
   const catalogGeneration=useRef(0);
+  const loadedCatalogLocation=useRef<{lat:number;lng:number}|null>(null);
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
+    // The pickup catalog must never be queried for an invented location.
+    // Missing-location loading is resolved by the bounded geolocation attempt,
+    // instead of repeatedly issuing unauthorized or location-less requests.
+    if (!userLocation) return;
     const generation=++catalogGeneration.current;
-    setShops([]); setLoadingShops(true); setIsSyncing(true); setFetchError(null);
+    const locationChanged=loadedCatalogLocation.current!==null &&
+      distanceKm(loadedCatalogLocation.current,userLocation)>0.15;
+    // Keep verified shops visible on ordinary refresh, and use a short-lived
+    // prior API response while refreshing after a tab reload.
+    let cached:Shop[]|null=null;
+    if (!locationChanged && loadedCatalogLocation.current===null) {
+      cached=readDisplayCatalog(userLocation);
+      if (cached!==null) {
+        setShops(cached);
+        loadedCatalogLocation.current=userLocation;
+      }
+    }
+    if (locationChanged) {setShops([]);setClosedPickupShops([]);}
+    setLoadingShops(locationChanged || (loadedCatalogLocation.current===null && cached===null));
+    setIsSyncing(true); setFetchError(null);
     try {
       const result=await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
+      loadedCatalogLocation.current=userLocation;
       setShops(result);
-      // A successful empty result is not a network or authentication error.
+      saveDisplayCatalog(userLocation,result);
+      // Orderable shops remain API-authoritative. Closed metadata is only
+      // for a read-only version of the original visual ShopCard.
+      setClosedPickupShopsLoading(true);
+      void customerPickupApi.approvedShops().then(publicCatalog=>{
+        if(generation===catalogGeneration.current)
+          setClosedPickupShops(nearbyClosedPickupShops(publicCatalog.shops,userLocation));
+      }).catch(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShops([]);
+      }).finally(()=>{
+        if(generation===catalogGeneration.current)setClosedPickupShopsLoading(false);
+      });
+      // A genuinely empty authoritative pickup result still means zero orderable shops.
     } catch(error) {
-      if(generation===catalogGeneration.current)setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      if(generation===catalogGeneration.current) {
+        setFetchError(error instanceof Error ? error.message : "Pickup shops could not be loaded. Please retry.");
+      }
     } finally {
       if(generation===catalogGeneration.current){setLoadingShops(false);setIsSyncing(false);}
     }
@@ -1416,51 +1494,102 @@ export default function App() {
   }, [fetchShopsData, syncOfflineOrders]);
 
   const requestLocation = useCallback((silent = false) => {
-    if (!navigator.geolocation) {
+    const attempt = ++locationAttemptRef.current;
+    if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+
+    const fail = (message: string) => {
+      if (attempt !== locationAttemptRef.current) return;
+      if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+      locationTimeoutRef.current = null;
+      // No fake coordinates or shops: show the real retry/error state, not
+      // a skeleton that can remain forever if GPS permission is unresolved.
       setLoadingShops(false);
-      setFetchError("Location is unavailable in this browser. Use a browser with location access to find pickup shops.");
-      if (!silent) {
-        setNotification({
-          message: "Geolocation is not supported by your browser",
-          type: "info",
-        });
-      }
+      setFetchError(message);
+      if (!silent) setNotification({message, type:"info"});
+    };
+
+    if (!navigator.geolocation) {
+      fail("Location is unavailable in this browser. Allow location access to find pickup shops within 4 km.");
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setUserLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        // Notification removed to keep it in the background as requested
-      },
-      (error) => {
-        if (error?.message && error.message.includes("permissions policy")) {
-          console.log("Geolocation disabled by iframe permissions policy.");
-        } else {
-          console.log("Error getting location (graceful fallback):", error?.message);
-        }
-        setLoadingShops(false);
-        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location could not be obtained. Tap Reload shops & live data to retry.");
-        if (silent) return; // Keep the existing non-intrusive automatic location behavior.
-        
-        let errorMsg = "Could not get your location automatically.";
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = "Location access denied. Allow your real location to discover pickup shops within 4 km.";
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg =
-            "Location timed out. Please retry; no default discovery location is used.";
-        }
-        setNotification({
-          message: errorMsg,
-          type: "info",
-        });
-      },
-      { timeout: 15005, enableHighAccuracy: false, maximumAge: 300000 },
-    );
+    // Some browsers leave the permission prompt unresolved indefinitely.
+    // Independently bound the Home loading state even if callbacks never fire.
+    locationTimeoutRef.current = setTimeout(() => {
+      fail("Location is taking too long. Allow location access and tap Reload Shops & Live Data to retry.");
+    }, 12000);
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          if (attempt !== locationAttemptRef.current) return;
+          const point = {lat:position.coords.latitude, lng:position.coords.longitude};
+          if (!Number.isFinite(point.lat) || Math.abs(point.lat)>90 ||
+              !Number.isFinite(point.lng) || Math.abs(point.lng)>180) {
+            fail("The device did not provide a valid location. Please retry.");
+            return;
+          }
+          if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+          locationTimeoutRef.current = null;
+          setFetchError(null);
+          setUserLocation(prev =>
+            prev?.lat===point.lat && prev?.lng===point.lng ? prev : point);
+          // The catalog effect fetches for this verified location.
+        },
+        (error) => {
+          if (attempt !== locationAttemptRef.current) return;
+          fail(error.code === error.PERMISSION_DENIED
+            ? "Location access denied. Allow your real location and tap Reload Shops & Live Data."
+            : "Location could not be obtained. Tap Reload Shops & Live Data to retry.");
+        },
+        {timeout:10000,enableHighAccuracy:false,maximumAge:300000},
+      );
+    } catch {
+      fail("Location is unavailable in this browser. Please allow location and retry.");
+    }
   }, []);
+
+  useEffect(() => {
+    requestLocation(true);
+    return () => {
+      locationAttemptRef.current++;
+      if (locationTimeoutRef.current !== null) clearTimeout(locationTimeoutRef.current);
+      locationTimeoutRef.current = null;
+    };
+  }, [requestLocation]);
+
+  // A single passive GPS watch runs only while Home is visible. Suspend it
+  // when the tab is hidden and restart on visibility without a second prompt.
+  useEffect(() => {
+    if (currentScreen!=="home" || !userLocation || !navigator.geolocation?.watchPosition)return;
+    let watchId:number|null=null;
+    const updateWatch=()=>{
+      if(document.hidden){
+        if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+        watchId=null;
+        return;
+      }
+      if(watchId!==null)return;
+      watchId=navigator.geolocation.watchPosition(
+        ({coords})=>{
+          const next={lat:coords.latitude,lng:coords.longitude};
+          setUserLocation(previous=>{
+            if(!shouldUpdateHomeLocation(previous,next,lastMovingLocationUpdateRef.current,Date.now()))return previous;
+            lastMovingLocationUpdateRef.current=Date.now();
+            return next;
+          });
+        },
+        ()=>{/* Preserve last real fix; explicit Retry remains available. */},
+        {enableHighAccuracy:false,maximumAge:60000,timeout:12000},
+      );
+    };
+    document.addEventListener("visibilitychange",updateWatch);
+    updateWatch();
+    return()=>{
+      document.removeEventListener("visibilitychange",updateWatch);
+      if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+    };
+  },[currentScreen,Boolean(userLocation)]);
 
   useEffect(() => {
     if (searchQuery.length > 1) {
@@ -1476,60 +1605,81 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
-  const subscribeToPushNotifications = useCallback(
-    async (customUserId?: string) => {
-      const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) return;
-      try {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-           await registerAndSyncPushToken(targetUserId);
-        }
-      } catch (err) {
-        console.debug("[Push] Notice:", err);
-      }
-    },
-    [session]
-  );
-
-  const requestNotificationPermission = useCallback(async () => {
-    if (!("Notification" in window)) {
-      return;
-    }
+  // User-action enrollment only. Browser permission alone is not a usable
+  // subscription: the authenticated pickup API must confirm the FCM token.
+  const subscribeToPushNotifications = useCallback(async (customUserId?: string):Promise<boolean> => {
+    const targetUserId=customUserId || session?.user?.id;
+    if(!pickupOrderingEnabled() || !targetUserId || targetUserId!==session?.user?.id ||
+       firebaseAuth.currentUser?.uid!==targetUserId || !("Notification" in window)) return false;
     try {
-      if (Notification.permission !== "denied") {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-          if (session?.user?.id) {
-            // Sync with push notifications in background
-            subscribeToPushNotifications(session.user.id).catch(() => {});
-            registerAndSyncPushToken(session.user.id).catch(() => {});
-          }
-        }
+      if(Notification.permission==="denied")return false;
+      const permission=Notification.permission==="granted" ? "granted" : await Notification.requestPermission();
+      if(permission!=="granted")return false;
+      const token=await requestNotificationPermissionAndGetToken();
+      if(!token) {
+        console.info("[Pickup push] Background notifications are not available on this browser.");
+        return false;
       }
-    } catch (_) {}
-  }, [session, subscribeToPushNotifications]);
+      const result=await customerPickupApi.subscribe(pickupInstallationId(targetUserId),token);
+      return result.success===true;
+    } catch(err) {
+      console.warn("[Pickup push] Enrollment was not confirmed:",err instanceof Error?err.message:"Unavailable");
+      return false;
+    }
+  },[session?.user?.id]);
 
-  // Listen for FCM foreground web push messages and display sonner toast notifications
+  // Both Settings and Profile use the same real logout, including best-effort
+  // revocation of the outgoing account's API-owned push subscription.
+  const logoutCustomer=useCallback(async()=>{
+    const uid=session?.user?.id;
+    const installation=uid ? existingPickupInstallationId(uid) : null;
+    if(installation && pickupOrderingEnabled()) {
+      await Promise.race([
+        customerPickupApi.revoke(installation).catch(()=>{}),
+        new Promise<void>(resolve=>setTimeout(resolve,2000))
+      ]);
+    }
+    await supabase.auth.signOut();
+    for(const key of ["remember_me_secure_token","cart","userProfile","favorites","pending_review"])
+      localStorage.removeItem(key);
+    setCart([]);setFavorites([]);setOrders([]);setNotifications([]);setNotificationOwnerId(null);
+    setUserProfile({fullName:"",email:"",phone:"",city:"",address:"",country:"South Africa",role:"user"});
+    setCurrentScreen("splash");
+  },[session?.user?.id,setCurrentScreen]);
+
+  // Called at session bootstrap: never pop an unsolicited permission prompt.
+  const requestNotificationPermission = useCallback(() => {
+    const uid=session?.user?.id;
+    if(!uid || !pickupOrderingEnabled() || !("Notification" in window) ||
+       Notification.permission!=="granted" || !existingPickupInstallationId(uid))return;
+    void subscribeToPushNotifications(uid);
+  },[session?.user?.id,subscribeToPushNotifications]);
+
+  // FCM is a wake-up signal, not an authority for order states or inbox facts.
+  // Refresh the authenticated API inbox before showing the customer an update.
   useEffect(() => {
-    let unsubscribe: (() => void) | void;
-    onForegroundMessage((payload) => {
-      const title = payload.notification?.title || payload.data?.title || "LocalEats Notification";
-      const body = payload.notification?.body || payload.data?.body || payload.data?.message || "You have an update regarding your order.";
-      toast.success(title, {
-        description: body,
-        duration: 5000,
-      });
-    }).then((unsub) => {
-      unsubscribe = unsub;
-    }).catch(console.warn);
-
-    return () => {
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
+    let active=true;
+    let unsubscribe:(()=>void)|void;
+    void onForegroundMessage(payload => {
+      const type=payload.data?.type;
+      if(type==="pickup_ready" && typeof payload.data?.event_id==="string"){
+        window.dispatchEvent(new Event("localeats-pickup-ready"));return;
       }
+      // A lifecycle wake only triggers an authenticated API refresh; no
+      // order status is ever trusted from the FCM payload itself.
+      if(type==="pickup_status" && ["preparing","completed","cancelled"].includes(payload.data?.status??"") &&
+        typeof payload.data?.order_id==="string"){
+        window.dispatchEvent(new Event("localeats-pickup-ready"));
+      }
+    }).then(unsub=>{
+      if(active)unsubscribe=unsub;
+      else if(typeof unsub==="function")unsub();
+    }).catch(()=>{});
+    return()=>{
+      active=false;
+      if(typeof unsubscribe==="function")unsubscribe();
     };
-  }, []);
+  },[]);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
@@ -1670,15 +1820,16 @@ export default function App() {
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Resubscribe only a previously opted-in account with a granted browser
+  // permission. Never subscribe an account based on cached profile identity.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
-      registerAndSyncPushToken(activeUserId).catch((err) => {
-        console.warn("[FCM] Auto push token registration notice:", err);
-      });
+    const uid=session?.user?.id;
+    if(uid && firebaseAuth.currentUser?.uid===uid && pickupOrderingEnabled() &&
+       typeof Notification!=="undefined" && Notification.permission==="granted" &&
+       existingPickupInstallationId(uid)) {
+      void subscribeToPushNotifications(uid);
     }
-  }, [session?.user?.id, userProfile?.id]);
+  },[session?.user?.id,subscribeToPushNotifications]);
 
   // Account switch detection: Clear old user profile and sync immediately with new active session
   useEffect(() => {
@@ -1707,9 +1858,7 @@ export default function App() {
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
 
-  useEffect(() => {
-    localStorage.setItem("app_notifications", JSON.stringify(notifications));
-  }, [notifications]);
+
 
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
@@ -1951,26 +2100,26 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Safety max timeout to guarantee Securing Session never freezes UI
-    const safetyTimer = setTimeout(() => {
-      setIsRestoringSession(false);
-    }, 1500);
+    let active = true;
+    // Show a retry prompt if Firebase restoration is slow, but never reveal
+    // the splash/login route before auth state is actually known.
+    const slowTimer = setTimeout(() => {if(active)setAuthRestoreSlow(true);}, 8000);
 
     const hasToken = Object.keys(localStorage).some(
       (key) => (key.startsWith("sb-") && (key.endsWith("-auth-token") || key.includes("auth-token"))) ||
                key === "supabase.auth.token"
     );
-    const hasRememberToken = !!localStorage.getItem("remember_me_secure_token");
     const cachedProfile = safeLocalStorageGet("userProfile", null);
     const hasCachedUser = !!(cachedProfile && (cachedProfile.fullName || cachedProfile.email || cachedProfile.phone));
 
-    if (hasToken || hasRememberToken) {
-      setIsRestoringSession(true);
+    {
       getResilientSession(3000).then(async ({ data: { session } }) => {
+        if (!active) return;
         if (session) {
           // Verify session validity with Supabase auth service to catch wiped DB or revoked tokens
           try {
             const { data: userData, error: userError } = await supabase.auth.getUser();
+            if (!active) return;
             if (userError || !userData?.user) {
               const errMsg = (userError?.message || "").toLowerCase();
               if (errMsg.includes("invalid") || errMsg.includes("not found") || errMsg.includes("sub claim") || errMsg.includes("jwt") || errMsg.includes("user_not_found")) {
@@ -2074,8 +2223,10 @@ export default function App() {
             }
           }
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       }).catch((err) => {
+        if (!active) return;
         console.info("[Auth] Session recovery error/offline, fallback to cached state:", err?.message || String(err));
         if (typeof navigator !== "undefined" && !navigator.onLine && hasCachedUser) {
           setCurrentScreen((prev) => {
@@ -2091,15 +2242,15 @@ export default function App() {
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
         }
+        clearTimeout(slowTimer);
         setIsRestoringSession(false);
       });
-    } else {
-      setIsRestoringSession(false);
     }
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
       if (_event === "PASSWORD_RECOVERY") {
         setCurrentScreen("reset-password");
         setIsRestoringSession(false);
@@ -2147,7 +2298,8 @@ export default function App() {
           return prev; // Stay on current screen if momentary loss
         });
       }
-      setIsRestoringSession(false);
+      // Startup gate is resolved by the Firebase-backed getSession above, not
+      // by an early/stale auth event.
     });
 
     const handleJwtExpired = () => {
@@ -2165,7 +2317,8 @@ export default function App() {
     window.addEventListener("supabase-jwt-expired", handleJwtExpired);
 
     return () => {
-      clearTimeout(safetyTimer);
+      active = false;
+      clearTimeout(slowTimer);
       subscription.unsubscribe();
       window.removeEventListener("supabase-jwt-expired", handleJwtExpired);
       // Ensure we explicitly release locks or reset any local lock state if needed on unmount
@@ -2220,21 +2373,90 @@ export default function App() {
 
   useEffect(() => {
     let active=true;
-    setOrders([]);setNotifications([]);
-    if(!session?.user?.id)return;
-    const refresh=async()=>{
-      try {
-        const data=await customerPickupApi.orders();
-        if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
-      } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
-      if(pickupOrderingEnabled())try{
-        const inbox=await customerPickupApi.notifications();
-        if(active)setNotifications((inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as unknown as AppNotification[]);
-      }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+    const uid=session?.user?.id;
+    if(!uid){
+      setOrders([]);setOrdersLoadState({uid:null,status:"ready"});setSelectedTrackingOrderId(null);
+      setNotifications([]);setNotificationOwnerId(null);setNotificationsLoading(false);
+      return;
+    }
+    setOrders([]);setOrdersLoadState({uid,status:"loading"});setSelectedTrackingOrderId(null);
+    let hasServerInbox=false;
+    let seenReadyIds=new Set<string>();
+    let previousConfirmedOrders:CustomerStatusOrder[]|null=null;
+    let latestOrderFetch=0;
+    // First hydrate the confirmed, tab-scoped inbox for THIS account only.
+    // Navigation must never wipe the inbox or restart authenticated fetches.
+    const previous=readDisplayInbox(uid);
+    setNotificationOwnerId(uid);
+    setNotifications(previous ?? []);
+    setNotificationsLoading(previous===null);
+    const refresh=()=>{
+      const request=++latestOrderFetch;
+      void (async()=>{
+        try {
+          const data=await customerPickupApi.orders();
+          if(!active || request!==latestOrderFetch)return;
+          if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Authenticated account changed.");
+          if(!Array.isArray(data.orders) || data.orders.some(o=>
+            !o || o.user_id!==uid || typeof o.id!=="string"))
+            throw new Error("Order history response did not match the authenticated account.");
+          // The API can return legacy deliveries. Ignore those for O1's
+          // confirmed-pickup-only history instead of hiding valid pickups.
+          const pickupOrders=data.orders.filter(o=>o.delivery_type==="collection");
+          const confirmed=pickupOrders as CustomerStatusOrder[];
+          const notices=customerOrderStatusNotices(previousConfirmedOrders,confirmed,uid);
+          previousConfirmedOrders=confirmed;
+          setOrders(pickupOrders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+          setOrdersLoadState({uid,status:"ready"});
+          for(const notice of notices){
+            toast.info(notice.title,{description:notice.message,duration:6500});
+          }
+        }catch{
+          if(active && request===latestOrderFetch){
+            setOrdersLoadState({uid,status:"error"});
+            setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."});
+          }
+        }
+      })();
+      if (pickupOrderingEnabled()) {
+        void (async()=>{
+          try {
+            const inbox=await customerPickupApi.notifications();
+            if(active) {
+              const items=(inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as AppNotification[];
+              const newlyConfirmed=hasServerInbox && items.some(n=>!seenReadyIds.has(n.id));
+              seenReadyIds=new Set(items.map(n=>n.id));
+              hasServerInbox=true;
+              setNotifications(prev=>{
+                const readIds=new Set(prev.filter(n=>n.read).map(n=>n.id));
+                return items.map(n=>({...n,read:readIds.has(n.id)}));
+              });
+              if(newlyConfirmed)toast.success("Pickup ready",{
+                description:"Your shop has confirmed an order is ready for collection.",
+                duration:5000
+              });
+            }
+          }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+          finally{if(active)setNotificationsLoading(false);}
+        })();
+      }else setNotificationsLoading(false);
     };
-    void refresh();const timer=setInterval(refresh,30000);
-    return()=>{active=false;clearInterval(timer);};
-  }, [session?.user?.id,currentScreen]);
+    const onRealtimeWake=()=>{if(!document.hidden)refresh();};
+    // Active order statuses are checked while the app is visible. Background
+    // alerts still require deployed server push; no hidden-tab polling.
+    refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},15000);
+    window.addEventListener("localeats-pickup-ready",onRealtimeWake);
+    window.addEventListener("localeats-orders-refresh",onRealtimeWake);
+    window.addEventListener("focus",onRealtimeWake);
+    document.addEventListener("visibilitychange",onRealtimeWake);
+    return()=>{
+      active=false;clearInterval(timer);
+      window.removeEventListener("localeats-pickup-ready",onRealtimeWake);
+      window.removeEventListener("localeats-orders-refresh",onRealtimeWake);
+      window.removeEventListener("focus",onRealtimeWake);
+      document.removeEventListener("visibilitychange",onRealtimeWake);
+    };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     void fetchShopsData();
@@ -2242,11 +2464,8 @@ export default function App() {
     return()=>{catalogGeneration.current++;clearInterval(timer);};
   }, [fetchShopsData]);
 
-  useEffect(() => {
-    if (currentScreen === "home" || currentScreen === "explore" || currentScreen === "discover") {
-      requestLocation(true);
-    }
-  }, [requestLocation, currentScreen]);
+  // Location is requested once on mount; Home navigation must not restart the
+  // geolocation/catalog sequence. Explicit retry remains available to the user.
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -2345,27 +2564,6 @@ export default function App() {
     }
   }, [pendingReview]);
 
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
-          console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(null);
-        },
-        { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
-      );
-    } else {
-      setUserLocation(null);
-    }
-  }, []);
-
   const addToCart = useCallback(
     (
       item: MenuItem,
@@ -2415,6 +2613,7 @@ export default function App() {
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             triggerHaptic([100, 50, 100]); // Stronger pulse for clear
             setCart([buildCartItemNode(quantity)]);
+            notifyLocalCartAdded(item.image || "");
             setNotification({
               message: `Started new cart with ${item.name}`,
               type: "success",
@@ -2471,6 +2670,8 @@ export default function App() {
           buildCartItemNode(quantity),
         ];
       });
+      // Visual feedback reflects the accepted local-cart mutation only — not an order.
+      notifyLocalCartAdded(item.image || "");
       // Notification removed for cleaner UI
     },
     [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
@@ -2655,29 +2856,19 @@ export default function App() {
   }, [userProfile, session, favorites]);
 
   if (isRestoringSession) {
+    // Keep one Home-shaped loading view in place until the persisted account
+    // is resolved. Do not flash Splash, Login, or unverified customer data.
     return (
-      <div className="relative min-h-screen">
-        <AuthSkeleton />
-        <div id="auth-loading-overlay" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-xs">
-          <div className="bg-white/95 dark:bg-slate-900/95 border border-slate-200/50 dark:border-slate-800/50 p-6 rounded-2xl shadow-xl flex flex-col items-center gap-4 max-w-xs text-center">
-            <div className="relative w-full max-w-[100vw] overflow-x-hidden">
-              <div className="w-12 h-12 rounded-full border-4 border-primary/20 border-t-primary animate-spin"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Lock className="w-4 h-4 text-primary animate-pulse" />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">Securing Session</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Verifying secure connection details safely...</p>
-            </div>
-            <button
-              onClick={() => setIsRestoringSession(false)}
-              className="mt-1 text-xs font-bold text-orange-600 dark:text-orange-400 hover:text-orange-700 bg-orange-50 dark:bg-orange-950/60 px-3.5 py-1.5 rounded-xl border border-orange-200 dark:border-orange-800/80 cursor-pointer active:scale-95 transition-all"
-            >
-              Continue to App
+      <div aria-busy="true" aria-label="Loading LocalEats home" className="min-h-screen relative">
+        <AppSkeletonLoader userProfile={{fullName:"",city:"",address:""}} />
+        {authRestoreSlow && (
+          <div role="status" className="fixed bottom-24 inset-x-4 z-50 max-w-sm mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg p-4 text-center">
+            <p className="text-sm font-semibold">Checking your account is taking longer than usual.</p>
+            <button type="button" onClick={() => window.location.reload()} className="mt-3 bg-orange-600 text-white text-sm font-bold py-2 px-5 rounded-lg">
+              Retry
             </button>
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -3024,8 +3215,10 @@ export default function App() {
                 <HomeScreen
                   userProfile={userProfile}
                   session={session}
-                  shops={visibleShops}
+                  shops={displayShops}
                   loadingShops={loadingShops}
+                  closedPickupShops={closedPickupShops}
+                  closedPickupShopsLoading={closedPickupShopsLoading}
                   fetchError={fetchError}
                   isOnline={isOnline}
                   onSettings={() => {
@@ -3049,7 +3242,7 @@ export default function App() {
                   onNotifications={() => {
                     setCurrentScreen("notifications");
                   }}
-                  unreadCount={notifications.filter((n) => !n.read).length}
+                  unreadCount={notificationOwnerId===session?.user?.id ? notifications.filter((n) => !n.read).length : 0}
                   onStoreInfo={(id) => {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
@@ -3076,13 +3269,13 @@ export default function App() {
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
-                  onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
                   onOpenCart={() => setIsCartDrawerOpen(true)}
                 />
               )}
               {currentScreen === "notifications" && (
                 <NotificationsScreen
-                  notifications={notifications}
+                  notifications={notificationOwnerId===session?.user?.id ? notifications : []}
+                  loading={Boolean(session?.user?.id) && (notificationOwnerId!==session?.user?.id || notificationsLoading)}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onRead={(id) =>
                     setNotifications((prev) =>
@@ -3097,12 +3290,15 @@ export default function App() {
               {currentScreen === "order-tracking" && (
                 <WidgetErrorBoundary fallbackName="Order Tracking">
                   <Suspense fallback={<div className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading map...</div>}>
-                    <OrderTrackingScreen
+                    <CustomerPickupTrackingScreen
+                      ownerUid={session?.user?.id}
                       orders={orders}
                       shops={visibleShops}
-                      showAlert={showAlert}
-                      onBack={() => setCurrentScreen(previousScreen || "home")}
-                      triggerHaptic={triggerHaptic}
+                      selectedOrderId={selectedTrackingOrderId}
+                      loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
+                      onBack={()=>{setSelectedTrackingOrderId(null);setCurrentScreen(previousScreen || "home");}}
+                      onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
+                      onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
                     />
                   </Suspense>
                 </WidgetErrorBoundary>
@@ -3216,7 +3412,7 @@ export default function App() {
               {currentScreen === "discover" && (
                 <DiscoverScreen
                   userProfile={userProfile}
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onExplore={() => {
                     setPreviousScreen("discover");
@@ -3240,7 +3436,7 @@ export default function App() {
               )}
               {currentScreen === "explore" && (
                 <ExploreScreen
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onDiscover={() => {
                     setPreviousScreen("explore");
@@ -3263,13 +3459,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && visibleShops.some(s=>String(s.id)===String(selectedStoreId)) && (
+              {currentScreen === "store-info" && (displayShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId))!}
+                  shop={displayShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
+                  readOnlyClosed={!displayShops.some(s=>String(s.id)===String(selectedStoreId))}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -3306,7 +3503,7 @@ export default function App() {
                   forcedTheme={forcedTheme}
                   onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onLogout={() => setCurrentScreen("splash")}
+                  onLogout={logoutCustomer}
                   onProfile={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("profile");
@@ -3398,7 +3595,7 @@ export default function App() {
                   showConfirm={showConfirm}
                   showPasswordPrompt={showPasswordPrompt}
                   isOnline={isOnline}
-                  onSubscribeToPush={subscribeToPushNotifications}
+                  onSubscribeToPush={pickupOrderingEnabled() ? subscribeToPushNotifications : undefined}
                   onManualSync={handleManualSync}
                   stalenessThresholdMs={stalenessThresholdMs}
                   onUpdateStalenessThreshold={setStalenessThresholdMs}
@@ -3417,27 +3614,7 @@ export default function App() {
                   }}
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={async () => {
-                    await supabase.auth.signOut();
-                    // Clear sensitive data on logout
-                    localStorage.removeItem("remember_me_secure_token");
-                    localStorage.removeItem("cart");
-                    localStorage.removeItem("userProfile");
-                    localStorage.removeItem("favorites");
-                    localStorage.removeItem("pending_review");
-                    setCart([]);
-                    setFavorites([]);
-                    setUserProfile({
-                      fullName: "",
-                      email: "",
-                      phone: "",
-                      city: "",
-                      address: "",
-                      country: "South Africa",
-                      role: "user",
-                    });
-                    setCurrentScreen("splash");
-                  }}
+                  onLogout={logoutCustomer}
                   setNotification={setNotification}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
@@ -3456,7 +3633,7 @@ export default function App() {
                     <CheckoutScreen
                       userProfile={userProfile}
                       session={session}
-                      shops={visibleShops}
+                      shops={displayShops}
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
@@ -3491,22 +3668,22 @@ export default function App() {
               )}
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
-                  session={session}
+                  ownerUid={session?.user?.id}
+                  pickupOrders={orders}
+                  loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
+                  onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
-                  userProfile={userProfile}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  isOnline={isOnline}
                   shops={visibleShops}
-                  addToCart={addToCart}
-                  setCart={setCart}
-                  setCurrentScreen={setCurrentScreen}
+                  onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
+                  onViewOrder={id=>{setSelectedTrackingOrderId(id);setPreviousScreen("order-history");setCurrentScreen("order-tracking");}}
                   triggerHaptic={triggerHaptic}
-                  onScanFlyer={() => setShowQRScanner(true)}
                 />
               )}
             </motion.div>
           </AnimatePresence>
+
+          {/* Decorative fly-to-cart arc after accepted local-cart actions only. */}
+          <CartFlightFeedback />
 
           {/* Interactive Floating Cart Button */}
           <FloatingCartButton
@@ -3527,6 +3704,22 @@ export default function App() {
             onUpdateQuantity={updateCartQuantity}
             onRemoveItem={removeItemFromCart}
             onClearCart={clearCart}
+            pickupLocation={userLocation}
+            pickupName={userProfile?.fullName || userProfile?.name || ""}
+            pickupPhone={userProfile?.phone || ""}
+            isSignedIn={Boolean(session?.user?.id && firebaseAuth.currentUser)}
+            onPickupOrderPlaced={(order) => {
+              setCart([]);
+              setIsCartDrawerOpen(false);
+              const confirmedOrder={...order,status:order.status==="ready_for_pickup"?"ready":order.status==="collected"?"completed":order.status} as unknown as Order;
+              setOrders(previous=>[confirmedOrder,...previous.filter(existing=>existing.id!==order.id)]);
+              setNotification({
+                type: "success",
+                message: `Pickup order ${order.id} is ${order.status}. Payment expected: ${order.payment_method === "cash" ? "Cash at shop" : "Card at shop"}. Pay R ${order.total_price.toFixed(2)} at ${shops.find((shop) => shop.id === order.shop_id)?.name || "the shop"}.`,
+              });
+              setPreviousScreen(currentScreen);
+              setCurrentScreen("order-history");
+            }}
             onProceedToCheckout={() => {
               if (!session) {
                 showAlert(
@@ -3615,7 +3808,8 @@ export default function App() {
             orders={orders}
             shops={shops}
             currentScreen={currentScreen}
-            onOpenTracking={(_orderId) => {
+            onOpenTracking={(orderId) => {
+              setSelectedTrackingOrderId(orderId);
               setPreviousScreen(currentScreen);
               setCurrentScreen("order-tracking");
             }}
@@ -3631,6 +3825,7 @@ export default function App() {
           <BottomNavigation
             currentScreen={currentScreen}
             onNavigate={(targetScreen) => {
+              if(targetScreen==="order-tracking")setSelectedTrackingOrderId(null);
               setPreviousScreen(currentScreen);
               setCurrentScreen(targetScreen);
             }}
@@ -3742,6 +3937,8 @@ function HomeScreen({
   session,
   shops,
   loadingShops,
+  closedPickupShops,
+  closedPickupShopsLoading,
   fetchError,
   onSettings,
   onProfile,
@@ -3775,13 +3972,14 @@ function HomeScreen({
   changeToDelivery,
   dataSaverEnabled,
   isSyncing = false,
-  onOpenAddressSwitcher,
   onOpenCart,
 }: {
   userProfile: UserProfile;
   session: Session | null;
   shops: Shop[];
   loadingShops: boolean;
+  closedPickupShops: ClosedPickupShopPreview[];
+  closedPickupShopsLoading: boolean;
   fetchError: string | null;
   onSettings: () => void;
   onProfile: () => void;
@@ -3820,7 +4018,6 @@ function HomeScreen({
   changeToDelivery: (orderId: string) => void;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
-  onOpenAddressSwitcher?: () => void;
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
@@ -3858,7 +4055,6 @@ function HomeScreen({
       console.error("Failed to save sort preference:", e);
     }
   }, [sortBy]);
-  const [isScrolled, setIsScrolled] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -3883,70 +4079,20 @@ function HomeScreen({
     }
   }, [isHeaderSearching]);
 
-  useEffect(() => {
-    if (!headerRef.current) return;
-    const observer = new ResizeObserver(() => {
-      if (headerRef.current) {
-        setHeaderHeight(headerRef.current.getBoundingClientRect().height);
-      }
-    });
-    observer.observe(headerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const [showFilters, setShowFilters] = useState(true);
-  const lastScrollYRef = useRef(0);
-
-  useEffect(() => {
-    let ticking = false;
-    const handleScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentY = window.scrollY;
-          setIsScrolled(currentY > 15);
-
-          if (currentY <= 30) {
-            setShowFilters(true);
-          } else if (currentY > lastScrollYRef.current + 8) {
-            // Scrolling down -> slide filters up into top bar for clear view
-            setShowFilters(false);
-          } else if (currentY < lastScrollYRef.current - 12) {
-            // Scrolling up -> reveal filters
-            setShowFilters(true);
-          }
-          lastScrollYRef.current = currentY;
-          ticking = false;
-        });
-        ticking = true;
-      }
+  // Measure the fixed header before paint, then only update when its actual
+  // integer height changes (e.g. dismissing the promo). Avoid scroll/resize
+  // feedback loops and first-frame content jumps.
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = () => {
+      const measured = header.offsetHeight;
+      setHeaderHeight(previous => previous === measured ? previous : measured);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  // Touch swipe support for smooth mobile interaction
-  useEffect(() => {
-    let touchStartY = 0;
-    const handleTouchStart = (e: TouchEvent) => {
-      touchStartY = e.touches[0].clientY;
-    };
-    const handleTouchMove = (e: TouchEvent) => {
-      const currentTouchY = e.touches[0].clientY;
-      const diff = touchStartY - currentTouchY;
-      if (window.scrollY > 30) {
-        if (diff > 15) {
-          setShowFilters(false);
-        } else if (diff < -15) {
-          setShowFilters(true);
-        }
-      }
-    };
-    window.addEventListener("touchstart", handleTouchStart, { passive: true });
-    window.addEventListener("touchmove", handleTouchMove, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
-    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(header);
+    return () => observer?.disconnect();
   }, []);
 
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
@@ -3999,57 +4145,8 @@ function HomeScreen({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isOrderStatusExpanded, setIsOrderStatusExpanded] = useState(false);
 
-  const [notificationPermissionStatus, setNotificationPermissionStatus] = useState<string>(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      return Notification.permission;
-    }
-    return "unsupported";
-  });
-
-  const [notificationBannerDismissed, setNotificationBannerDismissed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("localeats_notify_banner_dismissed") === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const handleRequestNotifications = async () => {
-    showAlert("Notifications not enabled", "Ready notifications require pickup database activation. No push subscription has been saved."); return;
-
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
-      return;
-    }
-    triggerHaptic?.(15, "button_press");
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermissionStatus(permission);
-      if (permission === "granted") {
-        toast.success("Order Notifications Enabled! 🔔", {
-          description: "You'll now receive real-time push alerts on meal preparation, packing, and live delivery status.",
-          duration: 5000,
-        });
-        if (session?.user?.id) {
-          registerAndSyncPushToken(session.user.id).catch(() => {});
-        }
-      } else if (permission === "denied") {
-        toast.error("Notifications Blocked", {
-          description: "You can enable notifications anytime in your browser site permissions.",
-        });
-      }
-    } catch (err) {
-      console.debug("Notice on notification permission:", err);
-    }
-  };
-
-  const handleDismissNotificationBanner = () => {
-    setNotificationBannerDismissed(true);
-    try {
-      localStorage.setItem("localeats_notify_banner_dismissed", "true");
-    } catch {}
-    triggerHaptic?.(10, "button_press");
-  };
+  // Notifications remain accessible through the Home bell and inbox.
+  // Do not show a push opt-in prompt until enrollment actually works.
 
   const frequentlyOrderedShops = useMemo(() => {
     if (!orders || orders.length === 0) return [];
@@ -4066,13 +4163,10 @@ function HomeScreen({
       .slice(0, 3);
   }, [orders, shops]);
 
-  const suggestions = useMemo(() => {
-    if (debouncedSearchQuery.length < 2) return [];
-    return shops
-      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
-      .map((s) => s.name)
-      .slice(0, 5);
-  }, [shops, debouncedSearchQuery]);
+  const suggestions = useMemo(
+    () => homeSearchSuggestions(shops, closedPickupShops, debouncedSearchQuery),
+    [shops, closedPickupShops, debouncedSearchQuery],
+  );
 
   const activeOrders = useMemo(
     () =>
@@ -4108,27 +4202,20 @@ function HomeScreen({
     { id: "open_now", label: "Open Now", type: "quickFilter" as const, value: "Open Now", icon: Activity },
     { id: "top_rated", label: "Top Rated", type: "quickFilter" as const, value: "Top Rated", icon: Star },
     { id: "fastest", label: "Fastest", type: "quickFilter" as const, value: "Fastest", icon: Zap },
-    { id: "halal", label: "Halal", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck },
-  ], []);
+    // Dietary tags identify item options, not halal certification for the shop.
+    ...(shops.some(homeHasHalalOptions) ? [{ id: "halal", label: "Halal options", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck }] : []),
+  ], [shops]);
 
-  // Pre-calculate search index map for lightning-fast search matches on low-end devices
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category} ${shop.cuisine_type || ""}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
+  const fastestShopIds = useMemo(
+    () => homeFastestShopIds(shops.filter(shop => getShopStatus(shop).isOpen)),
+    [shops],
+  );
 
   const filteredShops = useMemo(() => {
-    const query = debouncedSearchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
+    const query = debouncedSearchQuery.trim();
     return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
+      const shopText = [shop.name,shop.description,shop.category,shop.cuisine_type].filter(Boolean).join(" ").toLowerCase();
+      const matchesSearch = homeSearchMatches(shop, query);
 
       let matchesCategory = false;
       if (selectedCategory === "All") {
@@ -4155,25 +4242,21 @@ function HomeScreen({
 
       let matchesQuickFilter = true;
       if (selectedQuickFilter === "Top Rated") {
-        matchesQuickFilter = shop.rating !== undefined && shop.rating >= 4.5;
+        matchesQuickFilter = (homeRating(shop) ?? 0) >= 4.5;
       } else if (selectedQuickFilter === "Fastest") {
-        matchesQuickFilter = shop.prepTime === "15-20 min" || shop.prepTime === "10-15 min";
+        matchesQuickFilter = fastestShopIds.has(shop.id);
       } else if (selectedQuickFilter === "Open Now") {
         matchesQuickFilter = getShopStatus(shop).isOpen;
       } else if (selectedQuickFilter === "Halal") {
-        matchesQuickFilter = shopText.includes("halal") || shopText.includes("halaal");
+        matchesQuickFilter = homeHasHalalOptions(shop);
       }
 
       return matchesSearch && matchesCategory && matchesQuickFilter;
     });
-  }, [shops, debouncedSearchQuery, selectedCategory, favorites, shopSearchIndex, selectedQuickFilter]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, selectedQuickFilter, fastestShopIds]);
 
   const sortedShops = useMemo(() => {
-    const getMinPrepTime = (shop: Shop): number => {
-      if (!shop.prepTime) return 99;
-      const match = shop.prepTime.match(/\d+/);
-      return match ? parseInt(match[0], 10) : 99;
-    };
+    const getMinPrepTime = (shop: Shop): number => homePrepMinutes(shop) ?? Number.POSITIVE_INFINITY;
 
     const getPopularity = (shop: Shop): number => {
       return (shop.reviewCount || 0) + (shop.rating || 0) * 10;
@@ -4197,27 +4280,13 @@ function HomeScreen({
         return getMinPrepTime(a) - getMinPrepTime(b);
       }
 
-      // Default 'recommended' sort (Distance -> Special -> Rating)
+      // Default 'recommended' ordering: genuine distance, no fabricated GPS.
       if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
+        const knownDistance=(shop:Shop):number => nearestHomeDistance(shop,userLocation);
+        const distA=knownDistance(a), distB=knownDistance(b);
+        if(Number.isFinite(distA)!==Number.isFinite(distB))return Number.isFinite(distA)?-1:1;
+        if(Number.isFinite(distA)&&Number.isFinite(distB)&&Math.abs(distA-distB)>0.01)
+          return distA-distB;
       }
 
       // Prioritize "Local Eats Special"
@@ -4269,29 +4338,13 @@ function HomeScreen({
     return sorted
       .map((entry) => {
         const shop = shops.find((s) => s.id === entry.shopId);
-        const originalMenuItem = shop?.menu?.find(
-          (m) =>
-            m.name.toLowerCase() === entry.name.toLowerCase() ||
-            m.id === entry.variantId,
-        );
-
-        const menuItem: MenuItem = originalMenuItem || {
-          id: entry.variantId || entry.name,
-          name: entry.name,
-          price: entry.price,
-          displayPrice: `R ${entry.price.toFixed(2)}`,
-          image: shop?.logo || DEFAULT_SHOP_LOGO,
-          description: "Delicious local favorite",
-          customizations: entry.customizations,
-        };
-
-        return {
-          menuItem,
-          shopId: entry.shopId,
-          shopName: shop?.name || "Local Kitchen",
-          count: entry.count,
-        };
+        const menuItem = homeReorderMenuItem(shop,entry.name,entry.variantId);
+        // Historical prices, stale menu entries and disabled shops must not
+        // create a one-tap reorder shortcut.
+        if (!shop || !menuItem || !getShopStatus(shop).isOpen) return null;
+        return {menuItem,shopId:entry.shopId,shopName:shop.name,count:entry.count};
       })
+      .filter((item): item is {menuItem:MenuItem;shopId:string;shopName:string;count:number} => item!==null)
       .slice(0, 10);
   }, [orders, shops]);
 
@@ -4301,38 +4354,60 @@ function HomeScreen({
     0,
   );
 
+  const matchingClosedShops = useMemo(() => {
+    if (selectedQuickFilter === "Open Now" || selectedQuickFilter === "Fastest") return [];
+    const query=debouncedSearchQuery.trim();
+    const activeIds=new Set(shops.map(shop=>shop.id));
+    return closedPickupShops.filter(shop=>{
+      if(activeIds.has(shop.id))return false;
+      const text=[shop.name,shop.category,shop.description].join(" ").toLowerCase();
+      if(!homeSearchMatches(shop,query))return false;
+      if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
+      if(!["All","Favorites","Nearby"].includes(selectedCategory)){
+        if(selectedCategory==="Kota" && !text.includes("kota") && !text.includes("spatlo"))return false;
+        if(selectedCategory==="Braai" && !text.includes("braai"))return false;
+        if(!["Kota","Braai"].includes(selectedCategory) && shop.category!==selectedCategory)return false;
+      }
+      if(selectedQuickFilter==="Top Rated" && (shop.rating===null || shop.rating<4.5))return false;
+      // Closed previews contain no authoritative menu dietary tags.
+      if(selectedQuickFilter==="Halal")return false;
+      return true;
+    });
+  }, [closedPickupShops,shops,debouncedSearchQuery,selectedCategory,selectedQuickFilter,favorites]);
+
   const renderedShopList = useMemo(() => {
     return (
-      <motion.div
-        layout
-        initial="hidden"
-        animate="show"
-        variants={{
-          hidden: { opacity: 0 },
-          show: {
-            opacity: 1,
-            transition: {
-              staggerChildren: 0.1,
-            },
-          },
-        }}
-        className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate"
-      >
-        {sortedShops.map((shop) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
+        {sortedShops.map((shop,index) => (
           <ShopCard
             key={shop.id}
             shop={shop}
+            priorityImage={index === 0}
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
-      </motion.div>
+        {matchingClosedShops.map((preview,index)=>(
+          <ShopCard
+            key={preview.id}
+            shop={closedPickupCardData(preview)}
+            priorityImage={sortedShops.length === 0 && index === 0}
+            readOnlyClosed
+            isFollowed={favorites.includes(preview.id)}
+            onStoreInfo={onStoreInfo}
+            triggerHaptic={triggerHaptic}
+            dataSaverEnabled={dataSaverEnabled}
+          />
+        ))}
+      </div>
     );
-  }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
+  }, [sortedShops, matchingClosedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
 
-  if (loadingShops && shops.length === 0) {
+  // Show the same Home-shaped shell during initial discovery only. If the
+  // approved read-only closed catalog already arrived, let customers browse it.
+  if (loadingShops && shops.length === 0 && closedPickupShops.length === 0 && !fetchError) {
     return <AppSkeletonLoader userProfile={userProfile} />;
   }
 
@@ -4352,11 +4427,7 @@ function HomeScreen({
       <header
         ref={headerRef}
         id="home-sticky-header"
-        className={`fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b transition-all duration-200 rounded-none w-full pt-[env(safe-area-inset-top,0px)] ${
-          isScrolled
-            ? "border-slate-200/90 dark:border-slate-800 shadow-xs"
-            : "border-slate-100 dark:border-slate-850"
-        }`}
+        className="fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-850 rounded-none w-full pt-[env(safe-area-inset-top,0px)]"
       >
         <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
           
@@ -4364,23 +4435,7 @@ function HomeScreen({
           <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             <LocalEatsLogo width={105} height={26} className="shrink-0 scale-100 origin-left" />
             
-            {onOpenAddressSwitcher && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (triggerHaptic) triggerHaptic(8);
-                  onOpenAddressSwitcher();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800/90 hover:bg-orange-50 dark:hover:bg-orange-950/40 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-all cursor-pointer max-w-[120px] xs:max-w-[160px] sm:max-w-[220px] truncate group"
-                title="Change delivery address"
-              >
-                <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] sm:text-xs font-bold truncate">
-                  {userProfile.address ? userProfile.address.split(",")[0] : "Set Address"}
-                </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
-              </button>
-            )}
+
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
@@ -4409,6 +4464,8 @@ function HomeScreen({
               }`} />
               <input
                 id="header-search-input"
+                aria-controls="home-search-suggestions"
+                aria-expanded={showSuggestions && isHeaderSearching}
                 className="w-full bg-transparent border-none outline-none py-2.5 pl-9 pr-9 text-xs sm:text-sm font-semibold dark:text-white transition-all duration-300 transform focus:scale-[1.01] focus:ring-2 focus:ring-orange-500/50 focus:border-orange-500/50 focus:shadow-[0_0_8px_rgba(249,115,22,0.4)] rounded-lg"
                 placeholder="Search local kitchens..."
                 value={searchQuery}
@@ -4424,7 +4481,11 @@ function HomeScreen({
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                  if (e.key === "Escape") {
+                    setShowSuggestions(false);
+                    setIsHeaderSearching(false);
+                    setSearchQuery("");
+                  } else if (e.key === "Enter" && searchQuery.trim().length >= 2) {
                     saveRecentSearch(searchQuery.trim());
                     setShowSuggestions(false);
                   }
@@ -4466,22 +4527,17 @@ function HomeScreen({
                   triggerHaptic(10);
                   setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
                 }}
-                className="w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Search stores"
               >
                 <Search className="w-4.5 h-4.5" />
               </button>
               <button
                 onClick={onNotifications}
-                className="relative w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Notifications"
               >
-                <Bell className="w-4.5 h-4.5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[10px] whitespace-nowrap font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
-                    {unreadCount > 9 ? "9+" : unreadCount}
-                  </span>
-                )}
+                <CustomerNotificationBell unreadCount={unreadCount} />
               </button>
               <div className="relative">
                 <button
@@ -4494,7 +4550,7 @@ function HomeScreen({
                   aria-label="Settings and account menu"
                   aria-haspopup="true"
                   aria-expanded={isSettingsOpen}
-                  className={`w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all cursor-pointer ${
+                  className={`relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500 ${
                     isSettingsOpen
                       ? "bg-white dark:bg-slate-700 shadow-sm ring-2 ring-orange-500/40 text-orange-600 dark:text-orange-400"
                       : "hover:bg-white dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
@@ -4566,7 +4622,7 @@ function HomeScreen({
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
           <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white text-[11px] sm:text-xs py-2 px-3 sm:px-4 flex items-center justify-between gap-2 border-t border-white/15 shadow-inner">
             <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
-              <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
+              <Tag className="w-4 h-4 shrink-0 text-orange-100" />
               <span className="truncate font-semibold tracking-tight">
                 ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-2 py-1 rounded text-white select-all font-bold">LOCALEATS10</span>
               </span>
@@ -4610,7 +4666,7 @@ function HomeScreen({
               transition={{ duration: 0.2, ease: "easeOut" }}
               className="absolute top-full left-0 right-0 max-w-screen-xl mx-auto px-4 z-[100] pointer-events-none mt-1"
             >
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
+              <div id="home-search-suggestions" role="region" aria-label="Search suggestions" className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto pointer-events-auto">
                 {/* Clickable Horizontal Recent Searches Pills */}
                 {recentSearches.length > 0 && (
                   <div className="px-4 py-2 bg-slate-50/90 dark:bg-slate-950/70 border-b border-slate-100 dark:border-slate-800/80 flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -4621,7 +4677,7 @@ function HomeScreen({
                       <button
                         key={`recent-pill-${idx}`}
                         type="button"
-                        onMouseDown={(e) => {
+                        onClick={(e) => {
                           e.preventDefault();
                           setSearchQuery(term);
                           saveRecentSearch(term);
@@ -4634,7 +4690,7 @@ function HomeScreen({
                     ))}
                     <button
                       type="button"
-                      onMouseDown={(e) => {
+                      onClick={(e) => {
                         e.preventDefault();
                         setRecentSearches([]);
                         try {
@@ -4665,7 +4721,7 @@ function HomeScreen({
                             transition={{ duration: 0.15, delay: idx * 0.03 }}
                             key={`frequent-${shop.id}`}
                             type="button"
-                            onMouseDown={(e) => {
+                            onClick={(e) => {
                               e.preventDefault();
                               onStoreInfo(shop.id);
                               setIsHeaderSearching(false);
@@ -4694,7 +4750,7 @@ function HomeScreen({
                           </span>
                           <button
                             type="button"
-                            onMouseDown={(e) => {
+                            onClick={(e) => {
                               e.preventDefault();
                               setRecentSearches([]);
                               try {
@@ -4716,7 +4772,7 @@ function HomeScreen({
                           >
                             <button
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setSearchQuery(s);
                                 setShowSuggestions(false);
@@ -4773,7 +4829,7 @@ function HomeScreen({
                               transition={{ duration: 0.15, delay: idx * 0.03 }}
                               key={`frequent-match-${shop.id}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 onStoreInfo(shop.id);
                                 setIsHeaderSearching(false);
@@ -4799,28 +4855,27 @@ function HomeScreen({
                         <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
                           🔍 Stores Found
                         </div>
-                        {suggestions.map((name, idx) => {
-                          const shop = shops.find(s => s.name === name);
+                        {suggestions.map((suggestion, idx) => { 
                           return (
                             <motion.button
                               initial={{ opacity: 0, scale: 0.96, y: 4 }}
                               animate={{ opacity: 1, scale: 1, y: 0 }}
                               transition={{ duration: 0.15, delay: idx * 0.035 }}
-                              key={`store-${idx}`}
+                              key={`store-${suggestion.id}`}
                               type="button"
-                              onMouseDown={(e) => {
+                              aria-label={`${suggestion.name}${suggestion.closed ? " (Closed, browse menu)" : ""}`}
+                              onClick={(e) => {
                                 e.preventDefault();
-                                if (shop) {
-                                  onStoreInfo(shop.id);
-                                  setIsHeaderSearching(false);
-                                  setSearchQuery("");
-                                  setShowSuggestions(false);
-                                }
+                                onStoreInfo(suggestion.id);
+                                setIsHeaderSearching(false);
+                                setSearchQuery("");
+                                setShowSuggestions(false);
                               }}
                               className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
                             >
                               <Store className="w-3.5 h-3.5 text-orange-500" />
-                              {name}
+                              <span>{suggestion.name}</span>
+                              {suggestion.closed && <span className="ml-auto text-xs text-slate-500 dark:text-slate-400 font-semibold">Closed</span>}
                             </motion.button>
                           );
                         })}
@@ -4845,7 +4900,7 @@ function HomeScreen({
                             >
                               <button
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -4895,16 +4950,10 @@ function HomeScreen({
 
         {/* Sliding Unified Filter Chips Bar: [All 🍽️, Favorites ❤️, Nearby 📍, Kota 🍞, Braai 🔥, Open Now, Top Rated, Fastest, Halal] */}
         {currentScreen === "home" && (
-          <AnimatePresence initial={false}>
-            {showFilters && (
-              <motion.div
-                key="home-filter-chips-bar"
-                initial={{ height: 0, opacity: 0, y: -6 }}
-                animate={{ height: "auto", opacity: 1, y: 0 }}
-                exit={{ height: 0, opacity: 0, y: -6 }}
-                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
-              >
+          <div
+            id="home-filter-chips-bar"
+            className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+          >
                 <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
                     {filterChipsList.map((chip) => {
@@ -4926,7 +4975,8 @@ function HomeScreen({
                               setSelectedQuickFilter((prev) => (prev === chip.value ? null : chip.value));
                             }
                           }}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1.5 shrink-0 select-none ${
+                          aria-pressed={isSelected}
+                          className={`px-3 py-1.5 min-h-[40px] rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer border flex items-center gap-1.5 shrink-0 select-none focus-visible:outline-2 focus-visible:outline-orange-500 ${
                             isSelected
                               ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs"
                               : "bg-slate-100/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -4939,9 +4989,7 @@ function HomeScreen({
                     })}
                   </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </div>
         )}
       </header>
 
@@ -4955,70 +5003,15 @@ function HomeScreen({
               <span className="select-none">👋</span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 font-medium">
-              Order fresh local meals & goods delivered in <span className="font-semibold text-orange-600 dark:text-orange-400">{currentTownship.name}</span>
+              {pickupOrderingEnabled() ? "Browse local food shops near " : "Order fresh local meals & goods delivered in "}<span className="font-semibold text-orange-600 dark:text-orange-400">{currentTownship.name}</span>
             </p>
           </div>
           <div className="flex items-center shrink-0">
             <span className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-bold border border-orange-200 dark:border-orange-800/60 shadow-xs">
-              📍 Delivering to {currentTownship.name}
+              📍 {pickupOrderingEnabled() ? "Shops near " : "Delivering to "}{currentTownship.name}
             </span>
           </div>
         </div>
-
-        {/* Real-time Order Notification Permission Request Flow */}
-        {notificationPermissionStatus !== "granted" && notificationPermissionStatus !== "unsupported" && !notificationBannerDismissed && (
-          <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-            className="mb-6 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 dark:from-orange-950/40 dark:via-amber-950/30 dark:to-orange-950/40 p-4 rounded-2xl border border-orange-200/90 dark:border-orange-800/60 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative overflow-hidden"
-          >
-            <div className="flex items-start gap-3.5 z-10">
-              <div className="size-10 rounded-xl bg-orange-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-orange-500/20 animate-pulse">
-                <Bell className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
-                    Stay Updated on Your Orders
-                  </h4>
-                  {activeOrders.length > 0 ? (
-                    <span className="text-[9px] font-black uppercase tracking-wider bg-orange-500 text-white px-2 py-0.5 rounded-full animate-bounce">
-                      {activeOrders.length} Active Order{activeOrders.length > 1 ? "s" : ""}
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-bold uppercase tracking-wider bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-md">
-                      Optional Notifications
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
-                  {activeOrders.length > 0
-                    ? "You have orders in progress! Enable notifications to receive instant updates when food is cooking, packed, and out for delivery."
-                    : "Ready notifications require pickup database activation. Push is optional and best effort."}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-end sm:self-center shrink-0 z-10">
-              <button
-                type="button"
-                onClick={handleDismissNotificationBanner}
-                className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer transition-colors"
-              >
-                Maybe Later
-              </button>
-              <button
-                type="button"
-                onClick={handleRequestNotifications}
-                className="px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-md shadow-orange-600/20 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Bell className="w-3.5 h-3.5" />
-                <span>Enable Alerts</span>
-              </button>
-            </div>
-          </motion.div>
-        )}
 
         {/* Order Again Carousel */}
         {orderAgainEnabled && mostFrequentItems.length > 0 && (
@@ -5075,11 +5068,14 @@ function HomeScreen({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          addToCart(menuItem, shopId);
+                          const currentShop=shops.find(s=>s.id===shopId);
+                          const currentItem=homeReorderMenuItem(currentShop,menuItem.name,menuItem.id);
+                          if(!currentItem || !currentShop || !getShopStatus(currentShop).isOpen){
+                            toast.error("This item is unavailable. Open the shop to check its current menu.");
+                            return;
+                          }
+                          addToCart(currentItem,shopId);
                           triggerHaptic(10);
-                          toast.success(`Added ${menuItem.name} to cart`, {
-                            description: `From ${shopName}`
-                          });
                         }}
                         className="bg-orange-500 hover:bg-orange-600 text-white p-1 rounded-md transition-all active:scale-90 cursor-pointer flex items-center justify-center shadow-xs"
                         title="Add to cart"
@@ -5107,13 +5103,13 @@ function HomeScreen({
               {loadingShops ? (
                 <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-full border border-amber-100 dark:border-amber-900/40">
                   <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
-                  <span className="text-[9px] font-black text-amber-600 uppercase tracking-widest animate-pulse">
+                  <span className="text-xs font-black text-amber-600 uppercase tracking-widest animate-pulse">
                     Syncing...
                   </span>
                 </div>
               ) : (
-                <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online
+                <span className="text-xs font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
+                  {sortedShops.length} Online{matchingClosedShops.length ? ` · ${matchingClosedShops.length} Closed` : ""}
                 </span>
               )}
             </div>
@@ -5129,7 +5125,7 @@ function HomeScreen({
                   setSortBy(e.target.value as 'recommended' | 'popular' | 'rating' | 'fastest');
                   triggerHaptic(5);
                 }}
-                className="bg-transparent border-none text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer focus:ring-0 pr-1"
+                className="bg-transparent border-none text-xs font-bold text-slate-700 dark:text-slate-200 outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-orange-500 min-h-10 pr-1"
                 aria-label="Sort shops"
               >
                 <option value="recommended" className="dark:bg-slate-900">✨ Recommended</option>
@@ -5140,14 +5136,21 @@ function HomeScreen({
             </div>
           </div>
 
-          {loadingShops && shops.length === 0 ? (
-            <ShopFeedSkeleton count={6} />
-          ) : (
-            renderedShopList
+          {shops.some(shop=>shop.is_test_store===true) && (
+            <p role="status" className="mb-3 text-xs font-semibold text-orange-700 dark:text-orange-300">
+              Preview test location: My-Kota is shown here for UI testing only.
+              Its real shop remains in Ivory Park. No real order can be submitted.
+            </p>
           )}
+          {renderedShopList}
         </section>
 
-        {sortedShops.length === 0 && !loadingShops && (
+        {shops.length === 0 && !loadingShops && closedPickupShopsLoading && !fetchError && (
+          <div role="status" aria-live="polite" className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-sm text-slate-600 dark:text-slate-300">
+            Checking nearby shops outside trading hours...
+          </div>
+        )}
+        {sortedShops.length === 0 && matchingClosedShops.length === 0 && !loadingShops && !closedPickupShopsLoading && (
           <motion.section
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -5174,7 +5177,11 @@ function HomeScreen({
                 ? (fetchError || "No approved, available pickup shops found within 4 km of your real location.")
                 : searchQuery
                 ? `No merchants matching "${searchQuery}". Try a different keyword.`
-                : `No kitchens currently open in "${selectedCategory}".`}
+                : selectedQuickFilter === "Fastest"
+                ? "No confirmed preparation times are available for these shops."
+                : selectedQuickFilter === "Halal"
+                ? "No shops have tagged available Halal menu options."
+                : "No kitchens match the selected category or filters."}
             </p>
 
             {/* Quick popular suggestion tags when search yields 0 results */}
@@ -5705,33 +5712,11 @@ function DiscoverScreen({
 
   const [minRating, setMinRating] = useState(0);
   const [showOnlyOpen, setShowOnlyOpen] = useState(false);
+  const [showExtraFilters,setShowExtraFilters]=useState(false);
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<"smart" | "distance" | "rating" | "speed">("smart");
   
-  const [pingStatus, setPingStatus] = useState<"idle" | "testing" | "online" | "offline">("idle");
-  const [latency, setLatency] = useState<number | null>(null);
-
-  const handleTestPing = useCallback(() => {
-    setPingStatus("testing");
-    triggerHaptic?.(50);
-    setTimeout(() => {
-      if (navigator.onLine) {
-        setPingStatus("online");
-        setLatency(Math.floor(Math.random() * 30) + 20); // 20-50ms
-        toast.success("Connection check complete!", {
-          description: "You are connected to LocalEats and ready to order."
-        });
-      } else {
-        setPingStatus("offline");
-        setLatency(null);
-        toast.error("Connection check failed", {
-          description: "No internet connection. Your actions are saved and will sync later."
-        });
-      }
-    }, 1500);
-  }, [triggerHaptic]);
-
   const categories = [
     "All",
     "Favorites",
@@ -5739,165 +5724,45 @@ function DiscoverScreen({
     ...new Set(shops.map((s) => s.category)),
   ];
 
-  // Pre-calculate search index map for DiscoverScreen to optimize searching
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
-
-  const realFreshItems = useMemo(() => {
-    const items: Array<{
-      id: string;
-      shopId: string;
-      shopName: string;
-      itemName: string;
-      price: number;
-      image: string;
-      description: string;
-      badge: string;
-    }> = [];
-
-    shops.forEach((shop) => {
-      if (shop.menu && shop.menu.length > 0) {
-        shop.menu.forEach((item) => {
-          if (item.image) {
-            items.push({
-              id: `${shop.id}-${item.id}`,
-              shopId: shop.id,
-              shopName: shop.name,
-              itemName: item.name,
-              price: item.price,
-              image: item.image,
-              description: item.description || `${item.name} from ${shop.name}`,
-              badge: shop.rating >= 4.5 ? "Top Rated" : "Fresh",
-            });
-          }
-        });
-      }
-    });
-
-    return items.slice(0, 8);
-  }, [shops]);
-
   const filteredShops = useMemo(() => {
-    const query = debouncedSearchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
     return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
-
-      let matchesCategory = false;
-      if (selectedCategory === "All" || selectedCategory === "Nearby") {
-        matchesCategory = true;
-      } else if (selectedCategory === "Favorites") {
-        matchesCategory = favorites.includes(shop.id);
-      } else {
-        matchesCategory = shop.category === selectedCategory;
-      }
-
-      const matchesRating = shop.rating >= minRating;
-      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-
-      // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
-
-      return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
+      const matchesSearch=discoverMatchesShopOrFood(shop,debouncedSearchQuery);
+      if(selectedCategory==="Favorites" && !favorites.includes(shop.id))return false;
+      if(!discoverCategoryMatches(shop,selectedCategory))return false;
+      const rating=homeRating(shop);
+      const matchesRating=minRating===0 || (rating!==null && rating>=minRating);
+      const matchesOpen=!showOnlyOpen || getShopStatus(shop).isOpen;
+      const needsDistance=selectedCategory==="Nearby" || maxDistance!==null;
+      const distance=needsDistance ? discoverShopDistance(shop,userLocation) : Infinity;
+      const matchesDistance=!needsDistance || Number.isFinite(distance) && (maxDistance===null || distance<=maxDistance);
+      return matchesSearch && matchesRating && matchesOpen && matchesDistance;
     });
-  }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
+  }, [shops, debouncedSearchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation]);
 
-  const suggestions = useMemo(() => {
-    if (debouncedSearchQuery.length < 2) return [];
-    return shops
-      .filter((s) => s.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
-      .map((s) => s.name)
-      .slice(0, 5);
-  }, [shops, debouncedSearchQuery]);
+  const suggestions=useMemo(()=>discoverFoodSuggestions(shops,debouncedSearchQuery,6),[shops,debouncedSearchQuery]);
 
-  const sortedShops = [...filteredShops].sort((a, b) => {
-    const statusA = getShopStatus(a);
-    const statusB = getShopStatus(b);
+  const sortedShops=useMemo(()=>discoverSortShops(
+    filteredShops,
+    selectedCategory==="Nearby" ? "distance" : sortPriority,
+    userLocation,
+    (shop)=>getShopStatus(shop).isOpen,
+  ),[filteredShops,selectedCategory,sortPriority,userLocation]);
 
-    // If sorting by smart priority:
-    if (sortPriority === "smart") {
-      // 1. Prioritize Open shops
-      if (statusA.isOpen && !statusB.isOpen) return -1;
-      if (!statusA.isOpen && statusB.isOpen) return 1;
-
-      // 2. Distance Sort (Nearby Priority)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) {
-          return distA - distB;
-        }
-      }
-      
-      // 3. Rating Sort
-      return b.rating - a.rating;
-    }
-
-    if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
-      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
-      return distA - distB;
-    }
-
-    if (sortPriority === "rating") {
-      return b.rating - a.rating;
-    }
-
-    if (sortPriority === "speed") {
-      const speedA = parseInt(a.delivery_eta || "20") || 20;
-      const speedB = parseInt(b.delivery_eta || "20") || 20;
-      return speedA - speedB;
-    }
-
-    return 0;
-  });
+  const matchingFoodItems=useMemo(
+    ()=>debouncedSearchQuery.trim()
+      ? discoverFoodPreviews(sortedShops,debouncedSearchQuery,userLocation,shop=>getShopStatus(shop).isOpen,6)
+      : [],
+    [sortedShops,debouncedSearchQuery,userLocation],
+  );
+  const realFreshItems=useMemo(
+    ()=>discoverFoodPreviews(sortedShops,"",userLocation,shop=>getShopStatus(shop).isOpen,8),
+    [sortedShops,userLocation],
+  );
+  const nearbyShops=useMemo(
+    ()=>discoverSortShops(shops,"distance",userLocation,shop=>getShopStatus(shop).isOpen)
+      .filter(shop=>Number.isFinite(discoverShopDistance(shop,userLocation))).slice(0,2),
+    [shops,userLocation],
+  );
 
   return (
     <div className="bg-[#f6f6f9] dark:bg-slate-950 text-[#2d2f31] dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
@@ -5907,7 +5772,8 @@ function DiscoverScreen({
           <div className="flex items-center gap-4">
             <button
               onClick={onHome}
-              className="text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
+              aria-label="Back to Home"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-xl focus-visible:outline-2 focus-visible:outline-orange-500 text-[#FF6B00] dark:text-[#ff7a2f] hover:opacity-80 transition-opacity cursor-pointer"
             >
               <ArrowLeft className="w-6 h-6" />
             </button>
@@ -5931,7 +5797,9 @@ function DiscoverScreen({
             )}
             <button
               onClick={() => setViewMode(viewMode === "list" ? "map" : "list")}
-              className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
+              aria-label={viewMode==="list"?"Show shops on a map":"Show shops as a list"}
+              aria-pressed={viewMode==="map"}
+              className="min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 bg-white dark:bg-slate-800 rounded-xl shadow-sm text-slate-600 dark:text-slate-300 hover:text-orange-600 transition-colors cursor-pointer"
             >
               {viewMode === "list" ? (
                 <MapIcon className="w-5 h-5" />
@@ -5952,72 +5820,6 @@ function DiscoverScreen({
       </header>
 
       <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
-        {/* Dedicated Promo Code & Flyer Scanner Action Card */}
-        {onScanFlyer && (
-          <div className="px-6 pt-4 pb-1">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-gradient-to-r from-orange-500/10 via-amber-500/10 to-orange-500/5 dark:from-orange-500/20 dark:to-slate-900 rounded-2xl border border-orange-500/20 shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white shadow-md shrink-0">
-                  <QrCode className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                    <span>Scan Promo Codes & Flyers</span>
-                    <span className="bg-orange-600 text-white text-[9px] font-black px-2 py-1 rounded-full uppercase">Instant</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                    Scan QR codes on promotional cards or flyers to auto-apply discounts or view menus.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  triggerHaptic(10);
-                  onScanFlyer();
-                }}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer shrink-0 flex items-center justify-center gap-1.5 self-start sm:self-auto"
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>Scan Promo Code</span>
-              </button>
-            </div>
-          </div>
-        )}
-        {/* Real Menu Items Feed from Active Shops */}
-        {realFreshItems.length > 0 && (
-          <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
-            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-orange-500" />
-              Fresh From Local Kitchens
-            </h3>
-            
-            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
-              {realFreshItems.map((feed) => (
-                <div
-                  key={feed.id}
-                  onClick={() => onSelectShop(feed.shopId)}
-                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98]"
-                >
-                  <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
-                    <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" />
-                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
-                      {feed.badge}
-                    </div>
-                    <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
-                      R{feed.price}
-                    </div>
-                  </div>
-                  <div className="p-3">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
-                    <p className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
-                    <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* Search & Hero */}
         <section className="px-6 pt-4 pb-8 bg-[#f6f6f9] dark:bg-slate-950">
           <div className="mb-6">
@@ -6025,68 +5827,17 @@ function DiscoverScreen({
               Local Flavor
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400 text-lg">
-              Discover the finest local Kota spots.
+              Explore local food shops and their available menus.
             </p>
-          </div>
-
-          {/* Bento Grid Categories */}
-          <div className="mb-8 max-w-xl mx-auto">
-            <div className="grid grid-cols-2 gap-3 h-[200px]">
-              {/* Primary Category (Kotas) */}
-              <div 
-                onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
-                className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
-              >
-                <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-rose-500 transition-transform duration-500 group-hover:scale-105"></div>
-                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
-                <div className="absolute bottom-4 left-4 z-10">
-                  <h3 className="text-white font-black text-2xl tracking-tight drop-shadow-md">Kotas</h3>
-                  <p className="text-white/90 font-bold text-xs uppercase tracking-wider mt-1 drop-shadow-md">Local Legends</p>
-                </div>
-                <Store className="absolute top-4 right-4 w-6 h-6 text-white/50 z-10" />
-              </div>
-              
-              {/* Secondary Categories Stack */}
-              <div className="grid grid-rows-2 gap-3">
-                {/* Top Row */}
-                <div 
-                  onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
-                  className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
-                  <div className="absolute bottom-3 left-4 z-10">
-                    <h3 className="text-white font-black text-lg drop-shadow-md">Burgers</h3>
-                  </div>
-                </div>
-                
-                {/* Bottom Row (Split) */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div 
-                    onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
-                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
-                  >
-                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
-                    <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
-                  </div>
-                  <div 
-                    onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
-                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
-                  >
-                    <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
-                      <ArrowRight className="w-3 h-3 text-slate-900 dark:text-white" />
-                    </div>
-                    <span className="font-bold text-xs text-slate-700 dark:text-slate-300 z-10">See All</span>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div className="relative group mb-6 max-w-xl mx-auto z-30">
             <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-[#5a5c5e] dark:text-slate-500">
               <Search className="w-5 h-5" />
             </div>
+            <label htmlFor="discover-search-input" className="sr-only">Search local food shops</label>
             <input
+              id="discover-search-input" aria-controls="discover-search-suggestions" aria-expanded={showSuggestions} autoComplete="off"
               className="w-full h-14 pl-12 pr-10 bg-[#ffffff] dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-[0_8px_32px_rgba(45,47,49,0.04)] text-[#2d2f31] dark:text-white placeholder:text-[#757779] dark:placeholder:text-slate-500 outline-none transition-all"
               placeholder="Search stores nearby..."
               type="text"
@@ -6099,7 +5850,7 @@ function DiscoverScreen({
                 setTimeout(() => setShowSuggestions(false), 200);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && searchQuery.trim().length >= 2) {
+                if(e.key==="Escape"){setShowSuggestions(false);e.currentTarget.blur();} else if (e.key === "Enter" && searchQuery.trim().length >= 2) {
                   saveRecentSearch(searchQuery.trim());
                   setShowSuggestions(false);
                 }
@@ -6115,7 +5866,7 @@ function DiscoverScreen({
                   setSearchQuery("");
                   setShowSuggestions(true);
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
+                className="absolute right-1 top-1/2 -translate-y-1/2 min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full cursor-pointer transition-colors z-10"
                 aria-label="Clear search text"
               >
                 <X className="w-4 h-4" />
@@ -6125,7 +5876,7 @@ function DiscoverScreen({
             {/* Float Suggestions relative to search bar */}
             {showSuggestions && (
               <div className="absolute top-[calc(100%+8px)] left-0 right-0 z-40">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
+                <div id="discover-search-suggestions" role="region" aria-label="Discover search suggestions" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden max-h-[350px] overflow-y-auto">
                   {debouncedSearchQuery.length < 2 ? (
                     <>
                       {/* Recent Searches */}
@@ -6138,7 +5889,7 @@ function DiscoverScreen({
                             </span>
                             <button
                               type="button"
-                              onMouseDown={(e) => {
+                              onClick={(e) => {
                                 e.preventDefault();
                                 setRecentSearches([]);
                                 try {
@@ -6157,7 +5908,7 @@ function DiscoverScreen({
                             >
                               <button
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -6197,20 +5948,17 @@ function DiscoverScreen({
                           <div className="px-5 py-2.5 bg-slate-50 dark:bg-slate-950/20 text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800">
                             🔍 Search Suggestions
                           </div>
-                          {suggestions.map((s, idx) => (
-                            <button
-                              key={`sugg-${idx}`}
-                              type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                setSearchQuery(s);
-                                setShowSuggestions(false);
-                                saveRecentSearch(s);
-                              }}
-                              className="w-full text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none"
+                          {suggestions.map(suggestion => (
+                            <button key={suggestion.key} type="button"
+                              onClick={(e)=>{e.preventDefault();setSearchQuery(suggestion.query);setShowSuggestions(false);saveRecentSearch(suggestion.query);}}
+                              aria-label={suggestion.kind==="food" ? `Search for ${suggestion.label} from ${suggestion.shopName}` : `Search for ${suggestion.label}`}
+                              className="w-full min-h-11 text-left px-5 py-3 text-[13px] font-bold flex items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-800 border-b border-slate-100/40 dark:border-white/5 last:border-none cursor-pointer dark:text-white bg-transparent border-none focus-visible:outline-2 focus-visible:outline-orange-500"
                             >
-                              <Search className="w-3.5 h-3.5 text-orange-500" />
-                              {s}
+                              {suggestion.kind==="food" ? <Utensils className="w-4 h-4 shrink-0 text-orange-500" /> : <Store className="w-4 h-4 shrink-0 text-orange-500" />}
+                              <span className="min-w-0 flex flex-col gap-0.5">
+                                <span className="truncate">{suggestion.label}</span>
+                                {suggestion.kind==="food" && <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Menu item · {suggestion.shopName}</span>}
+                              </span>
                             </button>
                           ))}
                         </>
@@ -6226,7 +5974,7 @@ function DiscoverScreen({
                               <button
                                 key={`recent-match-${idx}`}
                                 type="button"
-                                onMouseDown={(e) => {
+                                onClick={(e) => {
                                   e.preventDefault();
                                   setSearchQuery(s);
                                   setShowSuggestions(false);
@@ -6246,132 +5994,210 @@ function DiscoverScreen({
               </div>
             )}
           </div>
+          {/* Bento Grid Categories */}
+          <div className="mb-8 max-w-xl mx-auto">
+            <div className="grid grid-cols-2 gap-3 h-[200px]">
+              {/* Primary Category (Kotas) */}
+              <div 
+                role="button" tabIndex={0} aria-pressed={selectedCategory==="Kotas"} aria-label="Browse Kotas" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Kotas");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Kotas"); triggerHaptic(5); }}
+                className={`relative rounded-3xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 ${selectedCategory === "Kotas" ? "ring-4 ring-orange-500" : ""}`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-br from-orange-400 to-rose-500 transition-transform duration-500 group-hover:scale-105"></div>
+                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors"></div>
+                <div className="absolute bottom-4 left-4 z-10">
+                  <h3 className="text-white font-black text-2xl tracking-tight drop-shadow-md">Kotas</h3>
+                  <p className="text-white/90 font-bold text-xs uppercase tracking-wider mt-1 drop-shadow-md">Local Legends</p>
+                </div>
+                <Store className="absolute top-4 right-4 w-6 h-6 text-white/50 z-10" />
+              </div>
+              
+              {/* Secondary Categories Stack */}
+              <div className="grid grid-rows-2 gap-3">
+                {/* Top Row */}
+                <div 
+                  role="button" tabIndex={0} aria-pressed={selectedCategory==="Burgers"} aria-label="Browse Burgers" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Burgers");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Burgers"); triggerHaptic(5); }}
+                  className={`relative rounded-2xl overflow-hidden cursor-pointer group shadow-sm transition-transform active:scale-95 bg-slate-900 dark:bg-slate-800 ${selectedCategory === "Burgers" ? "ring-4 ring-orange-500" : ""}`}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent to-slate-800/50 group-hover:to-slate-700/50 transition-colors"></div>
+                  <div className="absolute bottom-3 left-4 z-10">
+                    <h3 className="text-white font-black text-lg drop-shadow-md">Burgers</h3>
+                  </div>
+                </div>
+                
+                {/* Bottom Row (Split) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div 
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="Drinks"} aria-label="Browse Drinks" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("Drinks");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("Drinks"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 ${selectedCategory === "Drinks" ? "ring-2 ring-blue-500" : ""}`}
+                  >
+                    <span className="text-xl mb-1 group-hover:scale-110 transition-transform z-10 drop-shadow-sm">🥤</span>
+                    <span className="font-bold text-xs text-blue-900 dark:text-blue-100 z-10">Drinks</span>
+                  </div>
+                  <div 
+                    role="button" tabIndex={0} aria-pressed={selectedCategory==="All"} aria-label="Browse all food categories" onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelectedCategory("All");triggerHaptic(5);}}}
+                onClick={() => { setSelectedCategory("All"); triggerHaptic(5); }}
+                    className={`relative rounded-2xl overflow-hidden cursor-pointer flex flex-col items-center justify-center group active:scale-95 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${selectedCategory === "All" ? "ring-2 ring-slate-500" : ""}`}
+                  >
+                    <div className="w-6 h-6 rounded-full bg-white dark:bg-slate-700 flex items-center justify-center mb-1 group-hover:shadow-md transition-all z-10">
+                      <ArrowRight className="w-3 h-3 text-slate-900 dark:text-white" />
+                    </div>
+                    <span className="font-bold text-xs text-slate-700 dark:text-slate-300 z-10">See All</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </section>
 
-        {/* Category Chips */}
-        <section className="mb-10">
-          <div className="flex flex-col gap-4">
-            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* Category chips and compact Discover controls */}
+        <section className="mb-8" aria-label="Discover filters">
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-2.5 overflow-x-auto px-4 sm:px-6 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Food categories">
               {categories.map((category) => (
                 <button
                   key={category}
+                  type="button"
+                  aria-pressed={selectedCategory===category}
                   onClick={() => setSelectedCategory(category)}
-                  className={`whitespace-nowrap px-6 py-3 rounded-full font-semibold text-sm transition-all cursor-pointer ${
+                  className={`min-h-11 whitespace-nowrap px-5 py-2.5 rounded-full font-semibold text-sm transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 ${
                     selectedCategory === category
                       ? "bg-orange-600 text-white shadow-md shadow-orange-500/10"
                       : "bg-[#e1e2e6] dark:bg-slate-800 text-[#2d2f31] dark:text-slate-300 hover:bg-[#dbdde0] dark:hover:bg-slate-700"
                   }`}
                 >
-                  {category === "Nearby" && (
-                    <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />
-                  )}
-                  {getCategorySlang(category, language)}
+                  {category==="Nearby" && <Navigation className="w-3.5 h-3.5 mr-1 inline-block align-middle" />}
+                  {getCategorySlang(category,language)}
                 </button>
               ))}
             </div>
 
-            <div className="flex gap-3 overflow-x-auto px-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                onClick={() => setShowOnlyOpen(!showOnlyOpen)}
-                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
+            <div className="flex flex-wrap items-center gap-2 px-4 sm:px-6">
+              <button type="button"
+                aria-pressed={showOnlyOpen}
+                onClick={() => setShowOnlyOpen(value=>!value)}
+                className={`min-h-11 px-3.5 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border focus-visible:outline-2 focus-visible:outline-orange-500 ${
                   showOnlyOpen
                     ? "bg-green-100/90 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-300 dark:border-green-800/80 shadow-sm"
                     : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                }`}
-              >
-                <Clock
-                  className={`w-3 h-3 ${showOnlyOpen ? "fill-current text-green-600 dark:text-green-400" : ""}`}
-                />
-                Open Now
+                }`}>
+                <Clock className="w-3.5 h-3.5" /> Open Now
               </button>
-              
-              <button
-                onClick={() => setSortPriority(sortPriority === "distance" ? "smart" : "distance")}
-                className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
-                  sortPriority === "distance"
-                    ? "bg-blue-100/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-800/80 shadow-sm"
-                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                }`}
-              >
-                <Navigation
-                  className={`w-3 h-3 ${sortPriority === "distance" ? "text-blue-600 dark:text-blue-400" : ""}`}
-                />
-                Sort by Distance
-              </button>
-              {[0, 3, 4, 4.5].map((rating) => (
-                <button
-                  key={rating}
-                  onClick={() => setMinRating(rating)}
-                  className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 border ${
-                    minRating === rating
-                      ? "bg-yellow-100/90 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/80 shadow-sm"
-                      : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                  }`}
+
+              <div className="relative min-w-0 flex-1 sm:flex-none sm:w-52">
+                <label htmlFor="discover-sort" className="sr-only">Sort discovered shops</label>
+                <select
+                  id="discover-sort"
+                  value={selectedCategory==="Nearby"?"distance":sortPriority}
+                  disabled={selectedCategory==="Nearby"}
+                  onChange={(e) => {setSortPriority(e.target.value as "smart"|"distance"|"rating"|"speed");triggerHaptic(10);}}
+                  className="w-full min-h-11 appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl pl-3 pr-8 py-2 font-bold text-xs outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition-shadow disabled:opacity-75 cursor-pointer"
+                  aria-label="Sort shops"
                 >
-                  <Star
-                    className={`w-3 h-3 ${minRating === rating ? "fill-current text-yellow-500" : ""}`}
-                  />
-                  {rating === 0 ? "All Ratings" : `${rating}+ Stars`}
+                  <option value="smart">Open &amp; Nearby</option>
+                  <option value="distance">Nearest First</option>
+                  <option value="rating">Highest Rated</option>
+                  <option value="speed">Fastest Known Prep</option>
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none w-4 h-4 text-slate-400" />
+              </div>
+
+              <button type="button"
+                aria-expanded={showExtraFilters}
+                aria-controls="discover-extra-filters"
+                onClick={()=>setShowExtraFilters(value=>!value)}
+                className={`min-h-11 px-3.5 py-2 rounded-xl border font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                  showExtraFilters || minRating>0 || maxDistance!==null
+                    ? "bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400"
+                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+                }`}>
+                <List className="w-4 h-4" />
+                More filters{minRating>0 || maxDistance!==null ? ` (${Number(minRating>0)+Number(maxDistance!==null)})` : ""}
+              </button>
+            </div>
+
+            {selectedCategory==="Nearby" && (
+              <p className="px-4 sm:px-6 text-xs text-slate-500 dark:text-slate-400" role="status">Nearby shows verified distances, nearest first.</p>
+            )}
+
+            {showExtraFilters && (
+              <div id="discover-extra-filters" className="mx-4 sm:mx-6 p-3 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">Minimum rating</p>
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Minimum rating">
+                    {[0,3,4,4.5].map(rating=>(
+                      <button key={rating} type="button" aria-pressed={minRating===rating} onClick={()=>setMinRating(rating)}
+                        className={`min-h-11 px-3 py-2 rounded-xl border text-xs font-bold focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                          minRating===rating ? "bg-yellow-100/90 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/80" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                        }`}>
+                        {rating===0?"All ratings":`${rating}+ stars`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {userLocation && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mb-2">Pickup distance</p>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label="Maximum pickup distance">
+                      {[
+                        {val:null,label:"Any nearby"},
+                        {val:1,label:"Within 1 km"},
+                        {val:2,label:"Within 2 km"}
+                      ].map(option=>(
+                        <button key={option.label} type="button" aria-pressed={maxDistance===option.val}
+                          onClick={()=>{setMaxDistance(option.val);triggerHaptic(10);}}
+                          className={`min-h-11 px-3 py-2 rounded-xl border text-xs font-bold focus-visible:outline-2 focus-visible:outline-orange-500 ${
+                            maxDistance===option.val ? "bg-orange-600 border-orange-600 text-white" : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                          }`}>
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="px-4 sm:px-6 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400" aria-live="polite">
+              <span>{loadingShops ? "Finding nearby shops..." : `Showing ${sortedShops.length} ${sortedShops.length===1?"shop":"shops"}`}</span>
+              {(minRating>0 || maxDistance!==null || showOnlyOpen || selectedCategory!=="All" || searchQuery.trim()) && (
+                <button type="button" onClick={()=>{
+                  setMinRating(0);setMaxDistance(null);setShowOnlyOpen(false);
+                  setSelectedCategory("All");setSearchQuery("");
+                }} className="min-h-10 text-orange-600 dark:text-orange-400 font-bold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-orange-500">
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Available menu items matching this query, without fabricated photos */}
+        {debouncedSearchQuery.trim().length>0 && matchingFoodItems.length>0 && (
+          <section className="px-4 sm:px-6 mb-8" aria-label="Food matching your search">
+            <h3 className="text-base font-black text-slate-900 dark:text-white mb-1">Food matching your search</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">Current menu items and catalog prices. Open the shop to see options.</p>
+            <div className="flex gap-3 overflow-x-auto pb-2 touch-pan-x snap-x [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {matchingFoodItems.map(feed=>(
+                <button type="button" key={feed.id} onClick={()=>onSelectShop(feed.shopId)}
+                  aria-label={`View ${feed.itemName} at ${feed.shopName} menu`}
+                  className="flex-shrink-0 w-52 sm:w-60 snap-start text-left bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 overflow-hidden shadow-sm hover:border-orange-500/30 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-orange-500">
+                  <div className="h-28 relative bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                    {feed.image ? <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" /> : <Store className="w-8 h-8 text-slate-400" aria-hidden="true" />}
+                    <span className="absolute bottom-2 right-2 bg-black/75 text-white text-xs font-black px-2 py-1 rounded-lg">R{feed.price.toFixed(2)}</span>
+                  </div>
+                  <div className="p-3">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</p>
+                    <p className="text-xs text-orange-600 dark:text-orange-400 truncate mt-1">{feed.shopName}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-1">{feed.open ? Number.isFinite(feed.distance) ? `${feed.distance.toFixed(1)} km · Browse menu` : "Browse menu" : "Closed · Browse menu"}</p>
+                  </div>
                 </button>
               ))}
             </div>
-
-            {/* Sort Priority Section */}
-            <div className="flex flex-col gap-1.5 px-6">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Sort By
-              </span>
-              <div className="relative w-full max-w-xs">
-                <select
-                  value={sortPriority}
-                  onChange={(e) => {
-                    setSortPriority(e.target.value as any);
-                    triggerHaptic?.(10);
-                  }}
-                  className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-shadow pr-10 cursor-pointer"
-                >
-                  <option value="smart">Most Popular</option>
-                  <option value="rating">Highest Rated</option>
-                  <option value="speed">Fastest Delivery</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                  <ChevronDown className="w-4 h-4" />
-                </div>
-              </div>
-            </div>
-
-            {/* Pickup Radius Section */}
-            {userLocation && (
-              <div className="flex flex-col gap-1.5 px-6">
-                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                  Pickup Radius
-                </span>
-                <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {[
-                    { val: null, label: "Within 4 km" },
-                    { val: 2, label: "Within 2 km" },
-                    { val: 4, label: "Within 4 km" }
-                  ].map((opt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        setMaxDistance(opt.val);
-                        triggerHaptic?.(10);
-                      }}
-                      className={`whitespace-nowrap px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer border ${
-                        maxDistance === opt.val
-                          ? "bg-orange-600 border-orange-600 text-white shadow-sm"
-                          : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-800"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Store Grid or Map */}
         {viewMode === "list" ? (
@@ -6388,7 +6214,9 @@ function DiscoverScreen({
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
+                  onKeyDown={(e)=>{if(e.target!==e.currentTarget)return;if(e.key==="Enter"||e.key===" "){e.preventDefault();onSelectShop(shop.id);}}}
+                  role="button" tabIndex={0} aria-label={`Browse ${shop.name} menu`}
+                  className="group focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
@@ -6399,7 +6227,9 @@ function DiscoverScreen({
                     />
 
                     {/* Floating Heart Follow Badge */}
-                    <button
+                    <button type="button"
+                      aria-label={isFollowing ? `Remove ${shop.name} from favourites` : `Add ${shop.name} to favourites`}
+                      aria-pressed={isFollowing}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleFavorite(shop.id);
@@ -6408,8 +6238,7 @@ function DiscoverScreen({
                           toast.success(`Unfollowed ${shop.name}`);
                         } else {
                           toast.success(`Following ${shop.name}!`, {
-                            description:
-                              "You'll receive exclusive voucher promos from this store.",
+                            description:"Saved to your favourites.",
                           });
                         }
                       }}
@@ -6420,30 +6249,27 @@ function DiscoverScreen({
                       />
                     </button>
 
-                    {/* Highly Visible Rating Tag */}
-                    <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
-                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                      <span className="text-xs font-black text-slate-900 dark:text-white">
-                        {shop.rating.toFixed(1)}
-                      </span>
-                    </div>
+                    {/* Rating is displayed only when the API supplies a valid value. */}
+                    {homeRating(shop)!==null && (
+                      <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
+                        <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                        <span className="text-xs font-black text-slate-900 dark:text-white">{homeRating(shop)!.toFixed(1)}</span>
+                      </div>
+                    )}
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
-                      <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Speed: {shop.delivery_eta || "20m"}
-                      </div>
-                      {(() => {
-                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
-                        return distanceVal !== null ? (
-                          <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
-                            <Navigation className="w-2.5 h-2.5" />
-                            {distanceVal.toFixed(1)} km
-                          </div>
-                        ) : null;
-                      })()}
+                      {homePrepMinutes(shop)!==null && (
+                        <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
+                          Prep: {shop.prepTime}
+                        </div>
+                      )}
+                      {Number.isFinite(discoverShopDistance(shop,userLocation)) && (
+                        <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
+                          <Navigation className="w-2.5 h-2.5" />
+                          {discoverShopDistance(shop,userLocation).toFixed(1)} km
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -6464,7 +6290,7 @@ function DiscoverScreen({
                           </p>
                           {!status.isOpen && (
                             <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">
-                              Opens {status.nextOpeningTime || "Soon"}
+                              {status.nextOpeningTime ? `Opens ${status.nextOpeningTime}` : "Closed right now"}
                             </p>
                           )}
                         </div>
@@ -6476,12 +6302,12 @@ function DiscoverScreen({
                         )}
                       </div>
 
-                      <div className="mb-6">
-                        <TrustBadge shop={shop} />
+                      <div className="mb-6 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                        {status.isOpen ? "Open now" : "Closed · Menu browsing available"}
                       </div>
                     </div>
 
-                    <button
+                    <button type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectShop(shop.id);
@@ -6490,14 +6316,14 @@ function DiscoverScreen({
                       className="w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Store className="w-4 h-4" />
-                      View Menu & Order
+                      View Menu
                     </button>
                   </div>
                 </div>
               );
             }) // close map
             )} // close ternary
-            {filteredShops.length === 0 && (
+            {!loadingShops && filteredShops.length === 0 && (
               <div className="col-span-full py-16 px-4 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-6 duration-500 max-w-lg mx-auto">
                 <div className="relative mb-6">
                   <div className="absolute inset-0 bg-orange-500/10 dark:bg-orange-500/20 rounded-full scale-150 blur-2xl opacity-70"></div>
@@ -6510,13 +6336,13 @@ function DiscoverScreen({
                 </div>
 
                 <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2 tracking-tight">
-                  {shops.length === 0 ? "No Shops Found" : "No matches found"}
+                  {shops.length===0 ? (userLocation ? "No pickup shops nearby" : "Location needed") : "No matching shops or food"}
                 </h3>
                 
                 <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
-                  {shops.length === 0
-                    ? "No approved, available pickup shops found within 4 km of your real location."
-                    : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
+                  {shops.length===0
+                    ? (userLocation ? "No approved pickup shops are available in your current 4 km area. Try again later." : "Allow location access and retry to find eligible pickup shops nearby.")
+                    : debouncedSearchQuery.trim() ? "No shops or currently available menu items match this search and your filters. Try another food name or clear filters." : "No shops match these filters. Try another category or clear filters."}
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3 w-full max-w-xs">
@@ -6548,18 +6374,15 @@ function DiscoverScreen({
                   <div className="mt-8 bg-slate-50/90 dark:bg-slate-900/60 p-4 rounded-2xl max-w-sm w-full border border-slate-200/70 dark:border-slate-800 text-left shadow-sm">
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="font-bold text-xs text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                        </span>
-                        Service Status
+                        <span className="relative flex h-2 w-2"><span className="relative inline-flex rounded-full h-2 w-2 bg-slate-400"></span></span>
+                        Discovery Status
                       </span>
                       <span className="text-[9px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-200 dark:border-emerald-800">
-                        Online
+                        No shops found
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-                      Connected to <strong>LocalEats Cloud Service</strong>. New vendors and local kitchens will appear automatically when available.
+                      {userLocation ? "No verified pickup shops are available in your area right now." : "Location access is required to find nearby pickup shops."}
                     </p>
                   </div>
                 )}
@@ -6584,6 +6407,13 @@ function DiscoverScreen({
                 </button>
               </div>
             )}
+            {sortedShops.length>0 && !sortedShops.some(shop=>discoverShopCoordinates(shop)!==null) && (
+              <div className="absolute top-4 left-4 right-4 z-[1000] bg-white/95 dark:bg-slate-900/95 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg">
+                <p className="text-xs font-bold text-slate-800 dark:text-white">No verified shop map pins yet</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">These shops can still be browsed in the list.</p>
+                <button type="button" onClick={()=>setViewMode("list")} className="min-h-10 text-xs font-bold text-orange-600 dark:text-orange-400 underline underline-offset-2">View shops as a list</button>
+              </div>
+            )}
             <div className="h-full w-full relative z-10">
               <MapContainer
                 center={userLocation || DEFAULT_COORDS}
@@ -6606,27 +6436,15 @@ function DiscoverScreen({
                   </Marker>
                 )}
 
-                {sortedShops.map((shop) => {
-                  const sLat =
-                    shop.latitude ||
-                    -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                  const sLng =
-                    shop.longitude ||
-                    28.2268 + (hashString(shop.id) % 10) * 0.005;
-                  const dist = userLocation
-                    ? calculateDistance(
-                        sLat,
-                        sLng,
-                        userLocation.lat,
-                        userLocation.lng,
-                      )
-                    : null;
+                {sortedShops.filter(shop=>discoverShopCoordinates(shop)!==null).map((shop) => {
+                  const coordinates=discoverShopCoordinates(shop)!;
+                  const dist=discoverShopDistance(shop,userLocation);
                   const status = getShopStatus(shop);
 
                   return (
                     <Marker
                       key={shop.id}
-                      position={{ lat: sLat, lng: sLng }}
+                      position={coordinates}
                       icon={createShopMapIcon(status.isOpen)}
                     >
                       <Popup minWidth={200}>
@@ -6638,10 +6456,10 @@ function DiscoverScreen({
                             {shop.description}
                           </p>
                           <div className="flex items-center justify-between text-[10px] mb-2.5 border-t pt-1.5 border-slate-100 dark:border-slate-800">
-                            <span className="font-bold text-amber-500">
-                              ★ {shop.rating}
-                            </span>
-                            {dist !== null && (
+                            {homeRating(shop)!==null && (
+                              <span className="font-bold text-amber-500">★ {homeRating(shop)!.toFixed(1)}</span>
+                            )}
+                            {Number.isFinite(dist) && (
                               <span className="text-slate-500 font-semibold">
                                 {dist.toFixed(1)} km
                               </span>
@@ -6681,25 +6499,61 @@ function DiscoverScreen({
                 Interactive Leaflet Map
               </p>
               <p className="text-[10px] text-slate-500 font-medium">
-                Showing top-rated Spaza Kota shops near you. Click pins to
-                explore OTA menus instantly.
+                Showing shop locations supplied by LocalEats. Select a pin to
+                browse the shop's menu.
               </p>
             </div>
           </section>
         )}
 
+        {/* Real Menu Items Feed from Active Shops */}
+        {!debouncedSearchQuery.trim() && realFreshItems.length > 0 && (
+          <section className="px-6 py-5 bg-white dark:bg-slate-900 shadow-xs border-b border-slate-100 dark:border-slate-800">
+            <h3 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest flex items-center gap-1.5 mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-orange-500" />
+              Food from available menus
+            </h3>
+            
+            <div className="flex overflow-x-auto gap-4 no-scrollbar pb-2 pt-1 touch-pan-x -mx-6 px-6">
+              {realFreshItems.map((feed) => (
+                <div
+                  key={feed.id}
+                  onClick={() => onSelectShop(feed.shopId)}
+                  role="button" tabIndex={0} onKeyDown={(event)=>{if(event.target!==event.currentTarget)return;if(event.key==="Enter"||event.key===" "){event.preventDefault();onSelectShop(feed.shopId);}}} aria-label={`Browse ${feed.itemName} at ${feed.shopName}`}
+                  className="flex-shrink-0 w-60 bg-[#f6f6f9] dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs overflow-hidden flex flex-col cursor-pointer hover:border-orange-500/30 transition-all active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-orange-500"
+                >
+                  <div className="relative h-32 w-full bg-slate-100 dark:bg-slate-800">
+                    {feed.image ? <BlurUpImage src={feed.image} alt={feed.itemName} className="w-full h-full object-cover" /> : <Store className="w-8 h-8 text-slate-400" aria-hidden="true" />}
+                    <div className="absolute top-2 left-2 bg-orange-600 text-white text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md shadow-xs">
+                      {feed.open ? "On menu" : "Closed"}
+                    </div>
+                    <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-md text-white text-xs font-black px-2 py-0.5 rounded-lg">
+                      R{feed.price.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{feed.itemName}</h4>
+                    <p className="text-xs font-semibold text-orange-600 dark:text-orange-400 mt-0.5">{feed.shopName}</p>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">{feed.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Chef's Selection Carousel */}
-        <section className="mt-16 overflow-hidden">
+        {nearbyShops.length>0 && !debouncedSearchQuery.trim() && <section className="mt-16 overflow-hidden">
           <div className="px-6 mb-6">
             <h2 className="font-sans text-2xl font-bold text-[#2d2f31] dark:text-white">
-              Chef's Selection
+              Shops Near You
             </h2>
             <p className="text-[#5a5c5e] dark:text-slate-400">
-              Handpicked local favorites
+              Explore shops in your area
             </p>
           </div>
           <div className="flex gap-6 overflow-x-auto px-6 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden snap-x">
-            {shops.slice(0, 2).map((shop) => (
+            {nearbyShops.map((shop) => (
               <div
                 key={shop.id}
                 className="flex-none w-[85vw] max-w-[320px] snap-center bg-[#dbdde0] dark:bg-slate-800 rounded-lg p-6 flex flex-col items-center text-center"
@@ -6718,13 +6572,13 @@ function DiscoverScreen({
                 <p className="text-[#5a5c5e] dark:text-slate-400 text-sm mb-4 italic">
                   "{shop.description}"
                 </p>
-                <button className="px-6 py-2 bg-[#2d2f31] dark:bg-slate-700 text-[#f6f6f9] dark:text-white rounded-full text-sm font-bold cursor-pointer">
+                <button type="button" onClick={()=>onSelectShop(shop.id)} className="px-6 py-2 bg-[#2d2f31] dark:bg-slate-700 text-[#f6f6f9] dark:text-white rounded-full text-sm font-bold cursor-pointer">
                   View Menu
                 </button>
               </div>
             ))}
           </div>
-        </section>
+        </section>}
       </main>
     </div>
   );
@@ -8303,9 +8157,11 @@ function StoreInfoScreen({
   setCurrentScreen,
   isOnline,
   onScanFlyer,
+  readOnlyClosed = false,
 }: {
   onBack: () => void;
   shop: Shop;
+  readOnlyClosed?: boolean;
   isFavorite: boolean;
   onToggleFavorite: () => void;
   userProfile: UserProfile | null;
@@ -8436,46 +8292,87 @@ function StoreInfoScreen({
 
 
   const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
+  const [closedMenuError,setClosedMenuError] = useState<string|null>(null);
 
   useEffect(() => {
     if (!shop?.id) return;
+    if (shop.is_test_store) {
+      setIsMenuLoading(false);
+      return;
+    }
     let isMounted = true;
     const fetchMenu = async () => {
       setIsMenuLoading(true);
+      setApiMenu(null);
+      setClosedMenuError(null);
       try {
-        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && isMounted) {
-            // Remap keys if necessary to match MenuItem interface
-            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
-              id: String(m.id),
-              name: m.name,
-              price: Number(m.price),
-              displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-              description: m.description || "",
-              category: m.category || "Main Course",
-              is_available: m.is_available !== false,
-              customizations: m.customizations || [],
-            }));
-            setApiMenu(formattedMenu);
+        if (readOnlyClosed) {
+          // Only the public LocalEats API supplies real menu items. A closed
+          // shop never enters the orderable catalog, cart, or quote flow.
+          const response = await customerPickupApi.menu(shop.id);
+          if (!Array.isArray(response.menu_items)) throw new Error("Menu unavailable");
+          const validMenu: MenuItem[] = response.menu_items.map((item: any) => {
+            const price = Number(item.price);
+            if (!item || typeof item.id !== "string" || !item.id ||
+              typeof item.name !== "string" || !item.name.trim() ||
+              (typeof item.price !== "number" && typeof item.price !== "string") ||
+              String(item.price).trim() === "" || !Number.isFinite(price) || price < 0)
+              throw new Error("Menu information is unavailable");
+            return {
+              id:item.id, name:item.name, price,
+              displayPrice:`R ${price.toFixed(2)}`,
+              image:typeof item.image_url === "string" ? item.image_url : "",
+              description:typeof item.description === "string" ? item.description : "",
+              category:typeof item.category === "string" ? item.category : "Menu",
+              is_available:false, // Read only: never offer ordering from a closed shop.
+              customizations:[],
+            };
+          });
+          if (isMounted) setApiMenu(validMenu);
+        } else {
+          // Preserve the original open-shop menu path.
+          const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && isMounted) {
+              const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
+                id: String(m.id),
+                name: m.name,
+                price: Number(m.price),
+                displayPrice: `R${Number(m.price).toFixed(2)}`,
+                image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
+                description: m.description || "",
+                category: m.category || "Main Course",
+                is_available: m.is_available !== false,
+                customizations: m.customizations || [],
+              }));
+              setApiMenu(formattedMenu);
+            }
           }
         }
       } catch (err) {
-        console.warn("Failed to fetch shop menu from API:", err);
+        if (isMounted && readOnlyClosed) {
+          setApiMenu([]);
+          setClosedMenuError("The shop's menu couldn't load. Please try again later.");
+        } else {
+          console.warn("Failed to fetch shop menu from API:",err);
+        }
       } finally {
         if (isMounted) setIsMenuLoading(false);
       }
     };
-    fetchMenu();
+    void fetchMenu();
     return () => { isMounted = false; };
-  }, [shop?.id]);
+  }, [shop?.id,readOnlyClosed,shop.is_test_store]);
 
   const storeStatus = getStoreStatus();
+  const menuReadOnly = readOnlyClosed || (shop.is_test_store === true && !storeStatus.isOpen);
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    if (shop.is_test_store) return shop.menu;
+    // Do not invent fallback dishes for a closed shop, even while loading.
+    if (readOnlyClosed) return apiMenu ?? [];
     if (apiMenu !== null) {
       if (apiMenu.length > 0) return apiMenu;
       // If API succeeded but returned 0 items, respect it, don't fall back to fakes
@@ -8573,7 +8470,7 @@ function StoreInfoScreen({
         },
       ];
     }
-  }, [shop]);
+  }, [shop,apiMenu,readOnlyClosed]);
 
   const filteredMenu = useMemo(() => {
     let items = shopMenu.filter((item) =>
@@ -8854,7 +8751,12 @@ function StoreInfoScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
-      <RestaurantSchema shop={shop} />
+      {!shop.is_test_store && <RestaurantSchema shop={shop} />}
+      {shop.is_test_store===true && (
+        <div role="status" className="bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-200 px-4 py-2 text-xs font-bold text-center">
+          Simulated nearby listing for Preview testing. Actual location: {shop.address}. No real order, payment or merchant notification.
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
@@ -8935,7 +8837,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {shop.delivery_eta || "30-45 mins"}
+                {menuReadOnly ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -9063,6 +8965,12 @@ function StoreInfoScreen({
                 </div>
               )}
 
+              {menuReadOnly && (
+                <div role="status" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Closed right now · You can browse the real menu, but ordering is unavailable.
+                  {shop.opening_time && <span className="block text-xs text-slate-500 mt-1">Opens {shop.opening_time}</span>}
+                </div>
+              )}
               {/* Search & Price Sort Bar */}
               <div id="store-menu-search" className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
                 <div className="relative flex-1 group">
@@ -9266,7 +9174,7 @@ function StoreInfoScreen({
                                     key={item.id}
                                     item={item}
                                     shop={shop}
-                                    onSelect={(item) =>
+                                    onSelect={menuReadOnly ? undefined : (item) =>
                                       setSelectedItemForQuantity(item)
                                     }
                                     showAlert={showAlert}
@@ -9299,10 +9207,10 @@ function StoreInfoScreen({
                         <SearchX className="w-8 h-8" />
                       </div>
                       <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        No items found
+                        {readOnlyClosed ? (closedMenuError || (searchQuery ? "No matching dishes" : "No menu items available")) : "No items found"}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
-                        Try searching for something else
+                        {readOnlyClosed ? "Menu browsing only. Ordering resumes when the shop is open." : "Try searching for something else"}
                       </p>
                     </div>
                   )}
@@ -9686,9 +9594,10 @@ function StoreInfoScreen({
 
       <QuantityModal
         item={selectedItemForQuantity}
-        isOpen={!!selectedItemForQuantity}
+        isOpen={!menuReadOnly && !!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (menuReadOnly) return;
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,
@@ -9840,173 +9749,32 @@ function ExploreScreen({
   const [isMapOverlayMenuOpen, setIsMapOverlayMenuOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<"map" | "list">("map");
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop' | 'rider'>('all');
+  const [legendFilter, setLegendFilter] = useState<'all' | 'customer' | 'shop' | 'closed_shop'>('all');
   const [maxDistance, setMaxDistance] = useState<number | null>(null);
   const [sortPriority, setSortPriority] = useState<
     "rating" | "distance" | "name"
   >("rating");
 
-  // Fetch real registered riders from Supabase (no fake pins)
-  const [realRiders, setRealRiders] = useState<any[]>([]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadRealRiders = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("rider_profiles")
-          .select("id, name, full_name, phone, avatar_url, vehicle_type, rating, latitude, longitude, is_online");
-        if (!error && data && isMounted) {
-          setRealRiders(data);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch real rider profiles:", err);
-      }
-    };
-    loadRealRiders();
-
-    const channel = getFreshChannel("explore-map-riders-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "rider_profiles" },
-        () => {
-          loadRealRiders();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      isMounted = false;
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const categories = [
-    "All",
-    "Favorites",
-    "Nearby",
-    ...new Set(shops.map((s) => s.category)),
-  ];
-
-  // Pre-calculate search index map for ExploreScreen to optimize searching on low-end devices
-  const shopSearchIndex = useMemo(() => {
-    const indexMap: Record<string, string> = {};
-    shops.forEach((shop) => {
-      indexMap[shop.id] = `${shop.name} ${shop.description || ""} ${shop.category}`.toLowerCase();
-    });
-    return indexMap;
-  }, [shops]);
-
-  const filteredShops = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const queryTerms = query === "" ? [] : query.split(/\s+/);
-
-    return shops.filter((shop) => {
-      const shopText = shopSearchIndex[shop.id] || "";
-      const matchesSearch =
-        query === "" ||
-        queryTerms.every((term) => shopText.includes(term));
-
-      let matchesCategory = false;
-      if (selectedCategory === "All") {
-        matchesCategory = true;
-      } else if (selectedCategory === "Favorites") {
-        matchesCategory = favorites.includes(shop.id);
-      } else if (selectedCategory === "Nearby") {
-        matchesCategory = true; // Handled in sort
-      } else {
-        matchesCategory = shop.category === selectedCategory;
-      }
-
-      const matchesRating = shop.rating >= minRating;
-      const matchesOpen = !showOnlyOpen || getShopStatus(shop).isOpen;
-
-      // Filter by max distance if user location is loaded
-      let matchesDistance = true;
-      if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
-      }
-
-      return (
-        matchesSearch &&
-        matchesCategory &&
-        matchesRating &&
-        matchesOpen &&
-        matchesDistance
-      );
-    });
-  }, [shops, searchQuery, selectedCategory, favorites, minRating, showOnlyOpen, maxDistance, userLocation, shopSearchIndex]);
-
-  const sortedShops = [...filteredShops].sort((a, b) => {
-    const statusA = getShopStatus(a);
-    const statusB = getShopStatus(b);
-    if (statusA.isOpen && !statusB.isOpen) return -1;
-    if (!statusA.isOpen && statusB.isOpen) return 1;
-
-    if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
-    }
-
-    if (sortPriority === "name") {
-      return a.name.localeCompare(b.name);
-    }
-
-    // Default: Sort by rating
-    return b.rating - a.rating;
-  });
-
-  const activeShop = shops.find((s) => s.id === selectedShopId);
-  const mapCenter: [number, number] =
-    activeShop && activeShop.latitude && activeShop.longitude
-      ? [activeShop.latitude, activeShop.longitude]
-      : userLocation
-        ? [userLocation.lat, userLocation.lng]
-        : [-25.9964, 28.2268];
-
-  // Real-time Rider Proximity Observer: Filter riders to ONLY active/online couriers within 5km radius of user location or map center
-  const activeProximityRiders = useMemo(() => {
-    const refLat = userLocation?.lat ?? mapCenter[0];
-    const refLng = userLocation?.lng ?? mapCenter[1];
-
-    return realRiders.filter((rider) => {
-      const isOnline = rider.is_online === true || rider.is_online === "true";
-      if (!isOnline) return false;
-
-      const rLat = typeof rider.latitude === "number" && rider.latitude !== 0 ? rider.latitude : null;
-      const rLng = typeof rider.longitude === "number" && rider.longitude !== 0 ? rider.longitude : null;
-
-      if (rLat === null || rLng === null) return false;
-
-      const dist = calculateDistance(rLat, rLng, refLat, refLng);
-      return dist <= 5.0; // Strictly within 5.0 km radius limit
-    });
-  }, [realRiders, userLocation, mapCenter]);
+  // The public map reads only the authorized pickup shop catalog and
+  // this customer's own device location. Rider telemetry is never queried.
+  const categories=["All","Favorites","Nearby",...new Set(shops.map(shop=>shop.category).filter(Boolean))];
+  const sortedShops=useMemo(()=>mapVisibleShops(shops,{
+    query:searchQuery,category:selectedCategory,favorites,minRating,onlyOpen:showOnlyOpen,
+    maxDistance,location:userLocation,sort:sortPriority,isOpen:shop=>getShopStatus(shop).isOpen,
+  }),[shops,searchQuery,selectedCategory,favorites,minRating,showOnlyOpen,maxDistance,userLocation,sortPriority]);
+  const filteredShops=sortedShops;
+  const activeShop=shops.find(shop=>shop.id===selectedShopId);
+  const mapCenter=mapInitialCenter(activeShop,userLocation,sortedShops);
+  const mappedShops=sortedShops.filter(shop=>mapShopCoordinates(shop)!==null);
+  const openMappedShops=mappedShops.filter(shop=>getShopStatus(shop).isOpen);
+  const closedMappedShops=mappedShops.filter(shop=>!getShopStatus(shop).isOpen);
+  const activeFiltersCount=Number(!!searchQuery.trim())+Number(selectedCategory!=="All")+
+    Number(showOnlyOpen)+Number(minRating>0)+Number(maxDistance!==null);
+  const clearMapFilters=()=>{
+    setSearchQuery("");setSelectedCategory("All");setShowOnlyOpen(false);
+    setMinRating(0);setMaxDistance(null);
+    setLegendFilter("all");
+  };
 
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex flex-col font-sans relative shadow-xl overflow-hidden">
@@ -10016,8 +9784,10 @@ function ExploreScreen({
           <div className="max-w-lg md:mx-auto w-full">
             <div className="bg-white dark:bg-slate-900/95 backdrop-blur-xl rounded-[28px] shadow-xl flex items-center px-5 py-4 border border-white/20 dark:border-slate-800 transition-all focus-within:ring-2 focus-within:ring-orange-500/50">
               <Search className="w-5 h-5 text-orange-500 mr-3 shrink-0" />
+              <label htmlFor="localeats-map-list-search" className="sr-only">Search shops, menu food, or streets</label>
               <input
-                type="text"
+                id="localeats-map-list-search"
+                type="search"
                 placeholder="Filter by name, food, or street..."
                 className="flex-grow outline-none text-sm font-bold bg-transparent dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                 value={searchQuery}
@@ -10029,22 +9799,30 @@ function ExploreScreen({
                     setLayoutMode("map");
                     triggerHaptic(10);
                   }}
-                  className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer"
+                  type="button"
+                  aria-label="Show shops on map"
+                  className="min-w-11 min-h-11 inline-flex items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all select-none active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-orange-500"
                   title="Switch to Map View"
                 >
                   <MapIcon className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setIsFilterOpen(!isFilterOpen)}
-                  className={`p-2 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
+                  aria-label="Show or hide list filters"
+                  aria-expanded={isFilterOpen}
+                  aria-controls="localeats-map-list-filters"
+                  className={`min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 rounded-full transition-all ${isFilterOpen ? "bg-orange-600 text-white shadow-lg" : "bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"}`}
                 >
                   <SlidersHorizontal className="w-4 h-4" />
                 </button>
                 <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1"></div>
                 <button
-                  className="text-orange-500 active:scale-95 transition-transform p-1.5 hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
-                  onClick={onRequestLocation}
+                  type="button"
+                  aria-label="Locate me on the map"
+                  className="text-orange-500 min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 active:scale-95 transition-transform hover:bg-orange-50 dark:hover:bg-orange-950/30 rounded-full"
+                  onClick={()=>{setSelectedShopId(null);onRequestLocation();}}
                 >
                   {userLocation ? (
                     <LocateFixed className="w-6 h-6" />
@@ -10110,6 +9888,9 @@ function ExploreScreen({
                 height: isFilterOpen ? "auto" : 0,
                 opacity: isFilterOpen ? 1 : 0,
               }}
+              id="localeats-map-list-filters"
+              aria-hidden={!isFilterOpen}
+              inert={!isFilterOpen}
               className="overflow-hidden bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl rounded-[32px] mt-2 shadow-xl border border-gray-100 dark:border-slate-800"
             >
               <div className="p-6 flex flex-col gap-6 max-h-[70vh] overflow-y-auto">
@@ -10281,46 +10062,27 @@ function ExploreScreen({
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
             <Suspense fallback={null}>
               <QuickReorderWidget
-                orders={orders || []}
+                orders={[]}
                 shops={shops}
                 favorites={favorites}
-                onQuickReorder={(item) => {
-                  const shop = shops.find((s) => s.id === item.shop_id);
-                  if (item.product_name && item.price && addToCart) {
-                    addToCart({
-                    id: item.product_name.toLowerCase().replace(/\s+/g, '-'),
-                    name: item.product_name,
-                    price: item.price,
-                    quantity: item.quantity || 1,
-                    shopId: item.shop_id || (shop ? shop.id : '1'),
-                    image: shop ? (shop.logo_url || shop.logo) : DEFAULT_SHOP_LOGO,
-                  });
-                  toast.success(`Reordered ${item.product_name}!`, {
-                    description: "Item added to cart for 1-tap checkout.",
-                  });
-                } else if (shop) {
-                  onStoreInfo(shop.id);
-                }
-              }}
-              onSelectShop={(shop) => {
-                onStoreInfo(shop.id);
-              }}
-              onViewAllFavorites={() => {
-                setSelectedCategory("Favorites");
-              }}
-            />
+                showQuickReorder={false}
+                onQuickReorder={(item)=>{
+                  const current=shops.find(shop=>shop.id===item.shop_id);
+                  if(current)onStoreInfo(current.id);
+                }}
+                onSelectShop={(shop)=>onStoreInfo(shop.id)}
+                onViewAllFavorites={()=>setSelectedCategory("Favorites")}
+                          />
             </Suspense>
 
             <div className="flex justify-between items-center px-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                Found {sortedShops.length} local spots
+                {loadingShops?"Finding local spots...":`Found ${sortedShops.length} local ${sortedShops.length===1?"shop":"shops"}`}
               </span>
               <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 dark:text-orange-400">
-                {sortPriority === "rating"
+                {selectedCategory==="Nearby" ? "Nearest First" : sortPriority === "rating"
                   ? "Highest Rating"
-                  : sortPriority === "distance"
-                    ? "Nearest First"
-                    : "Alphabetical"}
+                  : sortPriority === "distance" ? "Nearest First" : "Alphabetical"}
               </span>
             </div>
 
@@ -10340,14 +10102,7 @@ function ExploreScreen({
                   selection.
                 </p>
                 <button
-                  onClick={() => {
-                    setSearchQuery("");
-                    setSelectedCategory("All");
-                    setMinRating(0);
-                    setMaxDistance(null);
-                    setShowOnlyOpen(false);
-                    triggerHaptic(10);
-                  }}
+                  onClick={() => {clearMapFilters();triggerHaptic(10);}}
                   className="mt-6 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-md transition-all active:scale-95 cursor-pointer"
                 >
                   Discover All Local Spots
@@ -10358,21 +10113,8 @@ function ExploreScreen({
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
 
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const distanceVal=mapShopDistance(shop,userLocation);
+                const hasMapPin=mapShopCoordinates(shop)!==null;
 
                 return (
                   <div
@@ -10392,7 +10134,7 @@ function ExploreScreen({
                       />
 
                       {/* Distance Float Indicator */}
-                      {distanceVal !== null && (
+                      {Number.isFinite(distanceVal) && (
                         <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
                           <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
                           <span>{distanceVal.toFixed(1)} km away</span>
@@ -10444,17 +10186,18 @@ function ExploreScreen({
 
                         {/* Stable Decision Metrics Row */}
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-bold mt-2.5 mb-2">
-                          <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
-                            <Star className="w-3 h-3 fill-current text-amber-500" />
-                            <span>{shop.rating.toFixed(1)}</span>
-                            <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
-                          </div>
+                          {homeRating(shop)!==null && (
+                            <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
+                              <Star className="w-3 h-3 fill-current text-amber-500" />
+                              <span>{homeRating(shop)!.toFixed(1)}</span>
+                              {homeReviewCount(shop)!==null && <span className="text-[10px] font-medium opacity-80">({homeReviewCount(shop)})</span>}
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1 mb-4 leading-relaxed font-semibold">
-                        {shop.description ||
-                          "Discover incredible local delicacies made with fresh ingredients and served warm."}
+                        {shop.description || "Browse this shop's available menu."}
                       </p>
 
                       <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800/60">
@@ -10467,18 +10210,21 @@ function ExploreScreen({
                           className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>View Menu</span>
                         </button>
 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            if(!hasMapPin)return;
                             setSelectedShopId(shop.id);
                             setLayoutMode("map");
                             triggerHaptic(10);
                           }}
+                          disabled={!hasMapPin}
+                          aria-label={hasMapPin ? `View ${shop.name} on the map` : `Map position not available for ${shop.name}`}
                           className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-750 dark:text-white rounded-2xl active:scale-95 transition-all text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer"
-                          title="View on Map"
+                          title={hasMapPin ? "View on Map" : "Shop map location unavailable"}
                         >
                           <MapIcon className="w-4 h-4 shrink-0 text-orange-500" />
                           <span>On Map</span>
@@ -10508,7 +10254,7 @@ function ExploreScreen({
               </h3>
               <p className="text-sm text-slate-500 max-w-xs leading-relaxed">
                 Interactive maps require an active data connection to stream
-                tiles. Switch to List view to browse saved shops.
+                tiles. Switch to List view to browse the available shop list. Offline map tiles may not load.
               </p>
               <div className="flex flex-wrap items-center justify-center gap-3 mt-8">
                 <button
@@ -10539,28 +10285,22 @@ function ExploreScreen({
               <MapLegend
                 userLocation={userLocation}
                 activeFilter={legendFilter}
-                onSelectFilter={(f) => setLegendFilter(f)}
-                shopCount={filteredShops.length}
-                riderCount={activeProximityRiders?.length || 0}
+                onSelectFilter={(filter)=>{if(filter!=="rider")setLegendFilter(filter);}}
+                shopCount={openMappedShops.length}
+                closedShopCount={closedMappedShops.length}
+                showRiders={false}
+                riderCount={0}
                 onFocusCustomer={() => {
-                  if (!userLocation) {
-                    onRequestLocation();
-                  } else {
-                    toast.success("Centering on your location");
-                  }
+                  setSelectedShopId(null);
+                  if (!userLocation)onRequestLocation();
                 }}
                 onFocusShop={() => {
-                  if (filteredShops.length > 0) {
-                    const s = filteredShops[0];
-                    setSelectedShopId(s.id);
-                    toast.info(`Focused on ${s.name}`);
-                  }
+                  if(openMappedShops.length>0)setSelectedShopId(openMappedShops[0].id);
                 }}
-                onFocusRider={() => {
-                  if (activeProximityRiders && activeProximityRiders.length > 0) {
-                    toast.info(`Found ${activeProximityRiders.length} active couriers nearby`);
-                  }
+                onFocusClosedShop={() => {
+                  if(closedMappedShops.length>0)setSelectedShopId(closedMappedShops[0].id);
                 }}
+
               />
             </div>
 
@@ -10577,6 +10317,8 @@ function ExploreScreen({
                     ? "bg-orange-600 text-white border-orange-500 shadow-orange-500/30 ring-2 ring-orange-400/50"
                     : "bg-white/95 dark:bg-slate-900/95 text-slate-800 dark:text-slate-100 border-slate-200/60 dark:border-slate-800/60 hover:border-orange-500"
                 }`}
+                aria-label={isMapFullscreen ? "Exit fullscreen map" : "Expand map"}
+                aria-pressed={isMapFullscreen}
                 title={isMapFullscreen ? "Exit Fullscreen Mode" : "Expand Fullscreen Mode"}
               >
                 {isMapFullscreen ? (
@@ -10594,6 +10336,13 @@ function ExploreScreen({
             </div>
           </div>
 
+          {!loadingShops && mappedShops.length===0 && (
+            <div className="absolute top-24 left-4 right-4 z-[700] bg-white/95 dark:bg-slate-900/95 p-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700">
+              <p className="text-sm font-bold">No verified shop locations to display</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Shops without GPS coordinates can still be browsed in the list.</p>
+              <button type="button" onClick={()=>setLayoutMode("list")} className="mt-2 text-xs text-orange-600 font-bold underline">View shops as a list</button>
+            </div>
+          )}
           <MapContainer
             center={mapCenter}
             zoom={14}
@@ -10608,7 +10357,11 @@ function ExploreScreen({
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             {/* Auto-focus on geolocation & Return to My Location button */}
-            <ExploreMapUserTracker userLocation={userLocation} center={mapCenter} />
+            <ExploreMapUserTracker
+              coords={activeShop ? mapShopCoordinates(activeShop) : null}
+              userLocation={userLocation}
+              center={mapCenter}
+            />
 
             {/* Distance Radius Filter Circle */}
             {userLocation && maxDistance !== null && (
@@ -10625,25 +10378,13 @@ function ExploreScreen({
               />
             )}
 
-            {/* Active Couriers / Riders Pins (Memoized Riders) */}
-            {(legendFilter === 'all' || legendFilter === 'rider') && (activeProximityRiders || []).map((rider) => {
-              const dist = userLocation ? calculateDistance(rider.latitude, rider.longitude, userLocation.lat, userLocation.lng) : 0;
-              return (
-                <MemoizedRiderMarker
-                  key={rider.id}
-                  rider={rider}
-                  distVal={dist}
-                />
-              );
-            })}
-
             {/* Shop Pins Cluster (Memoized Shops) */}
             <MarkerClusterGroup
               chunkedLoading
               maxClusterRadius={40}
               spiderfyOnMaxZoom={true}
             >
-              {filteredShops
+              {mappedShops
                 .filter((shop) => {
                   const status = getShopStatus(shop);
                   if (legendFilter === 'all') return true;
@@ -10688,11 +10429,15 @@ function ExploreScreen({
                 setIsMapOverlayMenuOpen(true);
                 triggerHaptic(10);
               }}
+              aria-label="Open map search and filters"
+              aria-haspopup="dialog"
+              aria-expanded={isMapOverlayMenuOpen}
               className="bg-slate-900/95 dark:bg-slate-900/95 text-white backdrop-blur-xl px-4 py-3 rounded-full shadow-xl flex items-center gap-2 border border-slate-700/60 font-black text-xs active:scale-95 transition-all cursor-pointer pointer-events-auto hover:bg-slate-800"
             >
               <Search className="w-4 h-4 text-orange-400 shrink-0" />
               <span>Search & Filters</span>
-              {(searchQuery || selectedCategory !== "All" || showOnlyOpen || maxDistance !== null) && (
+              <span className="sr-only">{activeFiltersCount} active search filters</span>
+              {activeFiltersCount>0 && (
                 <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse border border-white"></span>
               )}
             </button>
@@ -10706,6 +10451,7 @@ function ExploreScreen({
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Switch to shop list"
                 title="Switch to List View"
               >
                 <List className="w-4.5 h-4.5 text-orange-600 dark:text-orange-400" />
@@ -10713,10 +10459,12 @@ function ExploreScreen({
               <button
                 type="button"
                 onClick={() => {
+                  setSelectedShopId(null);
                   onRequestLocation();
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Center map on my location"
                 title="Center My Location"
               >
                 <LocateFixed className="w-4.5 h-4.5 text-blue-500" />
@@ -10728,6 +10476,7 @@ function ExploreScreen({
                   triggerHaptic(10);
                 }}
                 className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md size-11 rounded-full shadow-xl text-slate-700 dark:text-slate-200 hover:text-orange-500 flex items-center justify-center transition-all cursor-pointer active:scale-90 border border-slate-200/60 dark:border-slate-800/60"
+                aria-label="Return to Home"
                 title="Return Home"
               >
                 <Home className="w-4.5 h-4.5 text-slate-600 dark:text-slate-300" />
@@ -10738,24 +10487,31 @@ function ExploreScreen({
           {/* Compact Map Overlay Drawer Modal */}
           <AnimatePresence>
             {isMapOverlayMenuOpen && (
-              <div className="fixed inset-0 z-[2000] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200">
+              <div className="fixed inset-0 z-[2000] bg-slate-950/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-3 animate-in fade-in duration-200"
+                onClick={event=>{if(event.target===event.currentTarget)setIsMapOverlayMenuOpen(false);}}
+                onKeyDown={event=>{if(event.key==="Escape")setIsMapOverlayMenuOpen(false);}}
+              >
                 <motion.div
                   initial={{ opacity: 0, y: 40, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 40, scale: 0.95 }}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="localeats-map-filter-title"
                   className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-[32px] p-5 shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col gap-4 max-h-[80vh] overflow-y-auto"
                 >
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2">
                       <SlidersHorizontal className="w-4 h-4 text-orange-500" />
-                      <h3 className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-tight">
+                      <h3 id="localeats-map-filter-title" className="font-extrabold text-sm text-slate-900 dark:text-white uppercase tracking-tight">
                         Map Filters & Search
                       </h3>
                     </div>
                     <button
                       type="button"
                       onClick={() => setIsMapOverlayMenuOpen(false)}
-                      className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all cursor-pointer"
+                      aria-label="Close map search and filters"
+                      className="min-w-11 min-h-11 inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-orange-500 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-all cursor-pointer"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -10764,8 +10520,10 @@ function ExploreScreen({
                   {/* Search Input */}
                   <div className="bg-slate-100 dark:bg-slate-800/80 rounded-2xl flex items-center px-4 py-3 border border-slate-200/60 dark:border-slate-700/60">
                     <Search className="w-4 h-4 text-orange-500 mr-2.5 shrink-0" />
+                    <label htmlFor="localeats-map-dialog-search" className="sr-only">Search food, street or shop name</label>
                     <input
-                      type="text"
+                      id="localeats-map-dialog-search"
+                      type="search"
                       placeholder="Search food, street, or spot name..."
                       className="w-full bg-transparent outline-none text-xs font-bold dark:text-white placeholder:text-slate-400"
                       value={searchQuery}
@@ -10775,7 +10533,8 @@ function ExploreScreen({
                       <button
                         type="button"
                         onClick={() => setSearchQuery("")}
-                        className="text-xs text-slate-400 hover:text-slate-600 font-bold ml-1"
+                        aria-label="Clear map search"
+                        className="min-h-11 px-2 text-xs text-slate-400 hover:text-slate-600 font-bold ml-1 focus-visible:outline-2 focus-visible:outline-orange-500"
                       >
                         Clear
                       </button>
@@ -10796,7 +10555,8 @@ function ExploreScreen({
                             setSelectedCategory(cat);
                             triggerHaptic(10);
                           }}
-                          className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+                          aria-pressed={selectedCategory===cat}
+                          className={`min-h-11 px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
                             selectedCategory === cat
                               ? "bg-orange-600 text-white border-orange-500 shadow-md"
                               : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
@@ -10825,7 +10585,8 @@ function ExploreScreen({
                             setMaxDistance(dist);
                             triggerHaptic(10);
                           }}
-                          className={`py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border text-center ${
+                          aria-pressed={maxDistance===dist}
+                          className={`min-h-11 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border text-center ${
                             maxDistance === dist
                               ? "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900"
                               : "bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-slate-200/60 dark:border-slate-700/60"
@@ -10845,7 +10606,8 @@ function ExploreScreen({
                         setShowOnlyOpen(!showOnlyOpen);
                         triggerHaptic(10);
                       }}
-                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                      aria-pressed={showOnlyOpen}
+                      className={`min-h-11 py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
                         showOnlyOpen
                           ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
                           : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
@@ -10860,7 +10622,8 @@ function ExploreScreen({
                         setMinRating(minRating > 0 ? 0 : 4);
                         triggerHaptic(10);
                       }}
-                      className={`py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
+                      aria-pressed={minRating>0}
+                      className={`min-h-11 py-2.5 px-3 rounded-xl border text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
                         minRating > 0
                           ? "bg-amber-500/10 text-amber-600 border-amber-500/30"
                           : "bg-slate-50 dark:bg-slate-800/40 text-slate-400 border-slate-200/60 dark:border-slate-800"
@@ -10871,13 +10634,19 @@ function ExploreScreen({
                     </button>
                   </div>
 
+                  {activeFiltersCount>0 && (
+                    <button type="button" onClick={clearMapFilters}
+                      className="min-h-11 text-xs font-bold text-orange-600 dark:text-orange-400 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-orange-500">
+                      Clear all filters ({activeFiltersCount})
+                    </button>
+                  )}
                   {/* Apply / Close Button */}
                   <button
                     type="button"
                     onClick={() => setIsMapOverlayMenuOpen(false)}
                     className="w-full py-3.5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg transition-all active:scale-95 cursor-pointer mt-1"
                   >
-                    View Map Results ({filteredShops.length} spots)
+                    View Map Results ({mappedShops.length} {mappedShops.length===1?"pin":"pins"})
                   </button>
                 </motion.div>
               </div>
@@ -10894,6 +10663,8 @@ function ExploreScreen({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            role="region"
+            aria-label={`${activeShop.name} details`}
             className="absolute bottom-0 left-0 right-0 z-[2000] bg-white dark:bg-slate-950 rounded-t-[32px] bottom-sheet p-6 pb-24"
           >
             <div className="relative w-full max-w-[100vw] overflow-x-hidden">
@@ -10903,7 +10674,8 @@ function ExploreScreen({
               ></div>
               <button
                 onClick={() => setSelectedShopId(null)}
-                className="absolute -top-2 -right-2 p-2 bg-gray-100 dark:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors cursor-pointer"
+                aria-label="Close shop details"
+                className="absolute -top-2 -right-2 min-w-11 min-h-11 inline-flex items-center justify-center bg-gray-100 dark:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-white transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -10931,46 +10703,41 @@ function ExploreScreen({
                   <p className="text-gray-500 dark:text-slate-400 text-sm font-medium">
                     {activeShop.category} • {activeShop.address}
                   </p>
-                  <div className="flex items-center mt-1">
-                    <Star className="w-4 h-4 text-orange-500 fill-orange-500" />
-                    <span className="text-sm font-bold ml-1 dark:text-white">
-                      {activeShop.rating}
-                    </span>
-                    <span className="text-gray-400 dark:text-slate-500 text-xs ml-1">
-                      (120+ reviews)
-                    </span>
-                    {userLocation && (
-                      <>
-                        <span className="text-gray-300 dark:text-slate-700 mx-2">
-                          •
-                        </span>
-                        <span className="text-xs text-orange-600 dark:text-orange-400 font-extrabold uppercase tracking-wide">
-                          📍{" "}
-                          {calculateDistance(
-                            activeShop.latitude ||
-                              -25.9964 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            activeShop.longitude ||
-                              28.2268 +
-                                (hashString(activeShop.id) % 10) * 0.005,
-                            userLocation.lat,
-                            userLocation.lng,
-                          ).toFixed(1)}{" "}
-                          km away
-                        </span>
-                      </>
+                  <div className="flex items-center flex-wrap gap-2 mt-1">
+                    {homeRating(activeShop)!==null && (
+                      <span className="flex items-center gap-1 text-xs font-bold text-orange-600 dark:text-orange-400">
+                        <Star className="w-3.5 h-3.5 fill-current" />
+                        {homeRating(activeShop)!.toFixed(1)}
+                        {homeReviewCount(activeShop)!==null && <span className="text-slate-400">({homeReviewCount(activeShop)} reviews)</span>}
+                      </span>
                     )}
+                    {Number.isFinite(mapShopDistance(activeShop,userLocation)) && (
+                      <span className="text-xs text-orange-600 dark:text-orange-400 font-bold">
+                        📍 {mapShopDistance(activeShop,userLocation).toFixed(1)} km away
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-500 font-semibold">
+                      {getShopStatus(activeShop).isOpen?"Open now":"Closed · Menu browsing available"}
+                    </span>
                   </div>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => toggleFavorite(activeShop.id)}
-                className={`p-2 rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? "bg-red-50 dark:bg-red-500/10 text-red-500" : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500"}`}
+                aria-label={favorites.includes(activeShop.id) ? `Remove ${activeShop.name} from favourites` : `Save ${activeShop.name} to favourites`}
+                aria-pressed={favorites.includes(activeShop.id)}
+                className={`min-w-11 min-h-11 inline-flex items-center justify-center rounded-full transition-all active:scale-90 cursor-pointer ${favorites.includes(activeShop.id) ? "bg-red-50 dark:bg-red-500/10 text-red-500" : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500"}`}
               >
-                <Heart
-                  className={`w-5 h-5 ${favorites.includes(activeShop.id) ? "text-red-500 fill-current" : ""}`} />
+                <Heart className={`w-5 h-5 ${favorites.includes(activeShop.id) ? "text-red-500 fill-current" : ""}`} />
               </button>
             </div>
+            <button type="button"
+              onClick={() => onStoreInfo(activeShop.id)}
+              className="mt-5 w-full min-h-12 inline-flex items-center justify-center gap-2 rounded-2xl bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm shadow-md focus-visible:outline-2 focus-visible:outline-orange-500">
+              <BookOpen className="w-4 h-4" />
+              View Menu
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

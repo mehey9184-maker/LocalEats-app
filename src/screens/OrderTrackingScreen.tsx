@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Order, Shop } from "../types";
+import { isCollectionTrackingOrder, collectionTrackingStep } from "../services/orderTrackingPolicy";
 import { supabase, getFreshChannel } from "../lib/supabase";
 import { FirestoreService } from "../lib/firebase";
 import { safeLocalStorageGet, safeLocalStorageSet, formatRand } from "../utils";
@@ -46,7 +47,7 @@ import { storeMapIcon, riderMapIcon, userMapIcon } from "../components/MapCompon
 import L from "leaflet";
 
 export const isLiveDeliveryActive = (ord: any) => {
-  if (!ord) return false;
+  if (!ord || isCollectionTrackingOrder(ord)) return false;
   const dStatus = (ord.delivery_status || "").toLowerCase();
   return (
     dStatus === "picked_up" ||
@@ -70,13 +71,14 @@ interface SmartDispatchTrackingBannerProps {
 export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTrackingBannerProps) {
   const status = (order.status || "").toLowerCase();
   const deliveryStatus = (order.delivery_status || "").toLowerCase();
+  const isCollection = isCollectionTrackingOrder(order);
 
   // 1. Live Delivery Phase: When delivery_status === 'picked_up'
   if (
-    deliveryStatus === "picked_up" ||
+    !isCollection && (deliveryStatus === "picked_up" ||
     deliveryStatus === "out_for_delivery" ||
     deliveryStatus === "delivering" ||
-    deliveryStatus === "in_transit"
+    deliveryStatus === "in_transit")
   ) {
     return (
       <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/40 rounded-3xl space-y-3 shadow-lg animate-in fade-in duration-300">
@@ -103,7 +105,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
   }
 
   // 2. Ready Phase: If status === 'ready'
-  if (status === "ready") {
+  if (status === "ready" || (isCollection && status === "ready_for_pickup")) {
     return (
       <div className="p-5 bg-gradient-to-br from-amber-500/15 via-orange-500/10 to-transparent dark:from-amber-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-amber-500/40 rounded-3xl space-y-3 shadow-md animate-in fade-in duration-300">
         <div className="flex items-center justify-between gap-2">
@@ -113,16 +115,16 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
             </div>
             <div>
               <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-amber-500/20 text-amber-800 dark:text-amber-300 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-amber-500/30">
-                Ready Phase
+                {isCollection ? "Ready for Collection" : "Ready Phase"}
               </span>
               <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
-                Your food is packed and waiting for the rider to grab it.
+                {isCollection ? `Your food is ready for collection at ${shop?.name || "the shop"}.` : "Your food is packed and waiting for the rider to grab it."}
               </h4>
             </div>
           </div>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
-          The kitchen has completed preparation and packed your meal in warmth-retaining packaging at {shop?.name || "the shop"}. Waiting for courier to grab it.
+          {isCollection ? "Visit the shop to collect your food. Payment and physical handover must be confirmed by the shop before the order is completed." : `The kitchen has completed preparation and packed your meal at ${shop?.name || "the shop"}. Waiting for courier pickup.`}
         </p>
       </div>
     );
@@ -130,7 +132,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
 
   // 3. Rider Approach Phase: If status === 'preparing' AND delivery_status === 'accepted' (or rider_assigned)
   if (
-    (status === "preparing" || status === "confirmed") &&
+    !isCollection && (status === "preparing" || status === "confirmed") &&
     (deliveryStatus === "accepted" || deliveryStatus === "rider_assigned" || deliveryStatus === "approaching_restaurant")
   ) {
     return (
@@ -184,7 +186,7 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
   }
 
   // 5. Completed / Delivered Phase
-  if (status === "completed" || status === "delivered") {
+  if (status === "completed" || status === "delivered" || (isCollection && status === "collected")) {
     return (
       <div className="p-5 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent dark:from-emerald-500/20 dark:via-slate-900 dark:to-slate-950 border-2 border-emerald-500/30 rounded-3xl space-y-2 shadow-md">
         <div className="flex items-center gap-3">
@@ -193,10 +195,10 @@ export function SmartDispatchTrackingBanner({ order, shop }: SmartDispatchTracki
           </div>
           <div>
             <span className="text-[10px] whitespace-nowrap font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 px-2.5 py-0.5 rounded-full inline-block mb-1">
-              Delivered Safely
+              {isCollection ? "Collected at Shop" : "Delivered Safely"}
             </span>
             <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
-              Order Completed! Enjoy your meal.
+              {isCollection ? "Collection completed. Enjoy your meal!" : "Order Completed! Enjoy your meal."}
             </h4>
           </div>
         </div>
@@ -277,18 +279,23 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
     );
   }
 
-  if (status === "completed" || status === "delivered" || secondsLeft === 0) {
+  if (!isDelivery && (status === "ready" || status === "ready_for_pickup")) {
+    return <p className="text-xs font-bold text-emerald-600 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 mt-2">Ready for collection at the shop</p>;
+  }
+
+  if (status === "completed" || status === "delivered" || status === "collected") {
     return (
       <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-500 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 mt-2 animate-pulse">
         <span className="relative flex h-2 w-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
         </span>
-        Arrived & Delivered!
+        {isDelivery ? "Delivered!" : "Collected at the shop"}
       </div>
     );
   }
 
+  if (secondsLeft === 0) return <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mt-2">Estimated preparation time has passed. Check the latest order status.</p>;
   if (secondsLeft === null) return null;
 
   const minutes = Math.floor(secondsLeft / 60);
@@ -335,10 +342,10 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
 
         <div>
           <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 leading-none">
-            {status === "ready" ? "Rider Transfer" : "Estimated Food Prep"}
+            {status === "ready" ? (isDelivery ? "Rider Transfer" : "Ready for Collection") : "Estimated Food Prep"}
           </h5>
           <p className="text-xs font-black text-slate-800 dark:text-slate-200 mt-1 leading-none">
-            {status === "ready" ? "On the way" : "Crafting your order"}
+            {status === "ready" ? (isDelivery ? "Awaiting courier" : "Go to the shop") : "Crafting your order"}
           </p>
         </div>
       </div>
@@ -355,7 +362,7 @@ export function RealTimeCountdown({ createdAt, status, isDelivery }: RealTimeCou
   );
 }
 
-export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string; status: string }) {
+export function DetailedKitchenStatus({ createdAt, status, isCollection = false }: { createdAt: string; status: string; isCollection?: boolean }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -386,16 +393,16 @@ export function DetailedKitchenStatus({ createdAt, status }: { createdAt: string
     } else if (status === "ready") {
       return [
         { label: "Cooking completed & inspected", done: true, current: false },
-        { label: "Packed in heat-resistant dispatch bundle", done: true, current: false },
-        { label: "Food ready! Awaiting driver pickup or hand-over", done: false, current: true },
+        { label: isCollection ? "Packed for customer collection" : "Packed in heat-resistant dispatch bundle", done: true, current: false },
+        { label: isCollection ? "Ready for customer pickup at the shop" : "Food ready! Awaiting driver pickup or hand-over", done: false, current: true },
       ];
     } else {
       return [
         { label: "Food prepared & hand over complete", done: true, current: false },
-        { label: "Delivered safely - Enjoy!", done: true, current: false },
+        { label: isCollection ? "Collected at shop - Enjoy!" : "Delivered safely - Enjoy!", done: true, current: false },
       ];
     }
-  }, [status, elapsedMinutes]);
+  }, [status, elapsedMinutes, isCollection]);
 
   return (
     <div className="bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-150/40 dark:border-slate-800/80 mt-3 space-y-3">
@@ -836,6 +843,7 @@ export function OrderTrackingScreen({
       if (prevState) {
         // 1. Live Delivery Phase Trigger: When delivery_status becomes 'picked_up'
         if (
+          !isCollectionTrackingOrder(order) &&
           (currentDStatus === "picked_up" || currentDStatus === "out_for_delivery") &&
           prevDStatus !== "picked_up" &&
           prevDStatus !== "out_for_delivery"
@@ -868,13 +876,14 @@ export function OrderTrackingScreen({
           if (triggerHaptic) {
             triggerHaptic([300, 100, 300]);
           }
-          toast.info("Your food is packed and waiting for the rider to grab it.", {
-            description: `Meal is ready and packaged at the restaurant.`,
+          toast.info(isCollectionTrackingOrder(order) ? "Your order is ready for collection!" : "Your food is packed and waiting for the rider to grab it.", {
+            description: isCollectionTrackingOrder(order) ? "Visit the shop and complete payment before collecting your food." : "Meal is ready and packaged at the restaurant.",
           });
         }
 
         // 3. Rider Approach Phase Trigger
         if (
+          !isCollectionTrackingOrder(order) &&
           currentStatus === "preparing" &&
           (currentDStatus === "accepted" || currentDStatus === "rider_assigned") &&
           prevDStatus !== "accepted" &&
@@ -894,7 +903,7 @@ export function OrderTrackingScreen({
           if (triggerHaptic) {
             triggerHaptic([500, 100, 500]);
           }
-          toast.success(`Order #${order.id.slice(0, 5)} delivered!`, {
+          toast.success(`Order #${order.id.slice(0, 5)} ${isCollectionTrackingOrder(order) ? "collected!" : "delivered!"}`, {
             description: "Enjoy your meal!",
           });
         }
@@ -973,6 +982,11 @@ export function OrderTrackingScreen({
   };
 
   const handleMarkReceived = async (orderId: string, shopId: string, productName: string) => {
+    const currentOrder = localOrders.find(order => order.id === orderId) || orders.find(order => order.id === orderId);
+    if (!currentOrder || isCollectionTrackingOrder(currentOrder)) {
+      toast.error("Only the shop can complete a pickup order after payment and handover.");
+      return;
+    }
     if ("vibrate" in navigator) {
       navigator.vibrate([20, 30, 20]);
     }
@@ -1016,6 +1030,11 @@ export function OrderTrackingScreen({
   };
 
   const executeCancellation = async (orderId: string, reason: string) => {
+    const currentOrder = localOrders.find(order => order.id === orderId) || orders.find(order => order.id === orderId);
+    if (!currentOrder || isCollectionTrackingOrder(currentOrder)) {
+      toast.error("Contact the shop to cancel a pickup order. No order status was changed.");
+      return;
+    }
     setIsCancelling(true);
     triggerHaptic?.(15);
 
@@ -1203,7 +1222,7 @@ export function OrderTrackingScreen({
   const activeOrders = combinedOrders.filter(
     (o) => {
       const s = (o.status || "").toLowerCase();
-      return s !== "completed" && s !== "cancelled" && s !== "delivered";
+      return s !== "completed" && s !== "collected" && s !== "cancelled" && s !== "delivered";
     }
   );
 
@@ -1226,7 +1245,7 @@ export function OrderTrackingScreen({
           >
             <ArrowLeft className="w-6 h-6" />
           </button>
-          <h1 className="text-lg font-black tracking-tight text-center flex-1 line-clamp-1">Track Deliveries</h1>
+          <h1 className="text-lg font-black tracking-tight text-center flex-1 line-clamp-1">Track Orders</h1>
           <div className="flex items-center gap-1 shrink-0">
             {activeChatDeliveryOrder && (
               <button
@@ -1332,9 +1351,9 @@ export function OrderTrackingScreen({
               </div>
             </div>
             <div className="space-y-2">
-              <h2 className="text-lg font-black text-slate-800 dark:text-white">No Active Deliveries</h2>
+              <h2 className="text-lg font-black text-slate-800 dark:text-white">No Active Orders</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[240px] leading-relaxed mx-auto font-medium">
-                You don't have any deliveries in progress right now. Place an order to see it tracked live step-by-step!
+                You don't have any active orders right now. Place an order to follow its progress here!
               </p>
             </div>
           </div>
@@ -1415,8 +1434,14 @@ export function OrderTrackingScreen({
               );
             }
 
-            // Define delivery milestones/steps for Smart Dispatch 3-stage flow
-            const steps = [
+
+            const isCollection = isCollectionTrackingOrder(order);
+            const steps = isCollection ? [
+              { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received by kitchen" },
+              { s: "cooking", label: "Cooking", icon: <ChefHat className="w-4 h-4" />, desc: "The kitchen is cooking your food" },
+              { s: "ready", label: "Ready for Pickup", icon: <PackageCheck className="w-4 h-4" />, desc: "Collect at the shop" },
+              { s: "collected", label: "Collected", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Shop confirmed collection" },
+            ] : [
               { s: "pending", label: "Pending", icon: <Clock className="w-4 h-4" />, desc: "Order received by kitchen" },
               { s: "cooking", label: "Cooking", icon: <ChefHat className="w-4 h-4" />, desc: "The kitchen is cooking your food" },
               { s: "ready", label: "Packed & Ready", icon: <PackageCheck className="w-4 h-4" />, desc: "Waiting for rider pickup" },
@@ -1424,26 +1449,22 @@ export function OrderTrackingScreen({
               { s: "delivered", label: "Delivered", icon: <CheckCircle2 className="w-4 h-4" />, desc: "Delivered safely" },
             ];
 
-            // Numerical tracking index
-            let currentStepIndex = 0;
             const dStatus = (order.delivery_status || "").toLowerCase();
             const oStatus = (order.status || "").toLowerCase();
-
-            if (oStatus === "completed" || oStatus === "delivered") {
-              currentStepIndex = 4;
-            } else if (
-              dStatus === "picked_up" ||
-              dStatus === "out_for_delivery" ||
-              dStatus === "delivering" ||
-              dStatus === "in_transit"
-            ) {
-              currentStepIndex = 3;
-            } else if (oStatus === "ready") {
-              currentStepIndex = 2;
-            } else if (oStatus === "preparing" || oStatus === "confirmed") {
-              currentStepIndex = 1;
-            } else {
-              currentStepIndex = 0;
+            let currentStepIndex = isCollection ? collectionTrackingStep(oStatus) : 0;
+            if (!isCollection) {
+              if (oStatus === "completed" || oStatus === "delivered") {
+                currentStepIndex = 4;
+              } else if (
+                dStatus === "picked_up" || dStatus === "out_for_delivery" ||
+                dStatus === "delivering" || dStatus === "in_transit"
+              ) {
+                currentStepIndex = 3;
+              } else if (oStatus === "ready") {
+                currentStepIndex = 2;
+              } else if (oStatus === "preparing" || oStatus === "confirmed") {
+                currentStepIndex = 1;
+              }
             }
 
             return (
@@ -1476,16 +1497,24 @@ export function OrderTrackingScreen({
                   </div>
                   <div className="text-right flex flex-col items-end">
                     <p className="text-sm font-black text-slate-900 dark:text-white leading-tight">
-                      {formatRand(order.price + (order.delivery_fee || 0))}
+                      {formatRand(typeof order.total_price === "number" && Number.isFinite(order.total_price) ? order.total_price : order.price + (order.delivery_fee || 0))}
                     </p>
                     <span className="bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 text-[10px] whitespace-nowrap font-black px-2 py-0.5 rounded uppercase leading-none mt-1 inline-block">
-                      {order.is_delivery ? "🚚 Delivery" : "🛍️ Collection"}
+                      {isCollection ? "🛍️ Collection" : "🚚 Delivery"}
                     </span>
                   </div>
                 </div>
 
                 {/* Smart Dispatch & 3-Stage Tracking State Banner */}
                 <SmartDispatchTrackingBanner order={order} shop={shop} />
+                {isCollection && (oStatus === "ready" || oStatus === "ready_for_pickup") && (
+                  <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-900/50 p-4 space-y-1">
+                    <p className="text-xs font-black text-emerald-800 dark:text-emerald-300">Collect your order from {shop?.name || "the shop"}.</p>
+                    <p className="text-xs text-emerald-800/80 dark:text-emerald-200/80">
+                      {order.payment_status === "paid" ? "Payment has been confirmed by the shop. Present your order details when collecting." : order.payment_method === "card_machine" ? "Pay at the shop using its physical card machine before collection." : order.payment_method === "cash" ? "Pay cash at the shop before collection." : "Payment must be confirmed by the shop before your order can be collected."}
+                    </p>
+                  </div>
+                )}
 
                 {/* Direct Driver Chat Banner for Delivery Orders: Only active in Live Delivery Phase */}
                 {order.is_delivery && isLiveDeliveryActive(order) && (
@@ -1863,7 +1892,7 @@ export function OrderTrackingScreen({
                         {order.status.toLowerCase() === "pending" && "Waiting for shop acceptance..."}
                         {order.status.toLowerCase() === "confirmed" && "Order accepted! Preparing..."}
                         {order.status.toLowerCase() === "preparing" && "Chef is cooking your meal!"}
-                        {order.status.toLowerCase() === "ready" && "Your meal is ready for collection!"}
+                        {order.status.toLowerCase() === "ready" && (isCollection ? "Your meal is ready for collection!" : "Your meal is ready for rider pickup!")}
                       </p>
                       <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                         Est. preparation duration: 15-20 minutes
@@ -1871,9 +1900,9 @@ export function OrderTrackingScreen({
                     </div>
                   </div>
 
-                  <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={order.is_delivery} />
+                  <RealTimeCountdown createdAt={order.created_at} status={order.status} isDelivery={!isCollection} />
 
-                  {order.is_delivery && (
+                  {!isCollection && order.is_delivery && (
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60">
                       {shop?.allow_external_riders === false ? (
                         <p className="text-[10px] text-orange-600 dark:text-orange-400 font-bold flex items-center gap-1.5 leading-none">
@@ -1906,7 +1935,7 @@ export function OrderTrackingScreen({
 
                     {isExpanded && (
                       <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <DetailedKitchenStatus createdAt={order.created_at} status={order.status} />
+                        <DetailedKitchenStatus createdAt={order.created_at} status={order.status} isCollection={isCollection} />
 
                         <button
                           onClick={() => {
@@ -1925,7 +1954,7 @@ export function OrderTrackingScreen({
                 </div>
 
                 {/* Cancel Action */}
-                {["pending", "confirmed"].includes((order.status || "").toLowerCase()) && (
+                {!isCollection && ["pending", "confirmed"].includes((order.status || "").toLowerCase()) && (
                   <button
                     onClick={() => setCancellationModal({ isOpen: true, orderId: order.id })}
                     className="w-full py-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/[0.06] dark:hover:bg-red-500/[0.12] text-red-600 dark:text-red-400 rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 border border-red-200/30 dark:border-red-900/20 transition-all active:scale-95 cursor-pointer"
@@ -1936,7 +1965,7 @@ export function OrderTrackingScreen({
                 )}
 
                 {/* Mark as Received Action */}
-                {["ready", "picked_up", "delivered"].includes((order.status || "").toLowerCase()) && (
+                {!isCollection && ["ready", "picked_up", "delivered"].includes((order.status || "").toLowerCase()) && (
                   <button
                     onClick={() => handleMarkReceived(order.id, order.shop_id, order.product_name)}
                     className="w-full mt-2 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer"

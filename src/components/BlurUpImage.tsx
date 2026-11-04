@@ -7,6 +7,8 @@ interface BlurUpImageProps {
   fallbackSrc?: string;
   blurHash?: string;
   aspectRatio?: string;
+  /** Opt in only for the first visible Home shop image. */
+  priority?: boolean;
 }
 
 export const BlurUpImage = ({
@@ -14,12 +16,17 @@ export const BlurUpImage = ({
   alt,
   className = "",
   fallbackSrc = "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80",
+  priority = false,
 }: BlurUpImageProps) => {
+  const targetSrc = src && src.trim() ? src.trim() : fallbackSrc;
+  // The first visible Home hero should never request the generic fallback
+  // image before the effect discovers its real URL.
+  const initialSrc = priority && targetSrc.startsWith('http') && !targetSrc.includes('weserv.nl')
+    ? `https://images.weserv.nl/?url=${encodeURIComponent(targetSrc)}&output=webp&q=75&w=600`
+    : priority ? targetSrc : '';
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [displaySrc, setDisplaySrc] = useState<string>('');
-
-  const targetSrc = src && src.trim() ? src.trim() : fallbackSrc;
+  const [displaySrc, setDisplaySrc] = useState<string>(initialSrc);
 
   useEffect(() => {
     setIsLoaded(false);
@@ -65,7 +72,8 @@ export const BlurUpImage = ({
             ? 'opacity-100 blur-0 scale-100'
             : 'opacity-40 blur-md scale-105'
         }`}
-        loading="lazy"
+        loading={priority ? "eager" : "lazy"}
+        fetchPriority={priority ? "high" : "auto"}
         decoding="async"
         referrerPolicy="no-referrer"
       />

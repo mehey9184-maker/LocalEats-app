@@ -14,11 +14,17 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null):P
   const point=requireRealLocation(location);
   const result=await customerPickupApi.shops(point);
   if(!Array.isArray(result.shops)) throw new Error("The shop service returned an invalid catalog.");
-  return Promise.all(result.shops.map(async shop=>{
+  // One malformed or temporarily unavailable shop menu must not hide every
+  // other independently verified merchant. Never invent a menu or price.
+  const checks=await Promise.allSettled(result.shops.map(async shop=>{
     const menu=await customerPickupApi.menu(shop.id);
-    if(!Array.isArray(menu.menu_items)) throw new Error("The menu service returned an invalid menu.");
+    if(!Array.isArray(menu.menu_items))throw new Error("The menu service returned an invalid menu.");
     return mapPickupShop(shop,menu.menu_items);
   }));
+  const verified=checks.flatMap(check=>check.status==="fulfilled"?[check.value]:[]);
+  if(result.shops.length>0 && verified.length===0)
+    throw new Error("Nearby shops were found, but their menus could not be verified. Please retry.");
+  return verified;
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string) {
@@ -32,6 +38,12 @@ export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:n
 export {blockPickupSubmission};
 
 export const pickupOrderingEnabled=()=>import.meta.env?.VITE_PICKUP_ORDERING_ENABLED === "true";
+export function hasPendingPickupSubmission():boolean {
+ const uid=auth.currentUser?.uid;
+ if(!uid)return false;
+ try{return Boolean(sessionStorage.getItem(`pickup-create:${uid}`));}catch{return false;}
+}
+
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
  if(!pickupOrderingEnabled())blockPickupSubmission();
  const uid=auth.currentUser?.uid;
@@ -42,6 +54,13 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  const pending=stored ? JSON.parse(stored) : payload;
  if(!pending)throw new Error("Review a quote before submitting.");
  if(stored && payload && JSON.stringify(pending)!==JSON.stringify(payload))throw new Error("A previous order outcome is unresolved. Use Retry previous submission first.");
+ // A retry with an unknown outcome must preserve the original price and
+ // payment consent. Never trust a replayed response more than a new one.
+ const consentTotalMinor=pending?.consent?.total_minor;
+ const consentPaymentMethod=pending?.payment_method;
+ if(!Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
+    !["cash","card_machine"].includes(consentPaymentMethod))
+  throw new Error("The pending pickup request has invalid consent or payment details.");
  sessionStorage.setItem(key,JSON.stringify(pending));
  let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
  try{result=await customerPickupApi.create(pending);}catch(error){
@@ -49,6 +68,10 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
   throw error;
  }
  if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
+ const persistedTotalMinor=result.order.total_price == null ? NaN : Math.round(Number(result.order.total_price)*100);
+ if(!Number.isSafeInteger(persistedTotalMinor) || persistedTotalMinor!==consentTotalMinor ||
+    result.order.payment_method!==consentPaymentMethod)
+  throw new Error("The API returned an order that does not match the confirmed total or payment choice.");
  sessionStorage.removeItem(key);
  return result.order;
 }

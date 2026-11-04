@@ -33,7 +33,7 @@ export const createShopMapIcon = (isOpen: boolean = true) => {
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/>
           </svg>
-          <span class="absolute -top-1.5 -right-1.5 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full shadow-md flex items-center justify-center text-[10px] whitespace-nowrap font-black text-white">✓</span>
+          <!-- Orange shows an open shop, not a verified certification. -->
         </div>
         <div class="w-1.5 h-1.5 bg-amber-600 rounded-full mt-1"></div>
       </div>`,
@@ -170,8 +170,9 @@ export function MapFocusTracker({
   });
 
   const handleReturnToLocation = () => {
-    if (activeCoords) {
-      map.flyTo({ lat: activeCoords.lat, lng: activeCoords.lng }, 16, {
+    const destination = userLocation || activeCoords;
+    if (destination) {
+      map.flyTo({ lat: destination.lat, lng: destination.lng }, 16, {
         animate: true,
         duration: 0.8,
       });
@@ -226,7 +227,7 @@ export const MemoizedCustomerMarker = React.memo(
               <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
               <p className="font-extrabold text-xs text-blue-600 dark:text-blue-400">Your Location</p>
             </div>
-            <p className="text-[10px] text-slate-500 font-medium">Verified customer delivery spot</p>
+            <p className="text-[10px] text-slate-500 font-medium">Your device's reported location</p>
           </motion.div>
         </Popup>
       </Marker>
@@ -331,12 +332,14 @@ export const MemoizedShopMarker = React.memo(
   }) {
     const shopIcon = useMemo(() => createShopMapIcon(isOpen), [isOpen]);
 
+    // Never invent a shop's location if the catalog omits GPS coordinates.
+    if(typeof shop.latitude!=="number" || typeof shop.longitude!=="number" ||
+       !Number.isFinite(shop.latitude) || !Number.isFinite(shop.longitude) ||
+       Math.abs(shop.latitude)>90 || Math.abs(shop.longitude)>180 ||
+       (shop.latitude===0 && shop.longitude===0))return null;
     return (
       <Marker
-        position={[
-          shop.latitude || -25.9964,
-          shop.longitude || 28.2268,
-        ]}
+        position={[shop.latitude,shop.longitude]}
         icon={shopIcon}
         eventHandlers={{
           click: () => onSelectShop(shop.id),
@@ -357,10 +360,12 @@ export const MemoizedShopMarker = React.memo(
               )}
             </div>
             <div className="flex items-center justify-between gap-2 mb-1.5">
-              <div className="flex items-center gap-1">
-                <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
-                <span className="text-xs font-black">{shop.rating}</span>
-              </div>
+              {typeof shop.rating==="number" && Number.isFinite(shop.rating) && shop.rating>0 && shop.rating<=5 && (
+                <div className="flex items-center gap-1">
+                  <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500" />
+                  <span className="text-xs font-black">{shop.rating.toFixed(1)}</span>
+                </div>
+              )}
               <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
                 isOpen
                   ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/30"
