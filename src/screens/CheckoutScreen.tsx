@@ -3650,7 +3650,8 @@ export function CheckoutScreen({
                   distance !== null &&
                   distance > ZONE_B_LIMIT)
               }
-              className={`relative overflow-hidden w-full py-4 rounded-2xl font-black shadow-xl uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:scale-100 cursor-pointer ${
+              aria-busy={loading}
+              className={`client-tap-spring relative overflow-hidden ${loading ? "w-14 mx-auto !px-0" : "w-full"} min-h-14 py-4 rounded-2xl font-black shadow-xl uppercase tracking-widest flex items-center justify-center gap-2 transition-[width,transform] duration-300 disabled:scale-100 cursor-pointer ${
                 loading ||
                 (deliveryType === "delivery" &&
                   distance !== null &&
@@ -3659,14 +3660,22 @@ export function CheckoutScreen({
                   : "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-600/30 font-extrabold text-sm"
               }`}
             >
-              {/* Simple loading overlay preventing multiple clicks */}
-              {loading && (
-                <div className="absolute inset-0 bg-orange-700/95 dark:bg-orange-800/95 flex items-center justify-center gap-2 text-white font-bold text-xs uppercase tracking-wider backdrop-blur-xs z-10 select-none pointer-events-none">
-                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Requesting server quote...</span>
-                </div>
-              )}
-
+              {/* One control: compact spinner while busy; no success claim on quote review. */}
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin motion-reduce:animate-none shrink-0" aria-label="Checking quote or submission" />
+              ) : isP7TestCheckout && p7TestCompleted ? (
+                <>
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none">
+                    <motion.circle cx="12" cy="12" r="9.5" stroke="currentColor" strokeWidth="2"
+                      initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.22 }} />
+                    <motion.path d="M7.5 12.2 L10.6 15.2 L16.7 9" stroke="currentColor" strokeWidth="2"
+                      strokeLinecap="round" strokeLinejoin="round" initial={{ pathLength: 0 }}
+                      animate={{ pathLength: 1 }} transition={{ duration: 0.2, delay: 0.2 }} />
+                  </svg>
+                  <span>Simulation complete · no order</span>
+                </>
+              ) : (
+              <>
               <ShoppingBag className="w-5 h-5 shrink-0" />
               <span>
                 {deliveryType === "delivery" &&
@@ -3675,6 +3684,8 @@ export function CheckoutScreen({
                   ? "Out of Delivery Range"
                   : isP7TestCheckout ? "Simulate test checkout · no order" : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
               </span>
+              </>
+              )}
             </button>
             <button
               type="button"

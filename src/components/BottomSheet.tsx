@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 
 interface BottomSheetProps {
@@ -10,6 +10,7 @@ interface BottomSheetProps {
   children: React.ReactNode;
   maxHeight?: string;
   showHandle?: boolean;
+  easeOutMotion?: boolean;
   triggerHaptic?: (intensity?: number) => void;
 }
 
@@ -21,9 +22,11 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   children,
   maxHeight = "max-h-[90vh]",
   showHandle = true,
+  easeOutMotion = false,
   triggerHaptic,
 }) => {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -64,7 +67,9 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
             initial={{ y: "100%", opacity: 0.9 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: "100%", opacity: 0 }}
-            transition={{ type: "spring", stiffness: 350, damping: 32 }}
+            transition={reduceMotion ? { duration: 0 } :
+              easeOutMotion ? { duration: 0.35, ease: [0.22, 1, 0.36, 1] } :
+              { type: "spring", stiffness: 350, damping: 32 }}
             className={`relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-slate-800 ${maxHeight} flex flex-col z-10 overflow-hidden`}
           >
             {/* Top Drag Handle */}

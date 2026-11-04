@@ -1,4 +1,6 @@
 import React from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useCustomerPullToRefresh } from "../hooks/useCustomerPullToRefresh";
 import {ArrowLeft,ShoppingBag,Clock,ChevronRight,RotateCcw,Receipt,RefreshCw} from "lucide-react";
 import type {Shop,Order} from "../types";
 import {
@@ -28,6 +30,8 @@ export function OrderHistoryScreen({
  ownerUid,onBack,shops,pickupOrders,loadState,onRefresh,
  onOpenShop,onViewOrder,triggerHaptic,
 }:OrderHistoryScreenProps){
+ const reducedMotion = useReducedMotion();
+ const { surfaceRef, pulling, armed } = useCustomerPullToRefresh(Boolean(ownerUid) && loadState !== "loading", onRefresh);
  const orders=confirmedCustomerPickupOrders(pickupOrders,ownerUid);
  const loading=loadState==="loading";
  const error=loadState==="error";
@@ -52,7 +56,12 @@ export function OrderHistoryScreen({
     </button>
    </div>
 
-   <div className="max-w-2xl mx-auto p-4 space-y-4">
+   <div ref={surfaceRef} className="client-pull-surface max-w-2xl mx-auto p-4 space-y-4 relative">
+    {pulling && (
+     <div role="status" className="pointer-events-none absolute inset-x-0 -top-8 flex justify-center items-center gap-2 text-xs font-bold text-orange-600">
+      <RefreshCw size={14} aria-hidden="true" /> {armed ? "Release to refresh history" : "Pull down to refresh history"}
+     </div>
+    )}
     <p className="text-xs text-slate-500 dark:text-slate-400">
       This page displays only server-confirmed pickup orders for the signed-in account.
       Older orders from previous LocalEats systems are not imported or deleted by this Preview.
@@ -99,7 +108,7 @@ export function OrderHistoryScreen({
        Explore Nearby Shops
       </button>
      </div>
-    ) : orders.map(order=>{
+    ) : orders.map((order, index)=>{
      const status=confirmedPickupDisplayStatus(order.status);
      const total=confirmedPickupTotal(order);
      const shop=shops.find(value=>String(value.id)===String(order.shop_id));
@@ -109,7 +118,11 @@ export function OrderHistoryScreen({
      }):"Date unavailable";
      const items=Array.isArray(order.items)?order.items.filter(item=>item&&typeof item.name==="string"&&typeof item.quantity==="number"&&item.quantity>0):[];
      return (
-      <article key={order.id} className="p-4 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
+      <motion.article key={order.id}
+       initial={reducedMotion ? false : { opacity: 0, y: 12 }}
+       animate={{ opacity: 1, y: 0 }}
+       transition={{ duration: reducedMotion ? 0 : 0.3, ease: "easeOut", delay: reducedMotion ? 0 : Math.min(index * 0.07, 0.42) }}
+       className="p-4 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-3">
        <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
          <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">{confirmedPickupShopName(order,shops)}</h3>
@@ -146,7 +159,7 @@ export function OrderHistoryScreen({
          </button>
         </div>
        </div>
-      </article>
+      </motion.article>
      );
     })}
    </div>
