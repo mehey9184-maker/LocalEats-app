@@ -17,6 +17,7 @@ import {
   Dispatch,
   SetStateAction,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -294,6 +295,7 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 import { AddressSearch, LocationPickerMap, RecenterMap, ExploreMapUserTracker } from "./components/MapComponents";
 import { NotificationsScreen } from "./screens/NotificationsScreen";
 import {nearbyClosedPickupShops, closedPickupCardData, type ClosedPickupShopPreview} from "./services/nearbyClosedPickupShops";
+import {P7_MY_KOTA_ID,p7PreviewEnabled,previewMyKotaShop,previewDisplayShop} from "./services/p7PreviewShop";
 import {homeReorderMenuItem,homeRating,homeReviewCount} from "./services/homeTrustPolicy";
 import {homeSearchMatches,homeSearchSuggestions,homePrepMinutes,homeFastestShopIds,homeHasHalalOptions} from "./services/homeDiscoveryPolicy";
 import {discoverShopCoordinates,discoverShopDistance,discoverCategoryMatches,discoverSortShops} from "./services/discoverTrustPolicy";
@@ -324,6 +326,7 @@ import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
+import { CartFlightFeedback, CustomerNotificationBell, notifyLocalCartAdded } from "./components/CustomerMicroMotion";
 import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
@@ -668,6 +671,43 @@ export default function App() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [closedPickupShops, setClosedPickupShops] = useState<ClosedPickupShopPreview[]>([]);
   const [closedPickupShopsLoading, setClosedPickupShopsLoading] = useState(false);
+  // This public, read-only directory is separate from the 4km orderable shops.
+  // Never pass these metadata records into cart/checkout or current prices.
+  const p7TestEnabled=p7PreviewEnabled(
+    import.meta.env?.VITE_P7_NEARBY_TEST_MODE,
+    typeof window==="undefined"?"":(window.location?.hostname || ""),
+  ) && !pickupOrderingEnabled();
+  const [pilotDirectoryRows,setPilotDirectoryRows] = useState<unknown[]>([]);
+  const [pilotDirectoryStatus,setPilotDirectoryStatus] = useState<"loading"|"ready"|"error">("loading");
+  useEffect(()=>{
+    // The public directory is ONLY necessary for the P7 owner test.
+    // Never make this extra API request in Production or normal Previews.
+    if(!p7TestEnabled){
+      setPilotDirectoryRows([]);setPilotDirectoryStatus("ready");return;
+    }
+    let active=true;
+    void customerPickupApi.approvedShops().then(result=>{
+      if(!Array.isArray(result.shops))throw new Error("Invalid approved catalog.");
+      if(active){setPilotDirectoryRows(result.shops);setPilotDirectoryStatus("ready");}
+    }).catch(()=>{
+      if(active){setPilotDirectoryRows([]);setPilotDirectoryStatus("error");}
+    });
+    return ()=>{active=false;};
+  },[p7TestEnabled]);
+  const [p7TestShop,setP7TestShop]=useState<Shop|null>(null);
+  useEffect(()=>{
+    if(!p7TestEnabled){setP7TestShop(null);return;}
+    const row=pilotDirectoryRows.find((s:any)=>s?.id===P7_MY_KOTA_ID);
+    if(!row){setP7TestShop(null);return;}
+    let current=true;
+    void customerPickupApi.menu(P7_MY_KOTA_ID)
+      .then(result=>{
+        const verified=previewMyKotaShop(row,result.menu_items);
+        if(current)setP7TestShop(verified);
+      })
+      .catch(()=>{if(current)setP7TestShop(null);});
+    return ()=>{current=false;};
+  },[p7TestEnabled,pilotDirectoryRows]);
   const [loadingShops, setLoadingShops] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -933,6 +973,8 @@ export default function App() {
     Number.isFinite(shop.latitude) && Number.isFinite(shop.longitude) &&
     distanceKm({lat:Number(shop.latitude),lng:Number(shop.longitude)},userLocation)<=4
   ) : [];
+  // Display-only placement: original card/menu/address; not added to the API pickup catalog.
+  const displayShops=previewDisplayShop(visibleShops,p7TestShop);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationOwnerId, setNotificationOwnerId] = useState<string | null>(null);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -2356,12 +2398,15 @@ export default function App() {
           if(!active || request!==latestOrderFetch)return;
           if(firebaseAuth.currentUser?.uid!==uid)throw new Error("Authenticated account changed.");
           if(!Array.isArray(data.orders) || data.orders.some(o=>
-            !o || o.user_id!==uid || o.delivery_type!=="collection" || typeof o.id!=="string"))
+            !o || o.user_id!==uid || typeof o.id!=="string"))
             throw new Error("Order history response did not match the authenticated account.");
-          const confirmed=data.orders as CustomerStatusOrder[];
+          // The API can return legacy deliveries. Ignore those for O1's
+          // confirmed-pickup-only history instead of hiding valid pickups.
+          const pickupOrders=data.orders.filter(o=>o.delivery_type==="collection");
+          const confirmed=pickupOrders as CustomerStatusOrder[];
           const notices=customerOrderStatusNotices(previousConfirmedOrders,confirmed,uid);
           previousConfirmedOrders=confirmed;
-          setOrders(data.orders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
+          setOrders(pickupOrders.map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
           setOrdersLoadState({uid,status:"ready"});
           for(const notice of notices){
             toast.info(notice.title,{description:notice.message,duration:6500});
@@ -2568,6 +2613,7 @@ export default function App() {
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             triggerHaptic([100, 50, 100]); // Stronger pulse for clear
             setCart([buildCartItemNode(quantity)]);
+            notifyLocalCartAdded(item.image || "");
             setNotification({
               message: `Started new cart with ${item.name}`,
               type: "success",
@@ -2624,6 +2670,8 @@ export default function App() {
           buildCartItemNode(quantity),
         ];
       });
+      // Visual feedback reflects the accepted local-cart mutation only — not an order.
+      notifyLocalCartAdded(item.image || "");
       // Notification removed for cleaner UI
     },
     [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
@@ -3167,7 +3215,7 @@ export default function App() {
                 <HomeScreen
                   userProfile={userProfile}
                   session={session}
-                  shops={visibleShops}
+                  shops={displayShops}
                   loadingShops={loadingShops}
                   closedPickupShops={closedPickupShops}
                   closedPickupShopsLoading={closedPickupShopsLoading}
@@ -3247,7 +3295,7 @@ export default function App() {
                       orders={orders}
                       shops={visibleShops}
                       selectedOrderId={selectedTrackingOrderId}
-                      loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                      loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
                       onBack={()=>{setSelectedTrackingOrderId(null);setCurrentScreen(previousScreen || "home");}}
                       onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                       onOpenShop={id=>{setSelectedStoreId(id);setCurrentScreen("store-info");}}
@@ -3364,7 +3412,7 @@ export default function App() {
               {currentScreen === "discover" && (
                 <DiscoverScreen
                   userProfile={userProfile}
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onExplore={() => {
                     setPreviousScreen("discover");
@@ -3388,7 +3436,7 @@ export default function App() {
               )}
               {currentScreen === "explore" && (
                 <ExploreScreen
-                  shops={visibleShops}
+                  shops={displayShops}
                   onHome={() => setCurrentScreen("home")}
                   onDiscover={() => {
                     setPreviousScreen("explore");
@@ -3411,14 +3459,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && (visibleShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
+              {currentScreen === "store-info" && (displayShops.some(s=>String(s.id)===String(selectedStoreId)) || closedPickupShops.some(s=>String(s.id)===String(selectedStoreId))) && (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
-                  readOnlyClosed={!visibleShops.some(s=>String(s.id)===String(selectedStoreId))}
+                  shop={displayShops.find(s=>String(s.id)===String(selectedStoreId)) ?? closedPickupCardData(closedPickupShops.find(s=>String(s.id)===String(selectedStoreId))!)}
+                  readOnlyClosed={!displayShops.some(s=>String(s.id)===String(selectedStoreId))}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -3585,7 +3633,7 @@ export default function App() {
                     <CheckoutScreen
                       userProfile={userProfile}
                       session={session}
-                      shops={visibleShops}
+                      shops={displayShops}
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
@@ -3622,7 +3670,7 @@ export default function App() {
                 <OrderHistoryScreen
                   ownerUid={session?.user?.id}
                   pickupOrders={orders}
-                  loadState={ordersLoadState.uid===session?.user?.id?ordersLoadState.status:"loading"}
+                  loadState={ordersLoadState.uid===(session?.user?.id??null)?ordersLoadState.status:"loading"}
                   onRefresh={()=>window.dispatchEvent(new Event("localeats-orders-refresh"))}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   shops={visibleShops}
@@ -3633,6 +3681,9 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
+
+          {/* Decorative fly-to-cart arc after accepted local-cart actions only. */}
+          <CartFlightFeedback />
 
           {/* Interactive Floating Cart Button */}
           <FloatingCartButton
@@ -4004,7 +4055,6 @@ function HomeScreen({
       console.error("Failed to save sort preference:", e);
     }
   }, [sortBy]);
-  const [isScrolled, setIsScrolled] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -4029,70 +4079,20 @@ function HomeScreen({
     }
   }, [isHeaderSearching]);
 
-  useEffect(() => {
-    if (!headerRef.current) return;
-    const observer = new ResizeObserver(() => {
-      if (headerRef.current) {
-        setHeaderHeight(headerRef.current.getBoundingClientRect().height);
-      }
-    });
-    observer.observe(headerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const [showFilters, setShowFilters] = useState(true);
-  const lastScrollYRef = useRef(0);
-
-  useEffect(() => {
-    let ticking = false;
-    const handleScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentY = window.scrollY;
-          setIsScrolled(currentY > 15);
-
-          if (currentY <= 30) {
-            setShowFilters(true);
-          } else if (currentY > lastScrollYRef.current + 8) {
-            // Scrolling down -> slide filters up into top bar for clear view
-            setShowFilters(false);
-          } else if (currentY < lastScrollYRef.current - 12) {
-            // Scrolling up -> reveal filters
-            setShowFilters(true);
-          }
-          lastScrollYRef.current = currentY;
-          ticking = false;
-        });
-        ticking = true;
-      }
+  // Measure the fixed header before paint, then only update when its actual
+  // integer height changes (e.g. dismissing the promo). Avoid scroll/resize
+  // feedback loops and first-frame content jumps.
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = () => {
+      const measured = header.offsetHeight;
+      setHeaderHeight(previous => previous === measured ? previous : measured);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  // Touch swipe support for smooth mobile interaction
-  useEffect(() => {
-    let touchStartY = 0;
-    const handleTouchStart = (e: TouchEvent) => {
-      touchStartY = e.touches[0].clientY;
-    };
-    const handleTouchMove = (e: TouchEvent) => {
-      const currentTouchY = e.touches[0].clientY;
-      const diff = touchStartY - currentTouchY;
-      if (window.scrollY > 30) {
-        if (diff > 15) {
-          setShowFilters(false);
-        } else if (diff < -15) {
-          setShowFilters(true);
-        }
-      }
-    };
-    window.addEventListener("touchstart", handleTouchStart, { passive: true });
-    window.addEventListener("touchmove", handleTouchMove, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
-    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(header);
+    return () => observer?.disconnect();
   }, []);
 
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
@@ -4427,11 +4427,7 @@ function HomeScreen({
       <header
         ref={headerRef}
         id="home-sticky-header"
-        className={`fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b transition-all duration-200 rounded-none w-full pt-[env(safe-area-inset-top,0px)] ${
-          isScrolled
-            ? "border-slate-200/90 dark:border-slate-800 shadow-xs"
-            : "border-slate-100 dark:border-slate-850"
-        }`}
+        className="fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-850 rounded-none w-full pt-[env(safe-area-inset-top,0px)]"
       >
         <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
           
@@ -4541,12 +4537,7 @@ function HomeScreen({
                 className="relative before:absolute before:-inset-1 before:content-[''] w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300 focus-visible:outline-2 focus-visible:outline-orange-500"
                 aria-label="Notifications"
               >
-                <Bell className="w-4.5 h-4.5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-orange-500 text-white text-[10px] whitespace-nowrap font-black rounded-full flex items-center justify-center border border-white dark:border-slate-900">
-                    {unreadCount > 9 ? "9+" : unreadCount}
-                  </span>
-                )}
+                <CustomerNotificationBell unreadCount={unreadCount} />
               </button>
               <div className="relative">
                 <button
@@ -4631,7 +4622,7 @@ function HomeScreen({
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
           <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white text-[11px] sm:text-xs py-2 px-3 sm:px-4 flex items-center justify-between gap-2 border-t border-white/15 shadow-inner">
             <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
-              <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
+              <Tag className="w-4 h-4 shrink-0 text-orange-100" />
               <span className="truncate font-semibold tracking-tight">
                 ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-2 py-1 rounded text-white select-all font-bold">LOCALEATS10</span>
               </span>
@@ -4959,16 +4950,10 @@ function HomeScreen({
 
         {/* Sliding Unified Filter Chips Bar: [All 🍽️, Favorites ❤️, Nearby 📍, Kota 🍞, Braai 🔥, Open Now, Top Rated, Fastest, Halal] */}
         {currentScreen === "home" && (
-          <AnimatePresence initial={false}>
-            {showFilters && (
-              <motion.div
-                key="home-filter-chips-bar"
-                initial={{ height: 0, opacity: 0, y: -6 }}
-                animate={{ height: "auto", opacity: 1, y: 0 }}
-                exit={{ height: 0, opacity: 0, y: -6 }}
-                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
-              >
+          <div
+            id="home-filter-chips-bar"
+            className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+          >
                 <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
                     {filterChipsList.map((chip) => {
@@ -5004,9 +4989,7 @@ function HomeScreen({
                     })}
                   </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </div>
         )}
       </header>
 
@@ -5153,6 +5136,12 @@ function HomeScreen({
             </div>
           </div>
 
+          {shops.some(shop=>shop.is_test_store===true) && (
+            <p role="status" className="mb-3 text-xs font-semibold text-orange-700 dark:text-orange-300">
+              Preview test location: My-Kota is shown here for UI testing only.
+              Its real shop remains in Ivory Park. No real order can be submitted.
+            </p>
+          )}
           {renderedShopList}
         </section>
 
@@ -8307,6 +8296,10 @@ function StoreInfoScreen({
 
   useEffect(() => {
     if (!shop?.id) return;
+    if (shop.is_test_store) {
+      setIsMenuLoading(false);
+      return;
+    }
     let isMounted = true;
     const fetchMenu = async () => {
       setIsMenuLoading(true);
@@ -8370,12 +8363,14 @@ function StoreInfoScreen({
     };
     void fetchMenu();
     return () => { isMounted = false; };
-  }, [shop?.id,readOnlyClosed]);
+  }, [shop?.id,readOnlyClosed,shop.is_test_store]);
 
   const storeStatus = getStoreStatus();
+  const menuReadOnly = readOnlyClosed || (shop.is_test_store === true && !storeStatus.isOpen);
 
   // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
   const shopMenu = useMemo(() => {
+    if (shop.is_test_store) return shop.menu;
     // Do not invent fallback dishes for a closed shop, even while loading.
     if (readOnlyClosed) return apiMenu ?? [];
     if (apiMenu !== null) {
@@ -8756,7 +8751,12 @@ function StoreInfoScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
-      <RestaurantSchema shop={shop} />
+      {!shop.is_test_store && <RestaurantSchema shop={shop} />}
+      {shop.is_test_store===true && (
+        <div role="status" className="bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-200 px-4 py-2 text-xs font-bold text-center">
+          Simulated nearby listing for Preview testing. Actual location: {shop.address}. No real order, payment or merchant notification.
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
@@ -8837,7 +8837,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {readOnlyClosed ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
+                {menuReadOnly ? "Ordering unavailable" : (shop.delivery_eta || "30-45 mins")}
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -8965,7 +8965,7 @@ function StoreInfoScreen({
                 </div>
               )}
 
-              {readOnlyClosed && (
+              {menuReadOnly && (
                 <div role="status" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
                   Closed right now · You can browse the real menu, but ordering is unavailable.
                   {shop.opening_time && <span className="block text-xs text-slate-500 mt-1">Opens {shop.opening_time}</span>}
@@ -9174,7 +9174,7 @@ function StoreInfoScreen({
                                     key={item.id}
                                     item={item}
                                     shop={shop}
-                                    onSelect={readOnlyClosed ? undefined : (item) =>
+                                    onSelect={menuReadOnly ? undefined : (item) =>
                                       setSelectedItemForQuantity(item)
                                     }
                                     showAlert={showAlert}
@@ -9594,10 +9594,10 @@ function StoreInfoScreen({
 
       <QuantityModal
         item={selectedItemForQuantity}
-        isOpen={!readOnlyClosed && !!selectedItemForQuantity}
+        isOpen={!menuReadOnly && !!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
-          if (readOnlyClosed) return;
+          if (menuReadOnly) return;
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,

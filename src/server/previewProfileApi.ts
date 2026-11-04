@@ -9,7 +9,7 @@ export type PreviewProfileServices={
   insertProfile:(row:Record<string,unknown>)=>Promise<PreviewProfileRow|null>;
 };
 
-const BRANCH="repair/customer-profile-p4-safe-api-preview-01";
+const BRANCH="repair/customer-profile-p5-staging-auth-readiness-01";
 const PRODUCTION_SUPABASE_REF="phdjumtqkooyppxozqsi";
 const PRODUCTION_FIREBASE_PROJECT="localeats-5e26e";
 const json=(status:number,body:Record<string,unknown>)=>Response.json(body,{
@@ -24,13 +24,13 @@ const json=(status:number,body:Record<string,unknown>)=>Response.json(body,{
  */
 export function previewProfileEnabled(env:Record<string,string|undefined>):boolean {
   if(env.VERCEL_ENV!=="preview" || env.VERCEL_GIT_COMMIT_REF!==BRANCH ||
-     env.PROFILE_P4_ENABLE_STAGING_WRITES!=="true")return false;
-  const ref=env.PROFILE_P4_STAGING_SUPABASE_REF;
-  const url=env.PROFILE_P4_STAGING_SUPABASE_URL;
+     env.PROFILE_P5_ENABLE_STAGING_WRITES!=="true")return false;
+  const ref=env.PROFILE_P5_STAGING_SUPABASE_REF;
+  const url=env.PROFILE_P5_STAGING_SUPABASE_URL;
   if(!ref || !/^[a-z0-9]{10,32}$/.test(ref) || ref===PRODUCTION_SUPABASE_REF ||
-     !url || !env.PROFILE_P4_STAGING_SUPABASE_SECRET_KEY ||
-     !env.PROFILE_P4_STAGING_FIREBASE_PROJECT_ID ||
-     env.PROFILE_P4_STAGING_FIREBASE_PROJECT_ID===PRODUCTION_FIREBASE_PROJECT)return false;
+     !url || !env.PROFILE_P5_STAGING_SUPABASE_SECRET_KEY ||
+     !env.PROFILE_P5_STAGING_FIREBASE_PROJECT_ID || !env.PROFILE_P5_STAGING_FIREBASE_WEB_API_KEY ||
+     env.PROFILE_P5_STAGING_FIREBASE_PROJECT_ID===PRODUCTION_FIREBASE_PROJECT)return false;
   try {
     const parsed=new URL(url);
     if(parsed.protocol!=="https:" || parsed.username || parsed.password ||
@@ -39,28 +39,61 @@ export function previewProfileEnabled(env:Record<string,string|undefined>):boole
   }catch{return false;}
 }
 
-/** The only place where server-side credentials may be read. */
+/**
+ * Ask Firebase Authentication's own REST API to validate the ID token for the
+ * explicitly configured staging project. No Firebase Admin SDK or service
+ * account key is used; the staging Web API key selects the Auth project.
+ * The JWT claims are untrusted until Google's lookup succeeds.
+ */
+export async function verifyStagingFirebaseToken(
+  token:string,
+  projectId:string,
+  apiKey:string,
+  lookupFetch:typeof fetch=fetch,
+):Promise<PreviewIdentity|null>{
+  if(!token || token.length>8192 || !projectId || !apiKey)return null;
+  let claims:Record<string,unknown>;
+  try{
+    const parts=token.split(".");
+    if(parts.length!==3) return null;
+    claims=JSON.parse(Buffer.from(parts[1],"base64url").toString("utf8"));
+    if(claims.aud!==projectId || claims.iss!=="https://securetoken.google.com/"+projectId ||
+       typeof claims.sub!=="string" || !claims.sub.trim() || claims.sub.length>128)
+      return null;
+  }catch{return null;}
+  try{
+    const response=await lookupFetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key="+encodeURIComponent(apiKey),
+      {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({idToken:token}),
+       cache:"no-store",signal:AbortSignal.timeout(7000)},
+    );
+    if(!response.ok)return null;
+    const result=await response.json() as {users?:Array<{localId?:string;email?:string;disabled?:boolean;validSince?:string}>};
+    const user=result?.users?.length===1 ? result.users[0]:null;
+    if(!user || user.disabled || user.localId!==claims.sub)return null;
+    const validSince=Number(user.validSince??0);
+    const authTime=Number(claims.auth_time??0);
+    if(Number.isFinite(validSince) && validSince>0 &&
+       (!Number.isFinite(authTime) || authTime<validSince))return null;
+    return {uid:user.localId,email:typeof user.email==="string"?user.email:undefined};
+  }catch{return null;}
+}
+
+/** Uses only credentials from a separately opted-in staging environment. */
 export async function getStagingProfileServices(
   env:Record<string,string|undefined>,
 ):Promise<PreviewProfileServices|null>{
   if(!previewProfileEnabled(env))return null;
-  const [{createClient},{getApps,initializeApp},{getAuth}]=await Promise.all([
-    import("@supabase/supabase-js"),
-    import("firebase-admin/app"),
-    import("firebase-admin/auth"),
-  ]);
-  const adminApp=getApps().find(app=>app.name==="p4-profile-staging") ??
-    initializeApp({projectId:env.PROFILE_P4_STAGING_FIREBASE_PROJECT_ID},"p4-profile-staging");
+  const {createClient}=await import("@supabase/supabase-js");
   const db=createClient(
-    env.PROFILE_P4_STAGING_SUPABASE_URL!,
-    env.PROFILE_P4_STAGING_SUPABASE_SECRET_KEY!,
+    env.PROFILE_P5_STAGING_SUPABASE_URL!,
+    env.PROFILE_P5_STAGING_SUPABASE_SECRET_KEY!,
     {auth:{autoRefreshToken:false,persistSession:false}},
   );
   return {
-    verifyFirebaseToken:async(token)=>{
-      const decoded=await getAuth(adminApp).verifyIdToken(token);
-      return {uid:decoded.uid,email:decoded.email};
-    },
+    verifyFirebaseToken:(token)=>verifyStagingFirebaseToken(
+      token,env.PROFILE_P5_STAGING_FIREBASE_PROJECT_ID!,env.PROFILE_P5_STAGING_FIREBASE_WEB_API_KEY!,
+    ),
     readProfile:async(uid)=>{
       const {data,error}=await db.from("profiles").select("*").eq("user_id",uid).maybeSingle();
       if(error)throw error;

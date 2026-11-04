@@ -14,11 +14,17 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null):P
   const point=requireRealLocation(location);
   const result=await customerPickupApi.shops(point);
   if(!Array.isArray(result.shops)) throw new Error("The shop service returned an invalid catalog.");
-  return Promise.all(result.shops.map(async shop=>{
+  // One malformed or temporarily unavailable shop menu must not hide every
+  // other independently verified merchant. Never invent a menu or price.
+  const checks=await Promise.allSettled(result.shops.map(async shop=>{
     const menu=await customerPickupApi.menu(shop.id);
-    if(!Array.isArray(menu.menu_items)) throw new Error("The menu service returned an invalid menu.");
+    if(!Array.isArray(menu.menu_items))throw new Error("The menu service returned an invalid menu.");
     return mapPickupShop(shop,menu.menu_items);
   }));
+  const verified=checks.flatMap(check=>check.status==="fulfilled"?[check.value]:[]);
+  if(result.shops.length>0 && verified.length===0)
+    throw new Error("Nearby shops were found, but their menus could not be verified. Please retry.");
+  return verified;
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string) {
