@@ -218,8 +218,14 @@ import { Session } from "@supabase/supabase-js";
 import { LocalEatsLogo } from "./components/LocalEatsLogo";
 import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 
-import { CheckoutScreen } from "./screens/CheckoutScreen";
-import { OrderTrackingScreen } from "./screens/OrderTrackingScreen";
+// These full-page modules are not needed to paint Home or Discover.
+// Their existing Suspense/loading and error boundaries remain unchanged.
+const CheckoutScreen = lazy(() =>
+  import("./screens/CheckoutScreen").then(({ CheckoutScreen }) => ({ default: CheckoutScreen }))
+);
+const OrderTrackingScreen = lazy(() =>
+  import("./screens/OrderTrackingScreen").then(({ OrderTrackingScreen }) => ({ default: OrderTrackingScreen }))
+);
 import { RiderHandshakeInstructionPrompt } from "./components/SecureDeliveryHandshake";
 
 import {
