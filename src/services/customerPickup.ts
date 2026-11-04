@@ -54,6 +54,13 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  const pending=stored ? JSON.parse(stored) : payload;
  if(!pending)throw new Error("Review a quote before submitting.");
  if(stored && payload && JSON.stringify(pending)!==JSON.stringify(payload))throw new Error("A previous order outcome is unresolved. Use Retry previous submission first.");
+ // A retry with an unknown outcome must preserve the original price and
+ // payment consent. Never trust a replayed response more than a new one.
+ const consentTotalMinor=pending?.consent?.total_minor;
+ const consentPaymentMethod=pending?.payment_method;
+ if(!Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
+    !["cash","card_machine"].includes(consentPaymentMethod))
+  throw new Error("The pending pickup request has invalid consent or payment details.");
  sessionStorage.setItem(key,JSON.stringify(pending));
  let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
  try{result=await customerPickupApi.create(pending);}catch(error){
@@ -61,8 +68,9 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
   throw error;
  }
  if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
- const persistedTotalMinor=Math.round(Number(result.order.total_price)*100);
- if(!Number.isSafeInteger(persistedTotalMinor) || (review && persistedTotalMinor!==review.quote.total_minor) || (!result.replayed && result.order.payment_method!==pending.payment_method))
+ const persistedTotalMinor=result.order.total_price == null ? NaN : Math.round(Number(result.order.total_price)*100);
+ if(!Number.isSafeInteger(persistedTotalMinor) || persistedTotalMinor!==consentTotalMinor ||
+    result.order.payment_method!==consentPaymentMethod)
   throw new Error("The API returned an order that does not match the confirmed total or payment choice.");
  sessionStorage.removeItem(key);
  return result.order;
