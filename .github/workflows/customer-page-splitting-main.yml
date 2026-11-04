@@ -1,0 +1,47 @@
+name: Customer Page Code Splitting Main Release Gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'tests/customer-page-splitting-main.test.mjs'
+      - '.github/workflows/customer-page-splitting-main.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client-page-splitting:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Route lazy imports, discovery, pickup, cache and checkout regressions
+        run: node --experimental-strip-types --test tests/customer-page-splitting-main.test.mjs tests/customer-deferred-modules-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs tests/pickup-activation.test.mjs tests/original-pickup.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Full client build
+        run: npm run build
+      - name: Verify separate checkout/tracking chunks and main JS reduction
+        run: |
+          node --input-type=module - <<'NODE'
+          import {readdirSync,statSync} from 'node:fs';
+          import {join} from 'node:path';
+          import assert from 'node:assert/strict';
+          const dir='dist/assets';
+          const assets=readdirSync(dir).filter(n=>n.endsWith('.js')).map(n=>({name:n,bytes:statSync(join(dir,n)).size}));
+          for(const a of assets.sort((a,b)=>b.bytes-a.bytes))console.log((a.bytes/1024).toFixed(1)+' KiB  '+a.name);
+          assert.ok(assets.some(a=>a.name.startsWith('CheckoutScreen-')),'Missing deferred checkout chunk');
+          assert.ok(assets.some(a=>a.name.startsWith('OrderTrackingScreen-')),'Missing deferred tracking/map chunk');
+          const main=assets.filter(a=>/^index-[^-]+\.js$/.test(a.name)).sort((a,b)=>b.bytes-a.bytes)[0];
+          assert.ok(main,'Missing entrypoint JavaScript bundle');
+          console.log('Largest index module bytes:',main.bytes);
+          // Prior baseline before route splitting: 2,400,580 bytes (2,344.3 KiB).
+          assert.ok(main.bytes<2_300_000,'Main bundle is not meaningfully smaller than baseline');
+          NODE
