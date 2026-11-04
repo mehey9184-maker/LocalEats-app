@@ -59,3 +59,18 @@ test("map views keep their original offline UX and explicit loading fallback",()
   assert.match(app,/View List Instead/);
   assert.match(app,/Switch to List View/);
 });
+
+
+test("registration location maps remain usable but no longer load Leaflet at app startup",()=>{
+  const completeProfile=readFileSync(new URL("../src/screens/auth/CompleteProfileScreen.tsx",import.meta.url),"utf8");
+  assert.doesNotMatch(completeProfile,/^import \{ AddressSearch, LocationPickerMap \} from "\.\.\/\.\.\/components\/MapComponents"/m);
+  assert.match(completeProfile,/const AddressSearch = lazy\(\(\) => import\("\.\.\/\.\.\/components\/MapComponents"\)/);
+  assert.match(completeProfile,/const LocationPickerMap = lazy\(\(\) => import\("\.\.\/\.\.\/components\/MapComponents"\)/);
+  assert.match(completeProfile,/WidgetErrorBoundary fallbackName="Location Search"/);
+  assert.match(completeProfile,/WidgetErrorBoundary fallbackName="Location Picker"/);
+  assert.match(completeProfile,/<Suspense/);
+  assert.match(completeProfile,/<AddressSearch/);
+  assert.match(completeProfile,/<LocationPickerMap/);
+  assert.match(completeProfile,/setLatitude\(data\.lat\)/);
+  assert.match(completeProfile,/setLongitude\(data\.lng\)/);
+});
