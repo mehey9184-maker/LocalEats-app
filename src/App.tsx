@@ -17,6 +17,7 @@ import {
   Dispatch,
   SetStateAction,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -4054,7 +4055,6 @@ function HomeScreen({
       console.error("Failed to save sort preference:", e);
     }
   }, [sortBy]);
-  const [isScrolled, setIsScrolled] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -4079,70 +4079,20 @@ function HomeScreen({
     }
   }, [isHeaderSearching]);
 
-  useEffect(() => {
-    if (!headerRef.current) return;
-    const observer = new ResizeObserver(() => {
-      if (headerRef.current) {
-        setHeaderHeight(headerRef.current.getBoundingClientRect().height);
-      }
-    });
-    observer.observe(headerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  const [showFilters, setShowFilters] = useState(true);
-  const lastScrollYRef = useRef(0);
-
-  useEffect(() => {
-    let ticking = false;
-    const handleScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(() => {
-          const currentY = window.scrollY;
-          setIsScrolled(currentY > 15);
-
-          if (currentY <= 30) {
-            setShowFilters(true);
-          } else if (currentY > lastScrollYRef.current + 8) {
-            // Scrolling down -> slide filters up into top bar for clear view
-            setShowFilters(false);
-          } else if (currentY < lastScrollYRef.current - 12) {
-            // Scrolling up -> reveal filters
-            setShowFilters(true);
-          }
-          lastScrollYRef.current = currentY;
-          ticking = false;
-        });
-        ticking = true;
-      }
+  // Measure the fixed header before paint, then only update when its actual
+  // integer height changes (e.g. dismissing the promo). Avoid scroll/resize
+  // feedback loops and first-frame content jumps.
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const measure = () => {
+      const measured = header.offsetHeight;
+      setHeaderHeight(previous => previous === measured ? previous : measured);
     };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  // Touch swipe support for smooth mobile interaction
-  useEffect(() => {
-    let touchStartY = 0;
-    const handleTouchStart = (e: TouchEvent) => {
-      touchStartY = e.touches[0].clientY;
-    };
-    const handleTouchMove = (e: TouchEvent) => {
-      const currentTouchY = e.touches[0].clientY;
-      const diff = touchStartY - currentTouchY;
-      if (window.scrollY > 30) {
-        if (diff > 15) {
-          setShowFilters(false);
-        } else if (diff < -15) {
-          setShowFilters(true);
-        }
-      }
-    };
-    window.addEventListener("touchstart", handleTouchStart, { passive: true });
-    window.addEventListener("touchmove", handleTouchMove, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
-    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(header);
+    return () => observer?.disconnect();
   }, []);
 
   const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
@@ -4477,11 +4427,7 @@ function HomeScreen({
       <header
         ref={headerRef}
         id="home-sticky-header"
-        className={`fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b transition-all duration-200 rounded-none w-full pt-[env(safe-area-inset-top,0px)] ${
-          isScrolled
-            ? "border-slate-200/90 dark:border-slate-800 shadow-xs"
-            : "border-slate-100 dark:border-slate-850"
-        }`}
+        className="fixed top-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-100 dark:border-slate-850 rounded-none w-full pt-[env(safe-area-inset-top,0px)]"
       >
         <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
           
@@ -4676,7 +4622,7 @@ function HomeScreen({
         {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
           <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white text-[11px] sm:text-xs py-2 px-3 sm:px-4 flex items-center justify-between gap-2 border-t border-white/15 shadow-inner">
             <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
-              <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
+              <Tag className="w-4 h-4 shrink-0 text-orange-100" />
               <span className="truncate font-semibold tracking-tight">
                 ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-2 py-1 rounded text-white select-all font-bold">LOCALEATS10</span>
               </span>
@@ -5004,16 +4950,10 @@ function HomeScreen({
 
         {/* Sliding Unified Filter Chips Bar: [All 🍽️, Favorites ❤️, Nearby 📍, Kota 🍞, Braai 🔥, Open Now, Top Rated, Fastest, Halal] */}
         {currentScreen === "home" && (
-          <AnimatePresence initial={false}>
-            {showFilters && (
-              <motion.div
-                key="home-filter-chips-bar"
-                initial={{ height: 0, opacity: 0, y: -6 }}
-                animate={{ height: "auto", opacity: 1, y: 0 }}
-                exit={{ height: 0, opacity: 0, y: -6 }}
-                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
-              >
+          <div
+            id="home-filter-chips-bar"
+            className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+          >
                 <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
                     {filterChipsList.map((chip) => {
@@ -5049,9 +4989,7 @@ function HomeScreen({
                     })}
                   </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </div>
         )}
       </header>
 
