@@ -36,13 +36,16 @@ self.addEventListener('install', (event) => {
 
 // Activate Event: Claim clients and clean up stale legacy caches
 self.addEventListener('activate', (event) => {
-  const activeCacheNames = [CACHE_NAME_APP_SHELL];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((name) => {
-          if (!activeCacheNames.includes(name)) {
-            console.log('[Service Worker] Pruning legacy cache:', name);
+          // Only prune caches owned by this legacy worker. Do not wipe
+          // Workbox precaches, login-provider storage or unrelated PWA assets.
+          const obsoleteShell = name.startsWith('localeats-app-shell-') && name !== CACHE_NAME_APP_SHELL;
+          const privateApi = name.startsWith('localeats-api-');
+          if (obsoleteShell || privateApi) {
+            console.log('[Service Worker] Pruning owned legacy cache:', name);
             return caches.delete(name);
           }
         })
