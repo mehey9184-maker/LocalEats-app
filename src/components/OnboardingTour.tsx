@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShoppingBag, MapPin, Bike, CheckCircle, ChevronRight, X, Sparkles } from 'lucide-react';
+import { ShoppingBag, MapPin, CheckCircle, ChevronRight, X, Sparkles } from 'lucide-react';
 
 const TOUR_STEPS = [
   {
@@ -11,14 +11,14 @@ const TOUR_STEPS = [
   },
   {
     icon: MapPin,
-    title: "Pinpoint Delivery",
-    description: "Use our interactive map to drop a pin exactly at your door for perfect, delay-free deliveries.",
+    title: "Find Nearby Pickup",
+    description: "Allow location access to find pickup shops within 4 km.",
     badge: "Step 2 of 3"
   },
   {
-    icon: Bike,
-    title: "Fast & Tracked",
-    description: "Follow your order in real-time—from the moment the chef starts cooking until it's in your hands.",
+    icon: CheckCircle,
+    title: "Collect and Pay at the Shop",
+    description: "Check Orders for your pickup status. When it’s ready, collect and pay at the shop.",
     badge: "Step 3 of 3"
   }
 ];

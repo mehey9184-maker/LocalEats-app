@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { ArrowRight } from "lucide-react";
 import { LocalEatsLogo } from "../components/LocalEatsLogo";
 
@@ -28,25 +28,7 @@ export function SplashScreen({
     return () => clearTimeout(timeout);
   }, [session, onGuestBrowse]);
 
-  const playClick = () => {
-    // Professional crisp click sound
-    const click = new Audio(
-      "https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3",
-    );
-    click.volume = 0.4;
-    click.play().catch((e) => console.log("Click sound failed:", e));
-  };
-
-  const handleGetStarted = () => {
-    playClick();
-    onNext();
-  };
-
-  const handleSignIn = () => {
-    playClick();
-    onLogin();
-  };
-
+  const reduceMotion = useReducedMotion();
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     if (hour < 12) return "Good morning";
@@ -116,29 +98,25 @@ export function SplashScreen({
               near you.
             </h2>
             <p className="text-gray-100 mt-4 text-base md:text-lg font-medium opacity-90">
-              Fresh ingredients, street-style, delivered fast by our bicycle
-              fleet.
+              Find nearby kitchens, choose your meal, and collect and pay at the shop.
             </p>
           </div>
 
           {/* Action Row */}
           <div className="flex flex-col sm:flex-row gap-4 w-full">
             <motion.button
-              whileHover={{ y: -2, scale: 1.01 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={handleGetStarted}
+              whileHover={reduceMotion ? undefined : { y: -2, scale: 1.01 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.98 }}
+              onClick={onNext}
               className="flex-1 bg-brand-orange text-white py-4 px-8 rounded-2xl font-bold text-lg hover:bg-orange-600 transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center space-x-2 cursor-pointer"
             >
               <span>Get Started</span>
               <ArrowRight className="h-5 w-5" />
             </motion.button>
             <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.96 }}
-              onClick={() => {
-                playClick();
-                onGuestBrowse();
-              }}
+              whileHover={reduceMotion ? undefined : { scale: 1.02 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.96 }}
+              onClick={onGuestBrowse}
               className="px-8 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-md text-white rounded-2xl font-bold transition-all cursor-pointer"
             >
               Explore as Guest
@@ -147,10 +125,10 @@ export function SplashScreen({
 
           {/* Small Footer */}
           <div className="mt-8 flex items-center gap-2">
-            <p className="text-white/60 text-sm">Have account already?</p>
+            <p className="text-white/60 text-sm">Already have an account?</p>
             <button
               className="text-white font-bold text-sm hover:text-brand-orange underline underline-offset-4 transition-colors cursor-pointer"
-              onClick={handleSignIn}
+              onClick={onLogin}
             >
               Log In
             </button>

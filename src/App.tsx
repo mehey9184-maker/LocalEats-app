@@ -268,7 +268,6 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { ContactScreen } from "./screens/ContactScreen";
 import { OrderHistoryScreen } from "./screens/OrderHistoryScreen";
 import {
-  detectTownship,
   TOWNSHIPS,
   TownshipConfig,
 } from "./lib/townshipHelper";
@@ -3895,9 +3894,6 @@ function HomeScreen({
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
-  const currentTownship = useMemo(() => {
-    return detectTownship(userLocation?.lat, userLocation?.lng, userProfile?.address);
-  }, [userLocation, userProfile?.address]);
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -4526,6 +4522,7 @@ function HomeScreen({
                   setTimeout(() => document.getElementById("header-search-input")?.focus(), 100);
                 }}
                 className="w-9 h-9 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full hover:bg-white dark:hover:bg-slate-700 transition-all cursor-pointer text-slate-700 dark:text-slate-300"
+                id="tour-search-bar"
                 aria-label="Search stores"
               >
                 <Search className="w-4.5 h-4.5" />
@@ -4958,6 +4955,7 @@ function HomeScreen({
             {showFilters && (
               <motion.div
                 key="home-filter-chips-bar"
+                id="tour-categories"
                 initial={{ height: 0, opacity: 0, y: -6 }}
                 animate={{ height: "auto", opacity: 1, y: 0 }}
                 exit={{ height: 0, opacity: 0, y: -6 }}
@@ -5014,12 +5012,12 @@ function HomeScreen({
               <span className="select-none">👋</span>
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 font-medium">
-              Order fresh local meals & goods delivered in <span className="font-semibold text-orange-600 dark:text-orange-400">{currentTownship.name}</span>
+              Find nearby kitchens and collect your meal at the shop.
             </p>
           </div>
           <div className="flex items-center shrink-0">
-            <span className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-bold border border-orange-200 dark:border-orange-800/60 shadow-xs">
-              📍 Delivering to {currentTownship.name}
+            <span id="tour-pickup-details" className="inline-flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-full text-xs font-bold border border-orange-200 dark:border-orange-800/60 shadow-xs">
+              Pickup · Pay at the shop
             </span>
           </div>
         </div>

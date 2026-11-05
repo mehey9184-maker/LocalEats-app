@@ -11,28 +11,28 @@ interface TourStep {
 const INTERACTIVE_TOUR_STEPS: TourStep[] = [
   {
     targetId: 'tour-search-bar',
-    title: 'Instant Search Portal 🔍',
-    description: 'Tap here to instantly look up your favorite local Kotas, artisan chips, or traditional spaza kitchen recipes.',
+    title: 'Search for a shop',
+    description: 'Find nearby shops by name or search for a meal.',
   },
   {
-    targetId: 'tour-delivery-address',
-    title: 'GPS Delivery Pinpoint 📍',
-    description: 'Displays your delivery location. Tap Set to pin your exact entrance door on live maps for seamless rider handovers.',
+    targetId: 'tour-pickup-details',
+    title: 'Pickup and payment',
+    description: 'Collect at the shop and pay there by cash or card machine.',
   },
   {
     targetId: 'tour-categories',
-    title: 'Cuisine Category Chips 🌶️',
-    description: 'Swiftly swipe and tap to filter local merchants by culinary style, ratings, or distance with one simple click.',
+    title: 'Filter nearby shops',
+    description: 'Use the filters to narrow the nearby pickup list.',
   },
   {
-    targetId: 'tour-nav-discover',
-    title: 'Exotic Map Explorer 🗺️',
-    description: 'Eager to browse? Tap Discover to view all merchant kitchens plotted dynamically right over your local neighborhood map coordinates.',
+    targetId: 'nav-tab-explore',
+    title: 'Explore the map',
+    description: 'Open Map to see where nearby pickup shops are.',
   },
   {
     targetId: 'tour-help-trigger',
-    title: 'Help & Compliance Hub 🛡️',
-    description: 'Confused about delivery surcharges or privacy? Tap here at any time to query our help system or read POPIA terms!',
+    title: 'Get help',
+    description: 'Find help with pickup or read the privacy information.',
   }
 ];
 
