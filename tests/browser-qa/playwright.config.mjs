@@ -1,0 +1,42 @@
+import {defineConfig,devices} from "@playwright/test";
+
+export default defineConfig({
+  testDir:".",
+  testMatch:"*.spec.mjs",
+  fullyParallel:false,
+  retries:0,
+  workers:1,
+  timeout:60000,
+  expect:{timeout:20000},
+  reporter:[["line"],["html",{outputFolder:"playwright-report",open:"never"}]],
+  outputDir:"test-results/browser-qa",
+  use:{
+    baseURL:"http://127.0.0.1:4174",
+    trace:"retain-on-failure",
+    screenshot:"only-on-failure",
+    video:"retain-on-failure",
+    ...devices["Desktop Chrome"],
+    serviceWorkers:"block",
+    permissions:["geolocation"],
+    geolocation:{latitude:-26.1,longitude:28.03},
+  },
+  webServer:{
+    command:"npx vite --host 127.0.0.1 --port 4174 --strictPort",
+    url:"http://127.0.0.1:4174",
+    timeout:120000,
+    reuseExistingServer:false,
+    env:{
+      VITE_LOCAL_FIREBASE_EMULATORS:"true",
+      VITE_FIREBASE_PROJECT_ID:"demo-localeats-browser-qa",
+      VITE_FIREBASE_AUTH_DOMAIN:"demo-localeats-browser-qa.firebaseapp.com",
+      VITE_FIREBASE_API_KEY:"browser-qa-local-only",
+      VITE_FIREBASE_APP_ID:"1:123:web:localonly",
+      VITE_FIREBASE_STORAGE_BUCKET:"demo-localeats-browser-qa.appspot.com",
+      VITE_FIREBASE_MESSAGING_SENDER_ID:"123",
+      VITE_FIREBASE_FIRESTORE_DATABASE_ID:"(default)",
+      VITE_PICKUP_ORDERING_ENABLED:"false",
+      VITE_LOCALEATS_API_URL:"",
+      VITE_SENTRY_DSN:"",
+    },
+  },
+});
