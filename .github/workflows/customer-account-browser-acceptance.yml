@@ -1,0 +1,49 @@
+name: Customer Account Browser Acceptance (Firebase demo only)
+on:
+  push:
+    branches: [fix/client-account-trust-audit-20261106]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-acceptance:
+    name: Chromium guest/login/logout/account-switch/offline — localhost only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CI: "true"
+      VITE_LOCAL_FIREBASE_EMULATORS: "true"
+      VITE_PICKUP_ORDERING_ENABLED: "false"
+      VITE_FIREBASE_PROJECT_ID: demo-localeats-browser-qa
+      VITE_FIREBASE_FIRESTORE_DATABASE_ID: "(default)"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - name: Install pinned Playwright runner without changing lockfile
+        run: npm install --no-save --package-lock=false @playwright/test@1.56.1
+      - name: Install local Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Real browser, local Vite and demo Firebase emulators only
+        run: >
+          npx --yes firebase-tools@15.34.2 emulators:exec
+          --project demo-localeats-browser-qa
+          --only auth,firestore
+          "npx playwright test --config tests/browser-qa/playwright.config.mjs"
+      - name: Upload browser failure screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-browser-qa
+          path: |
+            playwright-report
+            test-results/browser-qa
+          retention-days: 7
+          if-no-files-found: ignore

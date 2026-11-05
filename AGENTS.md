@@ -140,3 +140,6 @@ The owner clarified that a guest tapping Profile should open the **existing Logi
 
 ## Client account trust review — 2026-11-06
 Review-only stacked branch `fix/client-account-trust-audit-20261106` enforces real logout for Settings/Profile, guest and anonymous denial for private account actions, account-isolated cached data, verified UID before favoriting/history/push, truthful support/review/profile saves and no client-inferred staff roles. The secure profile API, deployed Firestore security policies, hosted two-account acceptance, live ordering and delivery are **not activated**. Read `docs/CLIENT_ACCOUNT_TRUST_REPAIR_20261106.md`. Preserve the original customer UI, and do not merge or deploy without owner approval.
+
+## Local browser acceptance — 2026-11-06
+Real browser QA for stacked Client PR #61 uses only hard-coded demo-localeats-browser-qa Firebase Auth/Firestore emulators (localhost 9099/8080), Vite localhost port 4174 and aborts all external browser requests. No real accounts, Production, ordering, database writes or hosted Preview claim. See docs/CLIENT_ACCOUNT_BROWSER_ACCEPTANCE_20261106.md. Secure hosted backend and deployed rules release gates remain blocked.
