@@ -10,6 +10,9 @@ const pickupService=readFileSync(new URL("../src/services/customerPickup.ts",imp
 test("first-customer checkout offers only the existing Counter Pickup card",()=>{
   assert.match(checkout,/const \[deliveryType, setDeliveryType\] = useState<"collection" \| "delivery">\(\s*"collection"/);
   assert.match(checkout,/Counter Pickup/);
+  assert.match(checkout,/Order collection/);
+  assert.match(checkout,/Pay at the shop/);
+  assert.doesNotMatch(checkout,/Pay & Swipe Card on Arrival/);
   assert.match(checkout,/R0\.00 Pickup Fee/);
   assert.match(checkout,/Collect at the shop/);
   assert.doesNotMatch(checkout,/Bicycle Courier/);
