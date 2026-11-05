@@ -1,3 +1,4 @@
+import { MAX_PICKUP_ITEM_QUANTITY } from "../services/pickupMapping";
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -214,8 +215,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                                   item.selectedCustomizations
                                 );
                               }}
-                              className="w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
-                              aria-label="Decrease quantity"
+                              className="size-11 motion-safe:active:scale-95 disabled:opacity-50 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
+                              aria-label={item.quantity === 1 ? `Remove ${item.name}` : `Decrease quantity of ${item.name}`}
                             >
                               {item.quantity === 1 ? (
                                 <Trash2 className="w-3 h-3 text-rose-500" />
@@ -224,7 +225,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                               )}
                             </button>
 
-                            <span className="w-7 text-center text-xs font-black text-slate-900 dark:text-white">
+                            <span className="w-7 text-center text-xs tabular-nums font-black text-slate-900 dark:text-white">
                               {item.quantity}
                             </span>
 
@@ -240,8 +241,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                                   item.selectedCustomizations
                                 );
                               }}
-                              className="w-6 h-6 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
-                              aria-label="Increase quantity"
+                              className="size-11 motion-safe:active:scale-95 disabled:opacity-50 flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-orange-50 hover:text-orange-600 transition-colors cursor-pointer"
+                              disabled={item.quantity >= MAX_PICKUP_ITEM_QUANTITY}
+                              aria-label={`Increase quantity of ${item.name}`}
                             >
                               <Plus className="w-3 h-3" />
                             </button>

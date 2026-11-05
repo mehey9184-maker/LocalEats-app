@@ -34,6 +34,8 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 
 - **2026-11-05 Pickup onboarding.** Welcome, Home, tours, and shared page descriptions explain collection and pay-at-shop. Welcome actions use local feedback without downloading a click sound.
 
+- **2026-11-05 Pickup quantities.** Quantity controls respect the checkout limit of 99 per line, and the cart drawer gives mobile customers larger tap targets. The item picker uses menu prices without a bulk discount.
+
 - **2026-11-05 Pickup history.** Order History uses the authenticated pickup feed with sign-in, loading, retry, and stale-status feedback. The current-menu link uses the verified nearby catalog.
 
 - **2026-11-05 Nearby pickup reliability.** A failed or timed-out menu leaves verified neighboring shops visible and offers Retry. Partial results do not enter the verified catalog cache.

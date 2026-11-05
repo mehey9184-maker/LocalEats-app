@@ -17,11 +17,13 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
  return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
   address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:true,menu};
 }
+export const MAX_PICKUP_ITEM_QUANTITY = 99;
+
 export function pickupCartIntent(cart:CartItem[],location:{lat:number;lng:number},name:string,phone:string,method:string) {
  if(!cart.length || new Set(cart.map(i=>i.shopId)).size!==1) throw new Error("Choose items from one pickup shop per quote.");
  if(!["cash","card_machine"].includes(method)) throw new Error("Pay at the shop with cash or its physical card machine.");
  if(!name.trim() || !/^\+?[0-9 ()-]{9,20}$/.test(phone.trim())) throw new Error("Enter your name and a callable phone number.");
- for(const item of cart) if(!Number.isSafeInteger(item.quantity) || item.quantity<1 || item.quantity>99 || item.selectedCustomizations?.length)
+ for(const item of cart) if(!Number.isSafeInteger(item.quantity) || item.quantity<1 || item.quantity>MAX_PICKUP_ITEM_QUANTITY || item.selectedCustomizations?.length)
   throw new Error("Check item quantities. Menu options require server support and are unavailable for this pilot.");
  return {contract_version:"pickup-v1",idempotency_key:crypto.randomUUID(),shop_id:cart[0].shopId,
   items:cart.map(i=>({menu_item_id:i.id,quantity:i.quantity})),delivery_type:"collection",delivery_schedule_mode:"standard",
