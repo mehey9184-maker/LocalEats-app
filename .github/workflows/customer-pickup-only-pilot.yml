@@ -1,0 +1,36 @@
+name: Customer Pickup-Only Pilot Preview Gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/screens/CheckoutScreen.tsx'
+      - 'src/components/CartDrawer.tsx'
+      - 'tests/customer-pickup-only-pilot.test.mjs'
+      - 'docs/CUSTOMER_PICKUP_ONLY_PILOT.md'
+      - '.github/workflows/customer-pickup-only-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pickup-only-pilot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Pickup-only UI and original live checkout/pickup contract
+        run: node --experimental-strip-types --test tests/customer-pickup-only-pilot.test.mjs tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: Customer nearby/cache, original UI, startup and PWA regressions
+        run: node --experimental-strip-types --test tests/customer-map-on-demand-main.test.mjs tests/customer-page-splitting-main.test.mjs tests/customer-deferred-modules-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Full client build
+        run: npm run build
