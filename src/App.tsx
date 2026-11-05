@@ -255,7 +255,9 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
+import { canManageCustomerProfile } from "./lib/profileAccess";
+import { GuestProfileGate } from "./components/GuestProfileGate";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -1505,6 +1507,8 @@ export default function App() {
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
+    // Do not load or create a registered profile for a guest or different UID.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) return;
     try {
       let data: any = null;
       let error: any = null;
@@ -1643,10 +1647,10 @@ export default function App() {
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Only a registered, matching customer account may register private push tokens.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
+    const activeUserId = session?.user?.id;
+    if (canManageCustomerProfile(auth.currentUser, activeUserId)) {
       registerAndSyncPushToken(activeUserId).catch((err) => {
         console.warn("[FCM] Auto push token registration notice:", err);
       });
@@ -1867,6 +1871,12 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
+    // Check authorization BEFORE mutating state, cache, callbacks or the API.
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      const message = "Sign in or create an account to save your profile.";
+      setNotification({ message, type: "info" });
+      throw new Error(message);
+    }
     const updated = { ...userProfile, ...data };
     setUserProfile(updated);
 
@@ -1919,7 +1929,7 @@ export default function App() {
         }
       }
     } else {
-      if (successCallback) successCallback();
+      throw new Error("A registered account is required to save profile details.");
     }
   };
 
@@ -2337,8 +2347,8 @@ export default function App() {
     }
     prevFavoritesJsonRef.current = currJson;
 
-    // Sync favorites to profile if session exists
-    if (session?.user?.id) {
+    // Guest browsing must never start an account profile write.
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       upsertProfileWithRPC({
         user_id: session.user.id,
         favorites,
@@ -2621,8 +2631,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("userProfile", JSON.stringify(userProfile));
 
-    // Sync with Supabase if session exists
-    if (session?.user?.id) {
+    // An anonymous Firebase session is not a registered profile account.
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
@@ -3047,6 +3057,7 @@ export default function App() {
                 />
               )}
               {currentScreen === "complete-profile" && (
+                canManageCustomerProfile(auth.currentUser, session?.user?.id) ? (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3057,6 +3068,13 @@ export default function App() {
                   }}
                   setNotification={setNotification}
                 />
+                ) : (
+                  <GuestProfileGate
+                    onBack={() => setCurrentScreen("home")}
+                    onSignIn={() => setCurrentScreen("login")}
+                    onCreateAccount={() => setCurrentScreen("signup")}
+                  />
+                )
               )}
               {currentScreen === "login-success" && (
                 <LoginSuccessScreen
@@ -3496,6 +3514,7 @@ export default function App() {
                 />
               )}
               {currentScreen === "profile" && (
+                canManageCustomerProfile(auth.currentUser, session?.user?.id) ? (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
@@ -3530,6 +3549,13 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
                 />
+                ) : (
+                  <GuestProfileGate
+                    onBack={() => setCurrentScreen(previousScreen || "home")}
+                    onSignIn={() => setCurrentScreen("login")}
+                    onCreateAccount={() => setCurrentScreen("signup")}
+                  />
+                )
               )}
               {currentScreen === "contact" && (
                 <ContactScreen
