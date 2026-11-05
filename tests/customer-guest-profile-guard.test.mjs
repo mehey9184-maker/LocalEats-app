@@ -25,9 +25,9 @@ test("guest Profile and Complete Profile navigate straight to Login",()=>{
     assert.equal(profileDestination(account,"different-account",screen),"login");
     assert.equal(profileDestination(account,account.uid,screen),screen);
   }
-  // All five navigation entry points use the same immediate route guard.
+  // All six navigation entry points (including bottom Profile) use the same immediate guard.
   assert.match(app,/const navigateToProfile = useCallback/);
-  assert.equal((app.match(/navigateToProfile\("profile"\)/g)||[]).length,3);
+  assert.equal((app.match(/navigateToProfile\("profile"\)/g)||[]).length,4);
   assert.equal((app.match(/navigateToProfile\("complete-profile"\)/g)||[]).length,2);
   assert.match(app,/setCurrentScreen\(profileDestination\(auth.currentUser, session\?\.user\?\.id, requested\)\)/);
   // If sign-in state expires while on Profile, redirect and never mount the editor.
