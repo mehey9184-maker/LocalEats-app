@@ -2010,7 +2010,7 @@ export function CheckoutScreen({
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <button
                 type="button"
                 onClick={() => setDeliveryType("collection")}
@@ -2022,7 +2022,7 @@ export function CheckoutScreen({
               >
                 <div className="absolute top-2 right-2">
                   <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                    100% Free
+                    R0 Pickup Fee
                   </span>
                 </div>
                 <ShoppingBasket className="w-5 h-5 shrink-0" />
@@ -2031,57 +2031,15 @@ export function CheckoutScreen({
                     Counter Pickup
                   </p>
                   <p className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">
-                    R0.00 Delivery Fee
+                    R0.00 Pickup Fee
                   </p>
                   <p className="text-[10px] whitespace-nowrap text-slate-400 font-medium mt-0.5">
-                    Save R{ZONE_A_FEE.toFixed(2)} delivery
+                    Collect at the shop
                   </p>
                 </div>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  showAlert("Pickup only", "Delivery is unavailable for this pilot."); return;
-                  setDeliveryType("delivery");
-                  if (!deliveryAddressText || !isLocationConfirmed) {
-                    setShowAddressModal(true);
-                  }
-                  triggerHaptic(5);
-                }}
-                className={`flex flex-col items-center gap-2 p-3.5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
-                  deliveryType === "delivery"
-                    ? "border-orange-500 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 font-black shadow-sm"
-                    : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400"
-                }`}
-              >
-                <div className="absolute top-2 right-2">
-                  <span className="text-[10px] whitespace-nowrap font-black uppercase px-2 py-1 rounded-full bg-orange-500/20 text-orange-600 dark:text-orange-400">
-                    ~{deliveryFeePercent}% of meal
-                  </span>
-                </div>
-                <div className="relative">
-                  <Navigation className="w-5 h-5 shrink-0 rotate-45" />
-                  {distance !== null && distance > ZONE_B_LIMIT && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] whitespace-nowrap font-black px-1 rounded-full animate-bounce">
-                      !
-                    </span>
-                  )}
-                </div>
-                <div className="text-center">
-                  <p className="text-xs font-black leading-none mb-1">
-                    Bicycle Courier
-                  </p>
-                  <p className="text-[9px] font-bold text-orange-600 dark:text-orange-400">
-                    {distance !== null && distance > ZONE_A_LIMIT
-                      ? `Zone B: +R10.00`
-                      : `Zone A: +R5.00`}
-                  </p>
-                  <p className="text-[10px] whitespace-nowrap text-slate-400 font-medium mt-0.5">
-                    vs R35 standard car courier
-                  </p>
-                </div>
-              </button>
+
             </div>
           </section>
 
@@ -3531,7 +3489,7 @@ export function CheckoutScreen({
                 </div>
               )}
 
-              {deliveryType === "collection" && <div className="flex justify-between items-center text-slate-400"><span>Pickup delivery fee</span><span className="font-mono">R 0.00</span></div>}
+              {deliveryType === "collection" && <div className="flex justify-between items-center text-slate-400"><span>Pickup fee</span><span className="font-mono">R 0.00</span></div>}
               {deliveryType === "collection" && discountAmount > 0 && <div className="flex justify-between items-center text-emerald-400"><span>Server-validated discount</span><span className="font-mono">- R {discountAmount.toFixed(2)}</span></div>}
               {deliveryType === "delivery" && (
                 <div className="flex justify-between items-center text-orange-400">
