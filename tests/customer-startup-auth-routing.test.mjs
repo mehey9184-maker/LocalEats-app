@@ -6,6 +6,7 @@ const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8").replace
 const auth=readFileSync(new URL("../src/lib/supabase.ts",import.meta.url),"utf8").replace(/\r\n/g,"\n");
 
 test("Firebase-backed session checks wait for persistence hydration",()=>{
+ assert.match(auth,/!observedInitialState \? 'INITIAL_SESSION' : user \? 'SIGNED_IN' : 'SIGNED_OUT'/);
  const getSession=auth.slice(auth.indexOf("getSession: async () =>"),auth.indexOf("getUser: async () =>"));
  assert.match(getSession,/await auth\.authStateReady\(\)/);
  assert.match(getSession,/formatSession\(auth\.currentUser\)/);

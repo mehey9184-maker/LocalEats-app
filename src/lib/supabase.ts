@@ -40,9 +40,13 @@ const formatSession = async (user) => {
 
 let authStateListeners = [];
 if (typeof window !== 'undefined') {
+  let observedInitialState = false;
   onAuthStateChanged(auth, async (user) => {
+    // Firebase's first notification is restored state, even for a guest.
+    const event = !observedInitialState ? 'INITIAL_SESSION' : user ? 'SIGNED_IN' : 'SIGNED_OUT';
+    observedInitialState = true;
     const session = await formatSession(user);
-    const event = user ? 'SIGNED_IN' : 'SIGNED_OUT';
+    if (auth.currentUser !== user) return;
     authStateListeners.forEach(listener => listener(event, session));
   });
 }

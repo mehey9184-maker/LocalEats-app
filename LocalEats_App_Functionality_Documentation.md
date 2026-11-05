@@ -32,7 +32,7 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
-- **2026-11-05 Pickup storefront.** The storefront uses the same verified menu as nearby discovery and shows it immediately. Empty menus show a pickup availability message.
+- **2026-11-05 Pickup storefront.** The storefront uses the same verified menu as nearby discovery and shows it immediately. Empty menus show a pickup availability message. Shared links and unavailable storefronts show discovery progress, Retry, and a path back to nearby shops.
 
 - **2026-11-05 Customer startup.** Firebase restores the account behind a neutral Home skeleton. Returning customers open Home directly, slow restoration offers Retry, and the first available shop image loads with priority.
 
