@@ -1123,7 +1123,8 @@ export default function App() {
         : await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
-      setShops(result);
+      setShops(result.shops);
+      setFetchError(result.incomplete ? "Some pickup menus couldn’t load. Showing the shops we could verify." : null);
       // A successful empty catalog is not a network failure.
     } catch(error) {
       if(generation===catalogGeneration.current){
@@ -5197,6 +5198,14 @@ function HomeScreen({
             </div>
           </div>
 
+          {fetchError && shops.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 px-3 py-2 text-sm dark:border-amber-800">
+              <p role="status">{fetchError}</p>
+              <button type="button" onClick={onRetry} className="min-h-11 px-2 font-semibold text-orange-700 dark:text-orange-300">
+                Retry
+              </button>
+            </div>
+          )}
           {renderedShopList}
         </section>
 
