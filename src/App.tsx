@@ -1,7 +1,8 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
-import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
+import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
+import {readPickupWithDeadline} from './services/pickupRead';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -188,8 +189,8 @@ import { WidgetErrorBoundary } from "./components/WidgetErrorBoundary";
 const CheckoutScreen = lazy(() =>
   import("./screens/CheckoutScreen").then(({ CheckoutScreen }) => ({ default: CheckoutScreen }))
 );
-const OrderTrackingScreen = lazy(() =>
-  import("./screens/OrderTrackingScreen").then(({ OrderTrackingScreen }) => ({ default: OrderTrackingScreen }))
+const PickupTrackingScreen = lazy(() =>
+  import("./screens/PickupTrackingScreen").then(({ PickupTrackingScreen }) => ({ default: PickupTrackingScreen }))
 );
 import { RiderHandshakeInstructionPrompt } from "./components/SecureDeliveryHandshake";
 
@@ -2203,6 +2204,7 @@ export default function App() {
     let active = true;
     let inFlight = false;
     let inboxInFlight = false;
+    let feedRequest:AbortController|null = null;
     setOrders([]);
     setNotifications([]);
     if (!historyUserId) {
@@ -2212,6 +2214,8 @@ export default function App() {
     const refresh = async () => {
       if (!active || inFlight) return;
       inFlight = true;
+      const controller = new AbortController();
+      feedRequest = controller;
       setPickupHistory(previous => ({
         userId: historyUserId,
         orders: previous?.userId === historyUserId ? previous.orders : null,
@@ -2219,7 +2223,7 @@ export default function App() {
         refreshing: true,
       }));
       try {
-        const { orders: rows } = await customerPickupApi.orders();
+        const { orders: rows } = await readPickupWithDeadline(signal => customerPickupApi.orders(false,signal),{signal:controller.signal});
         if (!Array.isArray(rows)) throw new Error("Invalid order history");
         const ownedOrders = rows.filter(order => order.user_id === historyUserId);
         if (active) {
@@ -2242,6 +2246,7 @@ export default function App() {
           refreshing: false,
         }));
       } finally {
+        if(feedRequest === controller) feedRequest = null;
         inFlight = false;
       }
       if (!active || inboxInFlight || !pickupOrderingEnabled()) return;
@@ -2265,12 +2270,13 @@ export default function App() {
     return () => {
       active = false;
       refreshPickupHistory.current = () => {};
+      feedRequest?.abort();
       clearInterval(timer);
     };
   }, [historyUserId]);
 
   useEffect(() => {
-    if (currentScreen === "order-history") refreshPickupHistory.current();
+    if (currentScreen === "order-history" || currentScreen === "order-tracking") refreshPickupHistory.current();
   }, [currentScreen]);
 
   const currentPickupHistory = pickupHistory?.userId === historyUserId ? pickupHistory : null;
@@ -3142,13 +3148,22 @@ export default function App() {
               )}
               {currentScreen === "order-tracking" && (
                 <WidgetErrorBoundary fallbackName="Order Tracking">
-                  <Suspense fallback={<div className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading map...</div>}>
-                    <OrderTrackingScreen
-                      orders={orders}
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500 flex items-center justify-center min-h-screen">Loading pickup status…</div>}>
+                    <PickupTrackingScreen
+                      key={historyUserId || "guest"}
+                      signedIn={!!historyUserId}
+                      orders={currentPickupHistory?.orders ?? null}
+                      error={currentPickupHistory?.error ?? false}
+                      refreshing={currentPickupHistory?.refreshing ?? true}
                       shops={visibleShops}
-                      showAlert={showAlert}
+                      changesEnabled={pickupOrderingEnabled()}
+                      hasPendingCancellation={hasPendingPickupCancellation}
+                      onCancel={cancelCustomerPickup}
+                      onRetry={() => refreshPickupHistory.current()}
+                      onHistory={() => setCurrentScreen("order-history")}
+                      onSignIn={() => setCurrentScreen("login")}
+                      onBrowse={() => setCurrentScreen("home")}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
-                      triggerHaptic={triggerHaptic}
                     />
                   </Suspense>
                 </WidgetErrorBoundary>
@@ -3711,7 +3726,7 @@ export default function App() {
             activeOrdersCount={
               orders.filter((o) => {
                 const s = (o.status || "").toLowerCase();
-                return s !== "completed" && s !== "cancelled" && s !== "delivered";
+                return o.delivery_type === "collection" && s !== "collected" && s !== "completed" && s !== "cancelled" && s !== "delivered";
               }).length
             }
             triggerHaptic={triggerHaptic}
@@ -5055,7 +5070,7 @@ function HomeScreen({
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
                   {activeOrders.length > 0
-                    ? "You have orders in progress! Enable notifications to receive instant updates when food is cooking, packed, and out for delivery."
+                    ? "You have pickups in progress. Enable optional notifications for updates when the shop prepares your food and marks it Ready for collection."
                     : "Ready notifications require pickup database activation. Push is optional and best effort."}
                 </p>
               </div>

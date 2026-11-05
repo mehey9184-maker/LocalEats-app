@@ -21,6 +21,9 @@ The storefront renders the verified nearby catalog menu already loaded for its s
 
 Pickup history uses the authenticated orders feed and preserves only the current account’s last verified pickup statuses during a failed refresh.
 
+Active pickup tracking uses that same feed in a deferred pickup-only screen. It never mounts legacy delivery tracking or its offline cancellation effects. Pending cancellation uses an authenticated, revision-checked command retained per account and order for uncertain-response retry; success requires server confirmation. Stale or refreshing status disables changes. The mini tracker and notification prompt use pickup language.
+Pickup feed reads and cancellation responses have 15-second deadlines; late replies cannot overwrite newer reads or discard uncertain cancellation recovery. Account cleanup aborts an outstanding feed read.
+
 Welcome, Home, and onboarding describe pickup and pay-at-shop.
 
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.

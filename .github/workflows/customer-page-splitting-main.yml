@@ -4,6 +4,12 @@ on:
     branches: [main]
     paths:
       - 'src/App.tsx'
+      - 'src/screens/PickupTrackingScreen.tsx'
+      - 'src/services/pickupCancellation.ts'
+      - 'src/services/pickupRead.ts'
+      - 'src/services/customerPickup.ts'
+      - 'src/pickup/client.ts'
+      - 'tests/pickup-*.test.mjs'
       - 'tests/customer-page-splitting-main.test.mjs'
       - '.github/workflows/customer-page-splitting-main.yml'
   workflow_dispatch:
@@ -23,7 +29,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Route lazy imports, discovery, pickup, cache and checkout regressions
-        run: node --experimental-strip-types --test tests/customer-page-splitting-main.test.mjs tests/customer-deferred-modules-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs tests/pickup-activation.test.mjs tests/original-pickup.test.mjs
+        run: node --experimental-strip-types --test tests/customer-page-splitting-main.test.mjs tests/pickup-tracking.test.mjs tests/pickup-cancellation.test.mjs tests/pickup-read-deadline.test.mjs tests/customer-deferred-modules-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs tests/pickup-activation.test.mjs tests/original-pickup.test.mjs
       - name: TypeScript
         run: npm run lint
       - name: Full client build
@@ -38,7 +44,7 @@ jobs:
           const assets=readdirSync(dir).filter(n=>n.endsWith('.js')).map(n=>({name:n,bytes:statSync(join(dir,n)).size}));
           for(const a of assets.sort((a,b)=>b.bytes-a.bytes))console.log((a.bytes/1024).toFixed(1)+' KiB  '+a.name);
           assert.ok(assets.some(a=>a.name.startsWith('CheckoutScreen-')),'Missing deferred checkout chunk');
-          assert.ok(assets.some(a=>a.name.startsWith('OrderTrackingScreen-')),'Missing deferred tracking/map chunk');
+          assert.ok(assets.some(a=>a.name.startsWith('PickupTrackingScreen-')),'Missing deferred pickup tracking chunk');
           const main=assets.filter(a=>/^index-[^-]+\.js$/.test(a.name)).sort((a,b)=>b.bytes-a.bytes)[0];
           assert.ok(main,'Missing entrypoint JavaScript bundle');
           console.log('Largest index module bytes:',main.bytes);

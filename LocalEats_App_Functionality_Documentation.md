@@ -32,6 +32,9 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
 
+- **2026-11-05 Authoritative pickup tracking.** Orders and the active-order tracker open a deferred pickup status screen driven by the current account's authenticated feed. Pending waits for shop acceptance, Preparing and Ready reflect persisted states, and payment remains separate from collection. Delivery maps, rider phases, fabricated countdowns and legacy offline cancellation effects are not mounted on this route. Pending cancellation requires a reason, a revision and an idempotent command; uncertain responses retain the original per-account request for retry, and the UI waits for authenticated confirmation. Stale/refreshing data disables changes; history remains available for completed/cancelled pickups.
+  Feed reads and cancellation responses time out after 15 seconds. A timed-out feed preserves the current account's confirmed rows with an error and retry; account changes abort obsolete reads. A timed-out cancellation preserves its exact command for retry and ignores late responses.
+
 - **2026-11-05 Mobile cart checkout.** The cart bottom sheet is layered above the fixed bottom navigation. A 390 × 844 browser walkthrough reproduced navigation intercepting the Proceed to Checkout tap; the sheet's stacking level now keeps that action reachable.
   The active-order mini tracker also moves above a populated floating cart; its previous position intercepted View shopping cart when a customer already had an active pickup.
 
