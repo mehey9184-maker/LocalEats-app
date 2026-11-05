@@ -36,7 +36,8 @@ test("profile editor is lazy and preserves the existing cropper behavior",()=>{
 test("shop UI and safety gates remain untouched by optional module delivery",()=>{
   assert.match(app,/readPickupCatalog\(userLocation/);
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
-  assert.match(app,/import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
+  assert.match(app,/<ShopCard\b/);
+  assert.match(app,/<MenuItemCard\b/);
   assert.match(pickup,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
   assert.match(pickup,/blockPickupSubmission\(\)/);
 });
