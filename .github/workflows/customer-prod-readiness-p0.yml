@@ -80,3 +80,28 @@ jobs:
             "Unauthenticated probe must be denied as JSON (401/403), not 200 or a fabricated success.");
           console.log("Authenticated API route is deployed and denies unknown users.");
           JS
+
+  firebase-demo-security:
+    name: Firebase demo Auth + Firestore owner-security gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install existing pinned app dependencies
+        run: npm ci
+      - name: Two fake accounts and checked-in Firestore rules gate
+        # Demo project only, never live Firebase. Rules test remains red while access is public.
+        run: >
+          npx --yes firebase-tools@15.34.2
+          emulators:exec
+          --project demo-localeats-p0
+          --only auth,firestore
+          "npm run test:p0-auth-emulator && npm run test:p0-firestore-rules-gate"

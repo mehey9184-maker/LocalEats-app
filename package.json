@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:pickup-integration": "node --experimental-strip-types --test tests/original-pickup.test.mjs"
+    "test:pickup-integration": "node --experimental-strip-types --test tests/original-pickup.test.mjs",
+    "test:p0-auth-emulator": "node --experimental-strip-types --test tests/customer-p0-firebase-auth-emulator.test.mjs",
+    "test:p0-firestore-rules-gate": "node --experimental-strip-types --test tests/customer-p0-firestore-emulator-gate.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
