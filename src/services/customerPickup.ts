@@ -13,7 +13,15 @@ export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_AP
 
 const readVerifiedNearbyCatalog=createNearbyCatalogReader({
   shops: customerPickupApi.shops,
-  menu: id => customerPickupApi.menu(id, AbortSignal.timeout(5000)),
+  menu: async id => {
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 5000);
+    try {
+      return await customerPickupApi.menu(id, controller.signal);
+    } finally {
+      clearTimeout(deadline);
+    }
+  },
 }, mapPickupShop);
 export async function readPickupCatalog(location:{lat:number;lng:number}|null,options:{force?:boolean}={}):Promise<NearbyCatalog> {
   return readVerifiedNearbyCatalog(location,options);
