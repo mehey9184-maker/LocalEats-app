@@ -4,6 +4,8 @@ import {createPickupApi} from "../pickup/client";
 import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
 import {createNearbyCatalogReader, type NearbyCatalog} from "./nearbyCatalogCache";
 import type {CartItem} from "../types";
+import {createPickupCancellation,pickupCancellationKey} from './pickupCancellation';
+import type {PickupOrder} from '../pickup/client';
 
 export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_API_URL || "", async()=>{
   const user=auth.currentUser;
@@ -38,6 +40,15 @@ export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:n
 export {blockPickupSubmission};
 
 export const pickupOrderingEnabled=()=>import.meta.env?.VITE_PICKUP_ORDERING_ENABLED === "true";
+export const cancelCustomerPickup=createPickupCancellation({
+ identity:()=>auth.currentUser?.uid,enabled:pickupOrderingEnabled,command:customerPickupApi.command,
+ storage:{getItem:key=>sessionStorage.getItem(key),setItem:(key,value)=>sessionStorage.setItem(key,value),removeItem:key=>sessionStorage.removeItem(key)},
+});
+export function hasPendingPickupCancellation(order:PickupOrder):boolean {
+ const uid=auth.currentUser?.uid;
+ if(!uid||order.user_id!==uid)return false;
+ try{return !!sessionStorage.getItem(pickupCancellationKey(uid,order.id));}catch{return false;}
+}
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
  if(!pickupOrderingEnabled())blockPickupSubmission();
  const uid=auth.currentUser?.uid;

@@ -45,6 +45,8 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
   const activeOrder = orders.find((o) => {
     const s = (o.status || "").toLowerCase();
     return (
+      o.delivery_type === "collection" &&
+      s !== "collected" &&
       s !== "completed" &&
       s !== "delivered" &&
       s !== "cancelled" &&
@@ -74,7 +76,7 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
     if (s.includes("ready") || s.includes("packed")) {
       return {
         label: "Order is Ready 📦",
-        subtext: "Packed & awaiting driver pickup",
+        subtext: "Collect your meal at the shop",
         icon: Package,
         color: "text-emerald-500",
         bg: "bg-emerald-500/10 border-emerald-500/30",
@@ -93,7 +95,7 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
     }
     return {
       label: "Order In Progress ⏳",
-      subtext: "Confirming with kitchen",
+      subtext: "Waiting for shop acceptance",
       icon: Clock,
       color: "text-amber-500",
       bg: "bg-amber-500/10 border-amber-500/30",

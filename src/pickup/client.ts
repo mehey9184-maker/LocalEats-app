@@ -51,9 +51,9 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
     if(!result.order?.id || typeof result.replayed!=="boolean") throw new PickupApiError(503,"UNCONFIRMED","Order persistence is unconfirmed. Retry the same request.");
     return {order:result.order,replayed:result.replayed};
   },
-  orders:(merchant=false)=>request(merchant ? "/api/v1/merchant/orders" : "/api/v1/orders"),
+  orders:(merchant=false,signal?:AbortSignal)=>request(merchant ? "/api/v1/merchant/orders" : "/api/v1/orders","GET",undefined,false,signal),
   order:(id:string)=>request("/api/v1/orders/"+encodeURIComponent(id)),
-  command:(id:string,action:string,payload:unknown,merchant=true)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload),
+  command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal),
   notifications:()=>request("/api/v1/notifications"),
   subscribe:(id:string,fcm_token:string)=>request("/api/v1/push-subscriptions/"+id,"PUT",{fcm_token,permission_granted:true}),
   revoke:(id:string)=>request("/api/v1/push-subscriptions/"+id,"DELETE"),
