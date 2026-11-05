@@ -14,7 +14,7 @@ export default defineConfig({
     baseURL:"http://127.0.0.1:4174",
     trace:"retain-on-failure",
     screenshot:"only-on-failure",
-    video:"retain-on-failure",
+    video:"off", // Screenshots and Playwright traces remain; no FFmpeg download needed.
     ...devices["Desktop Chrome"],
     // GitHub Ubuntu runner ships Chromium-based Google Chrome already.
     // Local developers without CHROME_BIN use Playwright's installed Chromium.
