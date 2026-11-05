@@ -1683,10 +1683,16 @@ export default function App() {
       setUserProfile(freshProfile);
       setCart([]);
       setFavorites([]);
+      setOrders([]);
+      setNotifications([]);
+      setPendingReview(null);
+      // No account A data should follow account B on a shared device.
+      for (const key of ["cart", "favorites", "offline_orders_queue",
+        "cached_orders", "app_notifications", "pending_review",
+        "localeats_saved_cards", "localeats_saved_addresses"]) {
+        try { localStorage.removeItem(key); } catch {}
+      }
       localStorage.setItem("userProfile", JSON.stringify(freshProfile));
-      localStorage.removeItem("cart");
-      localStorage.removeItem("favorites");
-      localStorage.removeItem("offline_orders_queue");
       fetchUserProfile(session.user.id);
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
@@ -8393,39 +8399,9 @@ function StoreInfoScreen({
       setCurrentScreen("login");
       return;
     }
-    // Do not permit direct, unverified review writes before secure server review
-    // eligibility and pickup-order ownership are implemented.
+    // Reviews are server-authoritative. Do not post directly to public Firestore
+    // until the verified pickup/order eligibility API has been released.
     showAlert("Reviews unavailable", "Reviews will reopen after verified pickup-order checks are ready.");
-    return;
-    if (!isOnline) {
-      showAlert(
-        "Offline Mode",
-        "Connectivity is down. We cannot post your review right now. Please try again when back online! 🍻",
-      );
-      return;
-    }
-    if (!newComment.trim() || !userProfile) return;
-    setIsSubmittingReview(true);
-    try {
-      await FirestoreService.addReview(String(shop.id), {
-        user_id: userProfile?.id || session?.user?.id,
-        username: userProfile.fullName || "Anonymous",
-        user_name: userProfile.fullName || "Anonymous",
-        rating: newRating,
-        comment: newComment,
-      });
-
-      setShowReviewForm(false);
-      setNewComment("");
-      setNewRating(5);
-      fetchReviews();
-      showAlert("Success", "Thank you for your review!");
-    } catch (error) {
-      console.error("Error submitting review:", error);
-      showAlert("Error", "Failed to submit review. Please try again.");
-    } finally {
-      setIsSubmittingReview(false);
-    }
   };
 
   return (
