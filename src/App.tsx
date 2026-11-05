@@ -1,3 +1,4 @@
+import type { PickupOrder } from "./pickup/client";
 import {retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -2192,23 +2193,87 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  const historyUserId = session?.user?.id;
+  const [pickupHistory, setPickupHistory] = useState<{
+    userId: string; orders: PickupOrder[] | null; error: boolean; refreshing: boolean;
+  } | null>(null);
+  const refreshPickupHistory = useRef<() => void>(() => {});
+
   useEffect(() => {
-    let active=true;
-    setOrders([]);setNotifications([]);
-    if(!session?.user?.id)return;
-    const refresh=async()=>{
+    let active = true;
+    let inFlight = false;
+    let inboxInFlight = false;
+    setOrders([]);
+    setNotifications([]);
+    if (!historyUserId) {
+      setPickupHistory(null);
+      return;
+    }
+    const refresh = async () => {
+      if (!active || inFlight) return;
+      inFlight = true;
+      setPickupHistory(previous => ({
+        userId: historyUserId,
+        orders: previous?.userId === historyUserId ? previous.orders : null,
+        error: previous?.userId === historyUserId && previous.error,
+        refreshing: true,
+      }));
       try {
-        const data=await customerPickupApi.orders();
-        if(active)setOrders((data.orders ?? []).map(o=>({...o,status:o.status==="collected" ? "completed" : o.status==="ready_for_pickup" ? "ready" : o.status})) as unknown as Order[]);
-      } catch { if(active)setNotification({type:"error",message:"Order history could not refresh. Please retry; displayed data may be stale."}); }
-      if(pickupOrderingEnabled())try{
-        const inbox=await customerPickupApi.notifications();
-        if(active)setNotifications((inbox.notifications ?? []).map((event:any)=>({id:event.id,title:"Pickup ready",message:"Your order is ready for collection. Pay at the shop before handover.",type:"order",read:false,timestamp:Date.parse(event.occurred_at),orderId:event.order_id})) as unknown as AppNotification[]);
-      }catch{if(active)setNotification({type:"error",message:"Ready notifications could not refresh. Retry; no state was inferred."});}
+        const { orders: rows } = await customerPickupApi.orders();
+        if (!Array.isArray(rows)) throw new Error("Invalid order history");
+        const ownedOrders = rows.filter(order => order.user_id === historyUserId);
+        if (active) {
+          setPickupHistory({
+            userId: historyUserId,
+            orders: ownedOrders.filter(order => order.delivery_type === "collection"),
+            error: false,
+            refreshing: false,
+          });
+          setOrders(ownedOrders.map(order => ({
+            ...order,
+            status: order.status === "collected" ? "completed" : order.status === "ready_for_pickup" ? "ready" : order.status,
+          })) as unknown as Order[]);
+        }
+      } catch {
+        if (active) setPickupHistory(previous => ({
+          userId: historyUserId,
+          orders: previous?.userId === historyUserId ? previous.orders : null,
+          error: true,
+          refreshing: false,
+        }));
+      } finally {
+        inFlight = false;
+      }
+      if (!active || inboxInFlight || !pickupOrderingEnabled()) return;
+      inboxInFlight = true;
+      try {
+        const inbox = await customerPickupApi.notifications();
+        if (active) setNotifications((inbox.notifications ?? []).map((event: any) => ({
+          id: event.id, title: "Pickup ready",
+          message: "Your order is ready for collection. Pay at the shop before handover.",
+          type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
+        })) as unknown as AppNotification[]);
+      } catch {
+        if (active) setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
+      } finally {
+        inboxInFlight = false;
+      }
     };
-    void refresh();const timer=setInterval(refresh,30000);
-    return()=>{active=false;clearInterval(timer);};
-  }, [session?.user?.id,currentScreen]);
+    refreshPickupHistory.current = () => { void refresh(); };
+    void refresh();
+    const timer = setInterval(refresh, 30000);
+    return () => {
+      active = false;
+      refreshPickupHistory.current = () => {};
+      clearInterval(timer);
+    };
+  }, [historyUserId]);
+
+  useEffect(() => {
+    if (currentScreen === "order-history") refreshPickupHistory.current();
+  }, [currentScreen]);
+
+  const currentPickupHistory = pickupHistory?.userId === historyUserId ? pickupHistory : null;
 
   const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
     setLoadingShops(true);
@@ -3496,18 +3561,19 @@ export default function App() {
               )}
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
-                  session={session}
+                  signedIn={!!historyUserId}
+                  orders={currentPickupHistory?.orders ?? null}
+                  error={currentPickupHistory?.error ?? false}
+                  refreshing={currentPickupHistory?.refreshing ?? true}
+                  onRetry={() => refreshPickupHistory.current()}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
-                  userProfile={userProfile}
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  isOnline={isOnline}
+                  onSignIn={() => setCurrentScreen("login")}
+                  onBrowse={() => setCurrentScreen("home")}
                   shops={visibleShops}
-                  addToCart={addToCart}
-                  setCart={setCart}
-                  setCurrentScreen={setCurrentScreen}
-                  triggerHaptic={triggerHaptic}
-                  onScanFlyer={() => setShowQRScanner(true)}
+                  onStoreInfo={shopId => {
+                    setSelectedStoreId(shopId);
+                    setCurrentScreen("store-info");
+                  }}
                 />
               )}
             </motion.div>
