@@ -2,6 +2,7 @@ import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
+import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
 import {readPickupWithDeadline} from './services/pickupRead';
 /**
  * @license
@@ -3779,10 +3780,7 @@ const HorizontalShopCard = ({
         <div className="absolute bottom-3 right-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-2 py-1 rounded-xl flex items-center gap-1 shadow-sm border border-white/20">
           <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
           <span className="text-xs font-black text-slate-900 dark:text-white">
-            {shop.rating}
-          </span>
-          <span className="text-[9px] text-slate-500">
-            ({shop.reviewCount || 0})
+            {shopRatingLabel(shop)}
           </span>
         </div>
       </div>
@@ -3817,7 +3815,7 @@ const HorizontalShopCard = ({
           <div className="flex items-center gap-1">
             <Clock className="w-3 h-3 text-orange-500" />
             <span className="text-[10px] font-bold text-orange-600">
-              {shop.prepTime || "15-20 min"}
+              Pickup at shop
             </span>
           </div>
         </div>
@@ -3930,7 +3928,7 @@ function HomeScreen({
   const [sortBy, setSortBy] = useState<'recommended' | 'popular' | 'rating' | 'fastest'>(() => {
     try {
       const saved = localStorage.getItem("localeats_shop_sort_preference");
-      if (saved === 'recommended' || saved === 'popular' || saved === 'rating' || saved === 'fastest') {
+      if (saved === 'recommended' || saved === 'rating') {
         return saved;
       }
     } catch {}
@@ -4035,25 +4033,6 @@ function HomeScreen({
     };
   }, []);
 
-  const [isWinterBannerDismissed, setIsWinterBannerDismissed] = useState(() => {
-    try {
-      return localStorage.getItem("localeats_winter_banner_dismissed") === "true";
-    } catch {
-      return false;
-    }
-  });
-
-  const isPromoUsed = useCallback((code: string) => {
-    try {
-      const usedLocalKey = session?.user?.id
-        ? `used_promo_codes_${session.user.id}`
-        : `used_promo_codes_guest`;
-      const usedLocal = safeLocalStorageGet(usedLocalKey, []);
-      return usedLocal.includes(code);
-    } catch {
-      return false;
-    }
-  }, [session?.user?.id]);
   const [selectedCategory, setSelectedCategory] = useState("All");
 
   const [selectedQuickFilter, setSelectedQuickFilter] = useState<string | null>(null);
@@ -4193,7 +4172,6 @@ function HomeScreen({
     { id: "braai", label: "Braai 🔥", type: "category" as const, value: "Braai" },
     { id: "open_now", label: "Open Now", type: "quickFilter" as const, value: "Open Now", icon: Activity },
     { id: "top_rated", label: "Top Rated", type: "quickFilter" as const, value: "Top Rated", icon: Star },
-    { id: "fastest", label: "Fastest", type: "quickFilter" as const, value: "Fastest", icon: Zap },
     { id: "halal", label: "Halal", type: "quickFilter" as const, value: "Halal", icon: ShieldCheck },
   ], []);
 
@@ -4241,7 +4219,7 @@ function HomeScreen({
 
       let matchesQuickFilter = true;
       if (selectedQuickFilter === "Top Rated") {
-        matchesQuickFilter = shop.rating !== undefined && shop.rating >= 4.5;
+        matchesQuickFilter = (shopRatingFacts(shop)?.rating ?? 0) >= 4.5;
       } else if (selectedQuickFilter === "Fastest") {
         matchesQuickFilter = shop.prepTime === "15-20 min" || shop.prepTime === "10-15 min";
       } else if (selectedQuickFilter === "Open Now") {
@@ -4636,44 +4614,6 @@ function HomeScreen({
           </div>
         </div>
       </div>
-
-        {/* Dynamic Compact Promo Banner (Disappears when used/dismissed) */}
-        {!isHeaderSearching && !isWinterBannerDismissed && !isPromoUsed("LOCALEATS10") && (
-          <div className="bg-gradient-to-r from-orange-600 via-orange-500 to-amber-500 text-white text-[11px] sm:text-xs py-2 px-3 sm:px-4 flex items-center justify-between gap-2 border-t border-white/15 shadow-inner">
-            <div className="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
-              <Tag className="w-4 h-4 shrink-0 text-orange-100 animate-pulse" />
-              <span className="truncate font-semibold tracking-tight">
-                ❄️ <strong>Winter Special:</strong> 10% off Kotas code <span className="font-mono bg-white/25 px-2 py-1 rounded text-white select-all font-bold">LOCALEATS10</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText("LOCALEATS10");
-                  toast.success("Promo Code Copied!", {
-                    description: "Use LOCALEATS10 at checkout to get 10% off!"
-                  });
-                  triggerHaptic(15);
-                }}
-                className="bg-white text-orange-600 hover:bg-orange-50 font-black text-[10px] uppercase tracking-wider px-2.5 py-1 min-h-[30px] rounded-lg transition-all active:scale-95 cursor-pointer shadow-xs flex items-center justify-center"
-              >
-                Copy
-              </button>
-              <button
-                onClick={() => {
-                  setIsWinterBannerDismissed(true);
-                  try {
-                    localStorage.setItem("localeats_winter_banner_dismissed", "true");
-                  } catch {}
-                }}
-                className="w-7 h-7 flex items-center justify-center hover:bg-white/15 rounded-full transition-colors text-white/90 hover:text-white cursor-pointer"
-                aria-label="Dismiss banner"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Float Suggestions relative to header */}
         <AnimatePresence>
@@ -5209,9 +5149,7 @@ function HomeScreen({
                 aria-label="Sort shops"
               >
                 <option value="recommended" className="dark:bg-slate-900">✨ Recommended</option>
-                <option value="popular" className="dark:bg-slate-900">🔥 Most Popular</option>
                 <option value="rating" className="dark:bg-slate-900">⭐ Rating</option>
-                <option value="fastest" className="dark:bg-slate-900">⚡ Fastest Prep Time</option>
               </select>
             </div>
           </div>
@@ -6418,9 +6356,8 @@ function DiscoverScreen({
                   }}
                   className="w-full appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[#2d2f31] dark:text-slate-100 rounded-xl px-4 py-2.5 font-bold text-sm outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-shadow pr-10 cursor-pointer"
                 >
-                  <option value="smart">Most Popular</option>
+                  <option value="smart">Recommended</option>
                   <option value="rating">Highest Rated</option>
-                  <option value="speed">Fastest Delivery</option>
                 </select>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                   <ChevronDown className="w-4 h-4" />
@@ -6512,14 +6449,14 @@ function DiscoverScreen({
                     <div className="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-2xl flex items-center gap-1 shadow-md border border-slate-50 dark:border-slate-850">
                       <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
                       <span className="text-xs font-black text-slate-900 dark:text-white">
-                        {shop.rating.toFixed(1)}
+                        {shopRatingLabel(shop)}
                       </span>
                     </div>
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
                       <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Speed: {shop.delivery_eta || "20m"}
+                        Pickup at shop
                       </div>
                       {(() => {
                         const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
@@ -8155,44 +8092,7 @@ const QuantityModal = ({
 };
 
 function RestaurantSchema({ shop }: { shop: Shop }) {
-  const schema = {
-    "@context": "https://schema.org",
-    "@type": "Restaurant",
-    name: shop.name,
-    image: shop.logo,
-    servesCuisine: shop.category,
-    description: shop.description,
-    address: {
-      "@type": "PostalAddress",
-      streetAddress: shop.address,
-      addressLocality: "Local",
-      addressRegion: "Gauteng",
-      addressCountry: "ZA",
-    },
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: shop.rating,
-      reviewCount: shop.reviewCount || 120,
-    },
-    openingHoursSpecification: [
-      {
-        "@type": "OpeningHoursSpecification",
-        dayOfWeek: [
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-          "Sunday",
-        ],
-        opens: shop.opening_time || "08:00",
-        closes: shop.closing_time || "20:00",
-      },
-    ],
-  };
-
-  return <script type="application/ld+json">{JSON.stringify(schema)}</script>;
+  return <script type="application/ld+json">{JSON.stringify(restaurantMetadata(shop))}</script>;
 }
 
 const ImageCarousel = ({ images }: { images: string[] }) => {
@@ -8732,7 +8632,7 @@ function StoreInfoScreen({
             <button
               onClick={() => setIsShopChatOpen(true)}
               className="p-3 bg-black/30 backdrop-blur-md rounded-2xl text-white hover:bg-black/50 transition-all active:scale-90 cursor-pointer"
-              title="Chat with Shop"
+              title="Automated menu help"
             >
               <MessageCircle className="w-6 h-6 text-orange-400" />
             </button>
@@ -8764,7 +8664,7 @@ function StoreInfoScreen({
               </span>
               <div className="flex items-center gap-1 bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-md text-white text-[10px] font-bold">
                 <Clock className="w-3 h-3" />
-                {shop.delivery_eta || "30-45 mins"}
+                Pickup at shop
               </div>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-white tracking-tighter drop-shadow-xl">
@@ -8812,10 +8712,10 @@ function StoreInfoScreen({
             <button
               onClick={() => setIsShopChatOpen(true)}
               className="flex-grow md:flex-grow-0 px-3 md:px-6 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl flex items-center justify-center gap-1.5 md:gap-2 font-black text-[10px] md:text-xs uppercase tracking-widest shadow-xl shadow-orange-600/20 active:scale-95 transition-all cursor-pointer"
-              title="Chat with Shop"
+              title="Automated menu help"
             >
               <MessageCircle className="w-5 h-5" />
-              <span>Chat with Shop</span>
+              <span>Menu help</span>
             </button>
             <button
               onClick={handleShareMenu}
@@ -9134,19 +9034,19 @@ function StoreInfoScreen({
               {/* Reviews Summary */}
               <div className="flex flex-col sm:flex-row items-center gap-6 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm">
                 <div className="text-center sm:border-r border-slate-200 dark:border-slate-800/80 sm:pr-8 shrink-0">
-                  <p className="text-5xl font-black text-slate-900 dark:text-white">
-                    {shop.rating}
+                  <p className={`font-black text-slate-900 dark:text-white ${shopRatingFacts(shop) ? "text-5xl" : "text-lg"}`}>
+                    {shopRatingLabel(shop)}
                   </p>
                   <div className="flex text-orange-500 justify-center mt-1.5">
                     {[...Array(5)].map((_, i) => (
                       <Star
                         key={i}
-                        className={`w-3.5 h-3.5 ${i < Math.floor(shop.rating) ? "fill-current" : ""}`}
+                        className={`w-3.5 h-3.5 ${i < Math.floor(shopRatingFacts(shop)?.rating ?? 0) ? "fill-current" : ""}`}
                       />
                     ))}
                   </div>
                   <p className="text-[10px] text-slate-500 font-bold mt-2 uppercase tracking-wider">
-                    {reviews.length} Reviews
+                    {reviews.length > 0 ? `${reviews.length} reviews shown` : "Review details unavailable"}
                   </p>
                 </div>
                 <div className="flex-1 w-full space-y-2">
@@ -9339,7 +9239,7 @@ function StoreInfoScreen({
                     <p className="text-sm font-bold text-slate-900 dark:text-white">
                       {selectedStarFilter !== null
                         ? "No matching reviews"
-                        : "No reviews yet"}
+                        : "No reviews available"}
                     </p>
                     <p className="text-xs text-slate-500 mt-1">
                       {selectedStarFilter !== null
@@ -10225,8 +10125,7 @@ function ExploreScreen({
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-bold mt-2.5 mb-2">
                           <div className="flex items-center gap-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-lg border border-amber-500/15">
                             <Star className="w-3 h-3 fill-current text-amber-500" />
-                            <span>{shop.rating.toFixed(1)}</span>
-                            <span className="text-[10px] font-medium opacity-80">({shop.reviewCount || 0})</span>
+                            <span>{shopRatingLabel(shop)}</span>
                           </div>
                         </div>
                       </div>

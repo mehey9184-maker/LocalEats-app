@@ -3480,15 +3480,15 @@ export function CheckoutScreen({
               </div>
             </div>
 
-            {/* SECTION: On-Time & Freshness Guarantee Badge */}
+            {/* SECTION: Pickup handover guidance */}
             <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 p-4 rounded-3xl flex items-start gap-3 shadow-sm">
               <ShieldCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div className="space-y-0.5">
                 <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-                  100% On-Time & Freshness Guarantee
+                  Before you collect
                 </h4>
                 <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium leading-relaxed">
-                  If your meal arrives late, cold, or incorrect, reach out to local support for an instant credit or full replacement.
+                  Wait for Ready, check your items at the shop, and pay there using your selected payment method. Speak with the shop before leaving if something is wrong.
                 </p>
               </div>
             </div>

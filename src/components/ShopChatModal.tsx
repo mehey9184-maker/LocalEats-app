@@ -4,6 +4,7 @@ import { Send, X, MessageCircle, Store, Sparkles, Clock, CheckCheck, Loader2 } f
 import { BlurUpImage } from "./BlurUpImage";
 import { Shop } from "../types";
 import { audioHelper } from "../lib/audioHelper";
+import {menuHelpReply} from '../services/menuHelp';
 
 interface Message {
   id: string;
@@ -23,11 +24,11 @@ const QUICK_PROMPTS = [
   "🍔 What's your top recommended meal?",
   "🔥 What are your current popular specials?",
   "⏱️ How long is prep time right now?",
-  "💵 Is Cash on Delivery accepted?",
+  "💵 How do I pay for pickup?",
   "🥬 Do you have vegetarian or halal options?"
 ];
 
-export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatModalProps) {
+export function ShopChatModal({ isOpen, onClose, shop }: ShopChatModalProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -39,12 +40,12 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
       const initialMessage: Message = {
         id: "msg-welcome",
         sender: "shop",
-        text: `Hi ${userProfile?.full_name ? userProfile.full_name.split(" ")[0] : "there"}! 👋 Welcome to ${shop.name}. I'm your AI Kitchen Assistant. How can I help with recommendations, prep time, or order customisations today?`,
+        text: `Welcome to the automated menu guide for ${shop.name}. I can help you find menu information. Messages here are not sent to the shop, and I cannot confirm preparation times, dietary needs or special requests.`,
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages([initialMessage]);
     }
-  }, [isOpen, shop.name, userProfile?.full_name]);
+  }, [isOpen, shop.name]);
 
   useEffect(() => {
     if (isOpen) {
@@ -52,27 +53,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
     }
   }, [messages, isTyping, isOpen]);
 
-  const generateShopReply = (userQuery: string): string => {
-    const queryLower = userQuery.toLowerCase();
-
-    if (queryLower.includes("recommend") || queryLower.includes("top") || queryLower.includes("special") || queryLower.includes("popular")) {
-      return `Our customers love our signature items at ${shop.name}! You can check out our featured items on the menu tab. Everything is freshly prepared on order.`;
-    }
-    if (queryLower.includes("time") || queryLower.includes("prep") || queryLower.includes("long") || queryLower.includes("eta")) {
-      return `Our current estimated preparation time is around ${shop.delivery_eta || "20-30 mins"}. We start cooking as soon as your order is confirmed!`;
-    }
-    if (queryLower.includes("cash") || queryLower.includes("payment") || queryLower.includes("pay")) {
-      return `Yes! We accept both Cash on Arrival / Pickup and secure in-app payments. Pick whichever is most convenient for you.`;
-    }
-    if (queryLower.includes("halal") || queryLower.includes("veg") || queryLower.includes("diet")) {
-      return `We take special care with dietary preferences. You can add specific kitchen instructions to any menu item when adding it to your cart!`;
-    }
-    if (queryLower.includes("location") || queryLower.includes("where") || queryLower.includes("address")) {
-      return `We are located at ${shop.address || "in town"}. You can also tap 'Directions' on our shop page for exact navigation!`;
-    }
-
-    return `Thanks for reaching out! A kitchen team member at ${shop.name} has received your message. Feel free to place your order or ask any other questions!`;
-  };
+  const generateShopReply = (query: string) => menuHelpReply(query, shop);
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
@@ -103,7 +84,6 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           shop,
-          userProfile,
           messages: currentHistory,
           userQuery: text,
         }),
@@ -114,7 +94,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
       }
 
       const data = await response.json();
-      const replyText = data.reply || generateShopReply(text);
+      const replyText = typeof data.reply === 'string' && data.reply.trim() ? data.reply : generateShopReply(text);
 
       const shopMsg: Message = {
         id: `shop-${Date.now()}`,
@@ -172,19 +152,19 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
                       <Store className="w-5 h-5 text-white" />
                     )}
                   </div>
-                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-slate-900 rounded-full animate-pulse" />
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-orange-400 border-2 border-slate-900 rounded-full" />
                 </div>
                 <div>
                   <h3 className="font-black text-white text-sm line-clamp-1 flex items-center gap-1.5">
                     {shop.name}
                     <span className="bg-gradient-to-r from-orange-500/40 to-amber-500/40 text-orange-200 text-[9px] px-2 py-0.5 rounded-full uppercase font-extrabold tracking-wider border border-orange-400/30 flex items-center gap-1">
                       <Sparkles className="w-2.5 h-2.5 text-amber-300" />
-                      AI Kitchen Desk
+                      Automated menu guide
                     </span>
                   </h3>
                   <p className="text-[10px] text-slate-300 font-medium flex items-center gap-1">
                     <Clock className="w-3 h-3 text-emerald-400" />
-                    Kitchen Desk Active • Typically replies instantly
+                    Automated help • Not a shop conversation
                   </p>
                 </div>
               </div>
@@ -267,7 +247,7 @@ export function ShopChatModal({ isOpen, onClose, shop, userProfile }: ShopChatMo
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder={`Ask ${shop.name} a question...`}
+                placeholder="Ask the automated menu guide..."
                 className="flex-1 bg-slate-100 dark:bg-slate-800 border border-transparent focus:border-orange-500 rounded-full px-4 py-2.5 text-xs font-medium focus:outline-none text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all"
               />
               <button

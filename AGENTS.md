@@ -26,6 +26,8 @@ Pickup feed reads and cancellation responses have 15-second deadlines; late repl
 
 Welcome, Home, and onboarding describe pickup and pay-at-shop.
 
+Catalog cards and restaurant metadata display only valid provided rating/count/distance facts; missing counts, preparation estimates and hours are not invented. Pickup has no advertised voucher or timing/refund guarantee. Menu help is explicitly automated and does not represent a message sent to shop staff; its menu context and fallback answers must not invent items, payment methods or preparation estimates.
+
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 
 
