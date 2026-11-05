@@ -55,6 +55,10 @@ test("review candidate keeps real pickup reads and denies unauthorized writes",a
     });
     await t.test("API-verified shop owner may view order but cannot forge financial changes",async()=>{
       await assertSucceeds(getDoc(doc(m,"orders",orderId)));
+      // Important Merchant compatibility: shop-scoped list must be authorized,
+      // while unbounded cross-shop scans must remain denied.
+      await assertSucceeds(getDocs(query(collection(m,"orders"),where("shop_id","==",shopId))));
+      await assertFails(getDocs(collection(m,"orders")));
       await assertFails(getDoc(doc(m,"orders",otherOrder)));
       await assertFails(updateDoc(doc(m,"orders",orderId),{payment_status:"paid"}));
       await assertFails(updateDoc(doc(a,"orders",orderId),{total_price:1}));
