@@ -114,7 +114,11 @@ export function CheckoutScreen({
   isOnline: boolean;
   triggerHaptic: (pattern?: number | number[]) => void;
 }) {
-  const [loading, setLoading] = useState(false);
+  const [checkoutWork, setLoading] = useState<boolean | "quote" | "submit" | "retry">(false);
+  const loading = Boolean(checkoutWork);
+  const checkoutProgress = checkoutWork === "quote" ? "Checking pickup price…" :
+    checkoutWork === "submit" ? "Placing pickup order…" :
+    checkoutWork === "retry" ? "Retrying pickup submission…" : "";
   const [pickupQuote,setPickupQuote]=useState<Awaited<ReturnType<typeof quotePickupCart>>|null>(null);
   const [quoteConsent,setQuoteConsent]=useState(false);
   const [pickupQuoteError,setPickupQuoteError]=useState("");
@@ -893,7 +897,7 @@ export function CheckoutScreen({
     if (quoteLock.current) return;
     const revision = quoteRevision.current;
     quoteLock.current = true;
-    setLoading(true);
+    setLoading("quote");
     setPickupQuoteError("");
     try {
       if (!primaryShop) throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
@@ -918,7 +922,7 @@ export function CheckoutScreen({
     if (!retry && (!pickupQuote || !quoteConsent)) return;
 
     quoteLock.current = true;
-    setLoading(true);
+    setLoading(retry ? "retry" : "submit");
     setPickupQuoteError("");
     try {
       await submitPickupQuote(retry ? null : pickupQuote);
@@ -3606,6 +3610,7 @@ export function CheckoutScreen({
 
           <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
             <p className="font-bold">Pickup · Pay at the shop</p>
+            <div role="status" className="sr-only">{checkoutProgress}</div>
             <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
             {orderingEnabled && <button type="button" disabled={loading} onClick={() => submitReviewedPickup(true)}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
@@ -3629,21 +3634,15 @@ export function CheckoutScreen({
                   : "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-600/30 font-extrabold text-sm"
               }`}
             >
-              {/* Simple loading overlay preventing multiple clicks */}
-              {loading && (
-                <div className="absolute inset-0 bg-orange-700/95 dark:bg-orange-800/95 flex items-center justify-center gap-2 text-white font-bold text-xs uppercase tracking-wider backdrop-blur-xs z-10 select-none pointer-events-none">
-                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>{"Working…"}</span>
-                </div>
-              )}
-
-              <ShoppingBag className="w-5 h-5 shrink-0" />
+              {loading
+                ? <Loader2 aria-hidden="true" className="w-5 h-5 shrink-0 motion-safe:animate-spin" />
+                : <ShoppingBag aria-hidden="true" className="w-5 h-5 shrink-0" />}
               <span>
-                {deliveryType === "delivery" &&
-                distance !== null &&
-                distance > ZONE_B_LIMIT
-                  ? "Out of Delivery Range"
-                  : checkoutAction}
+                {checkoutProgress || (
+                  deliveryType === "delivery" && distance !== null && distance > ZONE_B_LIMIT
+                    ? "Out of Delivery Range"
+                    : checkoutAction
+                )}
               </span>
             </button>
             <button
@@ -3733,8 +3732,8 @@ export function CheckoutScreen({
                 >
                   {loading ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>{"Working…"}</span>
+                      <Loader2 aria-hidden="true" className="w-3.5 h-3.5 motion-safe:animate-spin" />
+                      <span>{checkoutProgress}</span>
                     </>
                   ) : (
                     <>
