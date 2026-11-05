@@ -8,6 +8,15 @@ on:
       - 'src/components/AppSkeletonLoader.tsx'
       - 'src/components/BlurUpImage.tsx'
       - 'src/components/ShopCard.tsx'
+      - 'src/components/StartupExperience.tsx'
+      - 'src/components/OnboardingTour.tsx'
+      - 'src/components/InteractiveTour.tsx'
+      - 'src/components/CookieConsentBanner.tsx'
+      - 'src/components/PopiaLegalDrawer.tsx'
+      - 'src/services/startupGuides.ts'
+      - 'tests/startup-*'
+      - 'package.json'
+      - 'package-lock.json'
       - 'tests/customer-startup-auth-routing.test.mjs'
       - '.github/workflows/customer-startup-auth-routing.yml'
   workflow_dispatch:
@@ -27,7 +36,11 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Startup routing and existing pickup regressions
-        run: node --experimental-strip-types --test tests/customer-startup-auth-routing.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-page-splitting-main.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs
+        run: node --experimental-strip-types --test tests/startup-guides.test.mjs tests/customer-startup-auth-routing.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-page-splitting-main.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs
+      - name: Install isolated test browser
+        run: npx playwright install --with-deps chromium
+      - name: Mobile startup, keyboard and reduced motion walkthrough
+        run: node tests/startup-browser.mjs
       - name: Type check
         run: npm run lint
       - name: Production-style build
