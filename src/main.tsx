@@ -1,6 +1,7 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import * as Sentry from '@sentry/react';
+import { MotionConfig } from 'motion/react';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { LanguageProvider } from './contexts/LanguageContext';
@@ -215,7 +216,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <LanguageProvider>
-        <App />
+        <MotionConfig reducedMotion="user">
+          <App />
+        </MotionConfig>
       </LanguageProvider>
     </ErrorBoundary>
   </StrictMode>,
