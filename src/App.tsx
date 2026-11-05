@@ -256,7 +256,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
-import { canManageCustomerProfile, profileDestination } from "./lib/profileAccess";
+import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -481,11 +481,13 @@ export default function App() {
     setCurrentScreen(profileDestination(auth.currentUser, session?.user?.id, requested));
   }, [setCurrentScreen, session?.user?.id]);
 
-  // Defense in depth: if authentication expires on a profile route, redirect
-  // without ever mounting the registered customer's editable form.
+  // An authenticated Firebase account may temporarily have no formatted session
+  // during token restoration. Hide its edit form, but do NOT bounce to Login/Home.
+  // Redirect genuine guests and mismatched accounts immediately.
   useEffect(() => {
     if ((currentScreen === "profile" || currentScreen === "complete-profile") &&
-        !canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+        !canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+        shouldRedirectProtectedProfile(auth.currentUser, session?.user?.id)) {
       setCurrentScreen("login");
     }
   }, [currentScreen, session?.user?.id, setCurrentScreen]);
@@ -2101,6 +2103,10 @@ export default function App() {
         setIsRestoringSession(false);
         return;
       }
+      // An old INITIAL_SESSION(null) arriving after Firebase has already restored
+      // a registered user must not clear that customer's data or redirect Profile.
+      if (!session && _event !== "SIGNED_OUT" &&
+          auth.currentUser && !auth.currentUser.isAnonymous) return;
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
