@@ -6961,7 +6961,7 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 pb-32 space-y-8">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
           <input
