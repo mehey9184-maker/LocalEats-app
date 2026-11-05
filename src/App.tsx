@@ -497,34 +497,27 @@ export default function App() {
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    return safeLocalStorageGet("userProfile", {
-      fullName: "",
-      email: "",
-      phone: "",
-      city: SUPPORTED_CITIES[0],
-      address: "",
-      country: "South Africa",
-      role: "user",
-    });
+  // Cached profile data is untrusted until Firebase restores account identity.
+  const emptyCustomerProfile = (): UserProfile => ({
+    fullName: "", email: "", phone: "", city: SUPPORTED_CITIES[0],
+    address: "", country: "South Africa", role: "user",
   });
+  const [userProfile, setUserProfile] = useState<UserProfile>(emptyCustomerProfile);
 
+  // Never persist guest or previous-account private details.
   useEffect(() => {
-    if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)
+        && userProfile.id === session?.user?.id) {
       safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
-      if (!localStorage.getItem("remember_me_secure_token")) {
-        localStorage.setItem("remember_me_secure_token", userProfile.id || userProfile.email || "true");
-      }
     }
-  }, [userProfile]);
+  }, [userProfile, session?.user?.id]);
 
   // Always hold the first render until Firebase knows whether this is a
   // returning customer or a guest; IndexedDB auth is not synchronous.
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [authRestoreSlow, setAuthRestoreSlow] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    return safeLocalStorageGet("favorites", []);
-  });
+  // Global favorites cache must not leak across accounts.
+  const [favorites, setFavorites] = useState<string[]>([]);
 
   const [forcedTheme, setForcedTheme] = useState<"light" | "dark" | "high-contrast" | "default">(() => {
     try {
@@ -1469,7 +1462,8 @@ export default function App() {
   const subscribeToPushNotifications = useCallback(
     async (customUserId?: string) => {
       const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) return;
+      if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)
+          || targetUserId !== session?.user?.id) return;
       try {
         const permission = await Notification.requestPermission();
         if (permission === "granted") {
@@ -1490,10 +1484,8 @@ export default function App() {
       if (Notification.permission !== "denied") {
         const permission = await Notification.requestPermission();
         if (permission === "granted") {
-          if (session?.user?.id) {
-            // Sync with push notifications in background
+          if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
             subscribeToPushNotifications(session.user.id).catch(() => {});
-            registerAndSyncPushToken(session.user.id).catch(() => {});
           }
         }
       }
@@ -1881,6 +1873,31 @@ export default function App() {
     [runWithProcessing, setNotification],
   );
 
+  const logoutCustomer = async () => {
+    // Navigation alone does not revoke a Firebase session.
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setNotification({ type: "error", message: "Sign out failed. Please try again." });
+      return;
+    }
+    setSession(null);
+    setUserProfile(emptyCustomerProfile());
+    setFavorites([]);
+    setCart([]);
+    setOrders([]);
+    setNotifications([]);
+    setPendingReview(null);
+    for (const key of [
+      "userProfile", "remember_me_secure_token", "localeats_session",
+      "favorites", "cart", "cached_orders", "app_notifications",
+      "pending_review", "pending_cancellation", "offline_orders_queue",
+      "offline_profile_queue", "localeats_saved_cards", "localeats_saved_addresses"
+    ]) {
+      try { localStorage.removeItem(key); } catch {}
+    }
+    setCurrentScreen("splash");
+  };
+
   const handleUpdateProfile = async (
     data: any,
     showSuccess: boolean = true,
@@ -2220,7 +2237,8 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const historyUserId = session?.user?.id;
+  const historyUserId = canManageCustomerProfile(auth.currentUser, session?.user?.id)
+    ? session!.user.id : null;
   const [pickupHistory, setPickupHistory] = useState<{
     userId: string; orders: PickupOrder[] | null; error: boolean; refreshing: boolean;
   } | null>(null);
@@ -2375,29 +2393,23 @@ export default function App() {
 
   const toggleFavorite = useCallback(
     async (shopId: string) => {
-      if (!session && !userProfile?.id) {
-        showAlert(
-          "Login Required",
-          "Please sign in or create an account to follow stores.",
-        );
-        setPreviousScreen(currentScreen);
+      if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+        showAlert("Login Required", "Please sign in to follow stores.");
         setCurrentScreen("login");
         return;
       }
-
+      const targetUserId = session!.user.id;
       const isFollowing = favorites.includes(shopId);
-      const targetUserId = session?.user?.id || userProfile?.id;
-      setFavorites((prev) =>
-        isFollowing ? prev.filter((id) => id !== shopId) : [...prev, shopId],
-      );
-      triggerHaptic();
-
-      if (targetUserId) {
-        if (isFollowing) {
-          FirestoreService.unfollowShop(targetUserId, shopId).catch(console.warn);
-        } else {
-          FirestoreService.followShop(targetUserId, shopId).catch(console.warn);
-        }
+      try {
+        if (isFollowing) await FirestoreService.unfollowShop(targetUserId, shopId);
+        else await FirestoreService.followShop(targetUserId, shopId);
+        if (!canManageCustomerProfile(auth.currentUser, targetUserId)) return;
+        setFavorites(prev => isFollowing ? prev.filter(id => id !== shopId)
+          : prev.includes(shopId) ? prev : [...prev, shopId]);
+        triggerHaptic();
+      } catch (error) {
+        console.warn("[Favorites] Save not confirmed:", error);
+        showAlert("Could not save", "Your favorite was not saved. Please try again.");
       }
     },
     [
@@ -2644,8 +2656,6 @@ export default function App() {
   );
 
   useEffect(() => {
-    localStorage.setItem("userProfile", JSON.stringify(userProfile));
-
     // An anonymous Firebase session is not a registered profile account.
     if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       const timer = setTimeout(async () => {
@@ -3414,12 +3424,13 @@ export default function App() {
               ))}
               {currentScreen === "settings" && (
                 <SettingsScreen
-                  userProfile={userProfile}
+                  userProfile={canManageCustomerProfile(auth.currentUser, session?.user?.id)
+                    ? userProfile : emptyCustomerProfile()}
                   setUserProfile={setUserProfile}
                   forcedTheme={forcedTheme}
                   onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onLogout={() => setCurrentScreen("splash")}
+                  onLogout={() => { void logoutCustomer(); }}
                   onProfile={() => {
                     setPreviousScreen("settings");
                     navigateToProfile("profile");
@@ -3429,13 +3440,11 @@ export default function App() {
                     setCurrentScreen("order-history");
                   }}
                   onAdminOrders={() => {
-                    setPreviousScreen("settings");
-                    setCurrentScreen("admin-orders");
+                    showAlert("Not available", "Admin access requires verified authorization.");
                   }}
                   onShopDashboard={() => {
-                    setPreviousScreen("settings");
-                    setCurrentScreen("shop-dashboard");
-                  }}
+                    showAlert("Merchant sign in", "Open your Merchant Dashboard with an approved shop account.");
+                  }
                   onContactUs={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("contact");
@@ -3530,27 +3539,7 @@ export default function App() {
                   }}
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={async () => {
-                    await supabase.auth.signOut();
-                    // Clear sensitive data on logout
-                    localStorage.removeItem("remember_me_secure_token");
-                    localStorage.removeItem("cart");
-                    localStorage.removeItem("userProfile");
-                    localStorage.removeItem("favorites");
-                    localStorage.removeItem("pending_review");
-                    setCart([]);
-                    setFavorites([]);
-                    setUserProfile({
-                      fullName: "",
-                      email: "",
-                      phone: "",
-                      city: "",
-                      address: "",
-                      country: "South Africa",
-                      role: "user",
-                    });
-                    setCurrentScreen("splash");
-                  }}
+                  onLogout={logoutCustomer}
                   setNotification={setNotification}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
@@ -3746,7 +3735,10 @@ export default function App() {
           <BottomNavigation
             currentScreen={currentScreen}
             onNavigate={(targetScreen) => {
-              setPreviousScreen(currentScreen);
+              if (targetScreen === "profile") {
+                navigateToProfile("profile");
+                return;
+              }
               setCurrentScreen(targetScreen);
             }}
             activeOrdersCount={
