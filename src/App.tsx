@@ -3269,7 +3269,7 @@ export default function App() {
                   }}
                   onShopDashboard={() => {
                     showAlert("Merchant sign in", "Open your Merchant Dashboard with an approved shop account.");
-                  }
+                  }}
                   onContactUs={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("contact");
