@@ -23,7 +23,7 @@ import { WidgetErrorBoundary } from "../../components/WidgetErrorBoundary";
 export interface CompleteProfileScreenProps {
   userProfile: UserProfile;
   onBack: () => void;
-  onSave: (data: Partial<UserProfile>) => void;
+  onSave: (data: Partial<UserProfile>) => void | Promise<void>;
   setNotification: (n: NotificationState) => void;
 }
 
@@ -112,9 +112,10 @@ export function CompleteProfileScreen({
 
       const publicUrl = await uploadAvatar(file, userProfile.id);
 
-      onSave({ photoURL: publicUrl });
+      // Storage upload and saving the avatar on the profile are separate steps.
+      await onSave({ photoURL: publicUrl });
       setNotification({
-        message: "Profile picture uploaded & saved to Supabase (<200KB)!",
+        message: "Profile picture saved to your account.",
         type: "success",
       });
       setPreviewUrl(null);
@@ -152,9 +153,14 @@ export function CompleteProfileScreen({
     }
   };
 
-  const handleDeletePhoto = () => {
-    onSave({ photoURL: "" });
-    setPreviewUrl(null);
+  const handleDeletePhoto = async () => {
+    try {
+      await onSave({ photoURL: "" });
+      setPreviewUrl(null);
+    } catch (error) {
+      console.warn("Avatar removal was not confirmed:", error);
+      setNotification({ message: "Could not remove your profile photo. Please retry.", type: "error" });
+    }
   };
 
   return (
