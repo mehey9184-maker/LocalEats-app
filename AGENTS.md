@@ -12,6 +12,8 @@ The customer checkout uses the same quote and submit labels and disabled states 
 
 The storefront renders the verified nearby catalog menu already loaded for its shop. Empty menus remain empty. Shared storefront links use real location discovery and show recovery when a shop cannot be verified.
 
+Pickup history uses the authenticated orders feed and preserves only the current account’s last verified pickup statuses during a failed refresh.
+
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 
 
