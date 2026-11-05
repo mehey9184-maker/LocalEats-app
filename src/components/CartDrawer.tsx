@@ -42,7 +42,7 @@ interface CartDrawerProps {
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
   isOpen,
-  fulfillment = "delivery",
+  fulfillment = "collection",
   onClose,
   cart,
   shops,
@@ -260,7 +260,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span className="font-bold text-slate-900 dark:text-white">R {subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
-                  <span>{fulfillment === "collection" ? "Pickup delivery fee" : "Estimated Delivery"}</span>
+                  <span>{fulfillment === "collection" ? "Pickup fee" : "Estimated Delivery"}</span>
                   <span className="font-bold text-slate-900 dark:text-white">R {estDeliveryFee.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
