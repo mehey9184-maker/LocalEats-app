@@ -131,3 +131,6 @@ Focused fix/customer-location-retry preserves the released original UI. Missing-
 
 ## Pickup kitchen instructions — 2026-11-05
 Customer special instructions are bounded to 500 characters per server menu line and preserved through quote/create. Repeated menu IDs consolidate with quantity-labelled instructions; aggregate quantity is limited to the existing server maximum of 20. Merchant presentation uses authoritative unit prices and line totals, keeps item instructions visible and escapes customer notes in HTML receipts. This changes no live SQL, ordering flags or payment state.
+
+## Guest profile permission correction — 2026-11-05
+The LocalEats customer app permits guest browsing of shops/menus, but a Firebase anonymous or signed-out guest must never open the registered edit-profile form, receive a saved-profile acknowledgement, write personal profile data or replay delayed writes. Profile and Complete Profile routes use active non-anonymous Firebase UID matching the current session; guests see Sign In/Create Account/Continue Browsing instead. The shared save service enforces the same account guard before local caching, retry queueing, Firestore mirrors or API calls. Preserve the signed-in Profile UI and all ShopCards. This is a review-only branch; no live orders, Production deployment, database migrations, Firebase rules changes or merge authorized.
