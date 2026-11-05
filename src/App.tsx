@@ -896,6 +896,7 @@ export default function App() {
   // A moved device never displays the previous location's shops.
   const visibleShops=userLocation && nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
+  const selectedStore = visibleShops.find(shop => shop.id === selectedStoreId);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const ordersRef = useRef<Order[]>(orders);
@@ -2209,17 +2210,32 @@ export default function App() {
     return()=>{active=false;clearInterval(timer);};
   }, [session?.user?.id,currentScreen]);
 
+  const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
+    setLoadingShops(true);
+    setFetchError(null);
+    requestLocation();
+  }, () => { void fetchShopsData(0, true); });
+
   useEffect(() => {
+    if (!userLocation) return;
     void fetchShopsData();
-    const timer=setInterval(()=>void fetchShopsData(),60000);
-    return()=>{catalogGeneration.current++;clearInterval(timer);};
-  }, [fetchShopsData]);
+    const timer = setInterval(() => void fetchShopsData(), 60000);
+    return () => { catalogGeneration.current++; clearInterval(timer); };
+  }, [fetchShopsData, !!userLocation]);
 
   useEffect(() => {
     if (currentScreen === "home" || currentScreen === "explore" || currentScreen === "discover") {
       requestLocation(true);
     }
   }, [requestLocation, currentScreen]);
+
+  const needsStoreLocation = currentScreen === "store-info" && !userLocation;
+  useEffect(() => {
+    if (!needsStoreLocation) return;
+    setLoadingShops(true);
+    setFetchError(null);
+    requestLocation(true);
+  }, [needsStoreLocation, requestLocation]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -3017,7 +3033,7 @@ export default function App() {
                     setSelectedStoreId(id);
                     setCurrentScreen("store-info");
                   }}
-                  onRetry={() => retryPickupDiscovery(userLocation, () => {setLoadingShops(true);setFetchError(null);requestLocation();}, () => {void fetchShopsData();})}
+                  onRetry={reloadPickupShops}
                   cart={cart}
                   addToCart={addToCart}
                   removeFromCart={removeFromCart}
@@ -3226,13 +3242,14 @@ export default function App() {
                   addToCart={addToCart}
                 />
               )}
-              {currentScreen === "store-info" && visibleShops.some(s=>String(s.id)===String(selectedStoreId)) && (
+              {currentScreen === "store-info" && (selectedStore ? (
                 <StoreInfoScreen
                   onBack={() => {
                     if ("vibrate" in navigator) navigator.vibrate(5);
                     setCurrentScreen(previousScreen || "home");
                   }}
-                  shop={visibleShops.find(s=>String(s.id)===String(selectedStoreId))!}
+                  key={selectedStore.id}
+                  shop={selectedStore}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
                   onToggleFavorite={() => {
@@ -3261,7 +3278,32 @@ export default function App() {
                   setCurrentScreen={setCurrentScreen}
                   onScanFlyer={() => setShowQRScanner(true)}
                 />
-              )}
+              ) : (
+                <section className="mx-auto max-w-lg space-y-4 px-4 py-12 text-slate-900 dark:text-slate-100">
+                  <div role="status">
+                    <h1 className="text-xl font-bold">
+                      {loadingShops || isSyncing ? "Checking pickup availability…" : "Pickup shop unavailable"}
+                    </h1>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                      {loadingShops || isSyncing
+                        ? "We’re checking which shops offer pickup near you."
+                        : fetchError || "This shop isn’t available for pickup near your current location."}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <button type="button" onClick={() => setCurrentScreen("home")}
+                      className="min-h-11 rounded-xl bg-orange-600 px-4 font-semibold text-white active:scale-[0.98] motion-reduce:transform-none">
+                      Back to shops
+                    </button>
+                    {!loadingShops && !isSyncing && (
+                      <button type="button" onClick={reloadPickupShops}
+                        className="min-h-11 rounded-xl border border-slate-300 px-4 font-semibold dark:border-slate-600">
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                </section>
+              ))}
               {currentScreen === "settings" && (
                 <SettingsScreen
                   userProfile={userProfile}
