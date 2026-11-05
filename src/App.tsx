@@ -255,7 +255,8 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
+import { canManageCustomerProfile, profileDestination } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -473,6 +474,22 @@ export default function App() {
   }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+
+  // Guest taps on Profile open the existing Login screen immediately.
+  // Guard every entry point, including the checkout incomplete-profile route.
+  const navigateToProfile = useCallback((requested: "profile" | "complete-profile") => {
+    setCurrentScreen(profileDestination(auth.currentUser, session?.user?.id, requested));
+  }, [setCurrentScreen, session?.user?.id]);
+
+  // Defense in depth: if authentication expires on a profile route, redirect
+  // without ever mounting the registered customer's editable form.
+  useEffect(() => {
+    if ((currentScreen === "profile" || currentScreen === "complete-profile") &&
+        !canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      setCurrentScreen("login");
+    }
+  }, [currentScreen, session?.user?.id, setCurrentScreen]);
+
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -1505,6 +1522,8 @@ export default function App() {
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
+    // Do not load or create a registered profile for a guest or different UID.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) return;
     try {
       let data: any = null;
       let error: any = null;
@@ -1643,10 +1662,10 @@ export default function App() {
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Only a registered, matching customer account may register private push tokens.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
+    const activeUserId = session?.user?.id;
+    if (canManageCustomerProfile(auth.currentUser, activeUserId)) {
       registerAndSyncPushToken(activeUserId).catch((err) => {
         console.warn("[FCM] Auto push token registration notice:", err);
       });
@@ -1867,6 +1886,12 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
+    // Check authorization BEFORE mutating state, cache, callbacks or the API.
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      const message = "Sign in or create an account to save your profile.";
+      setNotification({ message, type: "info" });
+      throw new Error(message);
+    }
     const updated = { ...userProfile, ...data };
     setUserProfile(updated);
 
@@ -1919,7 +1944,7 @@ export default function App() {
         }
       }
     } else {
-      if (successCallback) successCallback();
+      throw new Error("A registered account is required to save profile details.");
     }
   };
 
@@ -2337,8 +2362,8 @@ export default function App() {
     }
     prevFavoritesJsonRef.current = currJson;
 
-    // Sync favorites to profile if session exists
-    if (session?.user?.id) {
+    // Guest browsing must never start an account profile write.
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       upsertProfileWithRPC({
         user_id: session.user.id,
         favorites,
@@ -2621,8 +2646,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("userProfile", JSON.stringify(userProfile));
 
-    // Sync with Supabase if session exists
-    if (session?.user?.id) {
+    // An anonymous Firebase session is not a registered profile account.
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
@@ -3042,11 +3067,11 @@ export default function App() {
               )}
               {currentScreen === "success" && (
                 <SuccessScreen
-                  onCompleteProfile={() => setCurrentScreen("complete-profile")}
+                  onCompleteProfile={() => navigateToProfile("complete-profile")}
                   onExplore={() => setCurrentScreen("home")}
                 />
               )}
-              {currentScreen === "complete-profile" && (
+              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3063,7 +3088,7 @@ export default function App() {
                   onHome={() => {
                     setCurrentScreen("home");
                   }}
-                  onViewProfile={() => setCurrentScreen("profile")}
+                  onViewProfile={() => navigateToProfile("profile")}
                   onBack={() => setCurrentScreen("login")}
                 />
               )}
@@ -3085,7 +3110,7 @@ export default function App() {
                     setCurrentScreen("settings");
                   }}
                   onProfile={() => {
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onCheckout={() => {
                     setCurrentScreen("checkout");
@@ -3397,7 +3422,7 @@ export default function App() {
                   onLogout={() => setCurrentScreen("splash")}
                   onProfile={() => {
                     setPreviousScreen("settings");
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onOrderHistory={() => {
                     setPreviousScreen("settings");
@@ -3495,7 +3520,7 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "profile" && (
+              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
@@ -3550,7 +3575,7 @@ export default function App() {
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
-                        setCurrentScreen("complete-profile");
+                        navigateToProfile("complete-profile");
                       }}
                       cart={cart}
                       setCart={setCart}

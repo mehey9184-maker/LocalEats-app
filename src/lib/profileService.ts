@@ -1,4 +1,5 @@
-import { FirestoreService } from './firebase';
+import { FirestoreService, auth } from './firebase';
+import { canManageCustomerProfile } from './profileAccess';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -68,7 +69,7 @@ function calculateBackoffDelay(attempt: number, baseDelay = 1000, maxDelay = 300
  * If the last error was a permanent schema/type failure, retries are skipped.
  */
 export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAttempt = 0) {
-  if (typeof window === "undefined" || !profileData.user_id) return;
+  if (typeof window === "undefined" || !canManageCustomerProfile(auth.currentUser, profileData.user_id)) return;
   const userId = profileData.user_id;
 
   // Clear existing timer if any
@@ -82,6 +83,8 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
 
   const timer = setTimeout(async () => {
     activeRetryTimers.delete(userId);
+    // A guest/logout/account switch must not replay a previous profile write.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) return;
     if (!navigator.onLine) {
       // Re-schedule when connection resumes
       return;
@@ -123,8 +126,8 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
  * Direct synchronization multi-channel executor
  */
 async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ success: boolean; data?: any; error?: any }> {
-  if (!profileData.user_id) {
-    return { success: false, error: new Error("User ID is required") };
+  if (!canManageCustomerProfile(auth.currentUser, profileData.user_id)) {
+    return { success: false, error: new Error("Sign in with the matching registered account to save your profile.") };
   }
 
   const sanitizedPhone = toDBPhone(profileData.phone);
@@ -198,8 +201,9 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
  * persistent offline queue fallback, and exponential backoff retries.
  */
 export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Promise<{ data: any; error: any }> {
-  if (!profileData.user_id) {
-    return { data: null, error: new Error("User ID is required for profile upsert") };
+  // Check before touching localStorage, queueing a retry or making any network request.
+  if (!canManageCustomerProfile(auth.currentUser, profileData.user_id)) {
+    return { data: null, error: new Error("Sign in with the matching registered account to save your profile.") };
   }
 
   const sanitizedPhone = toDBPhone(profileData.phone);
@@ -293,7 +297,8 @@ export async function processOfflineProfileQueue() {
   for (const item of queue) {
     const profileData = item.data || item;
     const userId = item.user_id || profileData?.user_id;
-    if (!userId) continue;
+    // Never send queued data belonging to a guest or a different signed-in account.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) continue;
 
     try {
       const res = await syncProfileDirect(profileData);
