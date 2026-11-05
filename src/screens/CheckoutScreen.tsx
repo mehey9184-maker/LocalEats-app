@@ -7,6 +7,7 @@ import {
   ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, ChevronDown, ChevronUp, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff, Check, Zap, Calendar
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { canManageCustomerProfile } from "../lib/profileAccess";
 import { upsertProfileWithRPC } from "../lib/profileService";
 import { Shop, CartItem, Screen, UserProfile } from "../types";
 import { IdempotencyManager } from "../utils/idempotency";
@@ -16,7 +17,7 @@ import { LocalEatsLogo } from "../components/LocalEatsLogo";
 import { useTranslation } from "../contexts/LanguageContext";
 import { AnimatedPrice } from "../components/AnimatedPrice";
 import { toast } from "sonner";
-import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, CreateOrderRequestData, CreateOrderResponse } from "../lib/firebase";
+import { registerAndSyncPushToken, FirestoreService, ensureAnonymousAuth, auth, CreateOrderRequestData, CreateOrderResponse } from "../lib/firebase";
 import { LocationPickerMap } from "../components/MapComponents";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import { BlurUpImage } from "../components/BlurUpImage";
@@ -911,7 +912,7 @@ export function CheckoutScreen({
     setPickupQuoteError("");
     try {
       if (!primaryShop) throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
-      if (!session?.user?.id) throw new Error("Please sign in with your existing account to review a quote.");
+      if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) throw new Error("Please sign in with a registered account to review a pickup quote.");
       if (deliveryType !== "collection") throw new Error("This pilot supports pickup only. Select collection.");
       // The abort also releases checkout while an auth token is still being restored.
       const stopped = new Promise<never>((_, reject) => {
@@ -938,6 +939,11 @@ export function CheckoutScreen({
 
   const submitReviewedPickup = async (retry: boolean) => {
     if (!pickupOrderingEnabled() || quoteLock.current) return;
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      setPickupQuoteError("Sign in with your registered account before placing a pickup order.");
+      setCurrentScreen("login");
+      return;
+    }
     if (!retry && (!pickupQuote || !quoteConsent)) return;
 
     quoteLock.current = true;
@@ -958,7 +964,8 @@ export function CheckoutScreen({
   const orderingEnabled = pickupOrderingEnabled();
   // Show "Retry previous submission" only when an unresolved request exists for this account
   // (same UID-scoped key written by submitPickupQuote). Re-evaluated on every render.
-  const hasUnresolvedPickup = typeof sessionStorage !== "undefined" && !!session?.user?.id &&
+  const hasUnresolvedPickup = typeof sessionStorage !== "undefined" &&
+    canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
     !!sessionStorage.getItem(`pickup-create:${session.user.id}`);
   const checkoutAction = !pickupQuote ? "Review pickup quote" :
     orderingEnabled ? "Place pickup order" : "Ordering not enabled yet";
