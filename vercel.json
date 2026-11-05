@@ -17,7 +17,8 @@
     "deploymentEnabled": {
       "integration/customer-original-ui-pickup": true,
       "activation/pickup-workflow": false,
-      "fix/pickup-zero-fee": false
+      "fix/pickup-zero-fee": false,
+      "security/firestore-review-only-20261105": false
     }
   }
 }
