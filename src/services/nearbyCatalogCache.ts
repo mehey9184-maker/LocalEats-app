@@ -8,6 +8,7 @@
 import type {Shop} from "../types";
 
 type Point={lat:number;lng:number};
+export type NearbyCatalog = {shops: Shop[]; incomplete: boolean};
 type PublicSource={
   shops:(point:Point)=>Promise<{shops?:Array<{id:string}>}>;
   menu:(id:string)=>Promise<{menu_items?:unknown[]}>;
@@ -28,34 +29,44 @@ export function createNearbyCatalogReader(
   mapShop:(shop:any,menu:any[])=>Shop,
   now:()=>number=()=>Date.now(),
 ) {
-  const verified=new Map<string,{time:number;shops:Shop[]}>();
-  const pending=new Map<string,Promise<Shop[]>>();
+  const verified=new Map<string,{time:number;catalog:NearbyCatalog}>();
+  const pending=new Map<string,Promise<NearbyCatalog>>();
 
-  return async (location:Point|null, options:{force?:boolean}={}):Promise<Shop[]> => {
+  return async (location:Point|null, options:{force?:boolean}={}):Promise<NearbyCatalog> => {
     const key=nearbyCatalogKey(location);
     if(!key || !location)throw new Error("Allow your real location to find available pickup shops within 4 km.");
     const point=location;
     const cached=verified.get(key);
     const age=cached ? now()-cached.time : Infinity;
     if(cached && (age<0 || age>=NEARBY_CATALOG_TTL_MS))verified.delete(key);
-    if(!options.force && cached && age>=0 && age<NEARBY_CATALOG_TTL_MS)return cached.shops;
+    if(!options.force && cached && age>=0 && age<NEARBY_CATALOG_TTL_MS)return cached.catalog;
 
     // React effects, focus and manual refreshes may overlap. Coalesce without
     // showing a cached response whose freshness has expired.
     const inFlight=pending.get(key);
     if(inFlight)return inFlight;
+    verified.delete(key);
     const task=(async()=>{
       const catalog=await source.shops(point);
       if(!Array.isArray(catalog.shops))throw new Error("The shop service returned an invalid catalog.");
-      const result=await Promise.all(catalog.shops.map(async shop=>{
-        if(!shop || typeof shop.id!=="string" || !shop.id)throw new Error("The shop service returned an invalid shop.");
-        const menu=await source.menu(shop.id);
-        if(!Array.isArray(menu.menu_items))throw new Error("The menu service returned an invalid menu.");
-        return mapShop(shop,menu.menu_items);
+      const menus = await Promise.all(catalog.shops.map(async shop => {
+        if (!shop || typeof shop.id !== "string" || !shop.id) {
+          throw new Error("The shop service returned an invalid shop.");
+        }
+        const menu = await source.menu(shop.id).catch(() => null);
+        if (!Array.isArray(menu?.menu_items)) return null;
+        return mapShop(shop, menu.menu_items);
       }));
-      verified.delete(key);
-      verified.set(key,{time:now(),shops:result});
-      while(verified.size>MAX_LOCATIONS)verified.delete(verified.keys().next().value!);
+      const shops = menus.filter((shop): shop is Shop => shop !== null);
+      const incomplete = shops.length !== menus.length;
+      if (incomplete && shops.length === 0) {
+        throw new Error("Pickup menus could not be loaded. Please retry.");
+      }
+      const result = {shops, incomplete};
+      if (!incomplete) {
+        verified.set(key, {time: now(), catalog: result});
+        while (verified.size > MAX_LOCATIONS) verified.delete(verified.keys().next().value!);
+      }
       return result;
     })();
     pending.set(key,task);

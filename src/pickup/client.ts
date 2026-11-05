@@ -44,7 +44,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
  };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
-  menu:(id:string)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true),
+  menu:(id:string,signal?:AbortSignal)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true,signal),
   quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
     const result=await request("/api/v1/orders","POST",intent);

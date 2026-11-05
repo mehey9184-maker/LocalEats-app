@@ -10,6 +10,8 @@ Customer startup waits for Firebase session hydration using the same Home-shaped
 
 The customer checkout uses the same quote and submit labels, progress feedback, and disabled states on both action bars. Quote review remains available in Preview. Checkout lets customers stop a price check and times it out after 15 seconds. Checkout discards in-flight quotes after cart, account, or pickup details change. New submissions and retries share an in-flight lock and require the existing ordering gate.
 
+A failed pickup menu is omitted without hiding verified nearby shops or caching the partial result.
+
 The storefront renders the verified nearby catalog menu already loaded for its shop. Empty menus remain empty. Shared storefront links use real location discovery and show recovery when a shop cannot be verified.
 
 Pickup history uses the authenticated orders feed and preserves only the current account’s last verified pickup statuses during a failed refresh.

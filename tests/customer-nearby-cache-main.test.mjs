@@ -25,7 +25,7 @@ function fixture(clock={now:1000}) {
 test("reuse verified nearby shop and menu data for at most 15 seconds",async()=>{
   const f=fixture();
   const original=await f.reader(point);
-  assert.equal(original[0].menu[0].price,25);
+  assert.equal(original.shops[0].menu[0].price,25);
   const hit=await f.reader(point);
   assert.strictEqual(hit,original);
   assert.deepEqual(f.counts(),{catalogs:1,menus:1});
@@ -84,7 +84,7 @@ test("failed or invalid live reads do not become verified cache hits",async()=>{
   },(s,menu)=>({...s,menu}));
   await assert.rejects(()=>reader(point),/offline/);
   const rows=await reader(point);
-  assert.equal(rows.length,1);
+  assert.equal(rows.shops.length,1);
   assert.equal(attempts,2);
   const invalid=createNearbyCatalogReader({
     shops:async()=>({success:true}),
@@ -101,9 +101,31 @@ test("active app keeps same-location cards during refresh but fails closed on ne
   assert.match(app,/if\(!sameLocation\)\{displayedCatalogKeyRef\.current=null;setShops\(\[\]\)/);
   assert.match(app,/displayedCatalogKeyRef\.current=null;\s*setShops\(\[\]\);\s*setFetchError/);
   assert.match(app,/await readPickupCatalog\(userLocation\)/);
-  assert.match(service,/createNearbyCatalogReader\(customerPickupApi,mapPickupShop\)/);
+  assert.match(service,/createNearbyCatalogReader\([\s\S]*?\}, mapPickupShop\)/);
   assert.doesNotMatch(module,/localStorage|sessionStorage|indexedDB|fetch\(/);
   const storefront=app.slice(app.indexOf("function StoreInfoScreen("),app.indexOf("const filteredMenu",app.indexOf("function StoreInfoScreen(")));
   assert.match(storefront,/const shopMenu = shop\.menu;/);
   assert.doesNotMatch(storefront,/fetch\(|setIsMenuLoading|setApiMenu/);
+});
+
+test("a failed menu never hides verified neighbors or creates a partial cache hit", async () => {
+  const other = {...shop, id:"shop-2"};
+  let reads = 0;
+  let fail = true;
+  const reader = createNearbyCatalogReader({
+    shops: async () => { reads++; return {shops:[shop, other]}; },
+    menu: async id => {
+      if (id === other.id && fail) throw Error("offline");
+      return {menu_items:[item]};
+    },
+  }, fixture().map);
+
+  const partial = await reader(point);
+  assert.deepEqual(partial.shops.map(s => s.id), [shop.id]);
+  assert.equal(partial.incomplete, true);
+  fail = false;
+  const complete = await reader(point);
+  assert.deepEqual(complete.shops.map(s => s.id), [shop.id, other.id]);
+  assert.equal(complete.incomplete, false);
+  assert.equal(reads, 2);
 });
