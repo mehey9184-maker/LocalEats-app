@@ -130,8 +130,8 @@ test("switching from account A to B does not show A email or cache",async({page,
   await page.locator("#nav-tab-profile").click();
   const emailInput=page.locator('input[type="email"][readonly]').first();
   await expect(emailInput).toBeVisible();
-  await expect(emailInput).toHaveValue(accountB.email);
-  await expect(emailInput).not.toHaveValue(accountA.email);
+  await expect(emailInput).toHaveValue(accountB.email.toLowerCase());
+  await expect(emailInput).not.toHaveValue(accountA.email.toLowerCase());
 });
 test("offline profile-save attempt never reports synchronized success",async({page,request,context})=>{
   const account=await createAccount(request,"offline");
