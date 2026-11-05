@@ -157,3 +157,10 @@ Review-only rules and synthetic emulator tests cover direct order updates, pool-
 
 ## Pickup instructions and item amounts — 2026-11-05
 The customer adapter sends trimmed special instructions as supported item notes. Different requests for the same menu item consolidate into one server line with quantity labels, without client prices; combined notes over 500 characters and aggregate quantity over 20 fail before quote. The picker limits notes to 500 characters and quantity to 20, matching the existing API and SQL. Merchant mapping preserves authoritative unit/line amounts and named instructions; kitchen cards and acceptance show instructions, item rows show line amounts, and HTML receipt notes are escaped. No database migration or production activation is included.
+
+## Preview UX polish (proposed, not merged): motion accessibility and pickup quote panel
+- `MotionConfig reducedMotion="user"` wraps the app so transform and layout motion respects the device's reduced-motion setting.
+- Decorative skeleton shimmer and pulse stop under `prefers-reduced-motion`; spinners and state changes are unchanged.
+- The Checkout pickup quote panel keeps the same strings, data and gating. Lines, total and consent are laid out for faster scanning; the total uses the existing AnimatedPrice; the consent checkbox has a 44px target.
+- "Retry previous submission" shows only when an unresolved request exists for the signed-in account (same UID-scoped sessionStorage key used by submitPickupQuote).
+- No pricing, submission, flag, rules, schema or shop card/menu/cart changes. VITE_PICKUP_ORDERING_ENABLED stays default-off.

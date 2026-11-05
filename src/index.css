@@ -363,3 +363,11 @@ body {
 }
 
 
+
+/* Reduced motion: stop decorative skeleton animation. Spinners and state changes are unaffected. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  [class*="animate-[shimmer"] {
+    animation: none !important;
+  }
+}
