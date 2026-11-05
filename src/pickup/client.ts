@@ -27,24 +27,25 @@ export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):strin
 }
 export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transport:typeof fetch=fetch,
  options:{requireExplicitHttps?:boolean}={}) {
- const request=async(path:string,method="GET",body?:unknown,publicRead=false):Promise<ApiResponse>=>{
+ const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal):Promise<ApiResponse>=>{
    const origin=pickupApiOrigin(baseUrl,options.requireExplicitHttps);
    const bearer=publicRead ? "" : await token();
+   signal?.throwIfAborted();
    if(!publicRead && !bearer) throw new PickupApiError(401,"UNAUTHORIZED","Sign in again to continue.");
    let response:Response;
-   try {response=await transport(origin+path,{method,cache:"no-store",
+   try {response=await transport(origin+path,{method,cache:"no-store",...(signal ? {signal} : {}),
      headers:{"Content-Type":"application/json",...(bearer ? {Authorization:"Bearer fb-"+bearer} : {})},
      ...(body===undefined ? {} : {body:JSON.stringify(body)})});}
-   catch {throw new PickupApiError(0,"CONNECTION_LOST","Connection lost. The outcome may be unknown. Retry the same request.");}
+   catch {signal?.throwIfAborted();throw new PickupApiError(0,"CONNECTION_LOST","Connection lost. The outcome may be unknown. Retry the same request.");}
    let result:ApiResponse;
-   try {result=await response.json();} catch {throw new PickupApiError(response.status,"INVALID_RESPONSE","The service returned an invalid response.");}
+   try {result=await response.json();} catch {signal?.throwIfAborted();throw new PickupApiError(response.status,"INVALID_RESPONSE","The service returned an invalid response.");}
    if(!response.ok || result?.success!==true) throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.");
    return result;
  };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
   menu:(id:string)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true),
-  quote:(intent:unknown)=>request("/api/v1/orders/quote","POST",intent),
+  quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
     const result=await request("/api/v1/orders","POST",intent);
     if(!result.order?.id || typeof result.replayed!=="boolean") throw new PickupApiError(503,"UNCONFIRMED","Order persistence is unconfirmed. Retry the same request.");

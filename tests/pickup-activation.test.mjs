@@ -34,3 +34,27 @@ test('replayed order with wrong total or payment choice retains original consent
   assert.equal(JSON.parse(store.get('pickup-create:fixture-customer')).consent.total_minor,2500);
  }
 });
+
+test('cancelling a quote aborts its request and leaves checkout free to fetch a fresh quote', async () => {
+  const { createPickupApi } = await import('../src/pickup/client.ts');
+  const controller = new AbortController();
+  const reason = new Error('Price check stopped');
+  const paths = [];
+  const api = createPickupApi('', async () => 'fixture-token', async (path, options) => {
+    paths.push(path);
+    if (options.signal) {
+      assert.equal(options.signal, controller.signal);
+      return new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+      });
+    }
+    return Response.json({ success: true, quote: { total_minor: 2500 } });
+  });
+
+  const pending = api.quote({ shop_id: 'fixture-shop' }, controller.signal);
+  await Promise.resolve();
+  controller.abort(reason);
+  await assert.rejects(pending, error => error === reason);
+  assert.equal((await api.quote({ shop_id: 'fixture-shop' })).quote.total_minor, 2500);
+  assert.deepEqual(paths, ['/api/v1/orders/quote', '/api/v1/orders/quote']);
+});
