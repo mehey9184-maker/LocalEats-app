@@ -3688,6 +3688,7 @@ export default function App() {
             orders={orders}
             shops={shops}
             currentScreen={currentScreen}
+            hasCart={cart.length > 0}
             onOpenTracking={(_orderId) => {
               setPreviousScreen(currentScreen);
               setCurrentScreen("order-tracking");

@@ -9,6 +9,7 @@ interface ActiveOrderMiniTrackerProps {
   currentScreen: Screen;
   onOpenTracking: (orderId?: string) => void;
   triggerHaptic?: (intensity?: number) => void;
+  hasCart?: boolean;
 }
 
 export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
@@ -17,6 +18,7 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
   currentScreen,
   onOpenTracking,
   triggerHaptic,
+  hasCart = false,
 }) => {
   const [minimized, setMinimized] = useState(false);
 
@@ -109,7 +111,7 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed bottom-[74px] sm:bottom-[80px] left-0 right-0 z-40 px-3 sm:px-4 pointer-events-none flex justify-center">
+      <div className={`fixed ${hasCart ? "bottom-[152px] sm:bottom-[160px]" : "bottom-[74px] sm:bottom-[80px]"} left-0 right-0 z-40 px-3 sm:px-4 pointer-events-none flex justify-center`}>
         {minimized ? (
           <motion.button
             key="minimized-pill"
