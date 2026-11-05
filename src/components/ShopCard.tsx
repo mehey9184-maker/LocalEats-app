@@ -6,12 +6,13 @@ import {
   Heart,
   ShieldCheck,
   Sparkles,
-  Clock,
+  ShoppingBag,
   MapPin,
   Flame,
 } from "lucide-react";
 import { Shop, MenuItem } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
+import {shopRatingLabel,pickupDistanceLabel} from '../services/catalogFacts';
 import {
   getShopStatus,
   isShopAway,
@@ -47,16 +48,6 @@ export const ShopCard = memo(
       return "RRR";
     };
 
-    // Stable distance calculation or fallback
-    const getShopDistance = (s: Shop) => {
-      if (s.distance !== undefined && s.distance !== null) {
-        return `${s.distance.toFixed(1)} km`;
-      }
-      const num = s.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const km = 0.4 + (num % 18) * 0.1;
-      return `${km.toFixed(1)} km`;
-    };
-
     // Appetizing food cover photo based on category or menu items
     const getShopHeroImage = (s: Shop) => {
       if (s.images && s.images.length > 0 && !s.images[0].includes("unsplash.com/photo-1546069901-ba9599a7e63c")) {
@@ -77,8 +68,8 @@ export const ShopCard = memo(
 
     const heroImage = getShopHeroImage(shop);
     const priceTier = getPriceTier(shop);
-    const distanceStr = getShopDistance(shop);
-    const etaStr = shop.delivery_eta || "20-35 min";
+    const distanceStr = pickupDistanceLabel(shop.distance);
+    const etaStr = "Pickup at shop";
 
     return (
       <motion.div
@@ -166,7 +157,7 @@ export const ShopCard = memo(
           {/* Bottom Floating Pill inside Hero: ETA and Distance */}
           <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-white text-[11px] font-bold z-10 drop-shadow-sm">
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
-              <Clock className="w-3 h-3 text-orange-400" />
+              <ShoppingBag className="w-3 h-3 text-orange-400" />
               <span>{etaStr}</span>
             </div>
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
@@ -181,7 +172,7 @@ export const ShopCard = memo(
           <div className="flex justify-between items-start gap-2">
             <h4 className="text-base font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
-              <div className="bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Verified Township Kitchen">
+              <div className="bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Pickup kitchen">
                 <ShieldCheck className="w-4 h-4" />
               </div>
             </h4>
@@ -191,10 +182,7 @@ export const ShopCard = memo(
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400 font-bold">
             <div className="flex items-center gap-1 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-lg border border-amber-500/20">
               <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span className="font-black">{shop.rating || "4.8"}</span>
-              <span className="text-[10px] font-semibold opacity-75">
-                ({shop.reviewCount || 24})
-              </span>
+              <span className="font-black">{shopRatingLabel(shop)}</span>
             </div>
 
             <span className="text-slate-300 dark:text-slate-700">•</span>
@@ -333,7 +321,7 @@ export const MenuItemCard = memo(
               </h4>
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
-              {item.description || "Freshly made township favourite prepared with local ingredients"}
+              {item.description || "No item description available."}
             </p>
             {item.dietary_tags && item.dietary_tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
