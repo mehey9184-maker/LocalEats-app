@@ -1586,9 +1586,9 @@ export default function App() {
         if (data.favorites && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
         }
-      } else if (!error || error.code === "PGRST116" || !data) {
-        // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
-        // sync from current session metadata and auto-upsert to prevent empty state.
+      } else if (!error && !data) {
+        // An absent verified row may use login metadata as an *in-memory display*
+        // fallback. API 503/auth errors must never trigger an automatic profile write.
         try {
           const { data: authUserData } = await supabase.auth.getUser();
           const authUser = authUserData?.user;
@@ -1607,18 +1607,7 @@ export default function App() {
               role: fallbackRole,
             }));
 
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
+            // No silent write: only explicit user saves use the authenticated API.
           }
         } catch (authFetchErr) {
           console.warn("[Profile Sync from Auth Notice]", authFetchErr);
@@ -7365,11 +7354,12 @@ function ProfileScreen({
         {/* Buttons */}
         <div className="pt-8 space-y-4">
           <button
+            type="button"
             onClick={handleUpdateProfile}
             disabled={isSaving || uploading}
-            className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
+            className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-colors text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
-                ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
+                ? "bg-emerald-600 text-white shadow-emerald-600/30"
                 : isDirty
                 ? "bg-primary text-white shadow-primary/20 hover:bg-primary/90 active:scale-95"
                 : "bg-slate-900 dark:bg-slate-800 text-white shadow-slate-900/10 hover:bg-slate-800"
@@ -7399,8 +7389,9 @@ function ProfileScreen({
           </button>
 
           <button
+            type="button"
             onClick={onLogout}
-            className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+            className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
             Sign Out
