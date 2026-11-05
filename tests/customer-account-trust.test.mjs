@@ -101,8 +101,11 @@ test("review UI cannot create fake successful reviews via a mock facade",()=>{
  assert.doesNotMatch(direct,/FirestoreService\.addReview|Thank you for your review!/);
 });
 
-test("legacy checkout cannot submit an order while pickup ordering is disabled",()=>{
+test("pickup quote and submission refuse anonymous or mismatched accounts",()=>{
  const checkout=src("../src/screens/CheckoutScreen.tsx");
- assert.match(checkout,/await handlePickupAction\(\); return; \/\/ No legacy checkout/);
+ assert.match(checkout,/if \(!canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\) throw new Error/);
+ assert.match(checkout,/if \(!canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\) \{/);
+ assert.match(checkout,/setCurrentScreen\("login"\)/);
  assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return/);
+ assert.match(checkout,/await handlePickupAction\(\); return; \/\/ No legacy checkout/);
 });
