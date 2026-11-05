@@ -1,5 +1,5 @@
 import type { PickupOrder } from "./pickup/client";
-import {retryPickupDiscovery} from "./services/pickupMapping";
+import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 /**
@@ -2452,7 +2452,7 @@ export default function App() {
         return Object.freeze({
           ...immutableBaseItem,
           shopId: String(shopId),
-          quantity: Number(qty),
+          quantity: Math.min(Number(qty), MAX_PICKUP_ITEM_QUANTITY),
           specialInstructions: String(specialInstructions),
           selectedCustomizations: secureCustomizations,
         });
@@ -2516,7 +2516,7 @@ export default function App() {
               i.selectedCustomizations || [],
               secureCustomizations,
             )
-              ? Object.freeze({ ...i, quantity: i.quantity + quantity })
+              ? Object.freeze({ ...i, quantity: Math.max(i.quantity, Math.min(i.quantity + quantity, MAX_PICKUP_ITEM_QUANTITY)) })
               : i,
           );
         }
@@ -2577,7 +2577,9 @@ export default function App() {
               i.shopId === shopId &&
               (specialInstructions === undefined || i.specialInstructions === specialInstructions);
             if (matchItem) {
-              const nextQty = i.quantity + delta;
+              const nextQty = delta > 0
+                ? Math.max(i.quantity, Math.min(i.quantity + delta, MAX_PICKUP_ITEM_QUANTITY))
+                : i.quantity + delta;
               return nextQty > 0 ? { ...i, quantity: nextQty } : null;
             }
             return i;
@@ -7962,9 +7964,7 @@ const QuantityModal = ({
     (sum, c) => sum + Number(c.price),
     0,
   );
-  const isBulkDiscount = quantity > 5;
-  const rawTotalPrice = (basePrice + customizationsTotal) * quantity;
-  const totalPrice = isBulkDiscount ? rawTotalPrice * 0.85 : rawTotalPrice;
+  const totalPrice = (basePrice + customizationsTotal) * quantity;
 
   const toggleCustomization = (customization: {
     name: string;
@@ -8080,7 +8080,10 @@ const QuantityModal = ({
             </p>
             <div className="flex items-center gap-8">
               <button
-                onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                type="button"
+                aria-label="Decrease quantity"
+                disabled={quantity <= 1}
+                onClick={() => setQuantity(previous => Math.max(1, previous - 1))}
                 className="size-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-900 dark:text-white active:scale-90 transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
               >
                 <Minus className="w-8 h-8" />
@@ -8089,16 +8092,17 @@ const QuantityModal = ({
                 {quantity}
               </span>
               <button
-                onClick={() => setQuantity(quantity + 1)}
+                type="button"
+                aria-label="Increase quantity"
+                disabled={quantity >= MAX_PICKUP_ITEM_QUANTITY}
+                onClick={() => setQuantity(previous => Math.min(MAX_PICKUP_ITEM_QUANTITY, previous + 1))}
                 className="size-16 rounded-3xl bg-orange-600 flex items-center justify-center text-white shadow-xl shadow-orange-600/20 active:scale-90 transition-all cursor-pointer"
               >
                 <Plus className="w-8 h-8" />
               </button>
             </div>
-            {isBulkDiscount && (
-              <p className="mt-4 text-emerald-600 dark:text-emerald-400 font-bold text-[11px] uppercase tracking-wider text-center">
-                🎉 15% Bulk Discount Applied!
-              </p>
+            {quantity >= MAX_PICKUP_ITEM_QUANTITY && (
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Maximum {MAX_PICKUP_ITEM_QUANTITY} per item.</p>
             )}
           </div>
         </div>

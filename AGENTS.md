@@ -8,6 +8,8 @@ For Client App pickup release investigations, use the repository skill `$localea
 
 Customer startup waits for Firebase session hydration using the same Home-shaped shell as initial shop discovery. Returning customers open Home directly, and slow restoration offers Retry.
 
+The item picker, cart, and checkout enforce the pickup quantity limit. The picker shows menu pricing without a fabricated bulk discount.
+
 The customer checkout uses the same quote and submit labels, progress feedback, and disabled states on both action bars. Quote review remains available in Preview. Checkout lets customers stop a price check and times it out after 15 seconds. Checkout discards in-flight quotes after cart, account, or pickup details change. New submissions and retries share an in-flight lock and require the existing ordering gate.
 
 A failed pickup menu is omitted without hiding verified nearby shops or caching the partial result.

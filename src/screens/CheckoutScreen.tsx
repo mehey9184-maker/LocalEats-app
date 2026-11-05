@@ -1,3 +1,4 @@
+import { MAX_PICKUP_ITEM_QUANTITY } from "../services/pickupMapping";
 import {pickupQuoteAmounts} from "../services/pickupSummary";
 import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
@@ -561,7 +562,7 @@ export function CheckoutScreen({
   // Cart edit support inline
   const updateCartQty = (idx: number, change: number) => {
     const item = cart[idx];
-    if (!item) return;
+    if (!item || (change > 0 && item.quantity >= MAX_PICKUP_ITEM_QUANTITY)) return;
     const newQty = item.quantity + change;
 
     if ("vibrate" in navigator) navigator.vibrate(10);
@@ -2006,6 +2007,8 @@ export function CheckoutScreen({
                               </span>
                               <button
                                 type="button"
+                                aria-label={`Increase quantity of ${item.name}`}
+                                disabled={item.quantity >= MAX_PICKUP_ITEM_QUANTITY}
                                 onClick={() => {
                                   triggerHaptic(10);
                                   updateCartQty(idx, 1);
@@ -2736,6 +2739,8 @@ export function CheckoutScreen({
                       </span>
                       <button
                         type="button"
+                        aria-label={`Increase quantity of ${item.name}`}
+                        disabled={item.quantity >= MAX_PICKUP_ITEM_QUANTITY}
                         onClick={() => updateCartQty(idx, 1)}
                         className="text-slate-500 hover:text-orange-600 p-0.5 hover:bg-slate-50 rounded transition-colors"
                       >
