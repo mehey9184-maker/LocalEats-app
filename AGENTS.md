@@ -8,7 +8,7 @@ For Client App pickup release investigations, use the repository skill `$localea
 
 Customer startup waits for Firebase session hydration using the same Home-shaped shell as initial shop discovery. Returning customers open Home directly, and slow restoration offers Retry.
 
-The customer checkout uses the same quote and submit labels and disabled states on both action bars. Quote review remains available in Preview. New submissions and retries share an in-flight lock and require the existing ordering gate.
+The customer checkout uses the same quote and submit labels and disabled states on both action bars. Quote review remains available in Preview. Checkout discards in-flight quotes after cart, account, or pickup details change. New submissions and retries share an in-flight lock and require the existing ordering gate.
 
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 

@@ -34,6 +34,8 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 
 - **2026-11-05 Customer startup.** Firebase restores the account behind a neutral Home skeleton. Returning customers open Home directly, slow restoration offers Retry, and the first available shop image loads with priority.
 
+- **2026-11-05 Pickup quote freshness.** Checkout discards delayed quotes after the customer changes the cart, contact details, payment choice, pickup location, shop, or account. The updated checkout requires a fresh quote.
+
 - **2026-11-05 Pickup checkout clarity.** Both checkout action bars distinguish quote review from order placement. Preview shows the server quote with ordering disabled. When ordering is enabled in an authorized environment, placement requires consent and shares an in-flight lock with retries.
 
 - **[2026-08-26] Phase 12: Menu Item Dietary Tags Badges**:
