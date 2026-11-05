@@ -53,3 +53,12 @@ test("server route verifies Firebase token, denies other UIDs and keeps DB keys 
  assert.ok(vercel.rewrites.some(r=>r.source==="/api/profiles/:uid" && r.destination==="/api/profile?uid=:uid"));
  assert.ok(vercel.rewrites.some(r=>r.source==="/api/profiles" && r.destination==="/api/profile"));
 });
+
+test("profile input limits match the current isolated staging columns",()=>{
+ const uid="firebase-user-A";
+ for(const [field,max] of [["fullName",120],["language",12],["phone",32],["city",120]]){
+   const ok=normalizeProfileInput({user_id:uid,[field]:"a".repeat(max)},uid);
+   assert.equal(ok[field],"a".repeat(max));
+   assert.throws(()=>normalizeProfileInput({user_id:uid,[field]:"a".repeat(max+1)},uid),ProfileInputError);
+ }
+});

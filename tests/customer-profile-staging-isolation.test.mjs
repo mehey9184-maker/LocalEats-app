@@ -10,7 +10,8 @@ const valid={
   PROFILE_API_STAGING_SUPABASE_URL:"https://"+PROFILE_STAGING_REF+".supabase.co",
   PROFILE_API_STAGING_SUPABASE_SECRET_KEY:"unit-test-not-a-real-credential",
   PROFILE_API_STAGING_FIREBASE_PROJECT_ID:"localeats-customer-isolated-test",
-  PROFILE_API_STAGING_FIREBASE_CLIENT_EMAIL:"unit-test@example.iam.gserviceaccount.com",
+  VITE_FIREBASE_PROJECT_ID:"localeats-customer-isolated-test",
+  PROFILE_API_STAGING_FIREBASE_CLIENT_EMAIL:"unit-test@localeats-customer-isolated-test.iam.gserviceaccount.com",
   PROFILE_API_STAGING_FIREBASE_PRIVATE_KEY:"-----BEGIN PRIVATE KEY-----\\nFAKE_TEST_ONLY\\n-----END PRIVATE KEY-----",
 };
 test("Production, development and unapproved environments can never reach profile staging",()=>{
@@ -28,6 +29,9 @@ test("Database must be the exact independent staging Supabase project",()=>{
 test("Firebase authentication must not use the existing live project",()=>{
  assert.equal(stagingProfileConfig({...valid,PROFILE_API_STAGING_FIREBASE_PROJECT_ID:LIVE_FIREBASE_PROJECT_ID}),null);
  assert.equal(stagingProfileConfig({...valid,PROFILE_API_STAGING_FIREBASE_PROJECT_ID:undefined}),null);
+ assert.equal(stagingProfileConfig({...valid,VITE_FIREBASE_PROJECT_ID:undefined}),null);
+ assert.equal(stagingProfileConfig({...valid,VITE_FIREBASE_PROJECT_ID:LIVE_FIREBASE_PROJECT_ID}),null);
+ assert.equal(stagingProfileConfig({...valid,PROFILE_API_STAGING_FIREBASE_CLIENT_EMAIL:"unit-test@localeats-5e26e.iam.gserviceaccount.com"}),null);
  assert.equal(stagingProfileConfig({...valid,PROFILE_API_STAGING_FIREBASE_CLIENT_EMAIL:"not-service-account"}),null);
  assert.equal(stagingProfileConfig({...valid,PROFILE_API_STAGING_FIREBASE_PRIVATE_KEY:"invalid"}),null);
 });

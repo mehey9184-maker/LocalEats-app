@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { isConfirmedProfileSave } from './profileConfirmation';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -139,6 +140,7 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
   const sanitizedPhone = toDBPhone(profileData.phone);
   let synced = false;
   let lastError: any = null;
+  let confirmedProfile: any = null;
 
   // Channel 1: Supabase (Authoritative primary persistent database via Express API)
   try {
@@ -169,14 +171,20 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
       body: JSON.stringify(safePayload)
     });
     
-    const result = await response.json();
-          
-    if (!response.ok || !result.success) {
-      console.warn("[Profile Sync] Supabase API sync notice:", result.error || "Failed");
-      lastError = new Error(result.error || "Failed");
+    const contentType = response.headers.get("content-type") || "";
+    const result = /^\s*application\/json\s*(?:;|$)/i.test(contentType)
+      ? await response.json()
+      : null;
+    // Never discard a queued profile after HTML fallback or another user's receipt.
+    if (!isConfirmedProfileSave(response.status,contentType,result,profileData.user_id)) {
+      const message = typeof result?.error === "string" ? result.error :
+        "Profile service did not confirm this account's saved profile.";
+      console.warn("[Profile Sync] Server save not confirmed:", message);
+      lastError = new Error(message);
     } else {
       synced = true;
-      lastError = null; // Clear any previous error if Supabase succeeds
+      confirmedProfile = result.profile;
+      lastError = null;
     }
   } catch (sbErr: any) {
     console.warn("[Profile Sync] Exception syncing to Supabase API:", sbErr?.message || sbErr);
@@ -186,7 +194,7 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
   // No direct Firestore profile mirror: its live rules are not verified.
   // An API failure must never trigger a second unaudited write.
 
-  return { success: synced, error: synced ? null : lastError };
+  return { success: synced, data: synced ? confirmedProfile : undefined, error: synced ? null : lastError };
 }
 
 /**

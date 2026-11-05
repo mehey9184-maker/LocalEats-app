@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {archiveLegacyOrderDrafts,LEGACY_ORDER_QUEUE_KEY} from "../src/services/legacyOfflineDrafts.ts";
+import {isConfirmedProfileSave} from "../src/lib/profileConfirmation.ts";
 
 const src=p=>readFileSync(new URL(p,import.meta.url),"utf8");
 const app=src("../src/App.tsx");
@@ -86,4 +87,16 @@ test("P0 failed archive storage never deletes original order drafts",()=>{
   assert.ok(storage.getItem(LEGACY_ORDER_QUEUE_KEY));
   assert.equal(archiveLegacyOrderDrafts("../other",storage),false);
   assert.ok(storage.getItem(LEGACY_ORDER_QUEUE_KEY));
+});
+
+test("P0 profile save requires a JSON response with a matching owner receipt",()=>{
+ const uid="firebase-user-A",receipt={success:true,profile:{user_id:uid,fullName:"Test A"}};
+ assert.equal(isConfirmedProfileSave(200,"application/json; charset=utf-8",receipt,uid),true);
+ assert.equal(isConfirmedProfileSave(200,"text/html",receipt,uid),false);
+ assert.equal(isConfirmedProfileSave(503,"application/json",receipt,uid),false);
+ assert.equal(isConfirmedProfileSave(200,"application/json",{success:true},uid),false);
+ assert.equal(isConfirmedProfileSave(200,"application/json",{success:true,profile:{user_id:"firebase-user-B"}},uid),false);
+ assert.equal(isConfirmedProfileSave(200,"application/json",{success:false,profile:{user_id:uid}},uid),false);
+ assert.match(profile,/isConfirmedProfileSave\(response.status,contentType,result,profileData.user_id\)/);
+ assert.match(profile,/confirmedProfile = result.profile/);
 });

@@ -24,7 +24,9 @@ export function stagingProfileConfig(env:Environment):ProfileStagingConfig|null{
   if(ref!==PROFILE_STAGING_REF ||
      url!==`https://${PROFILE_STAGING_REF}.supabase.co` ||
      !secret || !firebaseProjectId || firebaseProjectId===LIVE_FIREBASE_PROJECT_ID ||
-     !firebaseClientEmail || !firebaseClientEmail.endsWith(".gserviceaccount.com") ||
+     // A Preview web app must not silently use the live Firebase project.
+     env.VITE_FIREBASE_PROJECT_ID!==firebaseProjectId ||
+     !firebaseClientEmail || !firebaseClientEmail.endsWith(`@${firebaseProjectId}.iam.gserviceaccount.com`) ||
      !firebasePrivateKey?.includes("PRIVATE KEY"))
     return null;
   return {

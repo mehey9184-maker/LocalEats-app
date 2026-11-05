@@ -17,8 +17,8 @@ export function normalizeProfileInput(raw:unknown,uid:string,verifiedEmail?:stri
   if(typeof verifiedEmail==="string" && verifiedEmail.length<=254)
     result.email=verifiedEmail;
   const fields:Record<string,number>={
-    fullName:160,phone:32,city:120,address:400,country:80,
-    photo_url:2048,language:16,
+    fullName:120,phone:32,city:120,address:400,country:80,
+    photo_url:2048,language:12,
   };
   for(const [name,max] of Object.entries(fields)){
     if(Object.prototype.hasOwnProperty.call(value,name))
