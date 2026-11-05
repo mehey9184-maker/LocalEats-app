@@ -97,3 +97,6 @@ Validation uses npm run test:pickup-integration, TypeScript and the production b
 
 ## Customer location retry correction — 2026-10-29
 Focused fix/customer-location-retry preserves the released original UI. Missing-location Reload now requests actual device geolocation rather than repeatedly loading with null coordinates. Denied/unavailable/timed-out location exits loading with a specific retry message; existing valid locations reload the API catalog. No default coordinates, radius change, order/payment action or Production setting change. Verify in Customer Preview before any main push; Production remains e8c41d728834390460923fb6a641915f4dfd8a9a.
+
+## Review-only Firestore rules candidate — 2026-11-05
+This separate security branch replaces public Firestore access only for emulator review. It is stacked on the unmerged Client P0 draft branch. No Firebase deploy, merge, Production/Preview activation, database write, rider/delivery launch, or original UI change is authorized. Inspect the exact deployed Client and Merchant database rules, verify auth/shop IDs and reachable legacy flows before any live rule change. See docs/CLIENT_FIRESTORE_RULES_REVIEW_20261105.md.

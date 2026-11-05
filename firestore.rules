@@ -1,114 +1,106 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Note: This application uses Supabase for Authentication (UUIDs) and Firebase for Database (Firestore).
-    // Because Firebase Auth is not natively aware of Supabase sessions, Firebase's `request.auth.uid`
-    // will either be null or an Anonymous Firebase UID, which will NEVER match the Supabase `user_id`
-    // stored in documents. Therefore, strict `request.auth.uid == user_id` rules are relaxed to `true`
-    // to allow the application to function without a backend token synchronization service.
-
-    match /reviews/{reviewId} {
-      allow read, write: if true;
+    // REVIEW-ONLY CANDIDATE — do not deploy without inspecting the exact live
+    // database/ruleset and testing the Customer + Merchant API transition.
+    // Admin SDK/backend authority is not granted by client Security Rules.
+    function signedIn() {
+      return request.auth != null;
     }
-    
-    match /follows/{followId} {
-      allow read, write: if true;
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
-    
-    match /contact_messages/{messageId} {
-      allow read, write: if true;
+    function ownedShop(shopId) {
+      return signedIn()
+        && shopId != null
+        && exists(/databases/$(database)/documents/shops/$(string(shopId)))
+        && get(/databases/$(database)/documents/shops/$(string(shopId))).data.get('owner_id', '') == request.auth.uid;
     }
-
-    match /app_errors/{errorId} {
-      allow read, write: if true;
+    function canReadOrder(orderData) {
+      return signedIn() && (
+        orderData.get('user_id', '') == request.auth.uid
+        || ownedShop(orderData.get('shop_id', null))
+      );
     }
-    
-    match /app_error_logs/{logId} {
-      allow read, write: if true;
-    }
-
-    // 1. User Profiles Collection
-    match /profiles/{userId} {
-      allow read, write: if true;
+    function validPushToken(data) {
+      return data.keys().hasOnly(['user_id', 'token', 'last_updated'])
+        && data.get('token', null) is string
+        && data.get('token', '').size() > 0
+        && data.get('token', '').size() <= 4096
+        && data.get('last_updated', null) is string;
     }
 
-    // 2. Shops / Stores / Merchants / Vendors
+    // Default deny for all unlisted paths, including sensitive nested docs.
+    // A more specific allow rule wins; never add a permissive recursive match.
+    match /{path=**} {
+      allow read, write: if false;
+    }
+
+    // Customer catalog: existing browse queries (including logged-out) still work.
+    // Store public fields only in these documents; Rules cannot redact fields.
     match /shops/{shopId} {
-      allow read, write: if true;
-      match /{allChildren=**} {
-        allow read, write: if true;
+      allow get, list: if true;
+      allow create, update, delete: if false; // API/merchant service only
+      match /menu/{itemId} {
+        allow get, list: if true;
+        allow create, update, delete: if false;
       }
     }
-    
-    match /stores/{storeId} {
-      allow read, write: if true;
-      match /{allChildren=**} {
-        allow read, write: if true;
-      }
-    }
-    
-    match /merchants/{merchantId} {
-      allow read, write: if true;
-      match /{allChildren=**} {
-        allow read, write: if true;
-      }
-    }
-    
-    match /vendors/{vendorId} {
-      allow read, write: if true;
-      match /{allChildren=**} {
-        allow read, write: if true;
-      }
-    }
-
-    // 3. Menu Items
     match /menu_items/{itemId} {
-      allow read, write: if true;
+      allow get, list: if true;
+      allow create, update, delete: if false;
+    }
+    match /reviews/{reviewId} {
+      allow get, list: if true; // Existing public review display
+      allow create, update, delete: if false; // Moderated API required
     }
 
-    // Rider Profiles
-    match /rider_profiles/{riderId} {
-      allow read, write: if true;
+    // P0 profile persistence uses the authenticated, server-owned profile API.
+    // An old direct Firestore mirror must NOT become an alternative writer.
+    match /profiles/{userId} {
+      allow get: if isSelf(userId);
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+    match /users/{userId} {
+      allow get: if isSelf(userId);
+      allow list: if false;
+      allow create, update, delete: if false; // Review Merchant auth bootstrap
     }
 
-    // Rider Connections
-    match /rider_connections/{connectionId} {
-      allow read, write: if true;
-    }
-
-    // 4. Orders Collection
+    // Both customer-owned and API-verified merchant-owned pickup order reads.
+    // Orders/prices/status/payment/collection are entirely server-authoritative.
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow get, list: if canReadOrder(resource.data);
+      allow create, update, delete: if false;
     }
 
-    // 5. Rider Locations
-    match /rider_locations/{riderId} {
-      allow read, write: if true;
+    // Keep the existing follow UI for authenticated customer-owned records.
+    // Merchant aggregate follower reads require a separate verified API.
+    match /follows/{followId} {
+      allow get, list: if isSelf(resource.data.get('user_id', ''));
+      allow create: if isSelf(request.resource.data.get('user_id', ''))
+        && request.resource.data.get('shop_id', null) is string
+        && followId == request.auth.uid + '_' + request.resource.data.get('shop_id', '')
+        && request.resource.data.keys().hasOnly(['user_id', 'shop_id', 'created_at']);
+      allow update: if false;
+      allow delete: if isSelf(resource.data.get('user_id', ''));
     }
 
-    // 6. Direct In-App Chat Messages
-    match /messages/{messageId} {
-      allow read, write: if true;
-    }
-    match /chat_messages/{messageId} {
-      allow read, write: if true;
-    }
-    match /order_messages/{messageId} {
-      allow read, write: if true;
-    }
-    match /rider_chat_messages/{messageId} {
-      allow read, write: if true;
-    }
-
-    // 7. Device Push Notification Tokens
+    // FCM token registration for the signed-in owner only. Tokens are private.
     match /user_push_tokens/{tokenId} {
-      allow read, write: if true;
+      allow get, list: if isSelf(resource.data.get('user_id', ''));
+      allow create: if isSelf(request.resource.data.get('user_id', ''))
+        && validPushToken(request.resource.data);
+      allow update: if isSelf(resource.data.get('user_id', ''))
+        && request.resource.data.get('user_id', '') == request.auth.uid
+        && validPushToken(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['token', 'last_updated']);
+      allow delete: if isSelf(resource.data.get('user_id', ''));
     }
-    
-    // 8. Promo Codes
-    match /promo_codes/{promoId} {
-      allow read, write: if true;
-    }
+
+    // No client access to private messages, rider GPS/connections, payment or
+    // promo administration, support inbox, debug logs, or legacy shadow tables.
+    // Delivery/Riders remain out of the pickup-only release.
   }
 }
