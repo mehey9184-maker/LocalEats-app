@@ -1,6 +1,6 @@
 import {pickupQuoteAmounts} from "../services/pickupSummary";
 import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
-import React, { useState, useEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   ChevronLeft, MapPin, Clock, CreditCard, ChevronRight, ChevronDown, ChevronUp, X, Phone, User, Home, Building2, Wallet, Navigation, ShoppingBag, Plus, Minus, ArrowRight, Truck, Info, ShieldCheck, Banknote, ShoppingBasket, ExternalLink, Lock, UserPlus, Sparkles, Bike, Loader2, Target, CheckCircle, QrCode, Trash2, ArrowLeft, AlertTriangle, Gift, Shield, Utensils, Percent, Heart, Coins, WifiOff, Check, Zap, Calendar
@@ -119,6 +119,7 @@ export function CheckoutScreen({
   const [quoteConsent,setQuoteConsent]=useState(false);
   const [pickupQuoteError,setPickupQuoteError]=useState("");
   const quoteLock=useRef(false);
+  const quoteRevision = useRef(0);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
     "cash",
   );
@@ -880,19 +881,38 @@ export function CheckoutScreen({
     }
   }, [isCoaDisabled, paymentMethod, deliveryType]);
 
-  useEffect(()=>{setPickupQuote(null);setQuoteConsent(false);setPickupQuoteError("");},[cart,customerName,customerPhone,paymentMethod,deliveryType,userLocation?.lat,userLocation?.lng]);
+  useLayoutEffect(() => {
+    setPickupQuote(null);
+    setQuoteConsent(false);
+    setPickupQuoteError("");
+    return () => { quoteRevision.current += 1; };
+  }, [cart, customerName, customerPhone, paymentMethod, deliveryType,
+    userLocation?.lat, userLocation?.lng, session?.user?.id, primaryShop?.id]);
+
   const reviewPickupQuote = async () => {
-    if(quoteLock.current)return;
-    quoteLock.current=true;setLoading(true);setPickupQuoteError("");
+    if (quoteLock.current) return;
+    const revision = quoteRevision.current;
+    quoteLock.current = true;
+    setLoading(true);
+    setPickupQuoteError("");
     try {
-      if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
-      if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
-      if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
-      const result=await quotePickupCart(cart,userLocation,customerName,customerPhone,paymentMethod);
-      setPickupQuote(result);setQuoteConsent(false);
-    } catch(error){setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");}
-    finally{quoteLock.current=false;setLoading(false);}
+      if (!primaryShop) throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
+      if (!session?.user?.id) throw new Error("Please sign in with your existing account to review a quote.");
+      if (deliveryType !== "collection") throw new Error("This pilot supports pickup only. Select collection.");
+      const result = await quotePickupCart(cart, userLocation, customerName, customerPhone, paymentMethod);
+      if (quoteRevision.current !== revision) return;
+      setPickupQuote(result);
+      setQuoteConsent(false);
+    } catch (error) {
+      if (quoteRevision.current === revision) {
+        setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");
+      }
+    } finally {
+      quoteLock.current = false;
+      setLoading(false);
+    }
   };
+
   const submitReviewedPickup = async (retry: boolean) => {
     if (!pickupOrderingEnabled() || quoteLock.current) return;
     if (!retry && (!pickupQuote || !quoteConsent)) return;
