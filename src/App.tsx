@@ -1910,22 +1910,9 @@ export default function App() {
       throw new Error(message);
     }
     const updated = { ...userProfile, ...data };
-    setUserProfile(updated);
 
     if (session?.user?.id) {
       const action = async () => {
-        // Sync user_metadata natively into Supabase Auth
-        const { error: authError } = await supabase.auth.updateUser({
-          data: {
-            full_name: updated.fullName,
-            fullName: updated.fullName,
-          }
-        });
-        
-        if (authError) {
-          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
-        }
-
         const { error } = await upsertProfileWithRPC({
           user_id: session.user.id,
           fullName: updated.fullName,
@@ -1941,9 +1928,12 @@ export default function App() {
           longitude: updated.longitude,
         });
 
-        if (error) {
-          throw error;
+        if (error) throw error;
+        if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+          throw new Error("Your account changed while saving. Sign in again.");
         }
+        // Do not show the edited details as saved until the API confirms them.
+        setUserProfile(updated);
       };
 
       if (showSuccess) {
@@ -1951,14 +1941,8 @@ export default function App() {
           if (successCallback) successCallback();
         });
       } else {
-        // Just do the action without the success tick overlay if asked
-        try {
-          await action();
-        } catch (err: any) {
-          console.warn("Notice saving profile in background:", err);
-        } finally {
-          if (successCallback) successCallback();
-        }
+        await action();
+        if (successCallback) successCallback();
       }
     } else {
       throw new Error("A registered account is required to save profile details.");
@@ -2142,8 +2126,15 @@ export default function App() {
         });
         requestNotificationPermission();
       } else {
-        if (_event === "SIGNED_OUT") {
-          localStorage.removeItem("remember_me_secure_token");
+        // A previous account's details must not remain visible after sign-out.
+        setUserProfile(emptyCustomerProfile());
+        setFavorites([]);
+        setOrders([]);
+        setNotifications([]);
+        setPendingReview(null);
+        for (const key of ["userProfile", "favorites", "cached_orders",
+          "app_notifications", "pending_review", "remember_me_secure_token"]) {
+          try { localStorage.removeItem(key); } catch {}
         }
         setCurrentScreen((prev) => {
           if (_event === "SIGNED_OUT") {
@@ -2655,102 +2646,9 @@ export default function App() {
     [triggerHaptic, setCart],
   );
 
-  useEffect(() => {
-    // An anonymous Firebase session is not a registered profile account.
-    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
-      const timer = setTimeout(async () => {
-        if (!navigator.onLine) return;
-        try {
-          const { error } = await upsertProfileWithRPC({
-            user_id: session.user.id,
-            fullName: userProfile.fullName,
-            email: userProfile.email,
-            phone: userProfile.phone,
-            city: userProfile.city,
-            address: userProfile.address,
-            country: userProfile.country,
-            role: userProfile.role,
-            photo_url: userProfile.photoURL,
-            language: userProfile.language || "en",
-            latitude: userProfile.latitude,
-            longitude: userProfile.longitude,
-            favorites: favorites,
-          });
+  // Explicit, authenticated edits are the only profile-save trigger. A delayed
+  // render/favorites/background effect must never send stale personal details.
 
-          if (error) {
-            const isFetchErr = 
-              error.message?.includes("Failed to fetch") || 
-              error.message?.includes("fetch") || 
-              error.message?.includes("upstream connect error") ||
-              error.message?.includes("connection timeout") ||
-              error.message?.includes("disconnect/reset") ||
-              (error.details && error.details.includes("Failed to fetch"));
-
-            const isMissingColumnError = 
-              error.code === "PGRST204" ||
-              error.message?.includes("column");
-
-            if (isMissingColumnError) {
-              // Graceful degradation: sync only essential fields known to exist
-              const safePayload = {
-                user_id: session.user.id,
-                fullName: userProfile.fullName,
-                email: userProfile.email,
-                phone: toDBPhone(userProfile.phone),
-                role: userProfile.role || "user",
-                city: userProfile.city || "",
-                address: userProfile.address || "",
-                country: userProfile.country || "South Africa",
-                photo_url: userProfile.photoURL || "",
-                language: userProfile.language || "en",
-                updated_at: new Date().toISOString(),
-              };
-              try {
-                const { getApiAuthHeaders } = await import("./lib/apiAuth");
-                const headers = await getApiAuthHeaders();
-                const response = await fetch('/api/profiles', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...headers
-                  },
-                  body: JSON.stringify(safePayload)
-                });
-                
-                if (!response.ok) {
-                  console.warn("Notice syncing fallback profile to Supabase:", await response.text());
-                } else {
-                  console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
-                }
-              } catch (e) {
-                console.warn("Silent failure in safe profile sync fallback:", e);
-              }
-
-              setNotification({
-                message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
-                type: "info",
-              });
-            } else {
-              const errStr = (error.message || "").toLowerCase();
-              if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
-                if (typeof window !== "undefined") {
-                  window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
-                }
-              }
-              if (isFetchErr) {
-                console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
-              } else {
-                console.warn("Notice syncing profile to Supabase:", error.message || error);
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Sync error:", err);
-        }
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [userProfile, session, favorites]);
 
   if (isRestoringSession) {
     // Keep one Home-shaped loading view in place until the persisted account
@@ -3204,7 +3102,7 @@ export default function App() {
                   </Suspense>
                 </WidgetErrorBoundary>
               )}
-              {currentScreen === "review" && pendingReview && (
+              {currentScreen === "review" && pendingReview && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
@@ -3224,89 +3122,10 @@ export default function App() {
                       setCurrentScreen("home");
                     }
                   }}
-                  onSubmit={async (
-                    rating,
-                    comment,
-                    riderRating,
-                    riderComment,
-                  ) => {
-                    try {
-                      // 1. Save Shop Review
-                      const dbShopId = typeof pendingReview.shopId === "number"
-                        ? pendingReview.shopId
-                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
-
-                      const dbOrderId = typeof pendingReview.orderId === "number"
-                        ? pendingReview.orderId
-                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
-                          ? pendingReview.orderId
-                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
-
-                      const { error: shopErr } = await supabase
-                        .from("reviews")
-                        .insert({
-                          shop_id: dbShopId,
-                          user_id: userProfile?.id || session?.user?.id,
-                          username: userProfile.fullName || "Anonymous",
-                          rating,
-                          comment,
-                          createdAt: new Date().toISOString(),
-                        });
-
-                      if (shopErr) throw shopErr;
-
-                      // 2. Save Rider Review if exists
-                      const { data: order } = await supabase
-                        .from("orders")
-                        .select("rider_id")
-                        .eq("id", dbOrderId)
-                        .single();
-
-                      if (order?.rider_id && riderRating) {
-                        await supabase
-                          .from("orders")
-                          .update({
-                            rider_rating: riderRating,
-                            rider_rating_comment: riderComment,
-                          })
-                          .eq("id", dbOrderId);
-
-                        // Update rider profile average rating
-                        const { data: rider } = await supabase
-                          .from("rider_profiles")
-                          .select("rating, rating_count")
-                          .eq("id", order.rider_id)
-                          .single();
-
-                        if (rider) {
-                          const currentRating = rider.rating || 5;
-                          const currentCount = rider.rating_count || 0;
-                          const newCount = currentCount + 1;
-                          const newRating =
-                            (currentRating * currentCount + riderRating) /
-                            newCount;
-
-                          await supabase
-                            .from("rider_profiles")
-                            .update({
-                              rating: Number(newRating.toFixed(1)),
-                              rating_count: newCount,
-                            })
-                            .eq("id", order.rider_id);
-                        }
-                      }
-
-                      showAlert(
-                        "Feedback Submitted",
-                        "Thank you for helping us improve! 🔥",
-                      );
-                    } catch (err) {
-                      console.error("Error saving review:", err);
-                      showAlert("Error", "Failed to save your review.");
-                    }
-
-                    setPendingReview(null);
-                    setCurrentScreen("order-history");
+                  onSubmit={async () => {
+                    // The legacy Supabase facade is a mock; a 200-like result
+                    // is not proof that a review was received by the shop.
+                    showAlert("Reviews unavailable", "Review submission will return after the verified pickup review API is ready.");
                   }}
                 />
               )}
@@ -8569,6 +8388,15 @@ function StoreInfoScreen({
   }, [fetchReviews]);
 
   const handleSubmitReview = async () => {
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      showAlert("Sign in required", "Please sign in to leave a shop review.");
+      setCurrentScreen("login");
+      return;
+    }
+    // Do not permit direct, unverified review writes before secure server review
+    // eligibility and pickup-order ownership are implemented.
+    showAlert("Reviews unavailable", "Reviews will reopen after verified pickup-order checks are ready.");
+    return;
     if (!isOnline) {
       showAlert(
         "Offline Mode",
