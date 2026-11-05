@@ -256,8 +256,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
-import { canManageCustomerProfile } from "./lib/profileAccess";
-import { GuestProfileGate } from "./components/GuestProfileGate";
+import { canManageCustomerProfile, profileDestination } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -475,6 +474,22 @@ export default function App() {
   }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+
+  // Guest taps on Profile open the existing Login screen immediately.
+  // Guard every entry point, including the checkout incomplete-profile route.
+  const navigateToProfile = useCallback((requested: "profile" | "complete-profile") => {
+    setCurrentScreen(profileDestination(auth.currentUser, session?.user?.id, requested));
+  }, [setCurrentScreen, session?.user?.id]);
+
+  // Defense in depth: if authentication expires on a profile route, redirect
+  // without ever mounting the registered customer's editable form.
+  useEffect(() => {
+    if ((currentScreen === "profile" || currentScreen === "complete-profile") &&
+        !canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      setCurrentScreen("login");
+    }
+  }, [currentScreen, session?.user?.id, setCurrentScreen]);
+
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -3052,12 +3067,11 @@ export default function App() {
               )}
               {currentScreen === "success" && (
                 <SuccessScreen
-                  onCompleteProfile={() => setCurrentScreen("complete-profile")}
+                  onCompleteProfile={() => navigateToProfile("complete-profile")}
                   onExplore={() => setCurrentScreen("home")}
                 />
               )}
-              {currentScreen === "complete-profile" && (
-                canManageCustomerProfile(auth.currentUser, session?.user?.id) ? (
+              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3068,20 +3082,13 @@ export default function App() {
                   }}
                   setNotification={setNotification}
                 />
-                ) : (
-                  <GuestProfileGate
-                    onBack={() => setCurrentScreen("home")}
-                    onSignIn={() => setCurrentScreen("login")}
-                    onCreateAccount={() => setCurrentScreen("signup")}
-                  />
-                )
               )}
               {currentScreen === "login-success" && (
                 <LoginSuccessScreen
                   onHome={() => {
                     setCurrentScreen("home");
                   }}
-                  onViewProfile={() => setCurrentScreen("profile")}
+                  onViewProfile={() => navigateToProfile("profile")}
                   onBack={() => setCurrentScreen("login")}
                 />
               )}
@@ -3103,7 +3110,7 @@ export default function App() {
                     setCurrentScreen("settings");
                   }}
                   onProfile={() => {
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onCheckout={() => {
                     setCurrentScreen("checkout");
@@ -3415,7 +3422,7 @@ export default function App() {
                   onLogout={() => setCurrentScreen("splash")}
                   onProfile={() => {
                     setPreviousScreen("settings");
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onOrderHistory={() => {
                     setPreviousScreen("settings");
@@ -3513,8 +3520,7 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "profile" && (
-                canManageCustomerProfile(auth.currentUser, session?.user?.id) ? (
+              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
@@ -3549,13 +3555,6 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
                 />
-                ) : (
-                  <GuestProfileGate
-                    onBack={() => setCurrentScreen(previousScreen || "home")}
-                    onSignIn={() => setCurrentScreen("login")}
-                    onCreateAccount={() => setCurrentScreen("signup")}
-                  />
-                )
               )}
               {currentScreen === "contact" && (
                 <ContactScreen
@@ -3576,7 +3575,7 @@ export default function App() {
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
-                        setCurrentScreen("complete-profile");
+                        navigateToProfile("complete-profile");
                       }}
                       cart={cart}
                       setCart={setCart}

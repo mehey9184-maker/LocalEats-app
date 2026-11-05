@@ -1,12 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {canManageCustomerProfile} from "../src/lib/profileAccess.ts";
+import {canManageCustomerProfile, profileDestination} from "../src/lib/profileAccess.ts";
 
 const src=path=>readFileSync(new URL(path,import.meta.url),"utf8");
 const app=src("../src/App.tsx");
 const service=src("../src/lib/profileService.ts");
-const guestGate=src("../src/components/GuestProfileGate.tsx");
 
 test("guest and anonymous Firebase identities cannot manage stored profile",()=>{
   assert.equal(canManageCustomerProfile(null,null),false);
@@ -17,14 +16,25 @@ test("guest and anonymous Firebase identities cannot manage stored profile",()=>
   assert.equal(canManageCustomerProfile({uid:"customer-1",isAnonymous:false},"customer-1"),true);
 });
 
-test("guest Profile and Complete Profile routes hide the editable forms",()=>{
-  assert.match(app,/currentScreen === "profile" && \(\s*canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\) \? \(\s*<ProfileScreen/);
-  assert.match(app,/currentScreen === "complete-profile" && \(\s*canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\) \? \(\s*<CompleteProfileScreen/);
-  assert.match(guestGate,/saving personal details requires an account/);
-  assert.match(guestGate,/Sign In/);
-  assert.match(guestGate,/Create Account/);
-  assert.match(guestGate,/Continue browsing as guest/);
-  assert.doesNotMatch(guestGate,/onSave|setUserProfile|upsertProfileWithRPC/);
+test("guest Profile and Complete Profile navigate straight to Login",()=>{
+  const guest={uid:"anonymous-uid",isAnonymous:true};
+  const account={uid:"registered-uid",isAnonymous:false};
+  for(const screen of ["profile","complete-profile"]){
+    assert.equal(profileDestination(null,null,screen),"login");
+    assert.equal(profileDestination(guest,guest.uid,screen),"login");
+    assert.equal(profileDestination(account,"different-account",screen),"login");
+    assert.equal(profileDestination(account,account.uid,screen),screen);
+  }
+  // All five navigation entry points use the same immediate route guard.
+  assert.match(app,/const navigateToProfile = useCallback/);
+  assert.equal((app.match(/navigateToProfile\("profile"\)/g)||[]).length,3);
+  assert.equal((app.match(/navigateToProfile\("complete-profile"\)/g)||[]).length,2);
+  assert.match(app,/setCurrentScreen\(profileDestination\(auth.currentUser, session\?\.user\?\.id, requested\)\)/);
+  // If sign-in state expires while on Profile, redirect and never mount the editor.
+  assert.match(app,/currentScreen === "profile" && canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\) && \(\s*<ProfileScreen/);
+  assert.match(app,/currentScreen === "complete-profile" && canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\) && \(\s*<CompleteProfileScreen/);
+  assert.match(app,/setCurrentScreen\("login"\);\s*\}\s*\}, \[currentScreen, session\?\.user\?\.id, setCurrentScreen\]\)/);
+  assert.doesNotMatch(app,/GuestProfileGate/);
 });
 
 test("guest profile save refuses success before modifying local state",()=>{
