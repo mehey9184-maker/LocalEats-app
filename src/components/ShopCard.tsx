@@ -26,12 +26,15 @@ export const ShopCard = memo(
     onStoreInfo,
     triggerHaptic,
     dataSaverEnabled,
+    priorityImage = false,
   }: {
     shop: Shop;
     isFollowed: boolean;
     onStoreInfo: (id: string) => void;
     triggerHaptic: (pattern?: number | number[]) => void;
     dataSaverEnabled?: boolean;
+    /** Prioritize the first visible Home image. */
+    priorityImage?: boolean;
   }) => {
     const status = getShopStatus(shop);
 
@@ -79,7 +82,6 @@ export const ShopCard = memo(
 
     return (
       <motion.div
-        layout
         layoutId={`shop-card-${shop.id}`}
         variants={{
           hidden: { opacity: 0, y: 15, scale: 0.98 },
@@ -118,6 +120,7 @@ export const ShopCard = memo(
             <BlurUpImage
               src={heroImage}
               alt={shop.name}
+              priority={priorityImage}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
             />
