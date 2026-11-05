@@ -16,9 +16,9 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null,op
   return readVerifiedNearbyCatalog(location,options);
 }
 
-export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string) {
+export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string,signal?:AbortSignal) {
   const intent=pickupCartIntent(cart,requireRealLocation(location),name,phone,method);
-  const result=await customerPickupApi.quote(intent);
+  const result=await customerPickupApi.quote(intent,signal);
   if(!result.quote || !Number.isSafeInteger(result.quote.total_minor) || result.quote.total_minor<0)
     throw new Error("The service did not confirm an authoritative quote.");
   pickupQuoteAmounts(result.quote);

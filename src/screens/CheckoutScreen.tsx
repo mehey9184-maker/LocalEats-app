@@ -124,6 +124,7 @@ export function CheckoutScreen({
   const [pickupQuoteError,setPickupQuoteError]=useState("");
   const quoteLock=useRef(false);
   const quoteRevision = useRef(0);
+  const activeQuote = useRef<AbortController | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "card_machine">(
     "cash",
   );
@@ -889,13 +890,21 @@ export function CheckoutScreen({
     setPickupQuote(null);
     setQuoteConsent(false);
     setPickupQuoteError("");
-    return () => { quoteRevision.current += 1; };
+    return () => {
+      quoteRevision.current += 1;
+      activeQuote.current?.abort();
+    };
   }, [cart, customerName, customerPhone, paymentMethod, deliveryType,
     userLocation?.lat, userLocation?.lng, session?.user?.id, primaryShop?.id]);
 
   const reviewPickupQuote = async () => {
     if (quoteLock.current) return;
     const revision = quoteRevision.current;
+    const controller = new AbortController();
+    activeQuote.current = controller;
+    const timeout = setTimeout(() => controller.abort(new Error(
+      "Checking the pickup price took too long. Your cart is saved. Try again.",
+    )), 15000);
     quoteLock.current = true;
     setLoading("quote");
     setPickupQuoteError("");
@@ -903,7 +912,14 @@ export function CheckoutScreen({
       if (!primaryShop) throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if (!session?.user?.id) throw new Error("Please sign in with your existing account to review a quote.");
       if (deliveryType !== "collection") throw new Error("This pilot supports pickup only. Select collection.");
-      const result = await quotePickupCart(cart, userLocation, customerName, customerPhone, paymentMethod);
+      // The abort also releases checkout while an auth token is still being restored.
+      const stopped = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+      });
+      const result = await Promise.race([
+        stopped,
+        quotePickupCart(cart, userLocation, customerName, customerPhone, paymentMethod, controller.signal),
+      ]);
       if (quoteRevision.current !== revision) return;
       setPickupQuote(result);
       setQuoteConsent(false);
@@ -912,6 +928,8 @@ export function CheckoutScreen({
         setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");
       }
     } finally {
+      clearTimeout(timeout);
+      activeQuote.current = null;
       quoteLock.current = false;
       setLoading(false);
     }
@@ -3611,6 +3629,13 @@ export function CheckoutScreen({
           <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
             <p className="font-bold">Pickup · Pay at the shop</p>
             <div role="status" className="sr-only">{checkoutProgress}</div>
+            {checkoutWork === "quote" && (
+              <button type="button"
+                onClick={() => activeQuote.current?.abort(new Error("Price check stopped. Your cart is saved."))}
+                className="mt-2 min-h-11 rounded-xl border border-orange-300 px-4 text-sm font-semibold">
+                Stop checking price
+              </button>
+            )}
             <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
             {orderingEnabled && <button type="button" disabled={loading} onClick={() => submitReviewedPickup(true)}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
