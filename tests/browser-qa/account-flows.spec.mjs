@@ -33,16 +33,24 @@ async function createAccount(request,label){
   expect(data.localId).toBeTruthy();
   return{email,password,uid:data.localId};
 }
+async function acknowledgePopiaIfShown(page){
+  const accept=page.locator("#popia-legal-bar").getByRole("button",{name:"Accept",exact:true});
+  if(await accept.isVisible()) await accept.click();
+}
 async function browseAsGuest(page){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
+  await acknowledgePopiaIfShown(page);
   await page.getByText("Explore as Guest").click();
   await expect(page.locator("#nav-tab-profile")).toBeVisible({timeout:25000});
 }
 async function login(page,account){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
+  await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
+  await acknowledgePopiaIfShown(page);
   const start=page.getByRole("button",{name:"Log In",exact:true});
-  if(await start.isVisible({timeout:5000}).catch(()=>false))await start.click();
+  await expect(start).toBeVisible({timeout:20000});
+  await start.click();
   await expect(page.locator("#login-email-input")).toBeVisible({timeout:25000});
   await page.locator("#login-email-input").fill(account.email);
   await page.locator("#login-password-input").fill(account.password);

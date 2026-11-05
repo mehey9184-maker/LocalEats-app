@@ -45,7 +45,7 @@ jobs:
         with:
           name: customer-browser-qa
           path: |
-            playwright-report
-            test-results/browser-qa
+            tests/browser-qa/playwright-report
+            tests/browser-qa/test-results/browser-qa
           retention-days: 7
           if-no-files-found: ignore
