@@ -24,3 +24,9 @@
 - Approval to release production separately after the above gates. PR is draft and must not be auto-merged.
 
 **Known limitation:** Fixing an unserved authenticated API is not a frontend-only action. This Client-only branch does not create backend functions, modify an API repository or database, or turn on ordering; it must stay blocked until a separately authorized secure backend integration exists.
+
+## Follow-up code hardening — 2026-11-05 (still BLOCKED)
+
+Updated the existing isolated P0 repair branch to align profile input limits with staging Postgres (fullName <=120, language <=12), require the exact staging Firebase project in both the Preview web client and Admin credentials, and acknowledge profile writes only on HTTP 2xx JSON with same-Firebase-UID persisted profile data. Added focused regression cases for HTML fallback, missing receipts, different user IDs and environment mismatches. The original UI and production code remain untouched; no Production database/security changes or live orders.
+
+**Unresolved release gates:** the P0 Preview lacks dedicated Firebase test account/credential configuration; real two-account signed-in persistence has not been verified; checked-in firestore.rules still grant public access and deployed rule state is unknown; the deliberate live-Production profile contract gate remains blocking. Do NOT merge P0 to main or activate profile/order writes yet.

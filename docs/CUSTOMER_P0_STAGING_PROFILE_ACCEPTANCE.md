@@ -41,3 +41,11 @@ The Client code requires \`VERCEL_ENV=preview\`, exact staging Supabase URL/refe
 Guarded script: \`scripts/customer-p0-staging-profile-smoke.mjs\`. Supply only secret-store environment variables \`P0_CUSTOMER_PREVIEW_URL\`, \`P0_TEST_UID_A\`, \`P0_TEST_UID_B\`, \`P0_TEST_FIREBASE_TOKEN_A\`, \`P0_TEST_FIREBASE_TOKEN_B\`. All GET checks are read-only by default. Do not paste tokens or private keys in a PR, issue, chat message or screenshot.
 
 **Blocked until:** staging Firebase project/credentials, both dummy tokens, live Firestore rules visibility, and signed-in browser acceptance are available. Do not merge PR #31 to \`main\` or change live Customer domains.
+
+## Profile staging verification update — 2026-11-05
+
+The API now requires the Preview browser's VITE_FIREBASE_PROJECT_ID to equal PROFILE_API_STAGING_FIREBASE_PROJECT_ID, and the Admin service-account email must belong to that exact isolated Firebase testing project. Branch-local VITE_FIREBASE_PROJECT_ID must override the shared Preview Firebase configuration; otherwise the API intentionally returns 503 and must NOT silently fall back to live Firebase Auth. Never use Production Firebase credentials or the Production Supabase service key.
+
+The staging profile form now rejects fullName longer than 120 and language longer than 12 characters, matching the existing Supabase table. A save is only acknowledged if the API returns HTTP 2xx, application/json, success=true and a profile.user_id matching the current account. Any failure retains local drafts without claiming server persistence.
+
+These are code-level safeguards, not final staging acceptance: separate Firebase test credentials, two dummy accounts, signed-in read-after-write/cross-account tests, deployed Firestore rule review and browser validation are still required. Keep PROFILE_API_STAGING_WRITES_ENABLED and all pickup order write gates OFF unless separately authorized.
