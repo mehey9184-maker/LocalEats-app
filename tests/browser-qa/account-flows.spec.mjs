@@ -52,12 +52,22 @@ async function seedFakeProfile(request,account){
   const response=await request.patch(url,{data:{fields},timeout:15000});
   expect(response.ok()).toBeTruthy();
 }
+async function chooseEssentialCookiesIfNeeded(page){
+  const alreadyChosen=await page.evaluate(()=>Boolean(localStorage.getItem("localeats_cookie_preferences")));
+  if(alreadyChosen)return;
+  // The real cookie banner appears 1200 ms after mount and overlaps the bottom nav.
+  const banner=page.locator("#cookie-consent-banner");
+  await expect(banner).toBeVisible({timeout:7000});
+  await banner.getByRole("button",{name:"Essential Only",exact:true}).click();
+  await expect(banner).toHaveCount(0);
+}
 async function browseAsGuest(page){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
   await acknowledgePopiaIfShown(page);
   await page.getByText("Explore as Guest").click();
   await expect(page.locator("#nav-tab-profile")).toBeVisible({timeout:25000});
+  await chooseEssentialCookiesIfNeeded(page);
 }
 async function login(page,account){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
@@ -73,6 +83,7 @@ async function login(page,account){
   const home=page.getByRole("button",{name:"Go to Home"});
   if(await home.isVisible({timeout:12000}).catch(()=>false))await home.click();
   await expect(page.locator("#nav-tab-profile")).toBeVisible({timeout:25000});
+  await chooseEssentialCookiesIfNeeded(page);
 }
 test("guest browser Profile tab goes straight to Login; no editable personal form",async({page})=>{
   const posted=[];
