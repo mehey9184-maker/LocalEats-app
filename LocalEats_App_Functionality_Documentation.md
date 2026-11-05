@@ -141,3 +141,8 @@ Production writes remain disabled. This branch is excluded from automatic deploy
 ## Repository-level Codex pickup launch skill — 2026-11-05
 
 Added `.agents/skills/localeats-pickup-launch/SKILL.md` for repeatable **read-only/Preview-first** pickup release audits. The skill covers geolocation and 4 km shop discovery, original shop/menu/cart UI, server-authoritative pickup quote, pay-at-shop choice, idempotency, security, notification trust, performance, and synthetic load tests. It references the current `test:pickup-integration`, `lint`, and `build` scripts; all test results must be reported rather than assumed. The skill does **not** activate orders, change the frontend behavior, modify database/security settings, add delivery/rider functionality, alter Production, or authorize merges. Merchant Dashboard/API verification remains separate. Owner approval is required for any activation or Production action.
+
+
+## Firestore pickup access review — 2026-11-05
+
+Review-only rules and synthetic emulator tests cover direct order updates, pool-order reads, and rider profile visibility. Production deployment is a separate action.
