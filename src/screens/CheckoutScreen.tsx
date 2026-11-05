@@ -1992,8 +1992,8 @@ export function CheckoutScreen({
               <section ref={addressSectionRef} className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-3xl border border-slate-100 dark:border-slate-800">
             <div className="flex items-center justify-between mb-3.5 px-1">
               <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-                <Bike className="w-4 h-4 text-orange-500" />
-                Fulfill Order via
+                <ShoppingBasket className="w-4 h-4 text-orange-500" />
+                Order collection
               </h3>
               {distance !== null && deliveryType === "delivery" && (
                 <div
@@ -2419,7 +2419,7 @@ export function CheckoutScreen({
                 <span className="text-xl shrink-0 animate-bounce">🛒</span>
                 <div className="text-left">
                   <h5 className="font-black text-xs text-orange-600 dark:text-orange-400 uppercase tracking-wide">
-                    Pay & Swipe Card on Arrival
+                    Pay at the shop
                   </h5>
                   <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400 font-bold mt-1">
                     You have selected <span className="text-orange-600 dark:text-orange-400 font-extrabold uppercase">Counter Pickup</span>. 
