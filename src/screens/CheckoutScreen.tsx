@@ -808,7 +808,7 @@ export function CheckoutScreen({
 
   // Psychological Price Anchoring Calculations:
   // 1. Estimated standard franchise / third-party aggregator retail value (anchoring against ~22% higher market benchmark)
-  const estimatedRetailSubtotal = subtotal > 0 ? subtotal * 1.22 : 0;
+  const estimatedRetailSubtotal = deliveryType === "delivery" && subtotal > 0 ? subtotal * 1.22 : 0;
   const directKitchenSavings = Math.max(0, estimatedRetailSubtotal - subtotal);
   const totalCombinedSavings = directKitchenSavings + discountAmount;
 
@@ -888,17 +888,43 @@ export function CheckoutScreen({
       if(!primaryShop)throw new Error("Reload shops to verify this cart’s pickup shop before reviewing a quote.");
       if(!session?.user?.id)throw new Error("Please sign in with your existing account to review a quote.");
       if(deliveryType!=="collection")throw new Error("This pilot supports pickup only. Select collection.");
-      if(pickupQuote && quoteConsent){
-        if(!pickupOrderingEnabled())blockPickupSubmission();
-        await submitPickupQuote(pickupQuote); setCart([]); onConfirm(); return;
-      }
       const result=await quotePickupCart(cart,userLocation,customerName,customerPhone,paymentMethod);
       setPickupQuote(result);setQuoteConsent(false);
     } catch(error){setPickupQuoteError(error instanceof Error ? error.message : "Quote unavailable. No order was created.");}
     finally{quoteLock.current=false;setLoading(false);}
   };
+  const submitReviewedPickup = async (retry: boolean) => {
+    if (!pickupOrderingEnabled() || quoteLock.current) return;
+    if (!retry && (!pickupQuote || !quoteConsent)) return;
+
+    quoteLock.current = true;
+    setLoading(true);
+    setPickupQuoteError("");
+    try {
+      await submitPickupQuote(retry ? null : pickupQuote);
+      setCart([]);
+      onConfirm();
+    } catch (error) {
+      setPickupQuoteError(error instanceof Error ? error.message : "Submission remains unconfirmed.");
+    } finally {
+      quoteLock.current = false;
+      setLoading(false);
+    }
+  };
+
+  const orderingEnabled = pickupOrderingEnabled();
+  const checkoutAction = !pickupQuote ? "Review pickup quote" :
+    orderingEnabled ? "Place pickup order" : "Ordering not enabled yet";
+  const checkoutActionDisabled = loading || cart.length === 0 ||
+    (deliveryType === "delivery" && distance !== null && distance > ZONE_B_LIMIT) ||
+    (!!pickupQuote && (!orderingEnabled || !quoteConsent));
+  const handlePickupAction = () => {
+    if (pickupQuote) return submitReviewedPickup(false);
+    return reviewPickupQuote();
+  };
+
   const handleConfirm = async () => {
-    await reviewPickupQuote(); return; // No legacy checkout, payment, queue or success path may execute.
+    await handlePickupAction(); return; // No legacy checkout, payment, queue or success path may execute.
 
     if (loading) return;
     if (cart.length === 0) {
@@ -1562,7 +1588,7 @@ export function CheckoutScreen({
   return (
     <main className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen font-sans">
       <div className="relative flex h-auto w-full max-w-2xl mx-auto flex-col bg-transparent overflow-x-hidden pb-16 min-h-screen px-3 sm:px-6">
-        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled until database activation. You can review your cart; no order or payment will be submitted.</p>}
+        {!pickupOrderingEnabled() && <p role="status" className="text-sm text-orange-700 dark:text-orange-300 py-3">Ordering is temporarily disabled. You can review your cart; no order or payment will be submitted.</p>}
         {!primaryShop && <p role="alert" className="text-sm text-orange-700 dark:text-orange-300">Your cart is preserved. Pickup shop details are unavailable. Return to browsing and reload shops before reviewing a quote.</p>}
         {/* Unified Card Container */}
         <div className="bg-white dark:bg-slate-900 shadow-xl rounded-3xl overflow-hidden flex flex-col my-4 sm:my-8 border border-slate-100 dark:border-slate-800">
@@ -1668,7 +1694,7 @@ export function CheckoutScreen({
                       : "font-bold text-slate-400"
                 }`}
               >
-                2. Delivery
+                2. Pickup details
               </span>
             </button>
 
@@ -1739,7 +1765,7 @@ export function CheckoutScreen({
                     : "font-bold text-slate-400"
                 }`}
               >
-                4. Place Order
+                4. Review pickup quote
               </span>
             </button>
           </div>
@@ -1750,10 +1776,10 @@ export function CheckoutScreen({
               <Zap className="w-3.5 h-3.5 text-orange-500 shrink-0" />
               <span>
                 {currentStep === 1
-                  ? "⚡ Great momentum! You've already loaded your basket (Step 1 ✓). Complete delivery info to lock it in."
+                  ? "Confirm your pickup contact details."
                   : currentStep === 2
-                    ? "🚀 Over 70% completed! Select payment method to finish setup."
-                    : "🎉 100% Ready! Final review — tap place order for instant kitchen dispatch."}
+                    ? "Choose how you’ll pay at the shop."
+                    : "Check the shop’s pickup details and review your server quote."}
               </span>
             </div>
           </div>
@@ -2705,7 +2731,7 @@ export function CheckoutScreen({
           </section>
 
           {/* SECTION 5: Vouchers & Coupon codes */}
-          <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
+          {deliveryType === "delivery" && <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-3.5">
             <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
               <Tag className="w-4 h-4 text-orange-500" />
               Promo Vouchers
@@ -2854,7 +2880,7 @@ export function CheckoutScreen({
                 </button>
               </div>
             )}
-          </section>
+          </section>}
 
           {/* SECTION 6: Payment Method & Cash change Chip Request */}
           <section ref={paymentMethodSectionRef} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-850 p-4 rounded-3xl shadow-sm space-y-4">
@@ -3394,7 +3420,7 @@ export function CheckoutScreen({
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
                   <CreditCard className="w-4 h-4 text-orange-500 shrink-0" />
                   <span className="capitalize">
-                    {paymentMethod === "cash" ? "Cash on Arrival" : paymentMethod === "card_machine" ? "Pay by Card on Arrival" : paymentMethod}
+                    {paymentMethod === "cash" ? "Pay cash at the shop" : paymentMethod === "card_machine" ? "Pay by card at the shop" : paymentMethod}
                   </span>
                 </div>
                 <button
@@ -3547,7 +3573,7 @@ export function CheckoutScreen({
                 <span className="text-sm font-black uppercase tracking-widest">
                   {deliveryType === "collection" ? (quotedPickup ? "Total payable at shop" : "Estimated pay at shop") : "Grand Total Amount"}
                 </span>
-                <span className="text-2xl font-black font-mono text-orange-500">
+                <span className="text-2xl font-black font-mono text-orange-500 whitespace-nowrap">
                   <AnimatedPrice value={totalAmount} />
                 </span>
               </div>
@@ -3561,13 +3587,13 @@ export function CheckoutScreen({
           <section aria-label="Pickup quote" className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 p-4 text-slate-900">
             <p className="font-bold">Pickup · Pay at the shop</p>
             <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
-            {pickupOrderingEnabled() && <button type="button" disabled={loading} onClick={async()=>{setLoading(true);try{await submitPickupQuote(null);setCart([]);onConfirm();}catch(e){setPickupQuoteError(e instanceof Error?e.message:"Submission remains unconfirmed.");}finally{setLoading(false);}}}>Retry previous submission</button>}
+            {orderingEnabled && <button type="button" disabled={loading} onClick={() => submitReviewedPickup(true)}>Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
             {pickupQuote && <>
               <ul>{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id}>{line.quantity} × {line.name}: R {(line.line_minor/100).toFixed(2)}</li>)}</ul>
               <p>Server total: R {(pickupQuote.quote.total_minor/100).toFixed(2)}</p>
               <p>Service fee: R {(pickupQuote.quote.service_fee_minor/100).toFixed(2)} · No delivery fee · Pay at shop</p>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={quoteConsent} onChange={e=>setQuoteConsent(e.target.checked)}/>I have reviewed this server quote. This does not place an order.</label>
+              {orderingEnabled && <label className="flex items-center gap-2"><input type="checkbox" checked={quoteConsent} disabled={loading} onChange={e=>setQuoteConsent(e.target.checked)}/>I agree to the quoted total.</label>}
             </>}
           </section>
           {/* PINNED BOTTOM CHECKOUT BUTTON STACK */}
@@ -3576,18 +3602,9 @@ export function CheckoutScreen({
               id="confirm-pay-btn"
               type="button"
               onClick={handleConfirm}
-              disabled={
-                loading ||
-                cart.length === 0 ||
-                (deliveryType === "delivery" &&
-                  distance !== null &&
-                  distance > ZONE_B_LIMIT)
-              }
+              disabled={checkoutActionDisabled}
               className={`relative overflow-hidden w-full py-4 rounded-2xl font-black shadow-xl uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:scale-100 cursor-pointer ${
-                loading ||
-                (deliveryType === "delivery" &&
-                  distance !== null &&
-                  distance > ZONE_B_LIMIT)
+                checkoutActionDisabled
                   ? "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed border-none shadow-none"
                   : "bg-orange-600 hover:bg-orange-700 text-white shadow-orange-600/30 font-extrabold text-sm"
               }`}
@@ -3596,7 +3613,7 @@ export function CheckoutScreen({
               {loading && (
                 <div className="absolute inset-0 bg-orange-700/95 dark:bg-orange-800/95 flex items-center justify-center gap-2 text-white font-bold text-xs uppercase tracking-wider backdrop-blur-xs z-10 select-none pointer-events-none">
                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                  <span>Requesting server quote...</span>
+                  <span>{"Working…"}</span>
                 </div>
               )}
 
@@ -3606,7 +3623,7 @@ export function CheckoutScreen({
                 distance !== null &&
                 distance > ZONE_B_LIMIT
                   ? "Out of Delivery Range"
-                  : pickupQuote && quoteConsent ? pickupOrderingEnabled() ? "Place pickup order" : "Ordering not enabled yet" : "Review pickup quote"}
+                  : checkoutAction}
               </span>
             </button>
             <button
@@ -3687,18 +3704,9 @@ export function CheckoutScreen({
                 <button
                   type="button"
                   onClick={handleConfirm}
-                  disabled={
-                    loading ||
-                    cart.length === 0 ||
-                    (deliveryType === "delivery" &&
-                      distance !== null &&
-                      distance > ZONE_B_LIMIT)
-                  }
+                  disabled={checkoutActionDisabled}
                   className={`relative overflow-hidden py-2 px-3.5 rounded-xl font-black text-[11px] uppercase tracking-wider flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:cursor-not-allowed ${
-                    loading ||
-                    (deliveryType === "delivery" &&
-                      distance !== null &&
-                      distance > ZONE_B_LIMIT)
+                    checkoutActionDisabled
                       ? "bg-slate-800 text-slate-500 cursor-not-allowed"
                       : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20"
                   }`}
@@ -3706,12 +3714,12 @@ export function CheckoutScreen({
                   {loading ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Processing...</span>
+                      <span>{"Working…"}</span>
                     </>
                   ) : (
                     <>
                       <ShoppingBag className="w-3.5 h-3.5" />
-                      <span>Review pickup quote</span>
+                      <span>{checkoutAction}</span>
                     </>
                   )}
                 </button>
