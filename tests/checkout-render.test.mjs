@@ -21,7 +21,8 @@ for(const [label,shops] of [['empty discovery',[]],['different shop',[{id:'diffe
  const html=renderToString(React.createElement(CheckoutScreen,{...props,shops}));
  assert.match(html,/Secure Checkout/);assert.match(html,/Cart Summary Preview/);assert.match(html,/25\.00/);assert.match(html,/Ordering is temporarily disabled/);
  assert.doesNotMatch(html,/Checkout failed to load|Wrong shop|Order Tax Invoice|Tax \/ VAT \(15% Included\)/);
- assert.doesNotMatch(html,/27\.50/);
+ assert.match(html,/Review pickup quote/);
+ assert.doesNotMatch(html,/27\.50|Place Order|instant kitchen dispatch/);
  if(label!=='matching shop')assert.match(html,/Pickup shop details are unavailable/);
  assert.equal(props.cart[0].quantity,1);
 });

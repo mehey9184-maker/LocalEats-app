@@ -31,8 +31,8 @@ test("existing page-level errors and loading UX remain in place",()=>{
 });
 
 test("pickup remains review-only and map discovery plus QR and cropper lazy paths survive",()=>{
-  assert.match(checkout,/await reviewPickupQuote\(\); return;/);
-  assert.match(checkout,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
+  assert.match(checkout,/await handlePickupAction\(\); return;/);
+  assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return;/);
   assert.match(pickup,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
   assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);

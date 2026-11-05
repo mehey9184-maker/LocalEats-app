@@ -46,8 +46,8 @@ test("unchanged app layout, saved-shop menus, profile address, and checkout stay
   assert.match(app,/<AddressSearch/);
   assert.match(app,/const AddressSearch = lazy\(\(\) => import\("\.\/components\/MapComponents"\)/);
   assert.match(app,/currentScreen === "checkout"/);
-  assert.match(checkout,/await reviewPickupQuote\(\); return;/);
-  assert.match(checkout,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
+  assert.match(checkout,/await handlePickupAction\(\); return;/);
+  assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return;/);
 });
 
 test("map views keep their original offline UX and explicit loading fallback",()=>{
