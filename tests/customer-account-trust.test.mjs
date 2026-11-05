@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {canManageCustomerProfile,profileDestination} from "../src/lib/profileAccess.ts";
+import {canManageCustomerProfile,profileDestination,shouldRedirectProtectedProfile} from "../src/lib/profileAccess.ts";
 import {isConfirmedProfileSave} from "../src/lib/profileConfirmation.ts";
 const src=path=>readFileSync(new URL(path,import.meta.url),"utf8");
 const app=src("../src/App.tsx");
@@ -108,4 +108,21 @@ test("pickup quote and submission refuse anonymous or mismatched accounts",()=>{
  assert.match(checkout,/setCurrentScreen\("login"\)/);
  assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return/);
  assert.match(checkout,/await handlePickupAction\(\); return; \/\/ No legacy checkout/);
+});
+
+test("transient Firebase session restoration does not throw signed-in Profile back Home",()=>{
+  const account={uid:"qa-registered",isAnonymous:false};
+  assert.equal(shouldRedirectProtectedProfile(account,null),false);
+  assert.equal(shouldRedirectProtectedProfile(account,account.uid),false);
+  assert.equal(shouldRedirectProtectedProfile(account,"other-account"),true);
+  assert.equal(shouldRedirectProtectedProfile({uid:"qa-guest",isAnonymous:true},null),true);
+  assert.equal(shouldRedirectProtectedProfile(null,null),true);
+  assert.match(app,/shouldRedirectProtectedProfile\(auth.currentUser, session\?\.user\?\.id\)/);
+  assert.match(app,/if \(!session && _event !== "SIGNED_OUT" &&\s*auth.currentUser && !auth.currentUser.isAnonymous\) return;/);
+});
+test("profile API read errors do not auto-enqueue phantom profile writes",()=>{
+  const fetchBlock=getSection(app,"  const fetchUserProfile = useCallback","  const logoutCustomer = async");
+  assert.match(fetchBlock,/else if \(!error && !data\)/);
+  assert.doesNotMatch(fetchBlock,/upsertProfileWithRPC\(/);
+  assert.doesNotMatch(fetchBlock,/auto-upsert to prevent empty state/);
 });
