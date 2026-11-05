@@ -37,6 +37,21 @@ async function acknowledgePopiaIfShown(page){
   const accept=page.locator("#popia-legal-bar").getByRole("button",{name:"Accept",exact:true});
   if(await accept.isVisible()) await accept.click();
 }
+async function seedFakeProfile(request,account){
+  const fields={
+    id:{stringValue:account.uid},
+    user_id:{stringValue:account.uid},
+    email:{stringValue:account.email},
+    fullName:{stringValue:"QA Original"},
+    phone:{stringValue:"0712345678"},
+    address:{stringValue:"Demo 1 Local Test Street"},
+    city:{stringValue:"Johannesburg"},
+    country:{stringValue:"South Africa"},
+  };
+  const url="http://127.0.0.1:8080/v1/projects/demo-localeats-browser-qa/databases/(default)/documents/profiles/"+account.uid;
+  const response=await request.patch(url,{data:{fields},timeout:15000});
+  expect(response.ok()).toBeTruthy();
+}
 async function browseAsGuest(page){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
@@ -74,7 +89,7 @@ test("demo-account login displays registered Profile; logout revokes access",asy
   const account=await createAccount(request,"logout");
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
-  await expect(page.getByRole("button",{name:"Save Profile Changes"})).toBeVisible();
+  await expect(page.getByPlaceholder("Your full name")).toBeVisible();
   await page.getByRole("button",{name:"Log Out",exact:true}).click();
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:20000});
   await page.getByText("Explore as Guest").click();
@@ -86,7 +101,7 @@ test("switching from account A to B does not show A email or cache",async({page,
   const accountB=await createAccount(request,"B");
   await login(page,accountA);
   await page.locator("#nav-tab-profile").click();
-  await expect(page.getByRole("button",{name:"Save Profile Changes"})).toBeVisible();
+  await expect(page.getByPlaceholder("Your full name")).toBeVisible();
   await page.getByRole("button",{name:"Log Out",exact:true}).click();
   await expect(page.getByText("Explore as Guest")).toBeVisible();
   await login(page,accountB);
@@ -100,6 +115,8 @@ test("offline profile-save attempt never reports synchronized success",async({pa
   const account=await createAccount(request,"offline");
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
+  await expect(page.getByPlaceholder("Your full name")).toBeVisible();
+  await page.getByPlaceholder("Your full name").fill("Offline QA edit");
   await expect(page.getByRole("button",{name:"Save Profile Changes"})).toBeVisible();
   await context.setOffline(true);
   await page.getByRole("button",{name:"Save Profile Changes"}).click();
@@ -108,14 +125,16 @@ test("offline profile-save attempt never reports synchronized success",async({pa
 });
 test("failed profile API never produces a saved-success toast",async({page,request})=>{
   const account=await createAccount(request,"unconfirmed");
+  await seedFakeProfile(request,account);
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
-  await expect(page.getByRole("button",{name:"Save Profile Changes"})).toBeVisible();
+  await expect(page.getByPlaceholder("Your full name")).toHaveValue("QA Original",{timeout:15000});
   await page.getByPlaceholder("Your full name").fill("Browser QA Pending");
   await page.getByPlaceholder(/e.g. 071 234/).fill("0712345678");
   // The address must not be invented. Incomplete form or unavailable backend
   // must not produce a fabricated "profile saved to cloud" receipt.
   await page.getByRole("button",{name:"Save Profile Changes"}).click();
+  await expect(page.getByText("Backend disabled in browser QA")).toBeVisible({timeout:15000});
   await expect(page.getByText("Profile saved & updated!")).toHaveCount(0);
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
