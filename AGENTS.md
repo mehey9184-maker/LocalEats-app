@@ -1,5 +1,14 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## Active pickup-only Codex policy (2026-11-05)
+
+**Current business scope supersedes historical rider/delivery descriptions above:** the near-term LocalEats release is customer pickup only, with pay-at-shop (cash or the shop's physical card machine). Rider/delivery expansion is deferred for at least six months after real customer use and requires a later explicit owner decision. Do not enable online payments, subscriptions, live orders, riders, or delivery while preparing Preview.
+
+For Client App pickup release investigations, use the repository skill `$localeats-pickup-launch` in `.agents/skills/localeats-pickup-launch/SKILL.md`. Follow its Preview-only test rules, original UI/UX preservation, server-authoritative pricing, 4 km discovery, duplicate-order protection, and no real-order simulation constraint. Treat earlier notes describing unrestricted Firestore rules or client-side price/order fallbacks as **historical incident records, not permission** to use insecure access. Never weaken security rules or enable an ordering flag without explicit separate approval.
+
+The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
+
+
 > **CRITICAL RULE FOR THE AI AGENT**: 
 > 1. You MUST ALWAYS consult this document BEFORE making any fixes, modifications, or starting new phases.
 > 2. You MUST ALWAYS update this document AFTER completing a phase or making significant functional changes to keep it current.
