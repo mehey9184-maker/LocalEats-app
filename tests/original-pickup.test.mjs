@@ -4,6 +4,19 @@ import {readFileSync} from 'node:fs';
 import {retryPickupDiscovery,requireRealLocation,mapPickupShop,pickupCartIntent,blockPickupSubmission} from '../src/services/pickupMapping.ts';
 const point={lat:-25.98,lng:28.2};
 const item={id:'real-menu',shopId:'real-shop',name:'Item',quantity:2,price:0.01,image:''};
+
+test('pickup instructions survive as bounded server notes without client prices',()=>{
+ const intent=pickupCartIntent([{...item,specialInstructions:'  No atchar  '}],point,'Test','0712345678','cash');
+ assert.deepEqual(intent.items,[{menu_item_id:item.id,quantity:2,notes:'No atchar'}]);
+ assert.throws(()=>pickupCartIntent([{...item,specialInstructions:'x'.repeat(501)}],point,'Test','0712345678','cash'),/500/);
+ assert.throws(()=>pickupCartIntent([{...item,quantity:21}],point,'Test','0712345678','cash'),/20/);
+});
+
+test('different instructions for one menu item retain their quantity labels in one server line',()=>{
+ const intent=pickupCartIntent([{...item,quantity:1,specialInstructions:'No atchar'},{...item,quantity:2}],point,'Test','0712345678','cash');
+ assert.deepEqual(intent.items,[{menu_item_id:item.id,quantity:3,notes:'1 ×: No atchar\n2 ×: No special instructions'}]);
+ assert.throws(()=>pickupCartIntent([{...item,quantity:11},{...item,quantity:10}],point,'Test','0712345678','cash'),/20/);
+});
 test('discovery never substitutes coordinates or accepts invalid or outside-radius API data',()=>{
  for(const p of [null,{lat:NaN,lng:28},{lat:100,lng:28}])assert.throws(()=>requireRealLocation(p));
  assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]));

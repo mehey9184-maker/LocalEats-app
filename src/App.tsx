@@ -8021,6 +8021,8 @@ const QuantityModal = ({
             </label>
             <textarea
               value={specialInstructions}
+              maxLength={500}
+              aria-label="Special instructions"
               onChange={(e) => setSpecialInstructions(e.target.value)}
               placeholder="E.g. 'no atchar' or 'extra spicy'..."
               className="w-full h-20 p-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-600/20 transition-all resize-none"

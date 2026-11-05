@@ -17,16 +17,31 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
  return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
   address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:true,menu};
 }
-export const MAX_PICKUP_ITEM_QUANTITY = 99;
+export const MAX_PICKUP_ITEM_QUANTITY = 20;
 
 export function pickupCartIntent(cart:CartItem[],location:{lat:number;lng:number},name:string,phone:string,method:string) {
  if(!cart.length || new Set(cart.map(i=>i.shopId)).size!==1) throw new Error("Choose items from one pickup shop per quote.");
  if(!["cash","card_machine"].includes(method)) throw new Error("Pay at the shop with cash or its physical card machine.");
  if(!name.trim() || !/^\+?[0-9 ()-]{9,20}$/.test(phone.trim())) throw new Error("Enter your name and a callable phone number.");
  for(const item of cart) if(!Number.isSafeInteger(item.quantity) || item.quantity<1 || item.quantity>MAX_PICKUP_ITEM_QUANTITY || item.selectedCustomizations?.length)
-  throw new Error("Check item quantities. Menu options require server support and are unavailable for this pilot.");
+  throw new Error("Choose 1 to 20 of each menu item. Priced menu options are unavailable for this pilot.");
+ const groups=new Map<string,{quantity:number;notes:string}[]>();
+ for(const item of cart){
+  if(item.specialInstructions != null && typeof item.specialInstructions!=="string") throw new Error("Check your item instructions.");
+  const notes=(item.specialInstructions || "").trim();
+  if(notes.length>500) throw new Error("Keep instructions within 500 characters per menu item.");
+  const entries=groups.get(item.id) || []; entries.push({quantity:item.quantity,notes});groups.set(item.id,entries);
+ }
+ const items=Array.from(groups,([menu_item_id,entries])=>{
+  const quantity=entries.reduce((sum,line)=>sum+line.quantity,0);
+  if(quantity>MAX_PICKUP_ITEM_QUANTITY) throw new Error("Choose no more than 20 of each menu item across your cart.");
+  const sameNotes=entries.every(line=>line.notes===entries[0].notes);
+  const notes=sameNotes ? entries[0].notes : entries.map(line=>`${line.quantity} ×: ${line.notes || "No special instructions"}`).join("\n");
+  if(notes.length>500) throw new Error("Keep combined instructions within 500 characters per menu item.");
+  return {menu_item_id,quantity,...(notes ? {notes} : {})};
+ });
  return {contract_version:"pickup-v1",idempotency_key:crypto.randomUUID(),shop_id:cart[0].shopId,
-  items:cart.map(i=>({menu_item_id:i.id,quantity:i.quantity})),delivery_type:"collection",delivery_schedule_mode:"standard",
+  items,delivery_type:"collection",delivery_schedule_mode:"standard",
   payment_method:method,tip_amount:0,customer_details:{name:name.trim(),phone:phone.trim()},launch_location:requireRealLocation(location)};
 }
 export function blockPickupSubmission():never {
