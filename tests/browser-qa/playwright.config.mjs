@@ -16,6 +16,11 @@ export default defineConfig({
     screenshot:"only-on-failure",
     video:"retain-on-failure",
     ...devices["Desktop Chrome"],
+    // GitHub Ubuntu runner ships Chromium-based Google Chrome already.
+    // Local developers without CHROME_BIN use Playwright's installed Chromium.
+    launchOptions:process.env.CHROME_BIN
+      ? {executablePath:process.env.CHROME_BIN}
+      : {},
     serviceWorkers:"block",
     permissions:["geolocation"],
     geolocation:{latitude:-26.1,longitude:28.03},
