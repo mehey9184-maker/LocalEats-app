@@ -1,0 +1,82 @@
+name: Customer Production Readiness P0 (Client Only)
+on:
+  push:
+    branches: [repair/customer-prod-readiness-p0-20261103]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  client-code:
+    name: Client auth, profile, offline, pickup & build checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci
+      - name: P0 trust, history and account isolation regressions
+        run: node --experimental-strip-types --test tests/customer-prod-readiness-p0.test.mjs
+      - name: Same-origin authenticated profile contract regression
+        run: node --experimental-strip-types --test tests/customer-profile-function-p0.test.mjs
+      - name: Profile route function negative auth runtime tests
+        run: node --import tsx --test tests/customer-profile-route-runtime.test.mjs
+      - name: Firebase/Supabase staging isolation and API-only profile tests
+        run: node --experimental-strip-types --test tests/customer-profile-staging-isolation.test.mjs
+      - name: Validate two-account staging smoke syntax without executing writes
+        run: node --check scripts/customer-p0-staging-profile-smoke.mjs
+      - name: Existing pickup, pricing and checkout regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Full client production build
+        run: npm run build
+      - name: Ensure P7-only demo cannot enter production release
+        run: |
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import {existsSync,readFileSync} from "node:fs";
+          assert.equal(existsSync("src/services/p7PreviewShop.ts"),false);
+          for(const file of ["src/App.tsx","src/screens/CheckoutScreen.tsx"]){
+            const source=readFileSync(file,"utf8");
+            assert.ok(!source.includes("VITE_P7_NEARBY_TEST_MODE"));
+            assert.ok(!source.includes("Simulate test checkout · no order"));
+          }
+          console.log("No P7 simulated GPS, location override or checkout included.");
+          JS
+
+  live-api-contract:
+    name: Production authenticated profile API contract (read-only release gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - name: Reject HTML SPA fallback for the client profile API
+        run: |
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          // Read-only and unauthenticated; uses a guaranteed non-user probe ID.
+          // Legitimate route should respond 401/403 in JSON without a valid token.
+          const url="https://localeatssa.co.za/api/profiles/production-readiness-no-user-probe";
+          const response=await fetch(url,{
+            method:"GET",
+            headers:{"Accept":"application/json"},
+            cache:"no-store",
+            redirect:"follow",
+            signal:AbortSignal.timeout(15000),
+          });
+          const type=response.headers.get("content-type")||"";
+          const summary={status:response.status,contentType:type,host:new URL(response.url).hostname};
+          console.log("Profile route public gate:",JSON.stringify(summary));
+          assert.ok(type.toLowerCase().includes("application/json"),
+            "BLOCKER: production /api/profiles is returning SPA HTML, not authenticated JSON.");
+          assert.ok([401,403].includes(response.status),
+            "Unauthenticated probe must be denied as JSON (401/403), not 200 or a fabricated success.");
+          console.log("Authenticated API route is deployed and denies unknown users.");
+          JS

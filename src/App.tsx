@@ -1,4 +1,5 @@
 import {retryPickupDiscovery} from "./services/pickupMapping";
+import {archiveLegacyOrderDrafts} from "./services/legacyOfflineDrafts";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 /**
@@ -229,7 +230,6 @@ import {
 import { useOfflineSync, processPendingCancellationsQueue } from "./hooks/useOfflineSync";
 import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
 import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
-import { processNetworkQueue } from "./lib/networkQueue";
 import {
   hashString,
   handleSupabaseError,
@@ -252,7 +252,7 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -1163,205 +1163,29 @@ export default function App() {
     }
   }, [userLocation?.lat,userLocation?.lng]);
 
-  const syncOfflineOrders = useCallback(async (retryCount = 0) => {
-    return; // Old saved intents must never be replayed as authoritative orders.
-
-    const queue = safeLocalStorageGet("offline_orders_queue", []);
-    if (!queue || queue.length === 0) {
-      setSyncError(null);
-      setIsSyncing(false);
-      return;
-    }
-
-    const syncLockKey = `offline_orders_sync_${queue.length}_${queue[0]?.id || "none"}`;
-    if (!IdempotencyManager.acquireLock(syncLockKey, 30000)) {
-      console.log("[Offline Sync] Sync already in progress under lock:", syncLockKey);
-      return;
-    }
-
-    console.log(`[Offline Sync] Attempt ${retryCount + 1}: Found queued offline orders of length:`, queue.length);
-    if (retryCount === 0) {
-      toast.info(`Sending ${queue.length} saved offline order(s) to the kitchen... 🍟`, {
-        position: "top-center"
-      });
-    }
-
-    setIsSyncing(true);
-    setSyncError(null);
-
-    try {
-      const validQueue = queue.filter((o: any) => o.shop_id && o.shop_id !== "null" && o.shop_id !== "undefined");
-      
-      if (validQueue.length < queue.length) {
-        console.warn(`[Offline Sync] Dropped ${queue.length - validQueue.length} invalid queued orders missing shop_id.`);
-        if (validQueue.length === 0) {
-           safeLocalStorageSet("offline_orders_queue", "[]");
-           setIsSyncing(false);
-           IdempotencyManager.releaseLock(syncLockKey);
-           return;
-        }
-      }
-
-      // Check which orders already exist in database to prevent double-insert
-      const pendingOrdersToInsert: any[] = [];
-      for (const o of validQueue) {
-        const rawShopId = o.shop_id;
-        const resolvedShopId =
-          typeof rawShopId === "string" && !isNaN(Number(rawShopId)) && rawShopId.trim() !== ""
-            ? Number(rawShopId)
-            : rawShopId;
-
-        const itemPrice = Number(o.price) || 0;
-        const itemQuantity = Math.max(1, Number(o.quantity) || 1);
-        const itemDeliveryFee = o.is_delivery ? (Number(o.delivery_fee) || 0) : 0;
-        const computedTotal = Number((itemPrice * itemQuantity + itemDeliveryFee).toFixed(2));
-        const finalTotalPrice = o.total_price !== undefined && !isNaN(Number(o.total_price))
-          ? Number(Number(o.total_price).toFixed(2))
-          : computedTotal;
-
-        // If price was 0 or missing but total_price was provided, reconstruct price with mathematical integrity
-        const finalPrice = (itemPrice === 0 && finalTotalPrice > itemDeliveryFee)
-          ? Number(((finalTotalPrice - itemDeliveryFee) / itemQuantity).toFixed(2))
-          : itemPrice;
-
-        const { latitude, longitude, is_offline_queued, ...restO } = o;
-        const orderRecord = {
-          ...restO,
-          id: o.id, // Preserve deterministic client order ID
-          shop_id: resolvedShopId,
-          status: "pending",
-          price: finalPrice,
-          quantity: itemQuantity,
-          delivery_fee: itemDeliveryFee,
-          total_price: Number((finalPrice * itemQuantity + itemDeliveryFee).toFixed(2)),
-          delivery_status: (o.payment_method === "cash_on_arrival" || o.payment_method === "cash") ? "none" : (o.is_delivery ? "finding_rider" : "none"),
-          lat: latitude || o.lat,
-          lng: longitude || o.lng,
-        };
-
-        if (o.id) {
-          const exists = await IdempotencyManager.checkOrderExists(o.id);
-          if (!exists) {
-            pendingOrdersToInsert.push(orderRecord);
-          } else {
-            console.log(`[Offline Sync] Order ${o.id} already exists in database. Skipping duplicate insert.`);
-          }
-        } else {
-          pendingOrdersToInsert.push(orderRecord);
-        }
-      }
-
-      if (pendingOrdersToInsert.length > 0) {
-        let syncSuccess = false;
-        try {
-          const { data, error } = await supabase
-            .from("orders")
-            .upsert(pendingOrdersToInsert, { onConflict: "id" })
-            .select("id");
-
-          if (!error) {
-            syncSuccess = true;
-            console.log("[Offline Sync] Successfully synced offline orders via Supabase:", data);
-          } else {
-            console.info("[Offline Sync] Supabase upsert notice, trying insert fallback:", error.message);
-            const { error: insertErr } = await supabase
-              .from("orders")
-              .insert(pendingOrdersToInsert);
-            if (!insertErr) {
-              syncSuccess = true;
-            }
-          }
-        } catch (supabaseErr: any) {
-          console.info("[Offline Sync] Direct Supabase connection unavailable, trying /api/orders fallback:", supabaseErr?.message || supabaseErr);
-        }
-
-        // Fallback to server API if direct Supabase connection was unavailable
-        if (!syncSuccess) {
-          try {
-            const apiRes = await fetch("/api/orders", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orders: pendingOrdersToInsert }),
-            });
-            if (apiRes.ok) {
-              syncSuccess = true;
-              console.log("[Offline Sync] Successfully synced offline orders via /api/orders");
-            }
-          } catch (apiErr: any) {
-            console.info("[Offline Sync] Server API fallback also pending connection:", apiErr?.message || apiErr);
-          }
-        }
-
-        if (!syncSuccess) {
-          throw new Error("Offline order synchronization will resume once network connection is stable.");
-        }
-      }
-      
-      // Clear the offline queue
-      safeLocalStorageSet("offline_orders_queue", JSON.stringify([]));
-      setSyncError(null);
-      setIsSyncing(false);
-      IdempotencyManager.recordResult(syncLockKey, true);
-
-      if (session?.user?.id) {
-        try {
-          const { data: freshOrders, error: fetchError } = await supabase
-            .from("orders")
-            .select("id, user_id, shop_id, status, delivery_status, product_name, quantity, price, total_price, delivery_fee, created_at, updated_at, is_delivery, payment_method, notes, delivery_instructions, customer_name, phone, email, address, city, latitude:lat, longitude:lng")
-            .eq("user_id", session.user.id)
-            .order("created_at", { ascending: false })
-            .limit(50);
-          if (!fetchError && freshOrders) {
-            safeLocalStorageSet("cached_orders", JSON.stringify(freshOrders));
-            window.dispatchEvent(new Event("local-orders-synced"));
-          }
-        } catch (_) {}
-      }
-
-      toast.success("All saved orders sent successfully! 🍟", {
-        duration: 4000,
-      });
-    } catch (err: any) {
-      const isNetworkErr =
-        err?.message?.includes("Failed to fetch") ||
-        err?.message?.includes("network") ||
-        err?.message?.includes("connection");
-      if (!isNetworkErr) {
-        console.warn("[Offline Sync] Notice syncing offline orders:", err?.message || err);
-      } else {
-        console.info("[Offline Sync] Network currently unavailable. Preserved queued orders for next sync attempt.");
-      }
-      setSyncError(err?.message || "Failed to sync offline orders");
-      setIsSyncing(false);
-      IdempotencyManager.releaseLock(syncLockKey);
-
-      if (retryCount < 3 && navigator.onLine) {
-        console.info(`[Offline Sync] Retrying in ${Math.pow(2, retryCount) * 2} seconds...`);
-        setTimeout(() => syncOfflineOrders(retryCount + 1), Math.pow(2, retryCount) * 2000);
-      }
-    }
-  }, [shops, session?.user?.id]);
-
+  // Legacy offline order replay is intentionally retired. Earlier local
+  // drafts remain on the device; only the authenticated API may create orders.
   const handleManualSync = useCallback(async () => {
     setIsSyncing(true);
     triggerHaptic?.([40, 40]);
     try {
-      await processNetworkQueue(async (req) => {
-        console.log("[NetworkQueue Processor] Processing queued item:", req.id, req.type);
-        return true;
-      });
+      // Do not discard legacy queued requests or claim they were sent:
+      // this Client does not have an authoritative replay contract.
+      const pendingOrders = safeLocalStorageGet("offline_orders_queue", []);
+      if (Array.isArray(pendingOrders) && pendingOrders.length > 0) {
+        toast.info("Old offline order drafts are still on this device. No order was sent. Contact LocalEats support before clearing them.", {
+          position: "top-center"
+        });
+      }
 
-      safeLocalStorageSet("offline_orders_queue", "[]");
-      localStorage.removeItem("offline_orders_queue");
-      
       if (navigator.onLine) {
-        await fetchShopsData(3, true); // Force fresh Supabase fetch
+        await fetchShopsData(3, true);
         await runHeartbeatPing();
-        toast.success("Manual sync completed! Queue processed & fresh backend data fetched. 🔄", {
+        toast.success("Shop data refreshed. Saved offline requests were NOT submitted.", {
           position: "top-center"
         });
       } else {
-        toast.info("Offline queue processed locally. Reconnect to internet for fresh Supabase fetch. 📶", {
+        toast.info("You're offline. Saved requests remain on this device and have NOT been submitted.", {
           position: "top-center"
         });
       }
@@ -1378,16 +1202,13 @@ export default function App() {
     const handleOnline = () => {
       setIsOnline(true);
       setNotification({
-        message: "Back online! Syncing saved offline requests... 🍟",
-        type: "success",
+        message: "Back online. Refreshing shops; saved offline requests have NOT been submitted.",
+        type: "info",
       });
       runHeartbeatPing();
-      processNetworkQueue(async (req) => {
-        console.log("[Auto Sync on Reconnect]", req);
-        return true;
-      });
+      // This release has no authorized replay executor for old queued data.
+      // Never mark pending requests complete or remove them on reconnect.
       fetchShopsData();
-      syncOfflineOrders();
     };
     const handleOffline = () => {
       setIsOnline(false);
@@ -1400,16 +1221,11 @@ export default function App() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    // Run custom check in case they are already online but have unsynced items
-    if (navigator.onLine) {
-      syncOfflineOrders();
-    }
-
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [fetchShopsData, syncOfflineOrders]);
+  }, [fetchShopsData, runHeartbeatPing]);
 
   const requestLocation = useCallback((silent = false) => {
     if (!navigator.geolocation) {
@@ -1532,40 +1348,32 @@ export default function App() {
       let data: any = null;
       let error: any = null;
 
-      // 1. Direct Firestore profile retrieval for real-time customer identity
+      // Only the authenticated API may supply persisted profile data.
+      // Direct Firestore reads are disabled until deployed security rules
+      // are independently verified and account isolation is proven.
+      if (auth.currentUser?.uid !== userId) return;
       try {
-        const firestoreProfile = await FirestoreService.getProfile(userId);
-        if (firestoreProfile) {
-          data = firestoreProfile;
+        const { getApiAuthHeaders } = await import("./lib/apiAuth");
+        const headers = await getApiAuthHeaders();
+        const response = await fetch(`/api/profiles/${encodeURIComponent(userId)}`, {
+          headers: { ...headers, Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!(response.headers.get("content-type") || "").toLowerCase().includes("application/json"))
+          throw new Error("Profile service returned an invalid response.");
+        const result = await response.json();
+        if (response.ok && result?.profile?.user_id === userId) {
+          data = result.profile;
+        } else if (response.ok) {
+          throw new Error("Profile service did not confirm this account's identity.");
+        } else {
+          error = new Error(response.status === 404
+            ? "No saved server profile exists for this account yet."
+            : "Profile service is unavailable. Your account profile was not confirmed.");
         }
-      } catch (fsErr) {
-        console.debug("[Profile] Firestore getProfile notice:", fsErr);
-      }
-
-      // 2. Primary attempt by user_id if not loaded from Firestore
-      if (!data) {
-        try {
-          const { getApiAuthHeaders } = await import("./lib/apiAuth");
-          const headers = await getApiAuthHeaders();
-          
-          const response = await fetch(`/api/profiles/${userId}`, {
-            headers: {
-              ...headers
-            }
-          });
-          
-          if (response.ok) {
-            const result = await response.json();
-            if (result.profile) {
-              data = result.profile;
-            }
-          } else {
-            error = new Error(`Failed to fetch profile: ${response.status}`);
-          }
-        } catch (apiErr) {
-          console.warn("[Profile] API fetch error:", apiErr);
-          error = apiErr;
-        }
+      } catch (apiErr) {
+        console.warn("[Profile] Authenticated API fetch notice:", apiErr);
+        error = apiErr;
       }
 
       const isTransientSchemaNotice =
@@ -1598,43 +1406,27 @@ export default function App() {
         if (data.favorites && Array.isArray(data.favorites)) {
           setFavorites(data.favorites);
         }
-      } else if (!error || error.code === "PGRST116" || !data) {
-        // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
-        // sync from current session metadata and auto-upsert to prevent empty state.
-        try {
-          const { data: authUserData } = await supabase.auth.getUser();
-          const authUser = authUserData?.user;
-          if (authUser && authUser.id === userId) {
-            const userMeta = authUser.user_metadata || {};
-            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
-            const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
-          }
-        } catch (authFetchErr) {
-          console.warn("[Profile Sync from Auth Notice]", authFetchErr);
-        }
+      } else if (auth.currentUser?.uid === userId) {
+        // Only the signed-in Firebase identity is used for a temporary
+        // display fallback. No automatic profile write and no privileged
+        // user_metadata role may be trusted.
+        const identity = auth.currentUser;
+        setUserProfile(prev => {
+          const sameAccount = prev.id === userId;
+          const name = identity.displayName || identity.email?.split("@")[0] || "";
+          return {
+            ...prev,
+            id: userId,
+            email: identity.email || (sameAccount ? prev.email : ""),
+            fullName: sameAccount ? (prev.fullName || name) : name,
+            phone: sameAccount ? prev.phone : "",
+            city: sameAccount ? prev.city : "Johannesburg",
+            address: sameAccount ? prev.address : "",
+            country: "South Africa",
+            role: "user",
+            photoURL: sameAccount ? prev.photoURL : "",
+          };
+        });
       }
     } catch (err: any) {
       const errStr = (err?.message || String(err)).toLowerCase();
@@ -1698,7 +1490,9 @@ export default function App() {
       localStorage.setItem("userProfile", JSON.stringify(freshProfile));
       localStorage.removeItem("cart");
       localStorage.removeItem("favorites");
-      localStorage.removeItem("offline_orders_queue");
+      // Preserve unsent drafts from the previous account without replaying
+      // or exposing them in the next user's normal order history.
+      archiveLegacyOrderDrafts(userProfile.id,localStorage);
       fetchUserProfile(session.user.id);
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
@@ -2701,10 +2495,10 @@ export default function App() {
               >
                 <span>⚠️ {syncError}</span>
                 <button 
-                  onClick={() => syncOfflineOrders(0)}
+                  onClick={() => {void handleManualSync();}}
                   className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-xs ml-2 transition-colors"
                 >
-                  Retry Now
+                  Refresh shops only
                 </button>
                 <button
                   onClick={() => setSyncError(null)}
