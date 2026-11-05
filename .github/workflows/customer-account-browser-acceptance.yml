@@ -32,6 +32,8 @@ jobs:
       - name: Install local Chromium
         run: npx playwright install chromium --with-deps
       - name: Real browser, local Vite and demo Firebase emulators only
+        env:
+          DEBUG: "pw:webserver"
         run: >
           npx --yes firebase-tools@15.34.2 emulators:exec
           --project demo-localeats-browser-qa

@@ -21,7 +21,11 @@ export default defineConfig({
     geolocation:{latitude:-26.1,longitude:28.03},
   },
   webServer:{
-    command:"npx vite --host 127.0.0.1 --port 4174 --strictPort",
+    // The config lives in tests/browser-qa, but Vite must serve the repo root.
+    cwd:process.cwd(),
+    command:"./node_modules/.bin/vite --host 127.0.0.1 --port 4174 --strictPort --config vite.config.ts",
+    stdout:"pipe",
+    stderr:"pipe",
     url:"http://127.0.0.1:4174",
     timeout:120000,
     reuseExistingServer:false,
