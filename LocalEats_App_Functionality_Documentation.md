@@ -154,3 +154,6 @@ Added `.agents/skills/localeats-pickup-launch/SKILL.md` for repeatable **read-on
 ## Firestore pickup access review — 2026-11-05
 
 Review-only rules and synthetic emulator tests cover direct order updates, pool-order reads, and rider profile visibility. Production deployment is a separate action.
+
+## Pickup instructions and item amounts — 2026-11-05
+The customer adapter sends trimmed special instructions as supported item notes. Different requests for the same menu item consolidate into one server line with quantity labels, without client prices; combined notes over 500 characters and aggregate quantity over 20 fail before quote. The picker limits notes to 500 characters and quantity to 20, matching the existing API and SQL. Merchant mapping preserves authoritative unit/line amounts and named instructions; kitchen cards and acceptance show instructions, item rows show line amounts, and HTML receipt notes are escaped. No database migration or production activation is included.

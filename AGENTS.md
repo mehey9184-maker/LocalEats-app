@@ -8,7 +8,7 @@ For Client App pickup release investigations, use the repository skill `$localea
 
 Customer startup waits for Firebase session hydration using the same Home-shaped shell as initial shop discovery. Returning customers open Home directly, and slow restoration offers Retry.
 
-The item picker, cart, and checkout enforce the pickup quantity limit. The picker shows menu pricing without a fabricated bulk discount.
+The item picker, cart, and checkout enforce the server pickup quantity limit of 20 per menu item. The picker shows menu pricing without a fabricated bulk discount.
 
 The cart bottom sheet sits above the fixed bottom navigation so its checkout action can receive mobile taps.
 The active-order mini tracker moves above a populated floating cart so returning customers can open the cart while another pickup is active.
@@ -128,3 +128,6 @@ Validation uses npm run test:pickup-integration, TypeScript and the production b
 
 ## Customer location retry correction — 2026-10-29
 Focused fix/customer-location-retry preserves the released original UI. Missing-location Reload now requests actual device geolocation rather than repeatedly loading with null coordinates. Denied/unavailable/timed-out location exits loading with a specific retry message; existing valid locations reload the API catalog. No default coordinates, radius change, order/payment action or Production setting change. Verify in Customer Preview before any main push; Production remains e8c41d728834390460923fb6a641915f4dfd8a9a.
+
+## Pickup kitchen instructions — 2026-11-05
+Customer special instructions are bounded to 500 characters per server menu line and preserved through quote/create. Repeated menu IDs consolidate with quantity-labelled instructions; aggregate quantity is limited to the existing server maximum of 20. Merchant presentation uses authoritative unit prices and line totals, keeps item instructions visible and escapes customer notes in HTML receipts. This changes no live SQL, ordering flags or payment state.
