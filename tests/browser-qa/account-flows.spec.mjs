@@ -166,3 +166,26 @@ test("failed profile API never produces a saved-success toast",async({page,reque
   await expect(page.getByText("Profile saved & updated!")).toHaveCount(0);
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
+
+test("pointer-acceptance: Profile Sign Out is stable and revokes authentication",async({page,request})=>{
+  const account=await createAccount(request,"pointer-logout");
+  await login(page,account);
+  await page.locator("#nav-tab-profile").click();
+  await expect(page.getByPlaceholder("Your full name")).toBeVisible();
+  // No force/dispatchEvent: this is a real mouse interaction acceptance gate.
+  await page.getByRole("button",{name:"Sign Out",exact:true}).click({timeout:12000});
+  await page.goto(BASE,{waitUntil:"domcontentloaded"});
+  await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:20000});
+});
+
+test("pointer-acceptance: Profile Save can be clicked without layout fighting",async({page,request})=>{
+  const account=await createAccount(request,"pointer-save");
+  await seedFakeProfile(request,account);
+  await login(page,account);
+  await page.locator("#nav-tab-profile").click();
+  await expect(page.getByPlaceholder("Your full name")).toHaveValue("QA Original",{timeout:15000});
+  await page.getByPlaceholder("Your full name").fill("Pointer QA Pending");
+  await page.getByRole("button",{name:"Save Profile Changes"}).click({timeout:12000});
+  await expect(page.getByText("Backend disabled in browser QA")).toBeVisible({timeout:15000});
+  await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
+});
