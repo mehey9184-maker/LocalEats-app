@@ -36,7 +36,8 @@ test("pickup remains review-only and map discovery plus QR and cropper lazy path
   assert.match(pickup,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
   assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
-  assert.match(app,/import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
+  assert.match(app,/<ShopCard\b/);
+  assert.match(app,/<MenuItemCard\b/);
   assert.match(app,/const DeferredProfileCropper = lazy\(/);
   assert.match(app,/await import\("html5-qrcode"\)/);
   // The MapContainer stays in the deferred map module instead of forcing Leaflet

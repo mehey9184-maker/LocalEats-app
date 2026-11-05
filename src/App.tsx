@@ -303,7 +303,7 @@ import { audioHelper } from "./lib/audioHelper";
 import { GlobalChatListener } from "./components/GlobalChatListener";
 import { cacheBusinessResults, getCachedBusinessResults } from "./lib/offlineCache";
 
-import { ShopCard, MenuItemSkeleton, MenuItemCard } from "./components/ShopCard";
+import { ShopCard, MenuItemCard } from "./components/ShopCard";
 import { getAvatarUrl, getCroppedImg, searchAddress, compressImage, uploadAvatar } from "./utils/imageUtils";
 import { autoAssignClosestRiderService } from "./services/riderAssignment";
 import { ModalAction, ModalState, ModalContent } from "./components/ActionModal";
@@ -8181,7 +8181,6 @@ function StoreInfoScreen({
   const [isShopChatOpen, setIsShopChatOpen] = useState(false);
   const [priceSort, setPriceSort] = useState<"default" | "low-to-high" | "high-to-low">("default");
   const [copiedMenuLink, setCopiedMenuLink] = useState(false);
-  const [isMenuLoading, setIsMenuLoading] = useState(true);
   const isScrollingRef = useRef(false);
   const [showTrustTooltip, setShowTrustTooltip] = useState(false);
 
@@ -8267,145 +8266,8 @@ function StoreInfoScreen({
   };
 
 
-  const [apiMenu, setApiMenu] = useState<MenuItem[] | null>(null);
-
-  useEffect(() => {
-    if (!shop?.id) return;
-    let isMounted = true;
-    const fetchMenu = async () => {
-      setIsMenuLoading(true);
-      try {
-        const res = await fetch(`/api/v1/shops/${shop.id}/menu`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && isMounted) {
-            // Remap keys if necessary to match MenuItem interface
-            const formattedMenu: MenuItem[] = (data.items || []).map((m: any) => ({
-              id: String(m.id),
-              name: m.name,
-              price: Number(m.price),
-              displayPrice: `R${Number(m.price).toFixed(2)}`,
-              image: m.image_url || m.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-              description: m.description || "",
-              category: m.category || "Main Course",
-              is_available: m.is_available !== false,
-              customizations: m.customizations || [],
-            }));
-            setApiMenu(formattedMenu);
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to fetch shop menu from API:", err);
-      } finally {
-        if (isMounted) setIsMenuLoading(false);
-      }
-    };
-    fetchMenu();
-    return () => { isMounted = false; };
-  }, [shop?.id]);
-
   const storeStatus = getStoreStatus();
-
-  // Safeguard: if the shop has no menu items, load smart local default dishes based on its category so it's never empty
-  const shopMenu = useMemo(() => {
-    if (apiMenu !== null) {
-      if (apiMenu.length > 0) return apiMenu;
-      // If API succeeded but returned 0 items, respect it, don't fall back to fakes
-      return [];
-    }
-
-    if (shop && shop.menu && shop.menu.length > 0) return shop.menu;
-
-    // Fallback dishes based on shop category
-    const isKota = shop && (shop.category || "").toLowerCase().includes("kota");
-    const shopId = shop ? shop.id : "default";
-    if (isKota) {
-      return [
-        {
-          id: `fallback-custom-item-${shopId}-1`,
-          name: "Classic Single Kota",
-          price: 35.0,
-          displayPrice: "R35.00",
-          image:
-            "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Fresh quarter loaf sandwich filled with golden hot chips, polony, and special sauce.",
-          category: "Kotas",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-2`,
-          name: "Special Double Cheese Kota",
-          price: 55.0,
-          displayPrice: "R55.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Quarter loaf packed with double chips, double cheese, polony, egg, Russian, and sauces.",
-          category: "Kotas",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-3`,
-          name: "Russian & Chips Portion",
-          price: 40.0,
-          displayPrice: "R40.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Golden sliced potato chips with grilled Russian sausages and seasoning.",
-          category: "Sides",
-          is_available: true,
-          customizations: [],
-        },
-      ];
-    } else {
-      // Braai / BBQ / Grill fallback
-      return [
-        {
-          id: `fallback-custom-item-${shopId}-4`,
-          name: "Chuck Beef Plate (Quarter kg)",
-          price: 85.0,
-          displayPrice: "R85.00",
-          image:
-            "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Flame-grilled super juicy chuck beef served with pap, chakalaka, and spicy BBQ sauce.",
-          category: "Plates",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-5`,
-          name: "Boerewors Roll Deluxe",
-          price: 45.0,
-          displayPrice: "R45.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Traditional local beef sausage grilled to perfection in a fresh roll with caramelized onions.",
-          category: "Wraps & Rolls",
-          is_available: true,
-          customizations: [],
-        },
-        {
-          id: `fallback-custom-item-${shopId}-6`,
-          name: "Flame-Grilled Chicken (Quarter)",
-          price: 65.0,
-          displayPrice: "R65.00",
-          image:
-            "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600",
-          description:
-            "Flame-grilled chicken basted in mild peri-peri or sweet lemon & herb sauce.",
-          category: "Plates",
-          is_available: true,
-          customizations: [],
-        },
-      ];
-    }
-  }, [shop]);
+  const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
     let items = shopMenu.filter((item) =>
@@ -9019,127 +8881,116 @@ function StoreInfoScreen({
                 </div>
               )}
 
-              {isMenuLoading ? (
-                <div className="space-y-4 pt-2">
-                  <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded-md w-36 animate-pulse mb-3" />
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
-                    {[...Array(6)].map((_, i) => (
-                      <MenuItemSkeleton key={i} />
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-8 md:space-y-12 pt-2">
-                  {visibleCategories.length > 0 ? (
-                    visibleCategories
-                      .filter((category) => category !== "All")
-                      .map((category) => {
-                        const itemsUnderCategory = groupedMenu[category] || [];
-                        if (itemsUnderCategory.length === 0) return null;
+              <div className="space-y-8 md:space-y-12 pt-2">
+                {visibleCategories.length > 0 ? (
+                  visibleCategories
+                    .filter((category) => category !== "All")
+                    .map((category) => {
+                      const itemsUnderCategory = groupedMenu[category] || [];
+                      if (itemsUnderCategory.length === 0) return null;
 
-                        return (
+                      return (
+                        <div
+                          key={category}
+                          id={`category-sec-${category.replace(/\s+/g, "-")}`}
+                          className="space-y-4 scroll-mt-44"
+                        >
                           <div
-                            key={category}
-                            id={`category-sec-${category.replace(/\s+/g, "-")}`}
-                            className="space-y-4 scroll-mt-44"
+                            onClick={() => {
+                              setCollapsedCategories((prev) => ({
+                                ...prev,
+                                [category]: !prev[category],
+                              }));
+                              if ("vibrate" in navigator) navigator.vibrate(5);
+                            }}
+                            className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2 cursor-pointer select-none group/cat"
                           >
+                            <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2 group-hover/cat:text-orange-600 transition-colors">
+                              <span className="text-sm md:text-base">
+                                {getCategoryEmoji(category)}
+                              </span>
+                              <span>{category}</span>
+                              <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
+                                {collapsedCategories[category]
+                                  ? "Tap to expand"
+                                  : "Tap to collapse"}
+                              </span>
+                            </h3>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono font-bold text-slate-400 px-2 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full">
+                                {itemsUnderCategory.length}{" "}
+                                {itemsUnderCategory.length === 1
+                                  ? "item"
+                                  : "items"}
+                              </span>
+                              <ChevronDown
+                                className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${collapsedCategories[category] ? "" : "rotate-180"}`}
+                              />
+                            </div>
+                          </div>
+
+                          {!collapsedCategories[category] ? (
+                            <motion.div
+                              initial="hidden"
+                              animate="show"
+                              variants={{
+                                hidden: { opacity: 0, y: -10 },
+                                show: {
+                                  opacity: 1,
+                                  y: 0,
+                                  transition: {
+                                    staggerChildren: 0.05,
+                                  },
+                                },
+                              }}
+                              className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4"
+                            >
+                              {itemsUnderCategory.map((item) => (
+                                <MenuItemCard
+                                  key={item.id}
+                                  item={item}
+                                  shop={shop}
+                                  onSelect={(item) =>
+                                    setSelectedItemForQuantity(item)
+                                  }
+                                  showAlert={showAlert}
+                                />
+                              ))}
+                            </motion.div>
+                          ) : (
                             <div
-                              onClick={() => {
+                              onClick={() =>
                                 setCollapsedCategories((prev) => ({
                                   ...prev,
-                                  [category]: !prev[category],
-                                }));
-                                if ("vibrate" in navigator) navigator.vibrate(5);
-                              }}
-                              className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-2 cursor-pointer select-none group/cat"
+                                  [category]: false,
+                                }))
+                              }
+                              className="py-4 text-center bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
                             >
-                              <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2 group-hover/cat:text-orange-600 transition-colors">
-                                <span className="text-sm md:text-base">
-                                  {getCategoryEmoji(category)}
-                                </span>
-                                <span>{category}</span>
-                                <span className="text-[10px] text-slate-400 font-bold normal-case ml-1 px-2 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded">
-                                  {collapsedCategories[category]
-                                    ? "Tap to expand"
-                                    : "Tap to collapse"}
-                                </span>
-                              </h3>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-mono font-bold text-slate-400 px-2 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-full">
-                                  {itemsUnderCategory.length}{" "}
-                                  {itemsUnderCategory.length === 1
-                                    ? "item"
-                                    : "items"}
-                                </span>
-                                <ChevronDown
-                                  className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${collapsedCategories[category] ? "" : "rotate-180"}`}
-                                />
-                              </div>
+                              📁 {itemsUnderCategory.length}{" "}
+                              {itemsUnderCategory.length === 1
+                                ? "dish is"
+                                : "dishes are"}{" "}
+                              collapsed. Click to expand.
                             </div>
-
-                            {!collapsedCategories[category] ? (
-                              <motion.div
-                                initial="hidden"
-                                animate="show"
-                                variants={{
-                                  hidden: { opacity: 0, y: -10 },
-                                  show: {
-                                    opacity: 1,
-                                    y: 0,
-                                    transition: {
-                                      staggerChildren: 0.05,
-                                    },
-                                  },
-                                }}
-                                className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4"
-                              >
-                                {itemsUnderCategory.map((item) => (
-                                  <MenuItemCard
-                                    key={item.id}
-                                    item={item}
-                                    shop={shop}
-                                    onSelect={(item) =>
-                                      setSelectedItemForQuantity(item)
-                                    }
-                                    showAlert={showAlert}
-                                  />
-                                ))}
-                              </motion.div>
-                            ) : (
-                              <div
-                                onClick={() =>
-                                  setCollapsedCategories((prev) => ({
-                                    ...prev,
-                                    [category]: false,
-                                  }))
-                                }
-                                className="py-4 text-center bg-slate-50/50 dark:bg-slate-900/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
-                              >
-                                📁 {itemsUnderCategory.length}{" "}
-                                {itemsUnderCategory.length === 1
-                                  ? "dish is"
-                                  : "dishes are"}{" "}
-                                collapsed. Click to expand.
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                  ) : (
-                    <div className="py-12 text-center">
-                      <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                        <SearchX className="w-8 h-8" />
-                      </div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        No items found
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Try searching for something else
-                      </p>
+                          )}
+                        </div>
+                      );
+                    })
+                ) : (
+                  <div className="py-12 text-center">
+                    <div className="size-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                      <SearchX className="w-8 h-8" />
                     </div>
-                  )}
-                </div>
-              )}
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      {shopMenu.length === 0 ? "No pickup items available" : "No items found"}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {shopMenu.length === 0 ? "Check back later for this shop’s menu." : "Try searching for something else."}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

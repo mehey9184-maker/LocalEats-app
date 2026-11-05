@@ -103,5 +103,7 @@ test("active app keeps same-location cards during refresh but fails closed on ne
   assert.match(app,/await readPickupCatalog\(userLocation\)/);
   assert.match(service,/createNearbyCatalogReader\(customerPickupApi,mapPickupShop\)/);
   assert.doesNotMatch(module,/localStorage|sessionStorage|indexedDB|fetch\(/);
-  assert.match(app,/import \{ ShopCard, MenuItemSkeleton, MenuItemCard \}/);
+  const storefront=app.slice(app.indexOf("function StoreInfoScreen("),app.indexOf("const filteredMenu",app.indexOf("function StoreInfoScreen(")));
+  assert.match(storefront,/const shopMenu = shop\.menu;/);
+  assert.doesNotMatch(storefront,/fetch\(|setIsMenuLoading|setApiMenu/);
 });
