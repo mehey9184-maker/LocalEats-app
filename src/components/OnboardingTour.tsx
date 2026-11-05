@@ -23,55 +23,15 @@ const TOUR_STEPS = [
   }
 ];
 
-export function OnboardingTour() {
-  const [isOpen, setIsOpen] = useState(false);
+export function OnboardingTour({isOpen,onComplete,onSkip}:{isOpen:boolean;onComplete:()=>void;onSkip:()=>void}) {
   const [currentStep, setCurrentStep] = useState(0);
-
-  useEffect(() => {
-    const handleRestart = () => {
-      setCurrentStep(0);
-      setIsOpen(true);
-      window.dispatchEvent(new CustomEvent('localeats_tour_started'));
-    };
-
-    const handleSkipAll = () => {
-      setIsOpen(false);
-    };
-
-    window.addEventListener('localeats_restart_tour', handleRestart);
-    window.addEventListener('localeats_skip_all_tours', handleSkipAll);
-
-    const hasSeenTour = localStorage.getItem('localeats_tour_seen');
-    if (!hasSeenTour) {
-      // Small delay so it feels natural and doesn't instantly block initial screen mount
-      const timer = setTimeout(() => {
-        setIsOpen(true);
-        window.dispatchEvent(new CustomEvent('localeats_tour_started'));
-      }, 1200);
-      return () => {
-        clearTimeout(timer);
-        window.removeEventListener('localeats_restart_tour', handleRestart);
-        window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
-      };
-    }
-
-    return () => {
-      window.removeEventListener('localeats_restart_tour', handleRestart);
-      window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
-    };
-  }, []);
-
-  const completeTour = () => {
-    localStorage.setItem('localeats_tour_seen', 'true');
-    setIsOpen(false);
-    window.dispatchEvent(new CustomEvent('localeats_tour_ended'));
-  };
+  useEffect(()=>{if(isOpen)setCurrentStep(0);},[isOpen]);
 
   const nextStep = () => {
     if (currentStep < TOUR_STEPS.length - 1) {
       setCurrentStep(prev => prev + 1);
     } else {
-      completeTour();
+      onComplete();
     }
   };
 
@@ -97,7 +57,7 @@ export function OnboardingTour() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={completeTour}
+          onClick={onSkip}
           className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-0"
         />
 
@@ -126,7 +86,7 @@ export function OnboardingTour() {
             <button
               type="button"
               id="btn-close-onboarding-guide"
-              onClick={completeTour}
+              onClick={onSkip}
               aria-label="Close guide"
               className="absolute top-3 right-3.5 z-10 w-8 h-8 rounded-full bg-black/30 hover:bg-black/45 backdrop-blur-md text-white flex items-center justify-center transition-all cursor-pointer active:scale-90"
             >
@@ -219,7 +179,7 @@ export function OnboardingTour() {
                   <button
                     type="button"
                     id="btn-onboarding-guide-skip"
-                    onClick={completeTour}
+                    onClick={onSkip}
                     className="min-h-[36px] py-1 text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 uppercase tracking-wider transition-colors cursor-pointer"
                   >
                     Skip Tour

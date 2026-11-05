@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { ChevronRight, ChevronLeft, X, Sparkles } from 'lucide-react';
 
 interface TourStep {
@@ -36,84 +36,29 @@ const INTERACTIVE_TOUR_STEPS: TourStep[] = [
   }
 ];
 
-export function InteractiveTour() {
-  const [isActive, setIsActive] = useState(false);
+export function InteractiveTour({isActive,onComplete,onSkip}:{isActive:boolean;onComplete:()=>void;onSkip:()=>void}) {
+  const reducedMotion=useReducedMotion();
+  useEffect(()=>{if(isActive)setCurrentStep(0);},[isActive]);
   const [currentStep, setCurrentStep] = useState(0);
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
 
-  const measureTarget = useCallback(() => {
-    const step = INTERACTIVE_TOUR_STEPS[currentStep];
-    if (!step) return;
-    const el = document.getElementById(step.targetId);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setTimeout(() => {
-        const rect = el.getBoundingClientRect();
-        setTargetRect(rect);
-      }, 250);
-    } else {
-      setTargetRect(null);
-    }
-  }, [currentStep]);
-
   useEffect(() => {
-    const handleStartInteractiveTour = () => {
-      setCurrentStep(0);
-      setIsActive(true);
-      window.dispatchEvent(new CustomEvent('localeats_tour_started'));
-    };
-
-    const handleSkipAll = () => {
-      setIsActive(false);
-    };
-
-    window.addEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
-    window.addEventListener('localeats_skip_all_tours', handleSkipAll);
-
-    // Auto-start interactive tour on first visit after initial screen settle
-    const hasSeenInteractiveTour = localStorage.getItem('localeats_interactive_tour_seen');
-    if (!hasSeenInteractiveTour) {
-      const timer = setTimeout(() => {
-        setIsActive(true);
-        window.dispatchEvent(new CustomEvent('localeats_tour_started'));
-      }, 3500);
-      return () => {
-        clearTimeout(timer);
-        window.removeEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
-        window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
-      };
-    }
-
-    return () => {
-      window.removeEventListener('localeats_start_interactive_tour', handleStartInteractiveTour);
-      window.removeEventListener('localeats_skip_all_tours', handleSkipAll);
-    };
-  }, []);
-
-  // Re-measure target when step changes or window events trigger
-  useEffect(() => {
-    if (!isActive) return;
-
-    measureTarget();
-
-    const handleResizeOrScroll = () => {
-      measureTarget();
-    };
-
-    window.addEventListener('resize', handleResizeOrScroll);
-    window.addEventListener('scroll', handleResizeOrScroll, true);
-
-    return () => {
-      window.removeEventListener('resize', handleResizeOrScroll);
-      window.removeEventListener('scroll', handleResizeOrScroll, true);
-    };
-  }, [isActive, measureTarget]);
+    if(!isActive)return;
+    let frame=0;
+    const target=document.getElementById(INTERACTIVE_TOUR_STEPS[currentStep].targetId);
+    const measure=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>setTargetRect(target?.getBoundingClientRect() ?? null));};
+    target?.scrollIntoView({behavior:reducedMotion ? 'instant' : 'smooth',block:'center'});
+    measure();
+    window.addEventListener('resize',measure);
+    window.addEventListener('scroll',measure,true);
+    return ()=>{cancelAnimationFrame(frame);window.removeEventListener('resize',measure);window.removeEventListener('scroll',measure,true);};
+  },[isActive,currentStep,reducedMotion]);
 
   const handleNext = () => {
     if (currentStep < INTERACTIVE_TOUR_STEPS.length - 1) {
       setCurrentStep(prev => prev + 1);
     } else {
-      handleComplete();
+      onComplete();
     }
   };
 
@@ -121,12 +66,6 @@ export function InteractiveTour() {
     if (currentStep > 0) {
       setCurrentStep(prev => prev - 1);
     }
-  };
-
-  const handleComplete = () => {
-    localStorage.setItem('localeats_interactive_tour_seen', 'true');
-    setIsActive(false);
-    window.dispatchEvent(new CustomEvent('localeats_tour_ended'));
   };
 
   if (!isActive) return null;
@@ -148,14 +87,14 @@ export function InteractiveTour() {
     transform: `translate3d(${Math.max(4, targetRect.left - 6)}px, ${Math.max(4, targetRect.top - 6)}px, 0px)`,
     width: `${Math.min(winWidth - 8, targetRect.width + 12)}px`,
     height: `${targetRect.height + 12}px`,
-    transition: 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
+    transition: reducedMotion ? 'none' : 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
     border: '2px solid rgb(249, 115, 22)',
   } : {
     position: 'fixed',
     inset: 0,
     backgroundColor: 'rgba(15, 23, 42, 0.78)',
     zIndex: 9990,
-    transition: 'all 0.3s ease',
+    transition: reducedMotion ? 'none' : 'all 0.3s ease',
   };
 
   // Position the guide slide card:
@@ -197,7 +136,7 @@ export function InteractiveTour() {
         {/* Invisible Clickable Backdrop */}
         <div 
           className="fixed inset-0 bg-transparent pointer-events-auto" 
-          onClick={handleComplete}
+          onClick={onSkip}
           aria-label="Dismiss guide"
         />
 
@@ -245,7 +184,7 @@ export function InteractiveTour() {
               <button 
                 type="button"
                 id="btn-close-interactive-guide"
-                onClick={handleComplete}
+                onClick={onSkip}
                 aria-label="Close guide"
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer active:scale-95"
               >
@@ -290,7 +229,7 @@ export function InteractiveTour() {
               <button
                 type="button"
                 id="btn-skip-interactive-guide"
-                onClick={handleComplete}
+                onClick={onSkip}
                 className="text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 uppercase tracking-widest px-2 py-2 cursor-pointer transition-colors min-h-[44px] flex items-center"
               >
                 Skip

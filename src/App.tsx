@@ -283,10 +283,7 @@ const AddressPickerMapCanvas = lazy(() => import("./components/OptionalMapCanvas
 const ExploreMapCanvas = lazy(() => import("./components/OptionalMapCanvases").then(({ExploreMapCanvas}) => ({default:ExploreMapCanvas})));
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
-import { OnboardingTour } from "./components/OnboardingTour";
-import { InteractiveTour } from "./components/InteractiveTour";
-import { PopiaLegalDrawer } from "./components/PopiaLegalDrawer";
-import { CookieConsentBanner } from "./components/CookieConsentBanner";
+import { StartupExperience } from "./components/StartupExperience";
 import { BottomNavigation } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
 
@@ -378,38 +375,6 @@ export default function App() {
   const previousScreen = currentScreenStack.length > 1 ? currentScreenStack[currentScreenStack.length - 2] : null;
 
   const transitionHistoryRef = useRef<{ screen: Screen; timestamp: number }[]>([]);
-
-  const [isTourActive, setIsTourActive] = useState<boolean>(() => {
-    try {
-      if (typeof window !== "undefined" && typeof localStorage !== "undefined") {
-        const hasSeenTour = localStorage.getItem("localeats_tour_seen");
-        const hasSeenInteractiveTour = localStorage.getItem("localeats_interactive_tour_seen");
-        return !hasSeenTour || !hasSeenInteractiveTour;
-      }
-    } catch (e) {
-      // ignore
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    const handleTourStart = () => setIsTourActive(true);
-    const handleTourEnd = () => setIsTourActive(false);
-
-    window.addEventListener("localeats_tour_started", handleTourStart);
-    window.addEventListener("localeats_tour_ended", handleTourEnd);
-    window.addEventListener("localeats_restart_tour", handleTourStart);
-    window.addEventListener("localeats_start_interactive_tour", handleTourStart);
-    window.addEventListener("localeats_skip_all_tours", handleTourEnd);
-
-    return () => {
-      window.removeEventListener("localeats_tour_started", handleTourStart);
-      window.removeEventListener("localeats_tour_ended", handleTourEnd);
-      window.removeEventListener("localeats_restart_tour", handleTourStart);
-      window.removeEventListener("localeats_start_interactive_tour", handleTourStart);
-      window.removeEventListener("localeats_skip_all_tours", handleTourEnd);
-    };
-  }, []);
 
   // Pure navigation state updater
   const setCurrentScreen = useCallback((target: Screen | ((prev: Screen) => Screen)) => {
@@ -3503,41 +3468,6 @@ export default function App() {
             />
           </Suspense>
           
-          {/* Guide Slide Container Wrapper with Dynamic Mobile Viewport Bounds */}
-          {currentScreen === "home" && (
-            <div 
-              id="guide-slide-container-wrapper" 
-              className="w-full max-w-[100vw] overflow-hidden flex-shrink-0 shrink-0 pointer-events-none relative z-[10000] outline outline-2 outline-red-500"
-            >
-              {/* Skip Tour button in the top-right corner */}
-              <button
-                type="button"
-                id="btn-skip-tour"
-                onClick={() => {
-                  try {
-                    localStorage.setItem("localeats_tour_seen", "true");
-                    localStorage.setItem("localeats_interactive_tour_seen", "true");
-                    window.dispatchEvent(new CustomEvent("localeats_skip_all_tours"));
-                    window.dispatchEvent(new CustomEvent("localeats_tour_ended"));
-                    setIsTourActive(false);
-                  } catch (e) {
-                    console.warn("Skip tour error:", e);
-                  }
-                }}
-                className={`fixed top-4 right-4 z-[10005] pointer-events-auto flex items-center gap-2 px-6 py-2 bg-slate-900/90 hover:bg-slate-950 dark:bg-slate-800/95 dark:hover:bg-slate-700 text-white text-xs font-black uppercase tracking-wider rounded-full shadow-md drop-shadow-md backdrop-blur-md border border-white/20 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer select-none ${
-                  isTourActive ? "opacity-100 visible animate-pulse hover:animate-none" : "opacity-0 invisible pointer-events-none"
-                }`}
-                aria-label="Skip Tour"
-              >
-                <span>Skip Tour</span>
-                <X className="w-3.5 h-3.5 text-orange-400" />
-              </button>
-              <Suspense fallback={null}>
-                <OnboardingTour />
-                <InteractiveTour />
-              </Suspense>
-            </div>
-          )}
           {/* Global Floating Real-time Order Mini Tracker */}
           <ActiveOrderMiniTracker
             orders={orders}
@@ -3552,8 +3482,7 @@ export default function App() {
           />
 
           <Suspense fallback={null}>
-            <PopiaLegalDrawer />
-            <CookieConsentBanner />
+            <StartupExperience showGuides={currentScreen === "home"} onRequestHome={() => setCurrentScreen("home")} />
           </Suspense>
 
           {/* Persistent Standardized Bottom Navigation Bar */}

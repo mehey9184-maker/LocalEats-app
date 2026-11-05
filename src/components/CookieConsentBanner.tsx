@@ -15,12 +15,13 @@ const DEFAULT_PREFERENCES: CookiePreferences = {
   personalization: true,
 };
 
-export const CookieConsentBanner: React.FC = () => {
+export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;onDismiss?:()=>void}) => {
   const [isVisible, setIsVisible] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [preferences, setPreferences] = useState<CookiePreferences>(DEFAULT_PREFERENCES);
 
   useEffect(() => {
+    if(!enabled)return;
     try {
       const saved = localStorage.getItem("localeats_cookie_preferences");
       if (!saved) {
@@ -28,12 +29,17 @@ export const CookieConsentBanner: React.FC = () => {
         const timer = setTimeout(() => setIsVisible(true), 1200);
         return () => clearTimeout(timer);
       } else {
-        setPreferences(JSON.parse(saved));
+        const parsed=JSON.parse(saved);
+        if(!parsed || parsed.essential!==true || !['analytics','persistence','personalization'].every(key=>typeof parsed[key]==='boolean'))
+          throw new Error('Saved cookie choices are invalid.');
+        setPreferences(parsed);
+        onDismiss?.();
       }
     } catch (e) {
       console.warn("Could not read cookie preferences:", e);
+      setIsVisible(true);
     }
-  }, []);
+  }, [enabled,onDismiss]);
 
   const savePreferences = (prefs: CookiePreferences) => {
     try {
@@ -41,6 +47,7 @@ export const CookieConsentBanner: React.FC = () => {
       setPreferences(prefs);
       setIsVisible(false);
       setShowSettingsModal(false);
+      onDismiss?.();
     } catch (e) {
       console.warn("Could not save cookie preferences:", e);
     }
@@ -64,7 +71,7 @@ export const CookieConsentBanner: React.FC = () => {
     });
   };
 
-  if (!isVisible && !showSettingsModal) return null;
+  if (!enabled || (!isVisible && !showSettingsModal)) return null;
 
   return (
     <>
@@ -85,7 +92,7 @@ export const CookieConsentBanner: React.FC = () => {
                 </h4>
                 <button
                   type="button"
-                  onClick={() => setIsVisible(false)}
+                  onClick={() => {setIsVisible(false);onDismiss?.();}}
                   className="text-slate-400 hover:text-white p-1 rounded-full transition-colors cursor-pointer"
                   title="Close banner"
                 >
