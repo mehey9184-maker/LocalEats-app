@@ -14,6 +14,8 @@ The storefront renders the verified nearby catalog menu already loaded for its s
 
 Pickup history uses the authenticated orders feed and preserves only the current account’s last verified pickup statuses during a failed refresh.
 
+Welcome, Home, and onboarding describe pickup and pay-at-shop.
+
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 
 
