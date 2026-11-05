@@ -1,0 +1,59 @@
+name: Isolated pickup PostgreSQL validation
+on:
+  push:
+    branches: [test/pickup-postgres-current-client]
+permissions:
+  contents: read
+jobs:
+  current-client-pickup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic-only-do-not-reuse
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: synthetic-only-do-not-reuse
+      PGSSLMODE: disable
+      PGDATABASE: local_pickup_qa
+      PICKUP_TEST_ISOLATED: '1'
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      PICKUP_WRITES_ENABLED: 'false'
+      RIDER_ACTIVATION_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: customer-original-ui
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 1ea7ee33a6fccb6b00b97e12a257cd99de0b7975
+          path: merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: merchant/localeats-api/package-lock.json
+      - name: Run pinned Merchant API and actual customer adapter against disposable PostgreSQL
+        working-directory: merchant
+        run: |
+          ln -s ../customer-original-ui customer-original-ui
+          npm ci --prefix localeats-api --no-audit --no-fund
+          npm run build --prefix localeats-api
+          PGDATABASE=postgres createdb local_pickup_qa
+          bash localeats-api/tests/pickup/ci-isolated-journey.sh
