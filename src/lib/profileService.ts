@@ -268,7 +268,8 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
     console.info("[Profile Service] Exception during profile sync:", err?.message || err);
     queueProfileSync(profileData, err?.message || "Sync exception");
     scheduleProfileRetry(profileData, 0);
-    return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
+    return { data: { cached: true, offline: true, retryScheduled: true },
+      error: new Error("Profile save not confirmed. Your changes are pending synchronization.") };
   }
 }
 
