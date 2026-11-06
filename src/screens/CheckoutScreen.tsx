@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { canManageCustomerProfile } from "../lib/profileAccess";
-import { upsertProfileWithRPC } from "../lib/profileService";
 import { Shop, CartItem, Screen, UserProfile } from "../types";
 import { IdempotencyManager } from "../utils/idempotency";
 import { calculateDistance, formatSAPhone, validateSAPhone, toDBPhone, safeLocalStorageSet, safeLocalStorageGet, getShopStatus, DEFAULT_MENU_IMAGE } from "../utils";
@@ -339,7 +338,6 @@ export function CheckoutScreen({
     const cachedProfile = getValidCachedProfile();
     return userProfile?.phone || cachedProfile?.phone || "";
   });
-  const [saveToProfile, setSaveToProfile] = useState(true);
 
   // Sync recipient details with userProfile updates
   useEffect(() => {
@@ -1182,29 +1180,6 @@ export function CheckoutScreen({
       userProfile?.phone ||
       cachedProfile?.phone ||
       "";
-
-    // Save profile background sync if requested
-    if (saveToProfile && session?.user?.id) {
-      try {
-        await upsertProfileWithRPC({
-          user_id: session.user.id,
-          fullName: finalCustomerName,
-          phone: toDBPhone(finalCustomerPhone),
-          ...(deliveryType === "delivery"
-            ? {
-                address: deliveryAddressText,
-                latitude: deliveryCoordinates?.coordinates[1],
-                longitude: deliveryCoordinates?.coordinates[0],
-              }
-            : {}),
-        });
-      } catch (err) {
-        console.warn(
-          "Could not save recipient details back to userProfile database schema:",
-          err,
-        );
-      }
-    }
 
     let currentLat =
       deliveryType === "delivery" ? deliveryCoordinates?.coordinates[1] : null;
@@ -2598,17 +2573,9 @@ export function CheckoutScreen({
               </div>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer select-none pl-1 pt-1">
-              <input
-                type="checkbox"
-                checked={saveToProfile}
-                onChange={(e) => setSaveToProfile(e.target.checked)}
-                className="rounded text-orange-600 focus:ring-orange-500 accent-orange-500 h-3.5 w-3.5 cursor-pointer"
-              />
-              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-tight">
-                Save change details to user profile for future checkouts
-              </span>
-            </label>
+            <p className="pl-1 pt-1 text-xs text-slate-500 dark:text-slate-400">
+              To change saved account details, open Profile.
+            </p>
 
             {/* STEP 1 NEXT CTA BUTTON */}
             {currentStep === 1 && (

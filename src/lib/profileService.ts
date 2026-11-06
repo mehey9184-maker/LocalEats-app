@@ -150,21 +150,15 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
     const headers = await getApiAuthHeaders();
     if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
     
-    const safePayload = {
-      user_id: profileData.user_id,
-      fullName: profileData.fullName,
-      email: profileData.email,
-      phone: sanitizedPhone,
-      // Roles must be determined server-side, never supplied by a customer form.
-      city: profileData.city || "",
-      address: profileData.address || "",
-      country: profileData.country || "South Africa",
-      photo_url: profileData.photo_url || "",
-      language: profileData.language || "en",
-      favorites: profileData.favorites || [],
-      updated_at: new Date().toISOString(),
-    };
-    
+    // Legacy callers may submit a single preference. Omitted fields must
+    // remain omitted until these callers move to the revision-bound API.
+    const safePayload: Record<string, unknown> = { user_id: profileData.user_id };
+    for (const key of ["fullName", "phone", "city", "address", "country", "photo_url", "language", "latitude", "longitude", "favorites"] as const) {
+      if (Object.prototype.hasOwnProperty.call(profileData, key) && profileData[key] !== undefined) {
+        safePayload[key] = key === "phone" ? sanitizedPhone : profileData[key];
+      }
+    }
+
     const response = await fetch('/api/profiles', {
       method: 'POST',
       headers: {
@@ -227,7 +221,7 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
         user_id: profileData.user_id,
         fullName: profileData.fullName ?? existing.fullName,
         email: profileData.email ?? existing.email,
-        phone: sanitizedPhone ?? profileData.phone ?? existing.phone,
+        phone: profileData.phone !== undefined ? sanitizedPhone : existing.phone,
         city: profileData.city ?? existing.city,
         address: profileData.address ?? existing.address,
         country: profileData.country ?? existing.country ?? "South Africa",
@@ -345,23 +339,6 @@ export async function processOfflineProfileQueue() {
   }
 }
 
-// Auto-register lifecycle event listeners
-if (typeof window !== "undefined") {
-  window.addEventListener('online', () => {
-    console.log("[Profile Service] Online event detected. Triggering queue processor...");
-    processOfflineProfileQueue();
-  });
-  window.addEventListener('localeats-sync-profile', () => {
-    processOfflineProfileQueue();
-  });
-
-  // Background health check interval every 30 seconds
-  setInterval(() => {
-    if (navigator.onLine) {
-      const queue = getProfileSyncQueue();
-      if (queue.length > 0) {
-        processOfflineProfileQueue();
-      }
-    }
-  }, 30000);
-}
+// Retired from the runtime import graph. Historical unversioned queue records
+// have no original server revision and must never be automatically replayed.
+// Keep them untouched until the current account explicitly reviews a draft.

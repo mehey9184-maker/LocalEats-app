@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion } from "motion/react";
 import { 
   MapPin, 
@@ -19,7 +19,7 @@ interface AddressSwitcherModalProps {
   isOpen: boolean;
   onClose: () => void;
   userProfile: UserProfile;
-  onSaveAddress: (address: string, coords?: { lat: number; lng: number }) => void;
+  onSaveAddress: (address: string, coords?: { lat: number; lng: number }) => Promise<void>;
   onRequestLocation: () => void;
   currentLocationCoords: { lat: number; lng: number } | null;
   triggerHaptic?: (intensity?: number) => void;
@@ -46,22 +46,39 @@ export const AddressSwitcherModal: React.FC<AddressSwitcherModalProps> = ({
   const [customInput, setCustomInput] = useState(userProfile.address || "");
   const [isEditingCustom, setIsEditingCustom] = useState(false);
 
-  const activeAddress = userProfile.address || "Select Delivery Address";
+  const activeAddress = userProfile.address || "Select Saved Home Address";
 
-  const handleSelectTownship = (township: typeof POPULAR_TOWNSHIPS[0]) => {
-    if (triggerHaptic) triggerHaptic(10);
-    const fullAddr = `${township.name}, ${township.city}`;
-    onSaveAddress(fullAddr, { lat: township.lat, lng: township.lng });
-    onClose();
+  const saving = useRef(false);
+  const mounted = useRef(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const saveAddress = async (address: string, coords?: {lat:number;lng:number}) => {
+    if (saving.current) return;
+    saving.current = true;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onSaveAddress(address, coords);
+      if (!mounted.current) return;
+      setIsEditingCustom(false);
+      onClose();
+    } catch (error) {
+      if (mounted.current) setSaveError(error instanceof Error ? error.message : "Your address was not saved. Please retry.");
+    } finally {
+      saving.current = false;
+      if (mounted.current) setIsSaving(false);
+    }
   };
-
-  const handleSaveCustom = (e: React.FormEvent) => {
+  const handleSelectTownship = async (township: typeof POPULAR_TOWNSHIPS[0]) => {
+    triggerHaptic?.(10);
+    await saveAddress(`${township.name}, ${township.city}`, { lat: township.lat, lng: township.lng });
+  };
+  const handleSaveCustom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customInput.trim()) return;
-    if (triggerHaptic) triggerHaptic(12);
-    onSaveAddress(customInput.trim());
-    setIsEditingCustom(false);
-    onClose();
+    triggerHaptic?.(12);
+    await saveAddress(customInput.trim());
   };
 
   const handleGPSLocation = () => {
@@ -74,12 +91,15 @@ export const AddressSwitcherModal: React.FC<AddressSwitcherModalProps> = ({
     <BottomSheet
       isOpen={isOpen}
       onClose={onClose}
-      title="Delivery Address"
-      subtitle="Where should we send your hot Kota?"
+      title="Saved Home Address"
+      subtitle="Optional account address. Collect pickup orders at the shop."
       maxHeight="max-h-[85vh]"
       triggerHaptic={triggerHaptic}
     >
       <div className="p-4 sm:p-5 space-y-4 overflow-y-auto">
+        {saveError && <p role="alert" className="text-sm text-red-600">{saveError}</p>}
+        {isSaving && <p role="status" className="text-sm">Saving address to your account...</p>}
+        <fieldset disabled={isSaving} className="contents">
         {/* GPS Live Location CTA */}
         <button
           type="button"
@@ -95,7 +115,7 @@ export const AddressSwitcherModal: React.FC<AddressSwitcherModalProps> = ({
                 Use Current GPS Location
               </p>
               <p className="text-[10px] text-orange-700 dark:text-orange-300 font-semibold">
-                Accurate pin for street delivery
+                Use GPS to find nearby pickup shops
               </p>
             </div>
           </div>
@@ -149,7 +169,7 @@ export const AddressSwitcherModal: React.FC<AddressSwitcherModalProps> = ({
         <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
           <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Popular Township Delivery Hubs</span>
+            <span>Popular Townships</span>
           </p>
           <div className="grid grid-cols-2 gap-2">
             {POPULAR_TOWNSHIPS.map((township) => {
@@ -175,6 +195,7 @@ export const AddressSwitcherModal: React.FC<AddressSwitcherModalProps> = ({
             })}
           </div>
         </div>
+        </fieldset>
       </div>
     </BottomSheet>
   );

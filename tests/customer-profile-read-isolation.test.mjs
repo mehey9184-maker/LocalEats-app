@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import ts from "typescript";
 import {canManageCustomerProfile} from "../src/lib/profileAccess.ts";
+import {initialCustomerProfileState,beginProfileRead,acceptProfileRead,failProfileRead,requireProfileEditBasis} from "../src/lib/customerProfileState.ts";
 const source=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
 const ast=ts.createSourceFile("App.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 let callback;
@@ -26,21 +27,26 @@ const effectCode=ts.transpileModule(`return (${favoritesEffect});`,{compilerOpti
 const toggleCode=ts.transpileModule(`return (${toggleCallback});`,{compilerOptions:{target:ts.ScriptTarget.ES2022},fileName:"toggle.ts"}).outputText;
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
 const identity=uid=>({uid,isAnonymous:false});
-function harness(read,{fetch=async()=>({ok:false,status:503}),deferUpdates=false,follow=async()=>{},strictReplay=false}={}){
+function harness(read,{fetch=async()=>({ok:false,status:503}),deferUpdates=false,follow=async()=>{},strictReplay=false,centralFailure=false}={}){
  let profile={id:"A",fullName:"Initial"},favorites=["initial"];
  let favoriteState={items:favorites,intent:null};
- const auth={currentUser:identity("A")};const updates=[],writes=[];
+ const auth={currentUser:identity("A")};const updates=[],writes=[],contexts=[],notices=[];
+ const emptyCustomerProfile=()=>({fullName:"",email:"",phone:"",city:"Johannesburg",address:"",country:"South Africa",role:"user"});
+ let profileState={...initialCustomerProfileState(emptyCustomerProfile()),profile,favoriteState,owner:auth.currentUser,basis:{identity:auth.currentUser,revision:"2026-11-06T18:00:00Z"}};
  const update=(kind,next)=>{
   const apply=()=>{if(kind==="profile")profile=typeof next==="function"?next(profile):next;
    else {const items=typeof next==="function"?next(favorites):next;if(items!==favorites){favorites=items;favoriteState={items,intent:null};}};};
   if(deferUpdates)updates.push(apply);else apply();
  };
  const deps={auth,canManageCustomerProfile,profileReadGeneration:{current:0},
+  beginProfileRead,acceptProfileRead,failProfileRead,requireProfileEditBasis,
+  handleUpdateProfile:async(data,show,callback,basis)=>{requireProfileEditBasis(basis,auth.currentUser);contexts.push(basis);if(centralFailure)throw Error("Conflict");writes.push({user_id:auth.currentUser.uid,...data});},setNotification:n=>notices.push(n),
+  setCustomerProfileState:next=>{const apply=()=>{profileState=typeof next==='function'?next(profileState):next;profile=profileState.profile;favoriteState=profileState.favoriteState;favorites=favoriteState.items;};if(deferUpdates)updates.push(apply);else apply();},
   lastSyncedFavoriteStateRef:{current:null},
-  setFavoriteState:next=>{const first=next(favoriteState);if(strictReplay)next(favoriteState);favoriteState=first;favorites=first.items;},
+  setFavoriteState:next=>{const first=next(favoriteState);if(strictReplay)next(favoriteState);favoriteState=first;favorites=first.items;profileState.favoriteState=first;},
   session:{user:{id:"A"}},upsertProfileWithRPC:async data=>{writes.push(data);return{error:null};},
-  emptyCustomerProfile:()=>({fullName:"",email:"",phone:"",city:"Johannesburg",address:"",country:"South Africa",role:"user"}),
-  readCustomerProfile:async uid=>({profile:await read(uid),revision:"2026-11-06T18:00:00Z"}),
+  emptyCustomerProfile,
+  readCustomerProfile:async uid=>{const row=await read(uid);const revision=row?.updated_at??"2026-11-06T18:00:00Z";return{profile:row?{...row,user_id:row.user_id??row.id,updated_at:revision}:null,revision:row?revision:null};},
   FirestoreService:{getProfile:read,followShop:follow,unfollowShop:follow},getAuthModule:async()=>({getApiAuthHeaders:async()=>({})}),fetch,
   showAlert:()=>{},setCurrentScreen:()=>{},triggerHaptic:()=>{},
   setUserProfile:next=>update("profile",next),setFavorites:next=>update("favorites",next),
@@ -48,8 +54,8 @@ function harness(read,{fetch=async()=>({ok:false,status:503}),deferUpdates=false
   console:{debug:()=>{},warn:()=>{},info:()=>{}},setTimeout:()=>{},
  };
  const run=new Function(...Object.keys(deps),emitted)(...Object.values(deps));
- const switchTo=uid=>{auth.currentUser=identity(uid);profile={id:uid,fullName:uid+" ready"};favorites=[uid+" favorite"];};
- return {run,auth,switchTo,writes,toggleFavorite:id=>new Function(...Object.keys(deps),"favorites",toggleCode)(...Object.values(deps),favorites)(id),runFavoritesEffect:()=>new Function(...Object.keys(deps),"favorites","favoriteState",effectCode)(...Object.values(deps),favorites,favoriteState)(),setFavoriteIntent:next=>{favoriteState={items:next,intent:{identity:auth.currentUser,userId:auth.currentUser.uid}};favorites=next;},flush:()=>updates.splice(0).forEach(f=>f()),get profile(){return profile;},get favorites(){return favorites;}};
+ const switchTo=uid=>{auth.currentUser=identity(uid);profile={id:uid,fullName:uid+" ready"};profileState={...initialCustomerProfileState(emptyCustomerProfile()),profile,owner:auth.currentUser};favorites=[uid+" favorite"];favoriteState={items:favorites,intent:null};profileState.favoriteState=favoriteState;};
+ return {run,auth,switchTo,writes,contexts,notices,get basis(){return profileState.basis;},toggleFavorite:id=>new Function(...Object.keys(deps),"favorites","customerProfileState",toggleCode)(...Object.values(deps),favorites,profileState)(id),runFavoritesEffect:()=>new Function(...Object.keys(deps),"favorites","favoriteState",effectCode)(...Object.values(deps),favorites,favoriteState)(),setFavoriteIntent:next=>{favoriteState={items:next,intent:{identity:auth.currentUser,userId:auth.currentUser.uid,basis:profileState.basis}};favorites=next;profileState.favoriteState=favoriteState;},flush:()=>updates.splice(0).forEach(f=>f()),get profile(){return profile;},get favorites(){return favorites;}};
 }
 test("late A profile response cannot publish A details or favorites after B is ready",async()=>{
  const pending=deferred(),h=harness(()=>pending.promise),load=h.run("A");
@@ -113,4 +119,24 @@ test("a delayed follow acknowledgement cannot adopt a fresh same-UID session",as
 test("StrictMode eager result and updater replay retain one explicit favorite sync",async()=>{
  const h=harness(async()=>null,{strictReplay:true});await h.toggleFavorite("chosen");h.runFavoritesEffect();h.runFavoritesEffect();
  assert.deepEqual(h.favorites,["initial","chosen"]);assert.deepEqual(h.writes,[{user_id:"A",favorites:["initial","chosen"]}]);
+});
+
+test("a delayed favorite acknowledgement retains the basis captured before the action",async()=>{
+ const pending=deferred(),h=harness(async()=>({user_id:"A",fullName:"A"}),{follow:()=>pending.promise});
+ const original=h.basis;const toggle=h.toggleFavorite("chosen");await h.run("A");assert.notEqual(h.basis,original);
+ pending.resolve();await toggle;h.runFavoritesEffect();assert.equal(h.contexts[0],original);
+});
+test("unverified favorites cannot initiate a follow or profile write",async()=>{
+ let follows=0;const h=harness(async()=>{throw Error("Unavailable");},{follow:async()=>follows++});
+ h.switchTo("A");await h.toggleFavorite("chosen");h.runFavoritesEffect();assert.equal(follows,0);assert.deepEqual(h.writes,[]);
+});
+test("central favorite failure is visible and cannot fall back to a legacy writer",async()=>{
+ const h=harness(async()=>null,{centralFailure:true});await h.toggleFavorite("chosen");h.runFavoritesEffect();await Promise.resolve();await Promise.resolve();
+ assert.deepEqual(h.writes,[]);assert.equal(h.notices[0]?.type,"error");
+ assert.doesNotMatch(favoritesEffect,/upsertProfileWithRPC|queueProfileSync/);
+});
+
+test("the actual App read callback cannot roll back favorites from an older server revision",async()=>{
+ let reads=0;const h=harness(async()=>++reads===1?{user_id:'A',fullName:'Fresh',favorites:['fresh'],updated_at:'2026-11-06T18:00:01Z'}:{user_id:'A',fullName:'Old',favorites:['old'],updated_at:'2026-11-06T18:00:00Z'});
+ await h.run('A');await h.run('A');assert.equal(h.profile.fullName,'Fresh');assert.deepEqual(h.favorites,['fresh']);h.runFavoritesEffect();assert.deepEqual(h.writes,[]);
 });

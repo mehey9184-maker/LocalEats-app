@@ -92,11 +92,13 @@ export const supabase: any = {
     signUp: async ({ email, password, options }) => {
       try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        if (auth.currentUser !== userCredential.user) throw new Error("Your account changed during signup.");
         const fullName = options?.data?.full_name || options?.data?.fullName || '';
         if (fullName) {
           await updateProfile(userCredential.user, { displayName: fullName }).catch(() => {});
         }
-        return { data: { user: { id: userCredential.user.uid, email: userCredential.user.email } }, error: null };
+        if (auth.currentUser !== userCredential.user) throw new Error("Your account changed during signup.");
+        return { data: { user: { id: userCredential.user.uid, email: userCredential.user.email }, firebaseUser: userCredential.user }, error: null };
       } catch (e) {
         return { data: { user: null }, error: { message: e.message } };
       }

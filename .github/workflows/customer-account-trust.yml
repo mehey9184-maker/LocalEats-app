@@ -20,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:account-trust
-      - run: node --experimental-strip-types --test tests/customer-login-navigation.test.mjs tests/customer-login-lifetime.test.mjs tests/customer-login-identity.test.mjs tests/customer-profile-read-isolation.test.mjs tests/customer-profile-write-isolation.test.mjs tests/customer-profile-api-client.test.mjs
+      - run: node --experimental-strip-types --test tests/customer-login-navigation.test.mjs tests/customer-login-lifetime.test.mjs tests/customer-login-identity.test.mjs tests/customer-profile-read-isolation.test.mjs tests/customer-profile-write-isolation.test.mjs tests/customer-profile-api-client.test.mjs tests/customer-profile-state.test.mjs tests/customer-profile-login-order.test.mjs tests/customer-profile-edit-session.test.mjs tests/customer-profile-form-save.test.mjs tests/customer-profile-processing-recovery.test.mjs tests/customer-signup-central-profile.test.mjs tests/customer-signup-navigation.test.mjs tests/customer-legacy-profile-retirement.test.mjs tests/customer-address-profile-session.test.mjs
       - run: npm run test:guest-profile-guard
       - run: npm run test:pickup-integration
       - run: npm run lint

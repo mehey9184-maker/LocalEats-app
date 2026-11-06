@@ -38,7 +38,7 @@ test("both Settings and Profile buttons invoke real Firebase logout; failed logo
 
 test("cached private identities cannot masquerade as current users or admin staff",()=>{
  assert.doesNotMatch(app,/useState<UserProfile>\(\(\) => \{\s*return safeLocalStorageGet\("userProfile"/);
- assert.match(app,/useState<UserProfile>\(emptyCustomerProfile\)/);
+ assert.match(app,/initialCustomerProfileState\(emptyCustomerProfile\(\)\)/);
  assert.match(app,/userProfile\.id === session\?\.user\?\.id/);
  assert.match(app,/setPendingReview\(null\)/);
  assert.match(settings,/const isAdmin = verifiedStaffRole === "admin"/);
@@ -82,12 +82,12 @@ test("profiles are successful only with an HTTP JSON owner receipt",()=>{
  assert.doesNotMatch(profile,/FirestoreService\.saveProfile/);
  assert.doesNotMatch(profile,/cached: true, offline: true, retryScheduled: true \}, error: null/);
  const save=getSection(app,"  const handleUpdateProfile = async (","  useEffect(() => {");
- assert.ok(save.indexOf("if (error) throw error")<save.indexOf("setUserProfile((prev)"));
+ assert.ok(save.indexOf("await customerProfileApi.save(")<save.indexOf("acceptProfileSave("));
 });
 
 test("profile photo completion awaits confirmed profile update",()=>{
- assert.match(photo,/await onSave\(\{ photoURL: publicUrl \}\)/);
- assert.match(photo,/await onSave\(\{ photoURL: "" \}\)/);
+ assert.match(photo,/await commitProfileChange\(\{ photoURL: publicUrl \}, submitted, true\)/);
+ assert.match(photo,/await commitProfileChange\(\{ photoURL: "" \}, profileDraft, true\)/);
  assert.doesNotMatch(photo,/uploaded & saved to Supabase/);
 });
 

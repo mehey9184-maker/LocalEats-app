@@ -365,11 +365,10 @@ export function LoginScreen({
           city: "Johannesburg",
           address: "",
           country: "South Africa",
-          role: userMeta.role || "customer",
+          role: "user",
         };
 
-        // Immediately update localStorage and wipe any outdated cached data
-        localStorage.setItem("userProfile", JSON.stringify(freshProfile));
+        // App owns the profile cache and preserves any already verified row.
         localStorage.setItem("localeats_session", authData.user.id);
         localStorage.removeItem("offline_orders_queue");
 

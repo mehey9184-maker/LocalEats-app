@@ -4,6 +4,7 @@ import {readFileSync} from "node:fs";
 import ts from "typescript";
 import {canManageCustomerProfile} from "../src/lib/profileAccess.ts";
 import {isConfirmedProfileSave} from "../src/lib/profileConfirmation.ts";
+import {initialCustomerProfileState,requireProfileEditBasis,acceptProfileSave,profileSaveResult} from "../src/lib/customerProfileState.ts";
 const source=readFileSync(new URL("../src/lib/profileService.ts",import.meta.url),"utf8");
 const ast=ts.createSourceFile("profileService.ts",source,ts.ScriptTarget.Latest,true);
 const names=["syncProfileDirect","upsertProfileWithRPC","scheduleProfileRetry","processOfflineProfileQueue"];
@@ -99,15 +100,23 @@ function findSave(node){
 }
 findSave(appAst);assert.ok(saveCallback);
 const emittedSave=ts.transpileModule(`return (${saveCallback});`,{compilerOptions:{target:ts.ScriptTarget.ES2022},fileName:"save.ts"}).outputText;
-function appSaveHarness({processing=async(action,done)=>{await action();done?.();},deferState=false}={}){
+function appSaveHarness({processing=async(action,done)=>{await action();done?.();},deferState=false,save}={}){
  const auth={currentUser:identity("A")},pending=[];
  let profile={id:"A",fullName:"Initial"};
+ const basis={identity:auth.currentUser,revision:"2026-11-06T18:00:00.123456+00:00"};const requests=[];
+ const emptyCustomerProfile=()=>({fullName:"",email:"",phone:"",city:"Johannesburg",address:"",country:"South Africa",role:"user"});
+ let state={...initialCustomerProfileState(emptyCustomerProfile()),profile,basis,owner:auth.currentUser,status:"ready"};
  const deps={auth,canManageCustomerProfile,session:{user:{id:"A"}},userProfile:profile,
-  setNotification:()=>{},upsertProfileWithRPC:async()=>({error:null}),runWithProcessing:processing,
+  setNotification:()=>{},upsertProfileWithRPC:async data=>{requests.push({kind:"legacy",data});return{error:null};},runWithProcessing:processing,
+  requireProfileEditBasis,acceptProfileSave,profileSaveResult,emptyCustomerProfile,profileReadGeneration:{current:1},profileSaveInFlightRef:{current:null},
+  toDBPhone:v=>v,
+  customerProfileApi:{save:async(uid,patch,revision)=>{requests.push({kind:"central",uid,patch,revision});return save?save(uid,patch,revision):{profile:{user_id:uid,fullName:typeof patch.fullName==='string'?patch.fullName.trim():'Initial',...Object.fromEntries(Object.entries(patch).filter(([key])=>key!=='fullName')),updated_at:"2026-11-06T18:00:01.123456+00:00"},revision:"2026-11-06T18:00:01.123456+00:00"};}},
+  setCustomerProfileState:next=>{const apply=()=>{state=typeof next==='function'?next(state):next;profile=state.profile;};if(deferState)pending.push(apply);else apply();},
   setUserProfile:next=>{const apply=()=>profile=typeof next==="function"?next(profile):next;if(deferState)pending.push(apply);else apply();},
  };
- return {run:new Function(...Object.keys(deps),emittedSave)(...Object.values(deps)),auth,
-  switchToB:()=>{auth.currentUser=identity("B");profile={id:"B",fullName:"Private B"};},
+ const raw=new Function(...Object.keys(deps),emittedSave)(...Object.values(deps));
+ return {run:(data,show=true,done)=>raw(data,show,done,basis),raw,basis,requests,auth,
+  switchToB:()=>{auth.currentUser=identity("B");profile={id:"B",fullName:"Private B"};state={...initialCustomerProfileState(emptyCustomerProfile()),profile,owner:auth.currentUser};},
   flush:()=>pending.splice(0).forEach(f=>f()),get profile(){return profile;}};
 }
 test("account change during success feedback cannot navigate or confirm the old form",async()=>{
@@ -124,4 +133,33 @@ test("a delayed React save-state updater cannot overwrite B after a confirmed A 
 test("same account receives its saved state and success callback",async()=>{
  let callbacks=0;const h=appSaveHarness();await h.run({fullName:"Updated A"},true,()=>callbacks++);
  assert.equal(callbacks,1);assert.equal(h.profile.fullName,"Updated A");
+});
+test("App submits only edited fields and their original verified revision",async()=>{
+ const h=appSaveHarness();await h.run({fullName:" Updated A ",role:"admin",email:"not-authority@example.invalid"},false);
+ assert.deepEqual(h.requests,[{kind:"central",uid:"A",patch:{fullName:" Updated A "},revision:h.basis.revision}]);
+ assert.equal(h.profile.fullName,"Updated A");assert.equal(h.profile.role,"user");
+});
+test("an unverified or foreign form cannot initiate a profile save",async()=>{
+ const h=appSaveHarness();await assert.rejects(()=>h.raw({fullName:"Updated"},false));assert.equal(h.requests.length,0);
+ await assert.rejects(()=>h.raw({fullName:"Updated"},false,undefined,{...h.basis,identity:identity("B")}));assert.equal(h.requests.length,0);
+});
+test("an API failure leaves the verified profile intact and does not call success",async()=>{
+ let callbacks=0;const h=appSaveHarness({save:async()=>{throw Error("Unconfirmed");}});
+ await assert.rejects(()=>h.run({fullName:"Draft"},false,()=>callbacks++),/Unconfirmed/);assert.equal(h.profile.fullName,"Initial");assert.equal(callbacks,0);
+});
+
+test("a legacy favorites-only request cannot blank unrelated saved profile fields",async()=>{
+ const h=harness();await h.syncProfileDirect({user_id:"A",favorites:["chosen"]});
+ assert.equal(h.requests.length,1);
+ assert.deepEqual(JSON.parse(h.requests[0].options.body),{user_id:"A",favorites:["chosen"]});
+});
+test("legacy partial writes preserve explicit clearing but exclude customer privilege and server timestamp fields",async()=>{
+ const h=harness();await h.syncProfileDirect({user_id:"A",address:"",latitude:0,longitude:0,role:"admin",email:"changed@example.invalid"});
+ assert.deepEqual(JSON.parse(h.requests[0].options.body),{user_id:"A",address:"",latitude:0,longitude:0});
+});
+
+test("a favorites-only legacy draft keeps the same account's cached phone",async()=>{
+ const h=harness({cache:{id:"A",phone:"0712345678",fullName:"Saved name"}});
+ await h.upsertProfileWithRPC({user_id:"A",favorites:["chosen"]});
+ const cached=JSON.parse(h.storage.getItem("userProfile"));assert.equal(cached.phone,"0712345678");assert.equal(cached.fullName,"Saved name");
 });

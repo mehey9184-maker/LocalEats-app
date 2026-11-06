@@ -53,7 +53,7 @@ function processingHarness(){
 test("profile processing reports failure to its form and never invokes success",async()=>{
  const h=processingHarness();const failure=new Error("Profile save not confirmed");
  await assert.rejects(h.run(async()=>{throw failure;},h.success,undefined,undefined,true),e=>e===failure);
- assert.equal(h.successes(),0);assert.equal(h.dialogs.length,1);
+ assert.equal(h.successes(),0);assert.equal(h.dialogs.length,0);
  assert.deepEqual(h.states,["saving","idle"]);
 });
 test("existing processing callers keep their handled-error return behavior",async()=>{

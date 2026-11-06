@@ -40,7 +40,10 @@ test("guest Profile and Complete Profile navigate straight to Login",()=>{
 test("guest profile save refuses success before modifying local state",()=>{
   const handler=app.slice(app.indexOf("  const handleUpdateProfile = async ("),app.indexOf("  useEffect(() => {",app.indexOf("  const handleUpdateProfile = async (")));
   assert.match(handler,/if \(!canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\)/);
-  assert.ok(handler.indexOf("if (!canManageCustomerProfile")<handler.indexOf("setUserProfile((prev)"));
+  const guard = handler.indexOf("if (!canManageCustomerProfile");
+  const request = handler.indexOf("await customerProfileApi.save(");
+  const publish = handler.indexOf("setCustomerProfileState(");
+  assert.ok(guard >= 0 && request > guard && publish > request);
   assert.match(handler,/throw new Error\(message\)/);
   assert.doesNotMatch(handler,/else \{\s*if \(successCallback\) successCallback\(\)/);
 });
