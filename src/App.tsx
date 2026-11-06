@@ -1915,7 +1915,9 @@ export default function App() {
       }catch{}
     };
     if(showSuccess){
-      await runWithProcessing(action,()=>{successCallback?.();});
+      const confirmed=await runWithProcessing(async()=>{await action();return true;},
+        ()=>{successCallback?.();});
+      if(confirmed!==true)throw Error("The profile server did not confirm this save.");
     }else{
       try{await action();successCallback?.();}
       catch(e){
