@@ -23,7 +23,7 @@ import { WidgetErrorBoundary } from "../../components/WidgetErrorBoundary";
 export interface CompleteProfileScreenProps {
   userProfile: UserProfile;
   onBack: () => void;
-  onSave: (data: Partial<UserProfile>) => void;
+  onSave: (data: Partial<UserProfile>) => Promise<void>;
   setNotification: (n: NotificationState) => void;
 }
 
@@ -73,6 +73,11 @@ export function CompleteProfileScreen({
     setIsSaving(true);
     try {
       await onSave({ fullName, phone, city, address, latitude, longitude });
+    } catch (error) {
+      setNotification({
+        message: error instanceof Error ? error.message : "Your profile was not confirmed saved. Please retry.",
+        type: "error",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -103,9 +108,9 @@ export function CompleteProfileScreen({
 
       const publicUrl = await uploadAvatar(file, userProfile.id);
 
-      onSave({ photoURL: publicUrl });
+      await onSave({ photoURL: publicUrl });
       setNotification({
-        message: "Profile picture uploaded & saved to Supabase (<200KB)!",
+        message: "Profile picture uploaded and confirmed saved.",
         type: "success",
       });
       setPreviewUrl(null);
@@ -143,9 +148,13 @@ export function CompleteProfileScreen({
     }
   };
 
-  const handleDeletePhoto = () => {
-    onSave({ photoURL: "" });
-    setPreviewUrl(null);
+  const handleDeletePhoto = async () => {
+    try {
+      await onSave({ photoURL: "" });
+      setPreviewUrl(null);
+    } catch (error) {
+      setNotification({message:error instanceof Error ? error.message : "Photo removal was not saved.", type:"error"});
+    }
   };
 
   return (
