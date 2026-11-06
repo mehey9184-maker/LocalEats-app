@@ -11,3 +11,13 @@ export function profileDestination(
 ): "login"|"profile"|"complete-profile" {
   return canManageCustomerProfile(identity,sessionUid) ? requested : "login";
 }
+
+/** A restored Firebase user with a temporarily missing session must not be
+ * redirected from Profile; the editor remains hidden until UIDs match.
+ * A genuine guest or a different account must go to Login immediately. */
+export function shouldRedirectProtectedProfile(
+ identity:ProfileIdentity,sessionUid:string|null|undefined,
+):boolean{
+ return !identity?.uid || Boolean(identity.isAnonymous) ||
+   Boolean(sessionUid && sessionUid!==identity.uid);
+}
