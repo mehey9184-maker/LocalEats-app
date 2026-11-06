@@ -54,7 +54,7 @@ export function CompleteProfileScreen({
   const [formErrors, setFormErrors] = useState<{ fullName?: string }>({});
 
   const handleSave = async () => {
-    if (!fullName || !phone || !city || !address) {
+    if (!fullName || !phone) {
       setNotification({
         message: "Please fill in all required fields to proceed.",
         type: "error",
@@ -65,15 +65,6 @@ export function CompleteProfileScreen({
     if (!validateSAPhone(phone)) {
       setNotification({
         message: "Invalid South African phone format. Use +27 XX XXX XXXX",
-        type: "error",
-      });
-      return;
-    }
-
-    if (!latitude || !longitude) {
-      setNotification({
-        message:
-          "Please search and select your precise address on the map to provide delivery coordinates.",
         type: "error",
       });
       return;
@@ -345,7 +336,7 @@ export function CompleteProfileScreen({
               <label className="block p-4 bg-orange-50 dark:bg-orange-950/20 border border-orange-100 dark:border-orange-900/30 rounded-2xl">
                 <span className="block text-orange-900 dark:text-orange-300 text-sm font-bold mb-3 ml-1 flex items-center gap-2">
                   <LocateFixed className="w-4 h-4" />
-                  Precise Home Location
+                  Optional Home Location
                 </span>
 
                 <div className="space-y-4">
@@ -391,7 +382,7 @@ export function CompleteProfileScreen({
 
                   {!latitude && (
                     <div className="text-[10px] text-slate-500 italic bg-white dark:bg-slate-900/50 p-2 rounded-lg border border-slate-100 dark:border-slate-800">
-                      * Search your address to drop a precise pin for the rider.
+                      * Optional for pickup. Nearby shops use your device location, not a delivery address.
                     </div>
                   )}
                 </div>
