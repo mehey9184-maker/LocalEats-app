@@ -266,6 +266,11 @@ const confirmedProfileTransport=createConfirmedProfileTransport({
   readsEnabled:()=>import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true",
   writesEnabled:()=>import.meta.env.VITE_PROFILE_WRITES_ENABLED==="true",
 });
+const trustedProfileRole=(value:unknown):UserProfile["role"]=>{
+  if(value==="customer"||value==="user")return "user";
+  if(value==="admin"||value==="shop_owner"||value==="merchant"||value==="rider")return value;
+  return "user";
+};
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -1506,8 +1511,8 @@ export default function App() {
             phone:typeof result.phone==="string"?result.phone:prev.phone,
             city:typeof result.city==="string"?result.city:prev.city,
             address:typeof result.address==="string"?result.address:prev.address,
-            role:typeof result.role==="string"?result.role:prev.role,
-            photoURL:typeof result.photo_url==="string"?result.photo_url:prev.photoURL,
+            role:trustedProfileRole(result.role),
+            photoURL:result.photo_url===null?"":typeof result.photo_url==="string"?result.photo_url:prev.photoURL,
             country:typeof result.country==="string"?result.country:prev.country,
           }));
         }
@@ -1903,8 +1908,8 @@ export default function App() {
         city:typeof saved.city==="string"?saved.city:prev.city,
         address:typeof saved.address==="string"?saved.address:prev.address,
         country:typeof saved.country==="string"?saved.country:prev.country,
-        role:typeof saved.role==="string"?saved.role:prev.role,
-        photoURL:typeof saved.photo_url==="string"?saved.photo_url:prev.photoURL,
+        role:trustedProfileRole(saved.role),
+        photoURL:saved.photo_url===null?"":typeof saved.photo_url==="string"?saved.photo_url:prev.photoURL,
         latitude:typeof saved.latitude==="number"?saved.latitude:prev.latitude,
         longitude:typeof saved.longitude==="number"?saved.longitude:prev.longitude,
       }));
