@@ -1843,6 +1843,39 @@ export default function App() {
     [runWithProcessing, setNotification],
   );
 
+  // Both sign-out entry points must end the real Firebase session.
+  // A failed logout must not pretend success or expose a stale guest view.
+  const logoutCustomer = async () => {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        setNotification({ type: "error", message: "Sign out failed. Please try again." });
+        return;
+      }
+      setSession(null);
+      setCart([]);
+      setFavorites([]);
+      setOrders([]);
+      setNotifications([]);
+      setPendingReview(null);
+      setUserProfile({
+        fullName: "", email: "", phone: "", city: "", address: "",
+        country: "South Africa", role: "user"
+      });
+      for (const key of [
+        "userProfile", "remember_me_secure_token", "localeats_session",
+        "favorites", "cart", "cached_orders", "app_notifications",
+        "pending_review", "pending_cancellation", "offline_orders_queue",
+        "offline_profile_queue", "localeats_saved_cards", "localeats_saved_addresses"
+      ]) {
+        try { localStorage.removeItem(key); } catch {}
+      }
+      setCurrentScreen("splash");
+    } catch {
+      setNotification({ type: "error", message: "Sign out failed. Please try again." });
+    }
+  };
+
   const handleUpdateProfile = async (
     data: any,
     showSuccess: boolean = true,
@@ -3375,7 +3408,7 @@ export default function App() {
                   forcedTheme={forcedTheme}
                   onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onLogout={() => setCurrentScreen("splash")}
+                  onLogout={() => { void logoutCustomer(); }}
                   onProfile={() => {
                     setPreviousScreen("settings");
                     navigateToProfile("profile");
@@ -3486,27 +3519,7 @@ export default function App() {
                   }}
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={async () => {
-                    await supabase.auth.signOut();
-                    // Clear sensitive data on logout
-                    localStorage.removeItem("remember_me_secure_token");
-                    localStorage.removeItem("cart");
-                    localStorage.removeItem("userProfile");
-                    localStorage.removeItem("favorites");
-                    localStorage.removeItem("pending_review");
-                    setCart([]);
-                    setFavorites([]);
-                    setUserProfile({
-                      fullName: "",
-                      email: "",
-                      phone: "",
-                      city: "",
-                      address: "",
-                      country: "South Africa",
-                      role: "user",
-                    });
-                    setCurrentScreen("splash");
-                  }}
+                  onLogout={logoutCustomer}
                   setNotification={setNotification}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
