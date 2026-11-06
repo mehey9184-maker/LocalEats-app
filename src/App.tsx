@@ -258,6 +258,14 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import { createConfirmedProfileTransport } from "./lib/confirmedCustomerProfile";
+
+const confirmedProfileTransport=createConfirmedProfileTransport({
+  origin:import.meta.env.VITE_LOCALEATS_API_URL||"",
+  currentUser:()=>auth.currentUser,
+  readsEnabled:()=>import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true",
+  writesEnabled:()=>import.meta.env.VITE_PROFILE_WRITES_ENABLED==="true",
+});
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -1487,6 +1495,24 @@ export default function App() {
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
+      if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"){
+        // If the verified API is selected, NEVER fall back to another user's
+        // Firestore/cache profile when authentication or server reads fail.
+        const result=await confirmedProfileTransport.read(userId);
+        if(result){
+          setUserProfile(prev=>({...prev,id:userId,
+            fullName:typeof result.fullName==="string"?result.fullName:prev.fullName,
+            email:typeof result.email==="string"?result.email:prev.email,
+            phone:typeof result.phone==="string"?result.phone:prev.phone,
+            city:typeof result.city==="string"?result.city:prev.city,
+            address:typeof result.address==="string"?result.address:prev.address,
+            role:typeof result.role==="string"?result.role:prev.role,
+            photoURL:typeof result.photo_url==="string"?result.photo_url:prev.photoURL,
+            country:typeof result.country==="string"?result.country:prev.country,
+          }));
+        }
+        return;
+      }
       let data: any = null;
       let error: any = null;
 
@@ -1846,59 +1872,48 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
-    const updated = { ...userProfile, ...data };
-    setUserProfile(updated);
-
-    if (session?.user?.id) {
-      const action = async () => {
-        // Sync user_metadata natively into Supabase Auth
-        const { error: authError } = await supabase.auth.updateUser({
-          data: {
-            full_name: updated.fullName,
-            fullName: updated.fullName,
-          }
-        });
-        
-        if (authError) {
-          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
-        }
-
-        const { error } = await upsertProfileWithRPC({
-          user_id: session.user.id,
-          fullName: updated.fullName,
-          email: updated.email,
-          phone: updated.phone,
-          city: updated.city,
-          address: updated.address,
-          country: updated.country,
-          role: updated.role,
-          photo_url: updated.photoURL,
-          language: updated.language || "en",
-          latitude: updated.latitude,
-          longitude: updated.longitude,
-        });
-
-        if (error) {
-          throw error;
-        }
-      };
-
-      if (showSuccess) {
-        await runWithProcessing(action, () => {
-          if (successCallback) successCallback();
-        });
-      } else {
-        // Just do the action without the success tick overlay if asked
-        try {
-          await action();
-        } catch (err: any) {
-          console.warn("Notice saving profile in background:", err);
-        } finally {
-          if (successCallback) successCallback();
-        }
+    const uid=session?.user?.id;
+    if(!uid||!canManageCustomerProfile(auth.currentUser,uid)){
+      setNotification({type:"error",message:"Sign in with your registered account to save your profile."});
+      return;
+    }
+    const updated={...userProfile,...data};
+    const action=async()=>{
+      // Do not trust a local cache or a Firestore mirror as proof of saving.
+      // This server endpoint and both flags must be separately activated.
+      const saved=await confirmedProfileTransport.save(uid,{
+        fullName:updated.fullName,
+        phone:updated.phone,
+        city:updated.city||"",
+        address:updated.address||"",
+        country:updated.country||"South Africa",
+        photo_url:updated.photoURL||null,
+        language:updated.language||"en",
+        ...(typeof updated.latitude==="number"&&typeof updated.longitude==="number"
+            ? {latitude:updated.latitude,longitude:updated.longitude}
+            : {latitude:null,longitude:null})
+      });
+      if(!canManageCustomerProfile(auth.currentUser,uid))
+        throw Error("Your account changed while saving. Refresh and sign in.");
+      setUserProfile(prev=>({...prev,...data,id:uid,
+        fullName:typeof saved.fullName==="string"?saved.fullName:prev.fullName,
+        phone:typeof saved.phone==="string"?saved.phone:prev.phone,
+        city:typeof saved.city==="string"?saved.city:prev.city,
+        address:typeof saved.address==="string"?saved.address:prev.address,
+      }));
+      // Firebase display-name metadata is optional convenience only; the
+      // server-confirmed profile row above remains the authoritative receipt.
+      try{
+        await supabase.auth.updateUser({data:{full_name:updated.fullName,fullName:updated.fullName}});
+      }catch{}
+    };
+    if(showSuccess){
+      await runWithProcessing(action,()=>{successCallback?.();});
+    }else{
+      try{await action();successCallback?.();}
+      catch(e){
+        setNotification({type:"error",message:e instanceof Error?e.message:"Profile save was not confirmed."});
       }
-    } else {
-      if (successCallback) successCallback();
     }
   };
 
