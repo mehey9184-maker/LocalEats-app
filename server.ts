@@ -1,4 +1,5 @@
 import {menuHelpResponse} from "./src/services/menuHelpResponse";
+import {ownsProfile, customerProfileFields} from "./src/services/profileOwnership";
 import {legacyOrderGuard} from "./legacyOrderGuards";
 import express from "express";
 import path from "path";
@@ -65,7 +66,6 @@ app.get("/api/health", (req, res) => {
 
 // In-memory store for synced orders as resilient fallback
 const serverOrders: any[] = [];
-const serverProfiles: Record<string, any> = {};
 
 // Authentication Middleware with authoritative Firebase Admin ID token verification
 const authenticateJWT = async (req: any, res: any, next: any) => {
@@ -82,10 +82,10 @@ const authenticateJWT = async (req: any, res: any, next: any) => {
     try {
       const decoded = await firebaseAdminAuth.verifyIdToken(token);
       (req as any).user = {
+        ...decoded,
         id: decoded.uid,
         uid: decoded.uid,
-        email: decoded.email,
-        ...decoded
+        email: decoded.email
       };
       return next();
     } catch (fbErr: any) {
@@ -113,10 +113,10 @@ const authenticateJWT = async (req: any, res: any, next: any) => {
     try {
       const decoded = await firebaseAdminAuth.verifyIdToken(token);
       (req as any).user = {
+        ...decoded,
         id: decoded.uid,
         uid: decoded.uid,
-        email: decoded.email,
-        ...decoded
+        email: decoded.email
       };
       return next();
     } catch (_) {}
@@ -128,10 +128,10 @@ const authenticateJWT = async (req: any, res: any, next: any) => {
   try {
     const decoded = await firebaseAdminAuth.verifyIdToken(tokenRaw);
     (req as any).user = {
-      id: decoded.uid,
-      uid: decoded.uid,
-      email: decoded.email,
-      ...decoded
+      ...decoded,
+        id: decoded.uid,
+        uid: decoded.uid,
+        email: decoded.email
     };
     return next();
   } catch (_) {}
@@ -158,8 +158,8 @@ app.post("/api/profiles", authenticateJWT, async (req: any, res: any) => {
     }
     const userId = profile.user_id || profile.id;
 
-    if (req.user?.id !== userId && req.user?.uid !== userId && req.user?.id !== 'anon') {
-      return res.status(403).json({ error: "Forbidden: user_id mismatch" });
+    if (!ownsProfile(req.user, userId)) {
+      return res.status(403).json({ error: "Forbidden: signed-in account does not own this profile" });
     }
 
     const upsertPayload: Record<string, any> = {
@@ -178,18 +178,17 @@ app.post("/api/profiles", authenticateJWT, async (req: any, res: any) => {
     if (resolvedAddress !== undefined) upsertPayload.address = resolvedAddress;
 
     // Include other valid schema columns if provided
-    for (const key of ['email', 'phone', 'city', 'country', 'role', 'language', 'latitude', 'longitude', 'favorites']) {
+    for (const key of customerProfileFields) {
       if (profile[key] !== undefined) {
         upsertPayload[key] = profile[key];
       }
     }
 
     if (!supabaseAdmin) {
-      serverProfiles[userId] = {
-        ...serverProfiles[userId],
-        ...upsertPayload,
-      };
-      return res.json({ success: true, profile: serverProfiles[userId] });
+      return res.status(503).json({
+        success: false,
+        error: "Profile storage unavailable. Nothing was saved."
+      });
     }
 
     const { data, error } = await supabaseAdmin
@@ -214,16 +213,15 @@ app.get("/api/profiles/:id", authenticateJWT, async (req: any, res: any) => {
   try {
     const { id } = req.params;
 
-    if (req.user?.id !== id && req.user?.uid !== id && req.user?.id !== 'anon') {
-      return res.status(403).json({ error: "Forbidden: ID mismatch" });
+    if (!ownsProfile(req.user, id)) {
+      return res.status(403).json({ error: "Forbidden: signed-in account does not own this profile" });
     }
 
     if (!supabaseAdmin) {
-      const profile = serverProfiles[id];
-      if (!profile) {
-        return res.status(404).json({ error: "Profile not found" });
-      }
-      return res.json({ profile });
+      return res.status(503).json({
+        success: false,
+        error: "Profile storage unavailable."
+      });
     }
 
     const { data, error } = await supabaseAdmin
