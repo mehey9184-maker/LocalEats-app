@@ -1,0 +1,39 @@
+name: Customer Confirmed Profile API Preview Gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'src/lib/confirmedCustomerProfile.ts'
+      - 'src/screens/auth/CompleteProfileScreen.tsx'
+      - 'tests/customer-confirmed-profile-api-preview.test.mjs'
+      - 'docs/CUSTOMER_CONFIRMED_PROFILE_API_PREVIEW_20261106.md'
+      - '.github/workflows/customer-confirmed-profile-api-preview.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-confirmed-profile-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_BACKEND_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Account isolation, fake API denial and verified profile response tests
+        run: node --experimental-strip-types --test tests/customer-confirmed-profile-api-preview.test.mjs
+      - name: Original pickup, guest profile, nearby and cache regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/checkout-render.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-guest-profile-main-safe.test.mjs tests/customer-real-logout-main-safe.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Production-style build, all profile and pickup writes OFF
+        run: npm run build
