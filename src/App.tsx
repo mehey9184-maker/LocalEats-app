@@ -1883,9 +1883,12 @@ export default function App() {
       };
 
       if (showSuccess) {
-        await runWithProcessing(action, () => {
+        const result = await runWithProcessing(action, () => {
           if (isCurrent() && successCallback) successCallback();
-        }, undefined, undefined, true);
+        });
+        // The existing processing helper returns null after showing an error.
+        // Do not let its swallowed failure look like an acknowledged save.
+        if (result === null) throw new Error("Profile save was not confirmed.");
         if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
       } else {
         await action();
