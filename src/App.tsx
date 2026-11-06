@@ -1895,11 +1895,18 @@ export default function App() {
       });
       if(!canManageCustomerProfile(auth.currentUser,uid))
         throw Error("Your account changed while saving. Refresh and sign in.");
-      setUserProfile(prev=>({...prev,...data,id:uid,
+      setUserProfile(prev=>({...prev,id:uid,
+        // Never apply unconfirmed client fields such as role or a stale UID.
         fullName:typeof saved.fullName==="string"?saved.fullName:prev.fullName,
+        email:typeof saved.email==="string"?saved.email:prev.email,
         phone:typeof saved.phone==="string"?saved.phone:prev.phone,
         city:typeof saved.city==="string"?saved.city:prev.city,
         address:typeof saved.address==="string"?saved.address:prev.address,
+        country:typeof saved.country==="string"?saved.country:prev.country,
+        role:typeof saved.role==="string"?saved.role:prev.role,
+        photoURL:typeof saved.photo_url==="string"?saved.photo_url:prev.photoURL,
+        latitude:typeof saved.latitude==="number"?saved.latitude:prev.latitude,
+        longitude:typeof saved.longitude==="number"?saved.longitude:prev.longitude,
       }));
       // Firebase display-name metadata is optional convenience only; the
       // server-confirmed profile row above remains the authoritative receipt.
