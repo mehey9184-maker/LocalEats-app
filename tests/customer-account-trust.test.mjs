@@ -51,8 +51,8 @@ test("favorites require the current registered UID and ack before changing UI",(
  const toggle=getSection(app,"  const toggleFavorite = useCallback(","  useEffect(() => {\n    // Handle review reminder");
  assert.match(toggle,/if \(!canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\)/);
  assert.doesNotMatch(toggle,/userProfile\?\.id/);
- assert.ok(toggle.indexOf("await FirestoreService.followShop")<toggle.indexOf("setFavorites(prev =>"));
- assert.ok(toggle.indexOf("await FirestoreService.unfollowShop")<toggle.indexOf("setFavorites(prev =>"));
+ assert.ok(toggle.indexOf("await FirestoreService.followShop")<toggle.indexOf("setFavoriteState(prev =>"));
+ assert.ok(toggle.indexOf("await FirestoreService.unfollowShop")<toggle.indexOf("setFavoriteState(prev =>"));
  assert.match(toggle,/showAlert\("Could not save"/);
 });
 
@@ -122,7 +122,8 @@ test("transient Firebase session restoration does not throw signed-in Profile ba
 });
 test("profile API read errors do not auto-enqueue phantom profile writes",()=>{
   const fetchBlock=getSection(app,"  const fetchUserProfile = useCallback","  const logoutCustomer = async");
-  assert.match(fetchBlock,/else if \(!error && !data\)/);
+  assert.match(fetchBlock,/const snapshot = await readCustomerProfile\(userId\)/);
+  assert.match(fetchBlock,/const data = snapshot\.profile/);
   assert.doesNotMatch(fetchBlock,/upsertProfileWithRPC\(/);
   assert.doesNotMatch(fetchBlock,/auto-upsert to prevent empty state/);
 });

@@ -62,6 +62,7 @@
     "workbox-background-sync": "^7.4.1",
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1",
-    "workbox-strategies": "^7.4.1"
+    "workbox-strategies": "^7.4.1",
+    "@playwright/test": "1.64.1"
   }
 }

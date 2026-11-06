@@ -4,17 +4,18 @@
 
 This is actual Chromium browser QA using the local Vite Client app, not a Vercel deployment. The isolated Auth and Firestore emulators use only Firebase project demo-localeats-browser-qa, with Auth on 127.0.0.1:9099, Firestore on 127.0.0.1:8080, and Vite at 127.0.0.1:4174. Pickup ordering is OFF.
 
-The emulator wiring is development-only and requires an exact demo project ID, local browser hostname and default Firestore DB. It throws on mismatch. All browser requests to non-loopback hosts are aborted, and requests to local /api/* receive an intentional 503. NO real Firebase, Supabase, orders, profile writes, payments, or Production are tested or changed.
+The emulator wiring is development-only and requires an exact demo project ID, local browser hostname and default Firestore DB. It throws on mismatch. All browser requests to non-loopback hosts are aborted. Synthetic central profile GETs verify the local Auth emulator identity and project the seeded local profile fixture into the central API response shape. All API mutations and other local /api/* calls receive an intentional 503. No real Firebase, hosted Supabase, orders, profile writes, payments or Production are tested or changed.
 
 ## Browser checks
 
 Guest Splash > Explore as Guest > bottom Profile > existing Login; no editable profile or profile/order API write. Two synthetic Auth emulator accounts sign in through the actual Login form. Registered customers see the original Profile editor, logout revokes the Auth session and guest Profile reopens Login, and account B does not display account A email. Offline and unavailable-backend profile saving must not claim success.
 
+The current registered-profile case seeds a nonempty favorites list, verifies the central-reader name is displayed, and asserts that hydration sends no POST/PATCH. The latest read-integration run passed all 14 desktop/mobile cases in 1.2 minutes using locked dependencies. The local runtime used existing workspace Java21 and emulator cache with a separate workspace CLI configuration; the initial system Java8/cache-permission failures happened before app tests and were not product failures. Emulator/Vite processes exited and their ports closed after verification. This is not positive hosted profile-save evidence.
+
 ## Local repeat (Node 22, Java 21)
 
 ```sh
 npm ci
-npm install --no-save --package-lock=false @playwright/test@1.64.1
 npx playwright install chromium --with-deps
 npx --yes firebase-tools@15.34.2 emulators:exec --project demo-localeats-browser-qa --only auth,firestore "npx playwright test --config tests/browser-qa/playwright.config.mjs"
 ```

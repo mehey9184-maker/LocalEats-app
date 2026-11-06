@@ -2,7 +2,7 @@ import {test,expect} from "@playwright/test";
 import {randomUUID} from "node:crypto";
 
 const BASE="http://127.0.0.1:4174";
-test.beforeEach(async({page})=>{
+test.beforeEach(async({page,request})=>{
   await page.addInitScript(()=>{
     localStorage.setItem("localeats_tour_seen","true");
     localStorage.setItem("localeats_interactive_tour_seen","true");
@@ -15,6 +15,23 @@ test.beforeEach(async({page})=>{
       ["4174","9099","8080"].includes(url.port);
     if(!allowed)return route.abort("blockedbyclient");
     if(url.port==="4174"&&url.pathname.startsWith("/api/")){
+      // Synthetic central profile reads use the local Auth emulator's verified
+      // account and existing seeded Firestore fixture. All mutations still fail.
+      // This models frontend reads; it is not hosted Supabase acceptance.
+      if(url.pathname==="/api/v1/profiles/me"&&route.request().method()==="GET"){
+        const header=route.request().headers().authorization||"";
+        const token=header.startsWith("Bearer fb-")?header.slice(10):"";
+        const lookup=token?await request.post("http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:lookup?key=demo",{data:{idToken:token}}):null;
+        const account=lookup?.ok()?(await lookup.json()).users?.[0]:null;
+        if(!account?.localId||!account.email)return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({success:false})});
+        const stored=await request.get("http://127.0.0.1:8080/v1/projects/demo-localeats-browser-qa/databases/(default)/documents/profiles/"+encodeURIComponent(account.localId));
+        if(stored.status()===404)return route.fulfill({status:404,contentType:"application/json",body:JSON.stringify({success:false,code:"PROFILE_NOT_FOUND"})});
+        if(!stored.ok())return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({success:false})});
+        const doc=await stored.json();
+        const profile=Object.fromEntries(Object.entries(doc.fields||{}).map(([key,value])=>[key,value.arrayValue?(value.arrayValue.values||[]).map(item=>item.stringValue):value.stringValue??null]));
+        profile.user_id=account.localId;profile.updated_at=doc.updateTime;
+        return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({success:true,profile,revision:doc.updateTime})});
+      }
       return route.fulfill({status:503,contentType:"application/json",
         body:JSON.stringify({success:false,error:"Backend disabled in browser QA"})});
     }
@@ -47,6 +64,7 @@ async function seedFakeProfile(request,account){
     address:{stringValue:"Demo 1 Local Test Street"},
     city:{stringValue:"Johannesburg"},
     country:{stringValue:"South Africa"},
+    favorites:{arrayValue:{values:[{stringValue:"qa-fixture-favorite"}]}},
   };
   const url="http://127.0.0.1:8080/v1/projects/demo-localeats-browser-qa/databases/(default)/documents/profiles/"+account.uid;
   const response=await request.patch(url,{data:{fields},timeout:15000});
@@ -100,6 +118,12 @@ test("guest browser Profile tab goes straight to Login; no editable personal for
 });
 test("demo-account login displays registered Profile; logout revokes access",async({page,request})=>{
   const account=await createAccount(request,"logout");
+  await seedFakeProfile(request,account);
+  const profileMutations=[];
+  page.on("request",req=>{
+    const url=new URL(req.url());
+    if(url.port==="4174"&&["/api/profiles","/api/v1/profiles/me"].includes(url.pathname)&&["POST","PATCH","PUT","DELETE"].includes(req.method()))profileMutations.push(req.method());
+  });
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
   await expect(page.getByPlaceholder("Your full name")).toBeVisible();
@@ -107,6 +131,8 @@ test("demo-account login displays registered Profile; logout revokes access",asy
   // A user who opens Profile immediately after login must keep that screen.
   await page.waitForTimeout(4000);
   await expect(page.getByPlaceholder("Your full name")).toBeVisible({timeout:2000});
+  await expect(page.getByPlaceholder("Your full name")).toHaveValue("QA Original");
+  expect(profileMutations).toEqual([]);
   await page.getByRole("button",{name:"Sign Out",exact:true}).click();
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:20000});
   await page.goto(BASE,{waitUntil:"domcontentloaded"});

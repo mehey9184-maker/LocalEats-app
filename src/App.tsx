@@ -258,6 +258,7 @@ import {
 import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import { readCustomerProfile } from "./services/customerProfile";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -482,7 +483,17 @@ export default function App() {
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [authRestoreSlow, setAuthRestoreSlow] = useState(false);
   // Global favorites cache must not leak across accounts.
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favoriteState, setFavoriteState] = useState<{
+    items: string[];
+    intent: { identity: typeof auth.currentUser; userId: string } | null;
+  }>({ items: [], intent: null });
+  const favorites = favoriteState.items;
+  const setFavorites = useCallback((next: string[] | ((previous: string[]) => string[])) => {
+    setFavoriteState(previous => {
+      const items = typeof next === "function" ? next(previous.items) : next;
+      return items === previous.items ? previous : { items, intent: null };
+    });
+  }, []);
 
   const [forcedTheme, setForcedTheme] = useState<"light" | "dark" | "high-contrast" | "default">(() => {
     try {
@@ -1483,144 +1494,53 @@ export default function App() {
 
   const profileReadGeneration = useRef(0);
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
-    // Do not load or create a registered profile for a guest or different UID.
     if (!canManageCustomerProfile(auth.currentUser, userId)) return;
     const identity = auth.currentUser;
     const generation = ++profileReadGeneration.current;
     const isCurrent = () => generation === profileReadGeneration.current &&
       auth.currentUser === identity && canManageCustomerProfile(auth.currentUser, userId);
     try {
-      let data: any = null;
-      let error: any = null;
-
-      // 1. Direct Firestore profile retrieval for real-time customer identity
-      try {
-        const firestoreProfile = await FirestoreService.getProfile(userId);
-        if (!isCurrent()) return;
-        if (firestoreProfile) {
-          data = firestoreProfile;
-        }
-      } catch (fsErr) {
-        console.debug("[Profile] Firestore getProfile notice:", fsErr);
-      }
-
-      // 2. Primary attempt by user_id if not loaded from Firestore
-      if (!data) {
-        try {
-          if (!isCurrent()) return;
-          const { getApiAuthHeaders } = await import("./lib/apiAuth");
-          if (!isCurrent()) return;
-          const headers = await getApiAuthHeaders();
-          if (!isCurrent()) return;
-          
-          const response = await fetch(`/api/profiles/${userId}`, {
-            headers: {
-              ...headers
-            }
-          });
-          if (!isCurrent()) return;
-          
-          if (response.ok) {
-            const result = await response.json();
-            if (!isCurrent()) return;
-            if (result.profile) {
-              data = result.profile;
-            }
-          } else {
-            error = new Error(`Failed to fetch profile: ${response.status}`);
-          }
-        } catch (apiErr) {
-          console.warn("[Profile] API fetch error:", apiErr);
-          error = apiErr;
-        }
-      }
-
+      const snapshot = await readCustomerProfile(userId);
       if (!isCurrent()) return;
-      const isTransientSchemaNotice =
-        (error?.message &&
-          (error.message.toLowerCase().includes("schema cache") ||
-           error.message.toLowerCase().includes("retrying") ||
-           error.message.toLowerCase().includes("pgrst"))) ||
-        error?.code === "PGRST116" ||
-        error?.code === "PGRST301";
-
-      if (error && !isTransientSchemaNotice) {
-        console.info("[Profile] Database query note:", error.message || error);
-      }
-
+      const data = snapshot.profile;
       if (data) {
         if ((data.user_id ?? data.id) !== userId) return;
         setUserProfile((prev) => isCurrent() ? ({
           ...prev,
-          id: data.user_id || data.id || userId,
-          fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
-          email: data.email || prev.email || "",
-          phone: data.phone || prev.phone || "",
-          city: data.city || prev.city || "Johannesburg",
-          address: data.address || data.default_address || prev.address || "",
-          country: data.country || prev.country || "South Africa",
-          role: data.role || prev.role || "customer",
-          photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
-          latitude: data.current_latitude || data.latitude || prev.latitude,
-          longitude: data.current_longitude || data.longitude || prev.longitude,
+          id: userId,
+          fullName: data.fullName ?? "",
+          email: data.email ?? identity?.email ?? "",
+          phone: data.phone ?? "",
+          city: data.city ?? "Johannesburg",
+          address: data.address ?? "",
+          country: data.country ?? "South Africa",
+          role: "user",
+          is_admin: false,
+          is_vendor: false,
+          photoURL: data.photo_url ?? "",
+          language: data.language ?? "en",
+          latitude: typeof data.latitude === "number" ? data.latitude : undefined,
+          longitude: typeof data.longitude === "number" ? data.longitude : undefined,
         }) : prev);
-        if (data.favorites && Array.isArray(data.favorites)) {
-          setFavorites((prev) => isCurrent() ? data.favorites : prev);
-        }
-      } else if (!error && !data) {
-        // An absent verified row may use login metadata as an *in-memory display*
-        // fallback. API 503/auth errors must never trigger an automatic profile write.
-        try {
-          const { data: authUserData } = await supabase.auth.getUser();
-          if (!isCurrent()) return;
-          const authUser = authUserData?.user;
-          if (authUser && authUser.id === userId) {
-            const userMeta = authUser.user_metadata || {};
-            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
-            const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => isCurrent() ? ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }) : prev);
-
-            // No silent write: only explicit user saves use the authenticated API.
-          }
-        } catch (authFetchErr) {
-          console.warn("[Profile Sync from Auth Notice]", authFetchErr);
-        }
+        setFavorites((prev) => isCurrent() ? (Array.isArray(data.favorites) ? data.favorites : []) : prev);
+      } else {
+        // A verified missing profile may display Firebase's own account facts.
+        // It must not trigger a write or grant a role from editable metadata.
+        setUserProfile((prev) => isCurrent() ? ({
+          ...emptyCustomerProfile(),
+          id: userId,
+          fullName: identity?.displayName || identity?.email?.split("@")[0] || "",
+          email: identity?.email || "",
+          phone: identity?.phoneNumber || "",
+          role: "user",
+        }) : prev);
+        setFavorites((prev) => isCurrent() ? [] : prev);
       }
-    } catch (err: any) {
+    } catch (error: any) {
       if (!isCurrent()) return;
-      const errStr = (err?.message || String(err)).toLowerCase();
-      const isNetworkError =
-        errStr.includes("failed to fetch") ||
-        errStr.includes("network error") ||
-        errStr.includes("load failed") ||
-        errStr.includes("upstream connect error") ||
-        errStr.includes("connection timeout") ||
-        errStr.includes("disconnect/reset") ||
-        errStr.includes("timeout") ||
-        errStr.includes("schema cache") ||
-        errStr.includes("retrying") ||
-        err?.name === "TypeError";
-
-      if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
-        }
-      }
-
-      if (!isNetworkError) {
-        console.info("[Profile] Notice fetching user profile:", err?.message || err);
-      }
-
-      if (isNetworkError && retries > 0) {
+      // Never log personal profile content or a server diagnostic.
+      console.info("[Profile] Account details could not be verified.");
+      if (error?.retryable === true && retries > 0) {
         setTimeout(() => { if (isCurrent()) void fetchUserProfile(userId, retries - 1); }, 3000);
       }
     }
@@ -2310,33 +2230,25 @@ export default function App() {
     }
   }, []); // Run on mount
 
-  const initialFavoritesHydratedRef = useRef(false);
-  const prevFavoritesJsonRef = useRef<string>(JSON.stringify(favorites));
+  const lastSyncedFavoriteStateRef = useRef<typeof favoriteState | null>(null);
 
   useEffect(() => {
-    // Avoid duplicate profile writes on initial app hydration
-    if (!initialFavoritesHydratedRef.current) {
-      initialFavoritesHydratedRef.current = true;
-      prevFavoritesJsonRef.current = JSON.stringify(favorites);
-      return;
-    }
-
-    const currJson = JSON.stringify(favorites);
-    if (prevFavoritesJsonRef.current === currJson) {
-      return;
-    }
-    prevFavoritesJsonRef.current = currJson;
-
-    // Guest browsing must never start an account profile write.
-    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+    // Reads, sign-in hydration and account cleanup are not save intentions.
+    // Only the confirmed favorite control below can authorize this sync.
+    const intent = favoriteState.intent;
+    if (!intent || lastSyncedFavoriteStateRef.current === favoriteState || auth.currentUser !== intent.identity ||
+        intent.userId !== session?.user?.id ||
+        !canManageCustomerProfile(auth.currentUser, intent.userId)) return;
+    lastSyncedFavoriteStateRef.current = favoriteState;
+    {
       upsertProfileWithRPC({
-        user_id: session.user.id,
+        user_id: intent.userId,
         favorites,
       }).catch((err) => {
         console.debug("[Favorites Sync Notice]", err);
       });
     }
-  }, [favorites, session]);
+  }, [favoriteState, session]);
 
   const toggleFavorite = useCallback(
     async (shopId: string) => {
@@ -2346,13 +2258,18 @@ export default function App() {
         return;
       }
       const targetUserId = session!.user.id;
+      const identity = auth.currentUser;
       const isFollowing = favorites.includes(shopId);
       try {
         if (isFollowing) await FirestoreService.unfollowShop(targetUserId, shopId);
         else await FirestoreService.followShop(targetUserId, shopId);
-        if (!canManageCustomerProfile(auth.currentUser, targetUserId)) return;
-        setFavorites(prev => isFollowing ? prev.filter(id => id !== shopId)
-          : prev.includes(shopId) ? prev : [...prev, shopId]);
+        if (auth.currentUser !== identity || !canManageCustomerProfile(auth.currentUser, targetUserId)) return;
+        setFavoriteState(prev => {
+          if (auth.currentUser !== identity || !canManageCustomerProfile(auth.currentUser, targetUserId)) return prev;
+          const next = isFollowing ? prev.items.filter(id => id !== shopId)
+            : prev.items.includes(shopId) ? prev.items : [...prev.items, shopId];
+          return next === prev.items ? prev : { items: next, intent: { identity, userId: targetUserId } };
+        });
         triggerHaptic();
       } catch (error) {
         console.warn("[Favorites] Save not confirmed:", error);

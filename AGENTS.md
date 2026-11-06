@@ -2,6 +2,8 @@
 
 ## Active pickup-only Codex policy (2026-11-05)
 
+The private central profile integration branch hydrates customer details through `/api/v1/profiles/me` at `VITE_LOCALEATS_API_URL`. It validates Firebase identity, owner, JSON/revision receipts and deadlines; a profile read must not enqueue writes. Favorites and explicit user intent commit together in pure React state so StrictMode replay cannot lose a save. This is not complete form/queue migration: bind edits and retries to the original verified backend revision before release. No CLI-owner credentials, production activation or hosted Supabase acceptance are implied. See `docs/superpowers/plans/2026-11-06-profile-service-integration.md`.
+
 **Current business scope supersedes historical rider/delivery descriptions above:** the near-term LocalEats release is customer pickup only, with pay-at-shop (cash or the shop's physical card machine). Rider/delivery expansion is deferred for at least six months after real customer use and requires a later explicit owner decision. Do not enable online payments, subscriptions, live orders, riders, or delivery while preparing Preview.
 
 For Client App pickup release investigations, use the repository skill `$localeats-pickup-launch` in `.agents/skills/localeats-pickup-launch/SKILL.md`. Follow its Preview-only test rules, original UI/UX preservation, server-authoritative pricing, 4 km discovery, duplicate-order protection, and no real-order simulation constraint. Treat earlier notes describing unrestricted Firestore rules or client-side price/order fallbacks as **historical incident records, not permission** to use insecure access. Never weaken security rules or enable an ordering flag without explicit separate approval.
