@@ -1,0 +1,86 @@
+// REVIEW ONLY — NOT A DEPLOYMENT FILE.
+// One shared Firebase project + named Firestore database serves Customer and
+// Merchant defaults. Never deploy until actual database rules, auth identities,
+// and both apps' read/write consumers are independently verified.
+// For pickup-only launch, account/order/payment/rider mutations are API-owned.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function self(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function shopOwner(shopId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/shops/$(string(shopId)))
+        && get(/databases/$(database)/documents/shops/$(string(shopId))).data.owner_id == request.auth.uid;
+    }
+
+    // Default deny applies to subcollections and all legacy/delivery paths.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Customer catalog only. A public document exposes ALL of its fields:
+    // inspect stored shop/menu fields before publishing these two rules.
+    match /shops/{shopId} {
+      allow get, list: if true;
+      allow create, update, delete: if false;
+    }
+    match /menu_items/{itemId} {
+      allow get, list: if true;
+      allow create, update, delete: if false;
+    }
+
+    // Legacy Firestore profile reads only; central Firebase-authenticated API
+    // owns saves. Listing profiles and direct browser writes are never allowed.
+    match /profiles/{uid} {
+      allow get: if self(uid);
+      allow list, create, update, delete: if false;
+    }
+    match /users/{uid} {
+      allow get: if self(uid);
+      allow list, create, update, delete: if false;
+    }
+
+    // No public delivery pool. Order create/changes happen ONLY on central API.
+    // Browser reads must be scoped to customer UID or authenticated shop owner;
+    // backend Admin SDK access is unaffected by these client rules.
+    match /orders/{orderId} {
+      allow get, list: if signedIn() && (
+        resource.data.user_id == request.auth.uid
+        || shopOwner(resource.data.shop_id)
+      );
+      allow create, update, delete: if false;
+    }
+
+    // Reviews are intended public display data. Creating/editing reviews must
+    // use an authenticated and moderated server endpoint (not yet released).
+    match /reviews/{reviewId} {
+      allow get, list: if true;
+      allow create, update, delete: if false;
+    }
+
+    // The existing Customer follow document format is <uid>_<shopId>.
+    // Allow a narrow, account-scoped action while preserving original UX.
+    match /follows/{followId} {
+      allow get, list: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['user_id','shop_id','created_at'])
+        && request.resource.data.keys().hasAll(['user_id','shop_id'])
+        && request.resource.data.user_id == request.auth.uid
+        && request.resource.data.shop_id is string
+        && followId == request.auth.uid + '_' + request.resource.data.shop_id;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.user_id == request.auth.uid;
+    }
+
+    // Sensitive: contact_messages, app_errors, profiles of riders, rider
+    // positions, rider_connections, messages/chat, shop subcollections,
+    // push tokens, stores/merchants/vendors, promo codes, payments, etc.
+    // No browser grants during the pickup pilot. Move needed operations to
+    // a verified API before any cutover, then test their old UI behavior.
+  }
+}
