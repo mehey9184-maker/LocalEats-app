@@ -1,0 +1,27 @@
+name: Client Isolated Security Preview Gate
+on:
+  push:
+    branches: [preview/client-profile-security-review-20261106]
+  pull_request:
+    branches: [fix/client-account-trust-audit-20261106]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-preview:
+    name: Profile API negative auth, guest, pickup regressions, TS/build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:security-preview
+      - run: npm run test:guest-profile-guard
+      - run: npm run test:account-trust
+      - run: npm run test:pickup-integration
+      - run: npm run lint
+      - run: npm run build
