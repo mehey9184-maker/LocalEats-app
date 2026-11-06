@@ -1,12 +1,21 @@
 {
   "rewrites": [
     {
+      "source": "/api/profiles/:uid",
+      "destination": "/api/profile?uid=:uid"
+    },
+    {
+      "source": "/api/profiles",
+      "destination": "/api/profile"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
   ],
   "git": {
     "deploymentEnabled": {
+      "preview/client-profile-security-review-20261106": false,
       "integration/customer-original-ui-pickup": true,
       "activation/pickup-workflow": false,
       "fix/pickup-zero-fee": false

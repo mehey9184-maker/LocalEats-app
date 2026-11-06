@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "test:pickup-integration": "node --experimental-strip-types --test tests/original-pickup.test.mjs",
     "test:guest-profile-guard": "node --experimental-strip-types --test tests/customer-guest-profile-guard.test.mjs",
-    "test:account-trust": "node --experimental-strip-types --test tests/customer-account-trust.test.mjs"
+    "test:account-trust": "node --experimental-strip-types --test tests/customer-account-trust.test.mjs",
+    "test:security-preview": "tsx --test tests/customer-security-preview.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -62,5 +63,10 @@
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1",
     "workbox-strategies": "^7.4.1"
+  },
+  "overrides": {
+    "jwks-rsa": {
+      "jose": "5.10.0"
+    }
   }
 }
