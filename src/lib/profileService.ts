@@ -1,4 +1,6 @@
-import { FirestoreService } from './firebase';
+import { auth } from './firebase';
+import { isConfirmedProfileSave } from './profileConfirmation';
+import { canManageCustomerProfile } from './profileAccess';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -68,8 +70,10 @@ function calculateBackoffDelay(attempt: number, baseDelay = 1000, maxDelay = 300
  * If the last error was a permanent schema/type failure, retries are skipped.
  */
 export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAttempt = 0) {
-  if (typeof window === "undefined" || !profileData.user_id) return;
+  if (typeof window === "undefined" || !canManageCustomerProfile(auth.currentUser, profileData.user_id)) return;
   const userId = profileData.user_id;
+  const identity = auth.currentUser;
+  const isCurrent = () => auth.currentUser === identity && canManageCustomerProfile(auth.currentUser, userId);
 
   // Clear existing timer if any
   if (activeRetryTimers.has(userId)) {
@@ -82,6 +86,8 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
 
   const timer = setTimeout(async () => {
     activeRetryTimers.delete(userId);
+    // A guest/logout/account switch must not replay a previous profile write.
+    if (!isCurrent()) return;
     if (!navigator.onLine) {
       // Re-schedule when connection resumes
       return;
@@ -89,6 +95,7 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
 
     try {
       const result = await syncProfileDirect(profileData);
+      if (!isCurrent()) return;
       if (result.success) {
         console.log(`[Profile Retry] Background sync succeeded for user ${userId}`);
         clearProfileFromQueue(userId);
@@ -104,6 +111,7 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
         }
       }
     } catch (err: any) {
+      if (!isCurrent()) return;
       if (isPermanentSyncError(err)) {
         console.error(`[Profile Retry] Permanent schema/type error for user ${userId}. Evicting from retry queue:`, err?.message || err);
         clearProfileFromQueue(userId);
@@ -123,25 +131,31 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
  * Direct synchronization multi-channel executor
  */
 async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ success: boolean; data?: any; error?: any }> {
-  if (!profileData.user_id) {
-    return { success: false, error: new Error("User ID is required") };
+  if (!canManageCustomerProfile(auth.currentUser, profileData.user_id)) {
+    return { success: false, error: new Error("Sign in with the matching registered account to save your profile.") };
   }
+  const identity = auth.currentUser;
+  const isCurrent = () => auth.currentUser === identity &&
+    canManageCustomerProfile(auth.currentUser, profileData.user_id);
 
   const sanitizedPhone = toDBPhone(profileData.phone);
   let synced = false;
   let lastError: any = null;
+  let confirmedProfile: any = null;
 
   // Channel 1: Supabase (Authoritative primary persistent database via Express API)
   try {
     const { getApiAuthHeaders } = await import('./apiAuth');
+    if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
     const headers = await getApiAuthHeaders();
+    if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
     
     const safePayload = {
       user_id: profileData.user_id,
       fullName: profileData.fullName,
       email: profileData.email,
       phone: sanitizedPhone,
-      role: profileData.role || "user",
+      // Roles must be determined server-side, never supplied by a customer form.
       city: profileData.city || "",
       address: profileData.address || "",
       country: profileData.country || "South Africa",
@@ -160,37 +174,30 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
       body: JSON.stringify(safePayload)
     });
     
-    const result = await response.json();
-          
-    if (!response.ok || !result.success) {
-      console.warn("[Profile Sync] Supabase API sync notice:", result.error || "Failed");
-      lastError = new Error(result.error || "Failed");
+    const contentType = response.headers.get("content-type") || "";
+    const result = /^\s*application\/json\s*(?:;|$)/i.test(contentType)
+      ? await response.json()
+      : null;
+    if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
+    if (!isConfirmedProfileSave(response.status,contentType,result,profileData.user_id)) {
+      const reason = typeof result?.error === "string" ? result.error :
+        "The profile server did not confirm a saved profile for your account.";
+      lastError = new Error(reason);
     } else {
       synced = true;
-      lastError = null; // Clear any previous error if Supabase succeeds
+      confirmedProfile = result.profile;
+      lastError = null;
     }
   } catch (sbErr: any) {
     console.warn("[Profile Sync] Exception syncing to Supabase API:", sbErr?.message || sbErr);
     lastError = sbErr;
   }
 
-  // Channel 2: Firestore (Non-blocking secondary mirror for compatibility)
-  FirestoreService.saveProfile(profileData.user_id, {
-    full_name: profileData.fullName || null,
-    email: profileData.email || null,
-    phone: sanitizedPhone,
-    city: profileData.city || null,
-    address: profileData.address || null,
-    country: profileData.country || "South Africa",
-    role: profileData.role || "user",
-    avatar_url: profileData.photo_url || null,
-    language: profileData.language || "en",
-    favorites: profileData.favorites || []
-  }).catch((fsErr: any) => {
-    console.debug("[Profile Sync] Firestore mirror notice:", fsErr?.message || fsErr);
-  });
+  // Do not mirror sensitive profile records through direct client Firestore writes.
+  // Only a verified server receipt makes a profile save successful.
+  return { success: synced, data: synced ? confirmedProfile : undefined,
+    error: synced ? null : lastError };
 
-  return { success: synced, error: synced ? null : lastError };
 }
 
 /**
@@ -198,9 +205,13 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
  * persistent offline queue fallback, and exponential backoff retries.
  */
 export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Promise<{ data: any; error: any }> {
-  if (!profileData.user_id) {
-    return { data: null, error: new Error("User ID is required for profile upsert") };
+  // Check before touching localStorage, queueing a retry or making any network request.
+  if (!canManageCustomerProfile(auth.currentUser, profileData.user_id)) {
+    return { data: null, error: new Error("Sign in with the matching registered account to save your profile.") };
   }
+  const identity = auth.currentUser;
+  const isCurrent = () => auth.currentUser === identity &&
+    canManageCustomerProfile(auth.currentUser, profileData.user_id);
 
   const sanitizedPhone = toDBPhone(profileData.phone);
 
@@ -208,7 +219,8 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
   try {
     if (typeof window !== "undefined" && window.localStorage) {
       const cached = localStorage.getItem("userProfile");
-      const existing = cached ? JSON.parse(cached) : {};
+      const parsed = cached ? JSON.parse(cached) : null;
+      const existing = (parsed?.user_id ?? parsed?.id) === profileData.user_id ? parsed : {};
       const updated = {
         ...existing,
         id: profileData.user_id,
@@ -237,16 +249,18 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
 
   // 3. If offline, keep in queue and return cached success immediately
   if (typeof navigator !== "undefined" && !navigator.onLine) {
-    console.info("[Profile Service] Network is offline. Profile saved locally and queued for auto-sync.");
-    return { data: { cached: true, offline: true }, error: null };
+    console.info("[Profile Service] Profile draft queued locally; server save not confirmed.");
+    return { data: { cached: true, offline: true },
+      error: new Error("Profile saved on this device only. Sign in online to confirm saving.") };
   }
 
   // 4. Attempt direct multi-channel sync
   try {
     const result = await syncProfileDirect(profileData);
+    if (!isCurrent()) return {data:null,error:new Error("Your account changed while saving. Sign in again.")};
     if (result.success) {
       clearProfileFromQueue(profileData.user_id);
-      return { data: result.data || { success: true }, error: null };
+      return { data: result.data, error: null };
     } else {
       if (isPermanentSyncError(result.error)) {
         console.error("[Profile Service] Permanent schema/type error. Evicting from queue and cancelling retry:", result.error?.message || result.error);
@@ -257,9 +271,11 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
       console.warn("[Profile Service] Database offline or unreachable. Scheduling exponential backoff retry...");
       queueProfileSync(profileData, result.error?.message || "Sync failed");
       scheduleProfileRetry(profileData, 0);
-      return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
+      return { data: { cached: true, offline: true, retryScheduled: true },
+        error: new Error("Profile save not confirmed. Your changes are pending synchronization.") };
     }
   } catch (err: any) {
+    if (!isCurrent()) return {data:null,error:new Error("Your account changed while saving. Sign in again.")};
     if (isPermanentSyncError(err)) {
       console.error("[Profile Service] Permanent schema/type error. Evicting from queue and cancelling retry:", err?.message || err);
       clearProfileFromQueue(profileData.user_id);
@@ -268,7 +284,8 @@ export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Prom
     console.info("[Profile Service] Exception during profile sync:", err?.message || err);
     queueProfileSync(profileData, err?.message || "Sync exception");
     scheduleProfileRetry(profileData, 0);
-    return { data: { cached: true, offline: true, retryScheduled: true }, error: null };
+    return { data: { cached: true, offline: true, retryScheduled: true },
+      error: new Error("Profile save not confirmed. Your changes are pending synchronization.") };
   }
 }
 
@@ -293,10 +310,14 @@ export async function processOfflineProfileQueue() {
   for (const item of queue) {
     const profileData = item.data || item;
     const userId = item.user_id || profileData?.user_id;
-    if (!userId) continue;
+    // Never send queued data belonging to a guest or a different signed-in account.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) continue;
+    const identity = auth.currentUser;
+    const isCurrent = () => auth.currentUser === identity && canManageCustomerProfile(auth.currentUser, userId);
 
     try {
       const res = await syncProfileDirect(profileData);
+      if (!isCurrent()) continue;
       if (res.success) {
         console.log(`[Offline Profile Sync] Successfully synced queued profile for ${userId}`);
         clearProfileFromQueue(userId);
@@ -311,6 +332,7 @@ export async function processOfflineProfileQueue() {
         scheduleProfileRetry(profileData, item.retryCount || 0);
       }
     } catch (e: any) {
+      if (!isCurrent()) continue;
       if (isPermanentSyncError(e)) {
         console.error(`[Offline Profile Sync] Permanent schema/type error for user ${userId}. Evicting from queue:`, e?.message || e);
         clearProfileFromQueue(userId);
