@@ -1804,44 +1804,9 @@ export default function App() {
     [runWithProcessing, setNotification, setCurrentScreen],
   );
 
-  const changeToDelivery = useCallback(
-    async (orderId: string) => {
-      await runWithProcessing(async () => {
-        const updatePayload: any = {
-          is_delivery: true,
-          delivery_status: "finding_rider",
-          delivery_fee: 15, // standard delivery fee
-          updated_at: new Date().toISOString(),
-        };
-
-        await FirestoreService.updateOrder(orderId, updatePayload);
-      const { error } = await supabase
-          .from("orders")
-          .update(updatePayload)
-          .eq("id", orderId);
-
-        if (error) throw error;
-
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId
-              ? {
-                  ...o,
-                  is_delivery: true,
-                  delivery_status: "finding_rider",
-                  delivery_fee: 15,
-                }
-              : o,
-          ),
-        );
-        setNotification({
-          message: "Order updated to delivery. Finding a rider now!",
-          type: "success",
-        });
-      });
-    },
-    [runWithProcessing, setNotification],
-  );
+  // Pickup-only launch. No delivery conversion action, fee, rider
+  // assignment or direct order write is exposed to the Home screen.
+  // Revisit delivery only after six months of real pickup use and new approval.
 
   // Both sign-out entry points must end the real Firebase session.
   // A failed logout must not pretend success or expose a stale guest view.
@@ -3126,7 +3091,6 @@ export default function App() {
                   addToCart={addToCart}
                   removeFromCart={removeFromCart}
                   clearCart={clearCart}
-                  changeToDelivery={changeToDelivery}
                   setNotification={setNotification}
                   setPendingReview={setPendingReview}
                   setCurrentScreen={setCurrentScreen}
@@ -3817,7 +3781,6 @@ function HomeScreen({
   isOnline,
   orderAgainEnabled = true,
   onEnableOrderAgain,
-  changeToDelivery,
   dataSaverEnabled,
   isSyncing = false,
   onOpenAddressSwitcher,
@@ -3862,7 +3825,6 @@ function HomeScreen({
   isOnline: boolean;
   orderAgainEnabled?: boolean;
   onEnableOrderAgain?: () => void;
-  changeToDelivery: (orderId: string) => void;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
   onOpenAddressSwitcher?: () => void;

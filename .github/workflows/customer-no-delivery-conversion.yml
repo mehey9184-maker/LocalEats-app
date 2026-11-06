@@ -1,0 +1,35 @@
+name: Customer Pickup — No Legacy Delivery Conversion
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'tests/customer-no-delivery-conversion-main.test.mjs'
+      - 'docs/CUSTOMER_NO_DELIVERY_CONVERSION_20261106.md'
+      - '.github/workflows/customer-no-delivery-conversion.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pickup-no-delivery-conversion:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Block legacy client delivery/rider conversion
+        run: node --experimental-strip-types --test tests/customer-no-delivery-conversion-main.test.mjs
+      - name: Existing pickup, checkout and cache regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/checkout-render.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-cache-safety-main.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Production build, pickup writes disabled
+        run: npm run build
