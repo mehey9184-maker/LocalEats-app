@@ -266,11 +266,9 @@ const confirmedProfileTransport=createConfirmedProfileTransport({
   readsEnabled:()=>import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true",
   writesEnabled:()=>import.meta.env.VITE_PROFILE_WRITES_ENABLED==="true",
 });
-const trustedProfileRole=(value:unknown):UserProfile["role"]=>{
-  if(value==="customer"||value==="user")return "user";
-  if(value==="admin"||value==="shop_owner"||value==="merchant"||value==="rider")return value;
-  return "user";
-};
+// Customer screens must never elevate access from a profile role or
+// user-editable Firebase metadata. Merchant/admin rights live on the server.
+const trustedProfileRole=(_value:unknown):UserProfile["role"]=>"user";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -475,18 +473,20 @@ export default function App() {
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    return safeLocalStorageGet("userProfile", {
-      fullName: "",
-      email: "",
-      phone: "",
-      city: SUPPORTED_CITIES[0],
-      address: "",
-      country: "South Africa",
-      role: "user",
-    });
+    const blank:UserProfile={
+      fullName: "",email: "",phone: "",city: SUPPORTED_CITIES[0],
+      address: "",country: "South Africa",role: "user"
+    };
+    // In server-owned mode a prior account's unscoped device cache must NEVER
+    // initialize another account's private profile.
+    return import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"
+      ? blank : safeLocalStorageGet("userProfile",blank);
   });
 
   useEffect(() => {
+    // Do not write private account data to unscoped legacy localStorage once
+    // the authoritative Firebase-owned profile service is activated.
+    if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true")return;
     if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
       safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
       if (!localStorage.getItem("remember_me_secure_token")) {
@@ -1504,16 +1504,20 @@ export default function App() {
         // If the verified API is selected, NEVER fall back to another user's
         // Firestore/cache profile when authentication or server reads fail.
         const result=await confirmedProfileTransport.read(userId);
-        if(result){
-          setUserProfile(prev=>({...prev,id:userId,
-            fullName:typeof result.fullName==="string"?result.fullName:prev.fullName,
-            email:typeof result.email==="string"?result.email:prev.email,
-            phone:typeof result.phone==="string"?result.phone:prev.phone,
-            city:typeof result.city==="string"?result.city:prev.city,
-            address:typeof result.address==="string"?result.address:prev.address,
-            role:trustedProfileRole(result.role),
-            photoURL:result.photo_url===null?"":typeof result.photo_url==="string"?result.photo_url:prev.photoURL,
-            country:typeof result.country==="string"?result.country:prev.country,
+        if(result && canManageCustomerProfile(auth.currentUser,userId)){
+          // Populate solely from this verified account's server record. Never
+          // inherit missing fields from the prior account's UI state.
+          setUserProfile(_prev=>({
+            id:userId,role:trustedProfileRole(result.role),
+            fullName:typeof result.fullName==="string"?result.fullName:"",
+            email:typeof result.email==="string"?result.email:"",
+            phone:typeof result.phone==="string"?result.phone:"",
+            city:typeof result.city==="string"?result.city:SUPPORTED_CITIES[0],
+            address:typeof result.address==="string"?result.address:"",
+            country:typeof result.country==="string"?result.country:"South Africa",
+            photoURL:typeof result.photo_url==="string"?result.photo_url:"",
+            latitude:typeof result.latitude==="number"?result.latitude:undefined,
+            longitude:typeof result.longitude==="number"?result.longitude:undefined,
           }));
         }
         return;
