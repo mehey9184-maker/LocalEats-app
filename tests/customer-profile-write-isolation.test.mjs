@@ -125,3 +125,9 @@ test("same account receives its saved state and success callback",async()=>{
  let callbacks=0;const h=appSaveHarness();await h.run({fullName:"Updated A"},true,()=>callbacks++);
  assert.equal(callbacks,1);assert.equal(h.profile.fullName,"Updated A");
 });
+
+test("a processing helper that returns null cannot confirm a profile save",async()=>{
+ const h=appSaveHarness({processing:async()=>null});
+ await assert.rejects(h.run({fullName:"Unsafe fake completion"},true),/not confirmed/);
+ assert.equal(h.profile.fullName,"Initial");
+});
