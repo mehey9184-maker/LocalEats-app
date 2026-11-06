@@ -91,3 +91,14 @@ test("Customer screen updates only verified server identity; existing UX remains
  assert.match(complete,/uploaded and confirmed saved/);
  assert.doesNotMatch(complete,/saved to Supabase \(<200KB\)!/);
 });
+
+test("server-owned profile mode does not reuse cached private fields or elevate metadata roles",()=>{
+ const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
+ assert.match(app,/const trustedProfileRole=\(_value:unknown\):UserProfile\["role"\]=>"user"/);
+ assert.match(app,/return import\.meta\.env\.VITE_PROFILE_BACKEND_ENABLED==="true"\s*\? blank : safeLocalStorageGet\("userProfile",blank\)/);
+ assert.match(app,/if\(import\.meta\.env\.VITE_PROFILE_BACKEND_ENABLED==="true"\)return;\s*if \(userProfile/);
+ assert.match(app,/if\(import\.meta\.env\.VITE_PROFILE_BACKEND_ENABLED==="true"\)\{\s*setUserProfile\(\{\s*id:session\.user\.id/);
+ assert.match(app,/setUserProfile\(_prev=>\(\{\s*id:userId,role:trustedProfileRole\(result.role\)/);
+ assert.match(app,/userProfile\.id===session\?\.user\?\.id/);
+ assert.match(app,/userProfile\.id!==uid/);
+});
