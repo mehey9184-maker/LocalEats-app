@@ -648,6 +648,7 @@ export default function App() {
     successCallback?: () => void,
     loadingLabel?: string,
     idempotencyKey?: string,
+    rethrowErrors = false,
   ) => {
     const key = idempotencyKey || "generic_" + Math.random().toString(36).substr(2, 9);
     
@@ -788,6 +789,8 @@ export default function App() {
           },
         ],
       });
+      // Form callers must distinguish a displayed error from confirmed success.
+      if (rethrowErrors) throw err;
       return null as any;
     }
   }, [setCurrentScreen]);
@@ -1901,7 +1904,7 @@ export default function App() {
       if (showSuccess) {
         await runWithProcessing(action, () => {
           if (successCallback) successCallback();
-        });
+        }, undefined, undefined, true);
       } else {
         await action();
         if (successCallback) successCallback();
@@ -2912,7 +2915,9 @@ export default function App() {
               {currentScreen === "login" && (
                 <LoginScreen
                   onLogin={() => {
-                    setCurrentScreen("login-success");
+                    // Auth restoration may already have opened Home, and the
+                    // customer can navigate before Login's feedback timer ends.
+                    setCurrentScreen((screen) => screen === "login" ? "login-success" : screen);
                   }}
                   onSignUp={() => setCurrentScreen("signup")}
                   onGuestBrowse={() => setCurrentScreen("home")}

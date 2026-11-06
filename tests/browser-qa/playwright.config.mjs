@@ -28,7 +28,7 @@ export default defineConfig({
   webServer:{
     // The config lives in tests/browser-qa, but Vite must serve the repo root.
     cwd:process.cwd(),
-    command:"./node_modules/.bin/vite --host 127.0.0.1 --port 4174 --strictPort --config vite.config.ts",
+    command:"node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4174 --strictPort --config vite.config.ts",
     stdout:"pipe",
     stderr:"pipe",
     url:"http://127.0.0.1:4174",

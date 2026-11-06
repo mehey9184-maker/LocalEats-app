@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {canManageCustomerProfile,profileDestination,shouldRedirectProtectedProfile} from "../src/lib/profileAccess.ts";
 import {isConfirmedProfileSave} from "../src/lib/profileConfirmation.ts";
-const src=path=>readFileSync(new URL(path,import.meta.url),"utf8");
+const src=path=>readFileSync(new URL(path,import.meta.url),"utf8").replace(/\r\n/g,"\n");
 const app=src("../src/App.tsx");
 const profile=src("../src/lib/profileService.ts");
 const settings=src("../src/screens/SettingsScreen.tsx");

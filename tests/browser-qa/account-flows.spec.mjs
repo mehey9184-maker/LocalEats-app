@@ -31,7 +31,7 @@ async function createAccount(request,label){
   expect(response.status()).toBe(200);
   const data=await response.json();
   expect(data.localId).toBeTruthy();
-  return{email,password,uid:data.localId};
+  return{email:data.email,password,uid:data.localId};
 }
 async function acknowledgePopiaIfShown(page){
   const accept=page.locator("#popia-legal-bar").getByRole("button",{name:"Accept",exact:true});
@@ -101,14 +101,14 @@ test("demo-account login displays registered Profile; logout revokes access",asy
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
   await expect(page.getByPlaceholder("Your full name")).toBeVisible();
-  // Keyboard activation tests the same UI handler without assuming stable
-  // scrolling/pointer hit targets; pointer usability is a separate BLOCKED gate.
-  const signOut = page.getByRole("button",{name:"Sign Out",exact:true});
-  await signOut.focus();
-  await signOut.press("Enter");
-  // Auth must be revoked across a full reload, not only visually hidden.
+  // Deliberately span the legacy delayed login + success redirect timers.
+  // A user who opens Profile immediately after login must keep that screen.
+  await page.waitForTimeout(4000);
+  await expect(page.getByPlaceholder("Your full name")).toBeVisible({timeout:2000});
+  await page.getByRole("button",{name:"Sign Out",exact:true}).click();
+  await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:20000});
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
-  await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:25000});
+  await expect(page.getByText("Explore as Guest")).toBeVisible();
   await page.getByText("Explore as Guest").click();
   await page.locator("#nav-tab-profile").click();
   await expect(page.locator("#login-email-input")).toBeVisible();
@@ -141,10 +141,8 @@ test("offline profile-save attempt never reports synchronized success",async({pa
   await page.getByPlaceholder("Your full name").fill("Offline QA edit");
   await expect(page.getByRole("button",{name:"Save Profile Changes"})).toBeVisible();
   await context.setOffline(true);
-  // Actual user pointer action, never a forced click.
-  const saveButton=page.getByRole("button",{name:"Save Profile Changes"});
-  await saveButton.focus();
-  await saveButton.press("Enter");
+  await expect.poll(()=>page.evaluate(()=>navigator.onLine)).toBe(false);
+  await page.getByRole("button",{name:"Save Profile Changes"}).click();
   await expect(page.getByText("No internet connection. Cannot save profile changes.")).toBeVisible();
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
@@ -158,11 +156,17 @@ test("failed profile API never produces a saved-success toast",async({page,reque
   await page.getByPlaceholder(/e.g. 071 234/).fill("0712345678");
   // The address must not be invented. Incomplete form or unavailable backend
   // must not produce a fabricated "profile saved to cloud" receipt.
-  // Actual user pointer action, never a forced click.
-  const saveButton=page.getByRole("button",{name:"Save Profile Changes"});
-  await saveButton.focus();
-  await saveButton.press("Enter");
-  await expect(page.getByText("Backend disabled in browser QA")).toBeVisible({timeout:15000});
+  // Record even short-lived success UI; a later error must not hide a false receipt.
+  await page.evaluate(()=>{
+    window.__qaProfileSuccessSeen=false;
+    const observer=new MutationObserver(()=>{
+      if(document.body.innerText.includes("Profile saved & updated!"))window.__qaProfileSuccessSeen=true;
+    });
+    observer.observe(document.body,{subtree:true,childList:true,characterData:true});
+  });
+  await page.getByRole("button",{name:"Save Profile Changes"}).click();
+  await expect(page.getByText("Profile save not confirmed. Your changes are pending synchronization.",{exact:true}).first()).toBeVisible({timeout:15000});
+  await expect.poll(()=>page.evaluate(()=>window.__qaProfileSuccessSeen)).toBe(false);
   await expect(page.getByText("Profile saved & updated!")).toHaveCount(0);
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
@@ -186,6 +190,6 @@ test("pointer-acceptance: Profile Save can be clicked without layout fighting",a
   await expect(page.getByPlaceholder("Your full name")).toHaveValue("QA Original",{timeout:15000});
   await page.getByPlaceholder("Your full name").fill("Pointer QA Pending");
   await page.getByRole("button",{name:"Save Profile Changes"}).click({timeout:12000});
-  await expect(page.getByText("Backend disabled in browser QA")).toBeVisible({timeout:15000});
+  await expect(page.getByText("Profile save not confirmed. Your changes are pending synchronization.",{exact:true}).first()).toBeVisible({timeout:15000});
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
