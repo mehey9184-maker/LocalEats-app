@@ -1846,23 +1846,19 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
+    // Check authorization BEFORE mutating state, cache, callbacks or the API.
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      const message = "Sign in or create an account to save your profile.";
+      setNotification({ message, type: "info" });
+      throw new Error(message);
+    }
+    const identity = auth.currentUser;
+    const isCurrent = () => auth.currentUser === identity &&
+      canManageCustomerProfile(auth.currentUser, session?.user?.id);
     const updated = { ...userProfile, ...data };
-    setUserProfile(updated);
 
     if (session?.user?.id) {
       const action = async () => {
-        // Sync user_metadata natively into Supabase Auth
-        const { error: authError } = await supabase.auth.updateUser({
-          data: {
-            full_name: updated.fullName,
-            fullName: updated.fullName,
-          }
-        });
-        
-        if (authError) {
-          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
-        }
-
         const { error } = await upsertProfileWithRPC({
           user_id: session.user.id,
           fullName: updated.fullName,
@@ -1878,27 +1874,28 @@ export default function App() {
           longitude: updated.longitude,
         });
 
-        if (error) {
-          throw error;
+        if (error) throw error;
+        if (!isCurrent()) {
+          throw new Error("Your account changed while saving. Sign in again.");
         }
+        // Do not show the edited details as saved until the API confirms them.
+        setUserProfile((prev) => isCurrent() ? updated : prev);
       };
 
       if (showSuccess) {
-        await runWithProcessing(action, () => {
-          if (successCallback) successCallback();
+        const result = await runWithProcessing(action, () => {
+          if (isCurrent() && successCallback) successCallback();
         });
+        // The existing processing helper returns null after showing an error.
+        // Do not let its swallowed failure look like an acknowledged save.
+        if (result === null) throw new Error("Profile save was not confirmed.");
+        if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
       } else {
-        // Just do the action without the success tick overlay if asked
-        try {
-          await action();
-        } catch (err: any) {
-          console.warn("Notice saving profile in background:", err);
-        } finally {
-          if (successCallback) successCallback();
-        }
+        await action();
+        if (successCallback) successCallback();
       }
     } else {
-      if (successCallback) successCallback();
+      throw new Error("A registered account is required to save profile details.");
     }
   };
 
