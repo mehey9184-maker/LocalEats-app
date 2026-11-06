@@ -1882,6 +1882,8 @@ export default function App() {
     successCallback?: () => void,
   ) => {
     const uid=session?.user?.id;
+    if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true" && userProfile.id!==uid)
+      throw Error("Your profile is still loading for this account. Please retry.");
     if(!uid||!canManageCustomerProfile(auth.currentUser,uid)){
       setNotification({type:"error",message:"Sign in with your registered account to save your profile."});
       return;
@@ -1996,17 +1998,26 @@ export default function App() {
             localStorage.setItem("remember_me_secure_token", session.access_token || "true");
           }
 
-          // Seed user profile state immediately from session metadata
+          // Seed session identity without exposing a previous account's
+          // unscoped cached profile in verified server-owned mode.
           if (session.user) {
             const uMeta = session.user.user_metadata || {};
-            setUserProfile((prev) => ({
-              ...prev,
-              id: session.user.id,
-              email: session.user.email || prev.email || "",
-              fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
-              phone: uMeta.phone || prev.phone || "",
-              role: uMeta.role || prev.role || "customer",
-            }));
+            if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"){
+              setUserProfile({
+                id:session.user.id,email:session.user.email||"",
+                fullName:"",phone:"",city:SUPPORTED_CITIES[0],
+                address:"",country:"South Africa",role:"user",
+              });
+            }else{
+              setUserProfile((prev) => ({
+                ...prev,
+                id: session.user.id,
+                email: session.user.email || prev.email || "",
+                fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
+                phone: uMeta.phone || prev.phone || "",
+                role: uMeta.role || prev.role || "customer",
+              }));
+            }
           }
 
           fetchUserProfile(session.user.id);
@@ -3058,7 +3069,7 @@ export default function App() {
                   onExplore={() => setCurrentScreen("home")}
                 />
               )}
-              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
+              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (import.meta.env.VITE_PROFILE_BACKEND_ENABLED!=="true"||userProfile.id===session?.user?.id) && (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3506,7 +3517,7 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
+              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (import.meta.env.VITE_PROFILE_BACKEND_ENABLED!=="true"||userProfile.id===session?.user?.id) && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
