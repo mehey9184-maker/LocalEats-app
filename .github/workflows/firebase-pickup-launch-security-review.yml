@@ -1,0 +1,33 @@
+name: Firebase pickup launch security — isolated review
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'security/review/firestore-pickup-launch-candidate_REVIEW_ONLY.rules'
+      - 'tests/firestore-pickup-launch-lockdown.test.cjs'
+      - '.github/workflows/firebase-pickup-launch-security-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  emulator-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73b1d18a591444 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci --no-audit --no-fund
+      - name: Exercise proposed rules against synthetic users and documents only
+        env:
+          CI: 'true'
+          FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true'
+        run: npx --yes firebase-tools@15.35.0 emulators:exec --only firestore --project demo-pickup-rules --config security/review/firebase.json "node --test tests/firestore-pickup-launch-lockdown.test.cjs"
