@@ -1,0 +1,30 @@
+name: Client Guest Profile Access Guard
+on:
+  push:
+    branches: [fix/customer-guest-profile-permissions-20261105]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  guest-profile:
+    name: Guest profile permissions, pickup regressions, TypeScript and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Use existing locked dependencies
+        run: npm ci
+      - name: Verify authenticated-only profile access and guest UI
+        run: npm run test:guest-profile-guard
+      - name: Existing pickup integration regressions
+        run: npm run test:pickup-integration
+      - name: TypeScript
+        run: npm run lint
+      - name: Client build
+        run: npm run build

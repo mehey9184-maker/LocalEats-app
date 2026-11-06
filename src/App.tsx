@@ -255,7 +255,8 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { onForegroundMessage, registerAndSyncPushToken, FirestoreService, auth } from "./lib/firebase";
+import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -438,6 +439,24 @@ export default function App() {
   }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+
+  // Guest taps on Profile open the existing Login screen immediately.
+  // Guard every entry point, including the checkout incomplete-profile route.
+  const navigateToProfile = useCallback((requested: "profile" | "complete-profile") => {
+    setCurrentScreen(profileDestination(auth.currentUser, session?.user?.id, requested));
+  }, [setCurrentScreen, session?.user?.id]);
+
+  // An authenticated Firebase account may temporarily have no formatted session
+  // during token restoration. Hide its edit form, but do NOT bounce to Login/Home.
+  // Redirect genuine guests and mismatched accounts immediately.
+  useEffect(() => {
+    if ((currentScreen === "profile" || currentScreen === "complete-profile") &&
+        !canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+        shouldRedirectProtectedProfile(auth.currentUser, session?.user?.id)) {
+      setCurrentScreen("login");
+    }
+  }, [currentScreen, session?.user?.id, setCurrentScreen]);
+
   const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
   const [appVersion, setAppVersion] = useState("4.0"); // Initialize with 4.0
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -445,34 +464,27 @@ export default function App() {
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    return safeLocalStorageGet("userProfile", {
-      fullName: "",
-      email: "",
-      phone: "",
-      city: SUPPORTED_CITIES[0],
-      address: "",
-      country: "South Africa",
-      role: "user",
-    });
+  // Cached profile data is untrusted until Firebase restores account identity.
+  const emptyCustomerProfile = (): UserProfile => ({
+    fullName: "", email: "", phone: "", city: SUPPORTED_CITIES[0],
+    address: "", country: "South Africa", role: "user",
   });
+  const [userProfile, setUserProfile] = useState<UserProfile>(emptyCustomerProfile);
 
+  // Never persist guest or previous-account private details.
   useEffect(() => {
-    if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)
+        && userProfile.id === session?.user?.id) {
       safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
-      if (!localStorage.getItem("remember_me_secure_token")) {
-        localStorage.setItem("remember_me_secure_token", userProfile.id || userProfile.email || "true");
-      }
     }
-  }, [userProfile]);
+  }, [userProfile, session?.user?.id]);
 
   // Always hold the first render until Firebase knows whether this is a
   // returning customer or a guest; IndexedDB auth is not synchronous.
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [authRestoreSlow, setAuthRestoreSlow] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    return safeLocalStorageGet("favorites", []);
-  });
+  // Global favorites cache must not leak across accounts.
+  const [favorites, setFavorites] = useState<string[]>([]);
 
   const [forcedTheme, setForcedTheme] = useState<"light" | "dark" | "high-contrast" | "default">(() => {
     try {
@@ -636,6 +648,7 @@ export default function App() {
     successCallback?: () => void,
     loadingLabel?: string,
     idempotencyKey?: string,
+    rethrowErrors = false,
   ) => {
     const key = idempotencyKey || "generic_" + Math.random().toString(36).substr(2, 9);
     
@@ -776,6 +789,8 @@ export default function App() {
           },
         ],
       });
+      // Form callers must distinguish a displayed error from confirmed success.
+      if (rethrowErrors) throw err;
       return null as any;
     }
   }, [setCurrentScreen]);
@@ -1417,7 +1432,8 @@ export default function App() {
   const subscribeToPushNotifications = useCallback(
     async (customUserId?: string) => {
       const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) return;
+      if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)
+          || targetUserId !== session?.user?.id) return;
       try {
         const permission = await Notification.requestPermission();
         if (permission === "granted") {
@@ -1438,10 +1454,8 @@ export default function App() {
       if (Notification.permission !== "denied") {
         const permission = await Notification.requestPermission();
         if (permission === "granted") {
-          if (session?.user?.id) {
-            // Sync with push notifications in background
+          if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
             subscribeToPushNotifications(session.user.id).catch(() => {});
-            registerAndSyncPushToken(session.user.id).catch(() => {});
           }
         }
       }
@@ -1469,7 +1483,14 @@ export default function App() {
     };
   }, []);
 
+  const profileReadGeneration = useRef(0);
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
+    // Do not load or create a registered profile for a guest or different UID.
+    if (!canManageCustomerProfile(auth.currentUser, userId)) return;
+    const identity = auth.currentUser;
+    const generation = ++profileReadGeneration.current;
+    const isCurrent = () => generation === profileReadGeneration.current &&
+      auth.currentUser === identity && canManageCustomerProfile(auth.currentUser, userId);
     try {
       let data: any = null;
       let error: any = null;
@@ -1477,6 +1498,7 @@ export default function App() {
       // 1. Direct Firestore profile retrieval for real-time customer identity
       try {
         const firestoreProfile = await FirestoreService.getProfile(userId);
+        if (!isCurrent()) return;
         if (firestoreProfile) {
           data = firestoreProfile;
         }
@@ -1487,17 +1509,22 @@ export default function App() {
       // 2. Primary attempt by user_id if not loaded from Firestore
       if (!data) {
         try {
+          if (!isCurrent()) return;
           const { getApiAuthHeaders } = await import("./lib/apiAuth");
+          if (!isCurrent()) return;
           const headers = await getApiAuthHeaders();
+          if (!isCurrent()) return;
           
           const response = await fetch(`/api/profiles/${userId}`, {
             headers: {
               ...headers
             }
           });
+          if (!isCurrent()) return;
           
           if (response.ok) {
             const result = await response.json();
+            if (!isCurrent()) return;
             if (result.profile) {
               data = result.profile;
             }
@@ -1510,6 +1537,7 @@ export default function App() {
         }
       }
 
+      if (!isCurrent()) return;
       const isTransientSchemaNotice =
         (error?.message &&
           (error.message.toLowerCase().includes("schema cache") ||
@@ -1523,7 +1551,8 @@ export default function App() {
       }
 
       if (data) {
-        setUserProfile((prev) => ({
+        if ((data.user_id ?? data.id) !== userId) return;
+        setUserProfile((prev) => isCurrent() ? ({
           ...prev,
           id: data.user_id || data.id || userId,
           fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
@@ -1536,15 +1565,16 @@ export default function App() {
           photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
           latitude: data.current_latitude || data.latitude || prev.latitude,
           longitude: data.current_longitude || data.longitude || prev.longitude,
-        }));
+        }) : prev);
         if (data.favorites && Array.isArray(data.favorites)) {
-          setFavorites(data.favorites);
+          setFavorites((prev) => isCurrent() ? data.favorites : prev);
         }
-      } else if (!error || error.code === "PGRST116" || !data) {
-        // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
-        // sync from current session metadata and auto-upsert to prevent empty state.
+      } else if (!error && !data) {
+        // An absent verified row may use login metadata as an *in-memory display*
+        // fallback. API 503/auth errors must never trigger an automatic profile write.
         try {
           const { data: authUserData } = await supabase.auth.getUser();
+          if (!isCurrent()) return;
           const authUser = authUserData?.user;
           if (authUser && authUser.id === userId) {
             const userMeta = authUser.user_metadata || {};
@@ -1552,33 +1582,23 @@ export default function App() {
             const fallbackPhone = userMeta.phone || "";
             const fallbackRole = userMeta.role || "customer";
 
-            setUserProfile((prev) => ({
+            setUserProfile((prev) => isCurrent() ? ({
               ...prev,
               id: userId,
               email: authUser.email || prev.email || "",
               fullName: fallbackName || prev.fullName || "",
               phone: fallbackPhone || prev.phone || "",
               role: fallbackRole,
-            }));
+            }) : prev);
 
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
+            // No silent write: only explicit user saves use the authenticated API.
           }
         } catch (authFetchErr) {
           console.warn("[Profile Sync from Auth Notice]", authFetchErr);
         }
       }
     } catch (err: any) {
+      if (!isCurrent()) return;
       const errStr = (err?.message || String(err)).toLowerCase();
       const isNetworkError =
         errStr.includes("failed to fetch") ||
@@ -1603,15 +1623,15 @@ export default function App() {
       }
 
       if (isNetworkError && retries > 0) {
-        setTimeout(() => fetchUserProfile(userId, retries - 1), 3000);
+        setTimeout(() => { if (isCurrent()) void fetchUserProfile(userId, retries - 1); }, 3000);
       }
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Only a registered, matching customer account may register private push tokens.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
+    const activeUserId = session?.user?.id;
+    if (canManageCustomerProfile(auth.currentUser, activeUserId)) {
       registerAndSyncPushToken(activeUserId).catch((err) => {
         console.warn("[FCM] Auto push token registration notice:", err);
       });
@@ -1637,10 +1657,16 @@ export default function App() {
       setUserProfile(freshProfile);
       setCart([]);
       setFavorites([]);
+      setOrders([]);
+      setNotifications([]);
+      setPendingReview(null);
+      // No account A data should follow account B on a shared device.
+      for (const key of ["cart", "favorites", "offline_orders_queue",
+        "cached_orders", "app_notifications", "pending_review",
+        "localeats_saved_cards", "localeats_saved_addresses"]) {
+        try { localStorage.removeItem(key); } catch {}
+      }
       localStorage.setItem("userProfile", JSON.stringify(freshProfile));
-      localStorage.removeItem("cart");
-      localStorage.removeItem("favorites");
-      localStorage.removeItem("offline_orders_queue");
       fetchUserProfile(session.user.id);
     }
   }, [session?.user?.id, userProfile?.id, fetchUserProfile]);
@@ -1827,28 +1853,49 @@ export default function App() {
     [runWithProcessing, setNotification],
   );
 
+  const logoutCustomer = async () => {
+    // Navigation alone does not revoke a Firebase session.
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setNotification({ type: "error", message: "Sign out failed. Please try again." });
+      return;
+    }
+    setSession(null);
+    setUserProfile(emptyCustomerProfile());
+    setFavorites([]);
+    setCart([]);
+    setOrders([]);
+    setNotifications([]);
+    setPendingReview(null);
+    for (const key of [
+      "userProfile", "remember_me_secure_token", "localeats_session",
+      "favorites", "cart", "cached_orders", "app_notifications",
+      "pending_review", "pending_cancellation", "offline_orders_queue",
+      "offline_profile_queue", "localeats_saved_cards", "localeats_saved_addresses"
+    ]) {
+      try { localStorage.removeItem(key); } catch {}
+    }
+    setCurrentScreen("splash");
+  };
+
   const handleUpdateProfile = async (
     data: any,
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
+    // Check authorization BEFORE mutating state, cache, callbacks or the API.
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      const message = "Sign in or create an account to save your profile.";
+      setNotification({ message, type: "info" });
+      throw new Error(message);
+    }
+    const identity = auth.currentUser;
+    const isCurrent = () => auth.currentUser === identity &&
+      canManageCustomerProfile(auth.currentUser, session?.user?.id);
     const updated = { ...userProfile, ...data };
-    setUserProfile(updated);
 
     if (session?.user?.id) {
       const action = async () => {
-        // Sync user_metadata natively into Supabase Auth
-        const { error: authError } = await supabase.auth.updateUser({
-          data: {
-            full_name: updated.fullName,
-            fullName: updated.fullName,
-          }
-        });
-        
-        if (authError) {
-          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
-        }
-
         const { error } = await upsertProfileWithRPC({
           user_id: session.user.id,
           fullName: updated.fullName,
@@ -1864,27 +1911,25 @@ export default function App() {
           longitude: updated.longitude,
         });
 
-        if (error) {
-          throw error;
+        if (error) throw error;
+        if (!isCurrent()) {
+          throw new Error("Your account changed while saving. Sign in again.");
         }
+        // Do not show the edited details as saved until the API confirms them.
+        setUserProfile((prev) => isCurrent() ? updated : prev);
       };
 
       if (showSuccess) {
         await runWithProcessing(action, () => {
-          if (successCallback) successCallback();
-        });
+          if (isCurrent() && successCallback) successCallback();
+        }, undefined, undefined, true);
+        if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
       } else {
-        // Just do the action without the success tick overlay if asked
-        try {
-          await action();
-        } catch (err: any) {
-          console.warn("Notice saving profile in background:", err);
-        } finally {
-          if (successCallback) successCallback();
-        }
+        await action();
+        if (successCallback) successCallback();
       }
     } else {
-      if (successCallback) successCallback();
+      throw new Error("A registered account is required to save profile details.");
     }
   };
 
@@ -2045,6 +2090,10 @@ export default function App() {
         setIsRestoringSession(false);
         return;
       }
+      // An old INITIAL_SESSION(null) arriving after Firebase has already restored
+      // a registered user must not clear that customer's data or redirect Profile.
+      if (!session && _event !== "SIGNED_OUT" &&
+          auth.currentUser && !auth.currentUser.isAnonymous) return;
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
@@ -2065,8 +2114,15 @@ export default function App() {
         });
         requestNotificationPermission();
       } else {
-        if (_event === "SIGNED_OUT") {
-          localStorage.removeItem("remember_me_secure_token");
+        // A previous account's details must not remain visible after sign-out.
+        setUserProfile(emptyCustomerProfile());
+        setFavorites([]);
+        setOrders([]);
+        setNotifications([]);
+        setPendingReview(null);
+        for (const key of ["userProfile", "favorites", "cached_orders",
+          "app_notifications", "pending_review", "remember_me_secure_token"]) {
+          try { localStorage.removeItem(key); } catch {}
         }
         setCurrentScreen((prev) => {
           if (_event === "SIGNED_OUT") {
@@ -2160,7 +2216,8 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const historyUserId = session?.user?.id;
+  const historyUserId = canManageCustomerProfile(auth.currentUser, session?.user?.id)
+    ? session!.user.id : null;
   const [pickupHistory, setPickupHistory] = useState<{
     userId: string; orders: PickupOrder[] | null; error: boolean; refreshing: boolean;
   } | null>(null);
@@ -2302,8 +2359,8 @@ export default function App() {
     }
     prevFavoritesJsonRef.current = currJson;
 
-    // Sync favorites to profile if session exists
-    if (session?.user?.id) {
+    // Guest browsing must never start an account profile write.
+    if (canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
       upsertProfileWithRPC({
         user_id: session.user.id,
         favorites,
@@ -2315,29 +2372,23 @@ export default function App() {
 
   const toggleFavorite = useCallback(
     async (shopId: string) => {
-      if (!session && !userProfile?.id) {
-        showAlert(
-          "Login Required",
-          "Please sign in or create an account to follow stores.",
-        );
-        setPreviousScreen(currentScreen);
+      if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+        showAlert("Login Required", "Please sign in to follow stores.");
         setCurrentScreen("login");
         return;
       }
-
+      const targetUserId = session!.user.id;
       const isFollowing = favorites.includes(shopId);
-      const targetUserId = session?.user?.id || userProfile?.id;
-      setFavorites((prev) =>
-        isFollowing ? prev.filter((id) => id !== shopId) : [...prev, shopId],
-      );
-      triggerHaptic();
-
-      if (targetUserId) {
-        if (isFollowing) {
-          FirestoreService.unfollowShop(targetUserId, shopId).catch(console.warn);
-        } else {
-          FirestoreService.followShop(targetUserId, shopId).catch(console.warn);
-        }
+      try {
+        if (isFollowing) await FirestoreService.unfollowShop(targetUserId, shopId);
+        else await FirestoreService.followShop(targetUserId, shopId);
+        if (!canManageCustomerProfile(auth.currentUser, targetUserId)) return;
+        setFavorites(prev => isFollowing ? prev.filter(id => id !== shopId)
+          : prev.includes(shopId) ? prev : [...prev, shopId]);
+        triggerHaptic();
+      } catch (error) {
+        console.warn("[Favorites] Save not confirmed:", error);
+        showAlert("Could not save", "Your favorite was not saved. Please try again.");
       }
     },
     [
@@ -2583,104 +2634,9 @@ export default function App() {
     [triggerHaptic, setCart],
   );
 
-  useEffect(() => {
-    localStorage.setItem("userProfile", JSON.stringify(userProfile));
+  // Explicit, authenticated edits are the only profile-save trigger. A delayed
+  // render/favorites/background effect must never send stale personal details.
 
-    // Sync with Supabase if session exists
-    if (session?.user?.id) {
-      const timer = setTimeout(async () => {
-        if (!navigator.onLine) return;
-        try {
-          const { error } = await upsertProfileWithRPC({
-            user_id: session.user.id,
-            fullName: userProfile.fullName,
-            email: userProfile.email,
-            phone: userProfile.phone,
-            city: userProfile.city,
-            address: userProfile.address,
-            country: userProfile.country,
-            role: userProfile.role,
-            photo_url: userProfile.photoURL,
-            language: userProfile.language || "en",
-            latitude: userProfile.latitude,
-            longitude: userProfile.longitude,
-            favorites: favorites,
-          });
-
-          if (error) {
-            const isFetchErr = 
-              error.message?.includes("Failed to fetch") || 
-              error.message?.includes("fetch") || 
-              error.message?.includes("upstream connect error") ||
-              error.message?.includes("connection timeout") ||
-              error.message?.includes("disconnect/reset") ||
-              (error.details && error.details.includes("Failed to fetch"));
-
-            const isMissingColumnError = 
-              error.code === "PGRST204" ||
-              error.message?.includes("column");
-
-            if (isMissingColumnError) {
-              // Graceful degradation: sync only essential fields known to exist
-              const safePayload = {
-                user_id: session.user.id,
-                fullName: userProfile.fullName,
-                email: userProfile.email,
-                phone: toDBPhone(userProfile.phone),
-                role: userProfile.role || "user",
-                city: userProfile.city || "",
-                address: userProfile.address || "",
-                country: userProfile.country || "South Africa",
-                photo_url: userProfile.photoURL || "",
-                language: userProfile.language || "en",
-                updated_at: new Date().toISOString(),
-              };
-              try {
-                const { getApiAuthHeaders } = await import("./lib/apiAuth");
-                const headers = await getApiAuthHeaders();
-                const response = await fetch('/api/profiles', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...headers
-                  },
-                  body: JSON.stringify(safePayload)
-                });
-                
-                if (!response.ok) {
-                  console.warn("Notice syncing fallback profile to Supabase:", await response.text());
-                } else {
-                  console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
-                }
-              } catch (e) {
-                console.warn("Silent failure in safe profile sync fallback:", e);
-              }
-
-              setNotification({
-                message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
-                type: "info",
-              });
-            } else {
-              const errStr = (error.message || "").toLowerCase();
-              if (errStr.includes("jwt expired") || errStr.includes("invalid jwt") || errStr.includes("token expired")) {
-                if (typeof window !== "undefined") {
-                  window.dispatchEvent(new CustomEvent("supabase-jwt-expired"));
-                }
-              }
-              if (isFetchErr) {
-                console.log("[Profile Sync] Connection offline or blocked. Profile saved in local state.");
-              } else {
-                console.warn("Notice syncing profile to Supabase:", error.message || error);
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Sync error:", err);
-        }
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [userProfile, session, favorites]);
 
   if (isRestoringSession) {
     // Keep one Home-shaped loading view in place until the persisted account
@@ -2978,7 +2934,9 @@ export default function App() {
               {currentScreen === "login" && (
                 <LoginScreen
                   onLogin={() => {
-                    setCurrentScreen("login-success");
+                    // Auth restoration may already have opened Home, and the
+                    // customer can navigate before Login's feedback timer ends.
+                    setCurrentScreen((screen) => screen === "login" ? "login-success" : screen);
                   }}
                   onSignUp={() => setCurrentScreen("signup")}
                   onGuestBrowse={() => setCurrentScreen("home")}
@@ -3007,11 +2965,11 @@ export default function App() {
               )}
               {currentScreen === "success" && (
                 <SuccessScreen
-                  onCompleteProfile={() => setCurrentScreen("complete-profile")}
+                  onCompleteProfile={() => navigateToProfile("complete-profile")}
                   onExplore={() => setCurrentScreen("home")}
                 />
               )}
-              {currentScreen === "complete-profile" && (
+              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3028,7 +2986,7 @@ export default function App() {
                   onHome={() => {
                     setCurrentScreen("home");
                   }}
-                  onViewProfile={() => setCurrentScreen("profile")}
+                  onViewProfile={() => navigateToProfile("profile")}
                   onBack={() => setCurrentScreen("login")}
                 />
               )}
@@ -3050,7 +3008,7 @@ export default function App() {
                     setCurrentScreen("settings");
                   }}
                   onProfile={() => {
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onCheckout={() => {
                     setCurrentScreen("checkout");
@@ -3134,7 +3092,7 @@ export default function App() {
                   </Suspense>
                 </WidgetErrorBoundary>
               )}
-              {currentScreen === "review" && pendingReview && (
+              {currentScreen === "review" && pendingReview && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
@@ -3154,89 +3112,10 @@ export default function App() {
                       setCurrentScreen("home");
                     }
                   }}
-                  onSubmit={async (
-                    rating,
-                    comment,
-                    riderRating,
-                    riderComment,
-                  ) => {
-                    try {
-                      // 1. Save Shop Review
-                      const dbShopId = typeof pendingReview.shopId === "number"
-                        ? pendingReview.shopId
-                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
-
-                      const dbOrderId = typeof pendingReview.orderId === "number"
-                        ? pendingReview.orderId
-                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
-                          ? pendingReview.orderId
-                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
-
-                      const { error: shopErr } = await supabase
-                        .from("reviews")
-                        .insert({
-                          shop_id: dbShopId,
-                          user_id: userProfile?.id || session?.user?.id,
-                          username: userProfile.fullName || "Anonymous",
-                          rating,
-                          comment,
-                          createdAt: new Date().toISOString(),
-                        });
-
-                      if (shopErr) throw shopErr;
-
-                      // 2. Save Rider Review if exists
-                      const { data: order } = await supabase
-                        .from("orders")
-                        .select("rider_id")
-                        .eq("id", dbOrderId)
-                        .single();
-
-                      if (order?.rider_id && riderRating) {
-                        await supabase
-                          .from("orders")
-                          .update({
-                            rider_rating: riderRating,
-                            rider_rating_comment: riderComment,
-                          })
-                          .eq("id", dbOrderId);
-
-                        // Update rider profile average rating
-                        const { data: rider } = await supabase
-                          .from("rider_profiles")
-                          .select("rating, rating_count")
-                          .eq("id", order.rider_id)
-                          .single();
-
-                        if (rider) {
-                          const currentRating = rider.rating || 5;
-                          const currentCount = rider.rating_count || 0;
-                          const newCount = currentCount + 1;
-                          const newRating =
-                            (currentRating * currentCount + riderRating) /
-                            newCount;
-
-                          await supabase
-                            .from("rider_profiles")
-                            .update({
-                              rating: Number(newRating.toFixed(1)),
-                              rating_count: newCount,
-                            })
-                            .eq("id", order.rider_id);
-                        }
-                      }
-
-                      showAlert(
-                        "Feedback Submitted",
-                        "Thank you for helping us improve! 🔥",
-                      );
-                    } catch (err) {
-                      console.error("Error saving review:", err);
-                      showAlert("Error", "Failed to save your review.");
-                    }
-
-                    setPendingReview(null);
-                    setCurrentScreen("order-history");
+                  onSubmit={async () => {
+                    // The legacy Supabase facade is a mock; a 200-like result
+                    // is not proof that a review was received by the shop.
+                    showAlert("Reviews unavailable", "Review submission will return after the verified pickup review API is ready.");
                   }}
                 />
               )}
@@ -3354,27 +3233,26 @@ export default function App() {
               ))}
               {currentScreen === "settings" && (
                 <SettingsScreen
-                  userProfile={userProfile}
+                  userProfile={canManageCustomerProfile(auth.currentUser, session?.user?.id)
+                    ? userProfile : emptyCustomerProfile()}
                   setUserProfile={setUserProfile}
                   forcedTheme={forcedTheme}
                   onSetForcedTheme={setForcedTheme}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
-                  onLogout={() => setCurrentScreen("splash")}
+                  onLogout={() => { void logoutCustomer(); }}
                   onProfile={() => {
                     setPreviousScreen("settings");
-                    setCurrentScreen("profile");
+                    navigateToProfile("profile");
                   }}
                   onOrderHistory={() => {
                     setPreviousScreen("settings");
                     setCurrentScreen("order-history");
                   }}
                   onAdminOrders={() => {
-                    setPreviousScreen("settings");
-                    setCurrentScreen("admin-orders");
+                    showAlert("Not available", "Admin access requires verified authorization.");
                   }}
                   onShopDashboard={() => {
-                    setPreviousScreen("settings");
-                    setCurrentScreen("shop-dashboard");
+                    showAlert("Merchant sign in", "Open your Merchant Dashboard with an approved shop account.");
                   }}
                   onContactUs={() => {
                     setPreviousScreen("settings");
@@ -3460,7 +3338,7 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "profile" && (
+              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
@@ -3470,27 +3348,7 @@ export default function App() {
                   }}
                   userProfile={userProfile}
                   completedOrdersCount={orders.filter(o => o.status.toLowerCase() === "completed" || o.status.toLowerCase() === "delivered").length}
-                  onLogout={async () => {
-                    await supabase.auth.signOut();
-                    // Clear sensitive data on logout
-                    localStorage.removeItem("remember_me_secure_token");
-                    localStorage.removeItem("cart");
-                    localStorage.removeItem("userProfile");
-                    localStorage.removeItem("favorites");
-                    localStorage.removeItem("pending_review");
-                    setCart([]);
-                    setFavorites([]);
-                    setUserProfile({
-                      fullName: "",
-                      email: "",
-                      phone: "",
-                      city: "",
-                      address: "",
-                      country: "South Africa",
-                      role: "user",
-                    });
-                    setCurrentScreen("splash");
-                  }}
+                  onLogout={logoutCustomer}
                   setNotification={setNotification}
                   triggerHaptic={triggerHaptic}
                   isOnline={isOnline}
@@ -3515,7 +3373,7 @@ export default function App() {
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
-                        setCurrentScreen("complete-profile");
+                        navigateToProfile("complete-profile");
                       }}
                       cart={cart}
                       setCart={setCart}
@@ -3650,7 +3508,10 @@ export default function App() {
           <BottomNavigation
             currentScreen={currentScreen}
             onNavigate={(targetScreen) => {
-              setPreviousScreen(currentScreen);
+              if (targetScreen === "profile") {
+                navigateToProfile("profile");
+                return;
+              }
               setCurrentScreen(targetScreen);
             }}
             activeOrdersCount={
@@ -7053,7 +6914,7 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 pb-32 space-y-8">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
           <input
@@ -7452,11 +7313,12 @@ function ProfileScreen({
         {/* Buttons */}
         <div className="pt-8 space-y-4">
           <button
+            type="button"
             onClick={handleUpdateProfile}
             disabled={isSaving || uploading}
-            className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
+            className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-colors text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
-                ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
+                ? "bg-emerald-600 text-white shadow-emerald-600/30"
                 : isDirty
                 ? "bg-primary text-white shadow-primary/20 hover:bg-primary/90 active:scale-95"
                 : "bg-slate-900 dark:bg-slate-800 text-white shadow-slate-900/10 hover:bg-slate-800"
@@ -7486,8 +7348,9 @@ function ProfileScreen({
           </button>
 
           <button
+            type="button"
             onClick={onLogout}
-            className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2 text-sm cursor-pointer"
+            className="w-full py-4 bg-slate-100 dark:bg-slate-900 dark:text-slate-200 text-slate-700 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-2 text-sm cursor-pointer"
           >
             <LogOut className="w-5 h-5" />
             Sign Out
@@ -8481,35 +8344,14 @@ function StoreInfoScreen({
   }, [fetchReviews]);
 
   const handleSubmitReview = async () => {
-    if (!isOnline) {
-      showAlert(
-        "Offline Mode",
-        "Connectivity is down. We cannot post your review right now. Please try again when back online! 🍻",
-      );
+    if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+      showAlert("Sign in required", "Please sign in to leave a shop review.");
+      setCurrentScreen("login");
       return;
     }
-    if (!newComment.trim() || !userProfile) return;
-    setIsSubmittingReview(true);
-    try {
-      await FirestoreService.addReview(String(shop.id), {
-        user_id: userProfile?.id || session?.user?.id,
-        username: userProfile.fullName || "Anonymous",
-        user_name: userProfile.fullName || "Anonymous",
-        rating: newRating,
-        comment: newComment,
-      });
-
-      setShowReviewForm(false);
-      setNewComment("");
-      setNewRating(5);
-      fetchReviews();
-      showAlert("Success", "Thank you for your review!");
-    } catch (error) {
-      console.error("Error submitting review:", error);
-      showAlert("Error", "Failed to submit review. Please try again.");
-    } finally {
-      setIsSubmittingReview(false);
-    }
+    // Reviews are server-authoritative. Do not post directly to public Firestore
+    // until the verified pickup/order eligibility API has been released.
+    showAlert("Reviews unavailable", "Reviews will reopen after verified pickup-order checks are ready.");
   };
 
   return (

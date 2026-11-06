@@ -40,8 +40,9 @@ export function ContactScreen({
       showAlert("Message Sent", "Thank you! Our support team will get back to you shortly.", "success");
     } catch (err: any) {
       console.warn("Error submitting contact message:", err);
-      showAlert("Message Received", "Thank you! We have logged your inquiry and will respond soon.", "info");
-      setSent(true);
+      // A failed network/Firestore write is not proof that support received it.
+      showAlert("Message Not Sent", "Your message was not delivered. Please try again.", "error");
+      setSent(false);
     } finally {
       setSubmitting(false);
     }

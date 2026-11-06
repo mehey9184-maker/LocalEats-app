@@ -1,0 +1,27 @@
+name: Client Account Trust and Guest Regression
+on:
+  push:
+    branches: [fix/client-account-trust-audit-20261106]
+  pull_request:
+    branches: [fix/customer-guest-profile-permissions-20261105]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  account-trust:
+    name: Guest/identity, profile, pickup, TypeScript and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:account-trust
+      - run: node --experimental-strip-types --test tests/customer-login-navigation.test.mjs tests/customer-login-lifetime.test.mjs tests/customer-login-identity.test.mjs tests/customer-profile-read-isolation.test.mjs tests/customer-profile-write-isolation.test.mjs
+      - run: npm run test:guest-profile-guard
+      - run: npm run test:pickup-integration
+      - run: npm run lint
+      - run: npm run build

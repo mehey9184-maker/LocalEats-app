@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:pickup-integration": "node --experimental-strip-types --test tests/original-pickup.test.mjs"
+    "test:pickup-integration": "node --experimental-strip-types --test tests/original-pickup.test.mjs",
+    "test:guest-profile-guard": "node --experimental-strip-types --test tests/customer-guest-profile-guard.test.mjs",
+    "test:account-trust": "node --experimental-strip-types --test tests/customer-account-trust.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

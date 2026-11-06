@@ -105,6 +105,9 @@ export const supabase: any = {
       try {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
         const session = await formatSession(userCredential.user);
+        if (auth.currentUser !== userCredential.user) {
+          return { data: { session: null, user: null }, error: { message: "Your account changed while signing in. Please try again." } };
+        }
         return { data: { session, user: session.user }, error: null };
       } catch (e) {
         let msg = "Invalid email or password";
