@@ -40,7 +40,7 @@ test("guest Profile and Complete Profile navigate straight to Login",()=>{
 test("guest profile save refuses success before modifying local state",()=>{
   const handler=app.slice(app.indexOf("  const handleUpdateProfile = async ("),app.indexOf("  useEffect(() => {",app.indexOf("  const handleUpdateProfile = async (")));
   assert.match(handler,/if \(!canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\)/);
-  assert.ok(handler.indexOf("if (!canManageCustomerProfile")<handler.indexOf("setUserProfile(updated)"));
+  assert.ok(handler.indexOf("if (!canManageCustomerProfile")<handler.indexOf("setUserProfile((prev)"));
   assert.match(handler,/throw new Error\(message\)/);
   assert.doesNotMatch(handler,/else \{\s*if \(successCallback\) successCallback\(\)/);
 });
@@ -50,7 +50,8 @@ test("guest/profile queue and delayed sync paths require the active registered U
   const upsert=service.slice(service.indexOf("export async function upsertProfileWithRPC"));
   assert.ok(sync.indexOf("!canManageCustomerProfile")<sync.indexOf("fetch('/api/profiles'"));
   assert.ok(upsert.indexOf("!canManageCustomerProfile")<upsert.indexOf('localStorage.getItem("userProfile")'));
-  assert.match(service,/if \(!canManageCustomerProfile\(auth.currentUser, userId\)\) return;/);
+  assert.match(service,/const isCurrent = \(\) => auth.currentUser === identity && canManageCustomerProfile\(auth.currentUser, userId\)/);
+  assert.match(service,/if \(!isCurrent\(\)\) return;/);
   assert.match(service,/if \(!canManageCustomerProfile\(auth.currentUser, userId\)\) continue;/);
   assert.match(app,/if \(canManageCustomerProfile\(auth.currentUser, session\?\.user\?\.id\)\)/);
   assert.match(app,/if \(!canManageCustomerProfile\(auth.currentUser, userId\)\) return;/);

@@ -82,7 +82,7 @@ test("profiles are successful only with an HTTP JSON owner receipt",()=>{
  assert.doesNotMatch(profile,/FirestoreService\.saveProfile/);
  assert.doesNotMatch(profile,/cached: true, offline: true, retryScheduled: true \}, error: null/);
  const save=getSection(app,"  const handleUpdateProfile = async (","  useEffect(() => {");
- assert.ok(save.indexOf("if (error) throw error")<save.indexOf("setUserProfile(updated)"));
+ assert.ok(save.indexOf("if (error) throw error")<save.indexOf("setUserProfile((prev)"));
 });
 
 test("profile photo completion awaits confirmed profile update",()=>{

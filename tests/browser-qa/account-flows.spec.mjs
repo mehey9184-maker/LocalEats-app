@@ -65,6 +65,7 @@ async function browseAsGuest(page){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
   await acknowledgePopiaIfShown(page);
+  await chooseEssentialCookiesIfNeeded(page);
   await page.getByText("Explore as Guest").click();
   await expect(page.locator("#nav-tab-profile")).toBeVisible({timeout:25000});
   await chooseEssentialCookiesIfNeeded(page);
@@ -73,6 +74,7 @@ async function login(page,account){
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:30000});
   await acknowledgePopiaIfShown(page);
+  await chooseEssentialCookiesIfNeeded(page);
   const start=page.getByRole("button",{name:"Log In",exact:true});
   await expect(start).toBeVisible({timeout:20000});
   await start.click();
@@ -171,25 +173,27 @@ test("failed profile API never produces a saved-success toast",async({page,reque
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });
 
-test("pointer-acceptance: Profile Sign Out is stable and revokes authentication",async({page,request})=>{
+test("pointer-acceptance: Profile Sign Out is stable and revokes authentication",async({page,request,isMobile})=>{
   const account=await createAccount(request,"pointer-logout");
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
   await expect(page.getByPlaceholder("Your full name")).toBeVisible();
   // No force/dispatchEvent: this is a real mouse interaction acceptance gate.
-  await page.getByRole("button",{name:"Sign Out",exact:true}).click({timeout:12000});
+  const signOut=page.getByRole("button",{name:"Sign Out",exact:true});
+  if(isMobile)await signOut.tap({timeout:12000});else await signOut.click({timeout:12000});
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:20000});
 });
 
-test("pointer-acceptance: Profile Save can be clicked without layout fighting",async({page,request})=>{
+test("pointer-acceptance: Profile Save can be clicked without layout fighting",async({page,request,isMobile})=>{
   const account=await createAccount(request,"pointer-save");
   await seedFakeProfile(request,account);
   await login(page,account);
   await page.locator("#nav-tab-profile").click();
   await expect(page.getByPlaceholder("Your full name")).toHaveValue("QA Original",{timeout:15000});
   await page.getByPlaceholder("Your full name").fill("Pointer QA Pending");
-  await page.getByRole("button",{name:"Save Profile Changes"}).click({timeout:12000});
+  const save=page.getByRole("button",{name:"Save Profile Changes"});
+  if(isMobile)await save.tap({timeout:12000});else await save.click({timeout:12000});
   await expect(page.getByText("Profile save not confirmed. Your changes are pending synchronization.",{exact:true}).first()).toBeVisible({timeout:15000});
   await expect(page.getByText("Profile Saved & Synchronized")).toHaveCount(0);
 });

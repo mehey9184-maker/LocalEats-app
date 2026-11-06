@@ -6,6 +6,10 @@ export default defineConfig({
   fullyParallel:false,
   retries:0,
   workers:1,
+  projects:[
+    {name:"desktop",use:{viewport:{width:1280,height:720}}},
+    {name:"mobile",use:{viewport:{width:390,height:844},isMobile:true,hasTouch:true}},
+  ],
   timeout:60000,
   expect:{timeout:20000},
   reporter:[["line"],["html",{outputFolder:"playwright-report",open:"never"}]],

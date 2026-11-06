@@ -1483,9 +1483,14 @@ export default function App() {
     };
   }, []);
 
+  const profileReadGeneration = useRef(0);
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     // Do not load or create a registered profile for a guest or different UID.
     if (!canManageCustomerProfile(auth.currentUser, userId)) return;
+    const identity = auth.currentUser;
+    const generation = ++profileReadGeneration.current;
+    const isCurrent = () => generation === profileReadGeneration.current &&
+      auth.currentUser === identity && canManageCustomerProfile(auth.currentUser, userId);
     try {
       let data: any = null;
       let error: any = null;
@@ -1493,6 +1498,7 @@ export default function App() {
       // 1. Direct Firestore profile retrieval for real-time customer identity
       try {
         const firestoreProfile = await FirestoreService.getProfile(userId);
+        if (!isCurrent()) return;
         if (firestoreProfile) {
           data = firestoreProfile;
         }
@@ -1503,17 +1509,22 @@ export default function App() {
       // 2. Primary attempt by user_id if not loaded from Firestore
       if (!data) {
         try {
+          if (!isCurrent()) return;
           const { getApiAuthHeaders } = await import("./lib/apiAuth");
+          if (!isCurrent()) return;
           const headers = await getApiAuthHeaders();
+          if (!isCurrent()) return;
           
           const response = await fetch(`/api/profiles/${userId}`, {
             headers: {
               ...headers
             }
           });
+          if (!isCurrent()) return;
           
           if (response.ok) {
             const result = await response.json();
+            if (!isCurrent()) return;
             if (result.profile) {
               data = result.profile;
             }
@@ -1526,6 +1537,7 @@ export default function App() {
         }
       }
 
+      if (!isCurrent()) return;
       const isTransientSchemaNotice =
         (error?.message &&
           (error.message.toLowerCase().includes("schema cache") ||
@@ -1539,7 +1551,8 @@ export default function App() {
       }
 
       if (data) {
-        setUserProfile((prev) => ({
+        if ((data.user_id ?? data.id) !== userId) return;
+        setUserProfile((prev) => isCurrent() ? ({
           ...prev,
           id: data.user_id || data.id || userId,
           fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
@@ -1552,15 +1565,16 @@ export default function App() {
           photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
           latitude: data.current_latitude || data.latitude || prev.latitude,
           longitude: data.current_longitude || data.longitude || prev.longitude,
-        }));
+        }) : prev);
         if (data.favorites && Array.isArray(data.favorites)) {
-          setFavorites(data.favorites);
+          setFavorites((prev) => isCurrent() ? data.favorites : prev);
         }
       } else if (!error && !data) {
         // An absent verified row may use login metadata as an *in-memory display*
         // fallback. API 503/auth errors must never trigger an automatic profile write.
         try {
           const { data: authUserData } = await supabase.auth.getUser();
+          if (!isCurrent()) return;
           const authUser = authUserData?.user;
           if (authUser && authUser.id === userId) {
             const userMeta = authUser.user_metadata || {};
@@ -1568,14 +1582,14 @@ export default function App() {
             const fallbackPhone = userMeta.phone || "";
             const fallbackRole = userMeta.role || "customer";
 
-            setUserProfile((prev) => ({
+            setUserProfile((prev) => isCurrent() ? ({
               ...prev,
               id: userId,
               email: authUser.email || prev.email || "",
               fullName: fallbackName || prev.fullName || "",
               phone: fallbackPhone || prev.phone || "",
               role: fallbackRole,
-            }));
+            }) : prev);
 
             // No silent write: only explicit user saves use the authenticated API.
           }
@@ -1584,6 +1598,7 @@ export default function App() {
         }
       }
     } catch (err: any) {
+      if (!isCurrent()) return;
       const errStr = (err?.message || String(err)).toLowerCase();
       const isNetworkError =
         errStr.includes("failed to fetch") ||
@@ -1608,7 +1623,7 @@ export default function App() {
       }
 
       if (isNetworkError && retries > 0) {
-        setTimeout(() => fetchUserProfile(userId, retries - 1), 3000);
+        setTimeout(() => { if (isCurrent()) void fetchUserProfile(userId, retries - 1); }, 3000);
       }
     }
   }, []);
@@ -1874,6 +1889,9 @@ export default function App() {
       setNotification({ message, type: "info" });
       throw new Error(message);
     }
+    const identity = auth.currentUser;
+    const isCurrent = () => auth.currentUser === identity &&
+      canManageCustomerProfile(auth.currentUser, session?.user?.id);
     const updated = { ...userProfile, ...data };
 
     if (session?.user?.id) {
@@ -1894,17 +1912,18 @@ export default function App() {
         });
 
         if (error) throw error;
-        if (!canManageCustomerProfile(auth.currentUser, session?.user?.id)) {
+        if (!isCurrent()) {
           throw new Error("Your account changed while saving. Sign in again.");
         }
         // Do not show the edited details as saved until the API confirms them.
-        setUserProfile(updated);
+        setUserProfile((prev) => isCurrent() ? updated : prev);
       };
 
       if (showSuccess) {
         await runWithProcessing(action, () => {
-          if (successCallback) successCallback();
+          if (isCurrent() && successCallback) successCallback();
         }, undefined, undefined, true);
+        if (!isCurrent()) throw new Error("Your account changed while saving. Sign in again.");
       } else {
         await action();
         if (successCallback) successCallback();
