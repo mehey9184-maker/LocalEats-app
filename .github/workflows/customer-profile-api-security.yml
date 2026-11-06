@@ -1,0 +1,35 @@
+name: Customer Profile API Ownership and Durable-Receipt Guard
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - server.ts
+      - src/services/profileOwnership.ts
+      - tests/customer-profile-api-security.test.mjs
+      - docs/CLIENT_PROFILE_API_SECURITY_20261106.md
+      - .github/workflows/customer-profile-api-security.yml
+permissions:
+  contents: read
+jobs:
+  profile-api-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Reject account spoofing, role escalation and fake success
+        run: node --experimental-strip-types --test tests/customer-profile-api-security.test.mjs
+      - name: Pickup-only customer regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/customer-guest-profile-main-safe.test.mjs tests/customer-real-logout-main-safe.test.mjs
+      - name: Full TypeScript and build
+        run: |
+          npm run lint
+          npm run build
