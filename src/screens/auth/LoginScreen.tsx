@@ -131,7 +131,7 @@ export function LoginScreen({
           city: "Johannesburg",
           address: "",
           country: "South Africa",
-          role: "customer",
+          role: "user", // UI role is ordinary Customer; never a staff role from metadata.
         };
 
         // Immediately update localStorage and wipe any outdated cached data
