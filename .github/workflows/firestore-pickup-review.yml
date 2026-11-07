@@ -30,4 +30,4 @@ jobs:
         env:
           CI: 'true'
           FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true'
-        run: npx --yes firebase-tools@15.35.0 emulators:exec --only firestore --project demo-pickup-rules --config security/review/firebase.json "node --test tests/firestore-pickup-review.test.cjs"
+        run: npx --yes firebase-tools@15.35.0 emulators:exec --only firestore --project demo-pickup-rules --config security/review/firebase.json "node --test tests/firestore-pickup-review.test.cjs && node security/review/check-narrow-pickup-rules.cjs && node security/review/check-profile-push-rules.cjs"

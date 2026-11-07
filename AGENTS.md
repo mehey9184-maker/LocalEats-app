@@ -137,3 +137,6 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+## Pickup Firestore review candidate — 2026-11-07
+The review-only rules and synthetic emulator checks are in security/review. They cover unrelated rider profile and order reads, protected order-field mutations and contact-only registered profile writes. Merchant PR #94 is a rollout prerequisite. The active Firebase configuration does not reference this candidate.
