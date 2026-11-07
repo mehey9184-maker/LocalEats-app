@@ -51,6 +51,7 @@ export function hasPendingPickupCancellation(order:PickupOrder):boolean {
 }
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
  if(!pickupOrderingEnabled())blockPickupSubmission();
+ if(review && review.quote.can_submit !== true)throw new Error("Pickup ordering is not available for this quote.");
  const uid=auth.currentUser?.uid;
  if(!uid)throw new Error("Sign in before submitting an order.");
  const key=`pickup-create:${uid}`;

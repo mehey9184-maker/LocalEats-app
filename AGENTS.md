@@ -135,5 +135,8 @@ Customer special instructions are bounded to 500 characters per server menu line
 ## Startup guide sequencing — 2026-11-05
 StartupExperience coordinates the existing privacy and cookie prompts before mounting optional Home guides. One controller sequences overview then interactive guidance, cancels delayed work after Skip/unmount and stores dismissal locally. Help can request either guide from other browsing screens; the request routes to Home and waits for outstanding privacy choices. Escape dismisses the tour, Tab stays within the active guide, reduced motion removes spotlight travel, and target measurement no longer scrolls on every scroll event. The debug red outline is removed. Malformed cookie preferences reopen the choices. Consent choices and production ordering flags are unchanged. Regression coverage includes the controller and actual startup components at 390×844 and 320×568, including reduced motion and blocked external network requests.
 
+## Customer first paint — 2026-11-07
+The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
 ## Pickup Firestore review candidate — 2026-11-07
 The review-only rules and synthetic emulator checks are in security/review. They cover unrelated rider profile and order reads plus protected order-field mutations. The active Firebase configuration does not reference this candidate.

@@ -172,5 +172,8 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 The existing Super Admin approval workflow, Merchant effective availability, and Customer original UI must agree: approval makes the store eligible for public browsing, **not automatically open for ordering**. A coordinated isolated Customer + API draft now retains nearby approved closed shops for viewing their actual menus and prices. The Customer maps server `is_active` **boolean** faithfully, keeps original cards navigable even when closed, and re-checks shop status before the quantity modal can add to cart; the existing MenuItemCard Closed label and server pickup quote/create gates remain in force. Public API still filters to approved, nonarchived stores, original 4 km customer radius, and configured Tembisa/Ivory Park pilot. No unapproved shop becomes browseable and no live ordering is enabled. Both draft branches require CI, independent review, browser tests and distinct Production approval. This does **not** start merchant subscription free periods: those begin only on genuine trading after approval.
 
+## Customer first paint — 2026-11-07
+The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
 ## Pickup Firestore review candidate — 2026-11-07
 The review-only rules and synthetic emulator checks are in security/review. They cover unrelated rider profile and order reads plus protected order-field mutations. The active Firebase configuration does not reference this candidate.
