@@ -109,8 +109,29 @@ service cloud.firestore {
     // 4. USERS (PROFILES)
     // =====================================================================
     match /users/{userId} {
-      // Authenticated users read and write only their own profile
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      function ownsRegisteredProfile() {
+        return isAuthenticated() && request.auth.uid == userId &&
+          request.auth.token.firebase.sign_in_provider != 'anonymous';
+      }
+
+      function validContactProfile(data) {
+        return data.keys().hasAll(['updated_at']) &&
+          data.updated_at is string && data.updated_at.size() <= 40 &&
+          data.get('full_name', '') is string && data.get('full_name', '').size() <= 120 &&
+          data.get('phone', '') is string && data.get('phone', '').size() <= 32;
+      }
+
+      allow get: if ownsRegisteredProfile();
+      allow create: if ownsRegisteredProfile() &&
+        request.resource.data.keys().hasOnly(['uid', 'email', 'full_name', 'phone', 'created_at', 'updated_at']) &&
+        request.resource.data.get('uid', userId) == userId &&
+        request.resource.data.get('email', '') is string && request.resource.data.get('email', '').size() <= 320 &&
+        request.resource.data.get('created_at', '') is string && request.resource.data.get('created_at', '').size() <= 40 &&
+        validContactProfile(request.resource.data);
+      // Preserve historical role fields, but disallow client additions, changes and removals.
+      allow update: if ownsRegisteredProfile() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['full_name', 'phone', 'updated_at']) &&
+        validContactProfile(request.resource.data);
     }
 
     // =====================================================================
