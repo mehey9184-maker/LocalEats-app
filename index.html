@@ -103,6 +103,14 @@
       #startup-shell .startup-title { width: 208px; background: var(--shell-line); border-radius: 8px; }
       #startup-shell .startup-subtitle { width: 160px; height: 16px; margin-top: 8px; }
       #startup-shell .startup-accent { width: 32px; height: 4px; margin: 67px 0 53px; background: #ea580c; }
+      #startup-shell .startup-message {
+        margin: 0;
+        padding: 12px 16px;
+        color: #334155;
+        font: 500 14px system-ui, sans-serif;
+        text-align: center;
+      }
+      #startup-shell .startup-message a { color: #9a3412; }
       #startup-shell .startup-cards { display: grid; gap: 12px; }
       #startup-shell .startup-card { border: 1px solid var(--shell-line); border-radius: 28px; overflow: hidden; }
       #startup-shell .startup-photo { aspect-ratio: 16 / 10; background: var(--shell-line); }
@@ -133,7 +141,12 @@
   </head>
   <body>
     <div id="root">
-      <div id="startup-shell" role="status" aria-busy="true" aria-label="Loading LocalEats Home">
+      <div id="startup-shell" aria-label="Loading LocalEats Home">
+        <p id="startup-message" class="startup-message" role="status">
+          <span id="startup-copy">Opening LocalEats…</span>
+          <a id="startup-retry" href="" hidden>Retry</a>
+        </p>
+        <noscript><p class="startup-message">Enable JavaScript to open LocalEats.</p></noscript>
         <div class="startup-header" aria-hidden="true">
           <div class="startup-row">
             <span class="startup-shape startup-brand"></span><span class="startup-shape startup-location"></span>
@@ -159,6 +172,28 @@
         </div>
       </div>
     </div>
+    <script>
+      (() => {
+        const retry = document.getElementById('startup-retry');
+        const showRetry = () => {
+          if (!retry.isConnected || !retry.hidden) return;
+          document.getElementById('startup-copy').textContent = 'LocalEats is taking longer to open. ';
+          retry.hidden = false;
+        };
+        const timeout = window.setTimeout(showRetry, 15000);
+        const onLoadError = (event) => {
+          if (event.target instanceof HTMLScriptElement && event.target.type === 'module') showRetry();
+        };
+        window.addEventListener('error', onLoadError, true);
+        const observer = new MutationObserver(() => {
+          if (retry.isConnected) return;
+          window.clearTimeout(timeout);
+          window.removeEventListener('error', onLoadError, true);
+          observer.disconnect();
+        });
+        observer.observe(document.getElementById('root'), {childList: true});
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
