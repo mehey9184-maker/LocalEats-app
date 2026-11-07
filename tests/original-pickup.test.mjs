@@ -20,7 +20,11 @@ test('different instructions for one menu item retain their quantity labels in o
 test('discovery never substitutes coordinates or accepts invalid or outside-radius API data',()=>{
  for(const p of [null,{lat:NaN,lng:28},{lat:100,lng:28}])assert.throws(()=>requireRealLocation(p));
  assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]));
- assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:false,lat:point.lat,lng:point.lng,distance_km:1},[]));
+ const closed=mapPickupShop({id:'s',name:'Shop',is_active:false,lat:point.lat,lng:point.lng,distance_km:1},[]);
+ assert.equal(closed.is_active,false);
+ assert.equal(closed.isOpen,false);
+ assert.deepEqual(closed.menu,[]);
+ assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:null,lat:point.lat,lng:point.lng,distance_km:1},[]));
 });
 test('real API menus map to original shop cards without invented items or options',()=>{
  const shop={id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:2};
