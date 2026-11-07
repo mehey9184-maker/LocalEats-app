@@ -13,3 +13,5 @@ With the locked dependencies installed and a Firebase CLI plus Java 21 available
 ```sh
 firebase emulators:exec --project demo-localeats-rules-diff --only firestore --config security/review/firebase.emulator.json "node security/review/check-narrow-pickup-rules.cjs"
 ```
+
+The isolated workflow also checks the live baseline and narrow candidate for unauthenticated and cross-account reads of profiles, orders and push tokens. It records residual grants for writes to the caller's own user document and legacy order status. These observations identify follow-up work and do not authorize a rollout.
