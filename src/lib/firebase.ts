@@ -301,19 +301,6 @@ export const FirestoreService = {
     }
   },
 
-  async submitContactMessage(messageData: any): Promise<void> {
-    try {
-      const { collection, addDoc } = await import('firebase/firestore');
-      await addDoc(collection(db, 'contact_messages'), {
-        ...messageData,
-        created_at: new Date().toISOString()
-      });
-    } catch (e) {
-      console.warn("[FirestoreService] submitContactMessage notice:", e);
-      throw e;
-    }
-  },
-
   // Orders
   async createAuthoritativeOrder(requestData: CreateOrderRequestData): Promise<CreateOrderResponse> {
     return rejectLegacyOrderWrite();
