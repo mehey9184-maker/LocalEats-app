@@ -3,7 +3,7 @@ const {doc,setDoc,updateDoc,getDoc,deleteField,collection,query,where,getDocs}=r
 const fs=require('node:fs');
 if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080') throw new Error('Run through the dedicated local emulator config');
 const rules=fs.readFileSync(__dirname+'/production-pickup-rules-narrow-REVIEW_ONLY.rules','utf8');
-(async()=>{const env=await initializeTestEnvironment({projectId:'demo-localeats-rules-diff',firestore:{host:'127.0.0.1',port:8080,rules}});
+(async()=>{const env=await initializeTestEnvironment({projectId:'demo-pickup-rules',firestore:{host:'127.0.0.1',port:8080,rules}});
 try{
  await env.withSecurityRulesDisabled(async c=>{const db=c.firestore();await Promise.all([
   setDoc(doc(db,'shops/shop-a'),{owner_id:'merchant-a',name:'Synthetic shop'}),setDoc(doc(db,'menu_items/menu-a'),{shop_id:'shop-a',price:25}),
