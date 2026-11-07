@@ -938,7 +938,7 @@ export function CheckoutScreen({
 
   const submitReviewedPickup = async (retry: boolean) => {
     if (!pickupOrderingEnabled() || quoteLock.current) return;
-    if (!retry && (!pickupQuote || !quoteConsent)) return;
+    if (!retry && (!canSubmitPickup || !quoteConsent)) return;
 
     quoteLock.current = true;
     setLoading(retry ? "retry" : "submit");
@@ -956,15 +956,16 @@ export function CheckoutScreen({
   };
 
   const orderingEnabled = pickupOrderingEnabled();
+  const canSubmitPickup = orderingEnabled && pickupQuote?.quote.can_submit === true;
   // Show "Retry previous submission" only when an unresolved request exists for this account
   // (same UID-scoped key written by submitPickupQuote). Re-evaluated on every render.
   const hasUnresolvedPickup = typeof sessionStorage !== "undefined" && !!session?.user?.id &&
     !!sessionStorage.getItem(`pickup-create:${session.user.id}`);
   const checkoutAction = !pickupQuote ? "Review pickup quote" :
-    orderingEnabled ? "Place pickup order" : "Ordering not enabled yet";
+    canSubmitPickup ? "Place pickup order" : "Ordering not available";
   const checkoutActionDisabled = loading || cart.length === 0 ||
     (deliveryType === "delivery" && distance !== null && distance > ZONE_B_LIMIT) ||
-    (!!pickupQuote && (!orderingEnabled || !quoteConsent));
+    (!!pickupQuote && (!canSubmitPickup || !quoteConsent));
   const handlePickupAction = () => {
     if (pickupQuote) return submitReviewedPickup(false);
     return reviewPickupQuote();
@@ -3645,7 +3646,11 @@ export function CheckoutScreen({
                 Stop checking price
               </button>
             )}
-            <p>{pickupOrderingEnabled() ? "Review the server quote and consent before placing your pickup order. Pay only at the shop." : "Order submission is not enabled yet. No order or payment will be created. Displayed cart prices are estimates until the server quote is returned."}</p>
+            <p>{canSubmitPickup
+              ? "Review the server quote and consent before placing your pickup order. Pay only at the shop."
+              : pickupQuote
+                ? "Pickup ordering is unavailable for this quote. You can still review the price."
+                : "Review the server quote to confirm the price and check pickup availability."}</p>
             {orderingEnabled && hasUnresolvedPickup && <button type="button" disabled={loading} onClick={() => submitReviewedPickup(true)} className="mt-2 min-h-11 rounded-xl border border-orange-300 px-4 text-sm font-semibold motion-safe:active:scale-95 transition-transform">Retry previous submission</button>}
             {pickupQuoteError && <p role="alert">{pickupQuoteError}</p>}
             {pickupQuote && <motion.div
@@ -3657,7 +3662,7 @@ export function CheckoutScreen({
               <ul className="divide-y divide-orange-200/70 text-sm">{pickupQuote.quote.lines.map(line=><li key={line.menu_item_id} className="flex justify-between gap-3 py-1.5"><span className="min-w-0">{line.quantity} × {line.name}</span><span className="font-mono shrink-0">R {(line.line_minor/100).toFixed(2)}</span></li>)}</ul>
               <p className="mt-3 flex items-baseline justify-between font-black"><span>Server total</span><span className="text-xl font-mono"><AnimatedPrice value={pickupQuote.quote.total_minor/100} /></span></p>
               <p className="mt-1 text-xs text-slate-600">Service fee: R {(pickupQuote.quote.service_fee_minor/100).toFixed(2)} · No delivery fee · Pay at shop</p>
-              {orderingEnabled && <label className="mt-3 flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" className="size-5 accent-orange-600" checked={quoteConsent} disabled={loading} onChange={e=>setQuoteConsent(e.target.checked)}/>I agree to the quoted total.</label>}
+              {canSubmitPickup && <label className="mt-3 flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" className="size-5 accent-orange-600" checked={quoteConsent} disabled={loading} onChange={e=>setQuoteConsent(e.target.checked)}/>I agree to the quoted total.</label>}
             </motion.div>}
           </section>
           {/* PINNED BOTTOM CHECKOUT BUTTON STACK */}
@@ -3980,4 +3985,3 @@ export function CheckoutScreen({
     </main>
   );
 }
-

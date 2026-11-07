@@ -9,7 +9,7 @@ async function service(enabled){
  }}]});const mod={exports:{}};new Function('require','module','exports',result.outputFiles[0].text)(createRequire(import.meta.url),mod,mod.exports);return mod.exports;
 }
 const store=new Map();globalThis.sessionStorage={getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)};
-const review={intent:{idempotency_key:'fixture-key',shop_id:'fixture-shop',payment_method:'cash'},quote:{total_minor:2500,pricing_fingerprint:'a'.repeat(64)}};
+const review={intent:{idempotency_key:'fixture-key',shop_id:'fixture-shop',payment_method:'cash'},quote:{can_submit:true,total_minor:2500,pricing_fingerprint:'a'.repeat(64)}};
 test('default-off activation cannot send or fabricate an order',async()=>{
  store.clear();globalThis.testPickupUid='fixture-customer';let calls=0;globalThis.testPickupCreate=()=>{calls++;};const api=await service('false');await assert.rejects(()=>api.submitPickupQuote(review),/not enabled/);assert.equal(calls,0);assert.equal(store.size,0);
 });
@@ -57,4 +57,17 @@ test('cancelling a quote aborts its request and leaves checkout free to fetch a 
   await assert.rejects(pending, error => error === reason);
   assert.equal((await api.quote({ shop_id: 'fixture-shop' })).quote.total_minor, 2500);
   assert.deepEqual(paths, ['/api/v1/orders/quote', '/api/v1/orders/quote']);
+});
+
+test("new pickup submission requires explicit server eligibility",async()=>{
+  store.clear();
+  globalThis.testPickupUid='fixture-customer';
+  let calls=0;
+  globalThis.testPickupCreate=async()=>{calls++;throw Error('Unexpected create');};
+  const api=await service('true');
+  for(const can_submit of [undefined,false,'true']){
+    await assert.rejects(()=>api.submitPickupQuote({...review,quote:{...review.quote,can_submit}}),/not available/);
+  }
+  assert.equal(calls,0);
+  assert.equal(store.size,0);
 });
