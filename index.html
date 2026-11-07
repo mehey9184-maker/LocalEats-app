@@ -69,10 +69,96 @@
         console.error('Unhandled Promise Rejection, Reason:', e.reason);
       });
     </script>
+    <style>
+      #startup-shell {
+        --shell-line: #e2e8f0;
+        --shell-soft: #f1f5f9;
+        min-height: 100vh;
+        background: white;
+      }
+      body:has(#startup-shell) { margin: 0; }
+      #startup-shell * { box-sizing: border-box; }
+      #startup-shell .startup-header {
+        padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+        border-bottom: 1px solid var(--shell-line);
+      }
+      #startup-shell .startup-row, #startup-shell .startup-nav, #startup-shell .startup-main {
+        max-width: 1280px;
+        margin-inline: auto;
+      }
+      #startup-shell .startup-row { display: flex; gap: 6px; overflow: hidden; align-items: center; }
+      #startup-shell .startup-row + .startup-row { margin-top: 8px; }
+      #startup-shell .startup-shape {
+        display: block;
+        flex-shrink: 0;
+        height: 32px;
+        width: 60px;
+        border-radius: 16px;
+        background: var(--shell-soft);
+      }
+      #startup-shell .startup-brand { width: 105px; background: var(--shell-line); }
+      #startup-shell .startup-location { width: 96px; margin-right: auto; }
+      #startup-shell .startup-dot { width: 36px; height: 36px; border-radius: 50%; }
+      #startup-shell .startup-main { padding: 42px 16px 112px; }
+      #startup-shell .startup-title { width: 208px; background: var(--shell-line); border-radius: 8px; }
+      #startup-shell .startup-subtitle { width: 160px; height: 16px; margin-top: 8px; }
+      #startup-shell .startup-accent { width: 32px; height: 4px; margin: 67px 0 53px; background: #ea580c; }
+      #startup-shell .startup-cards { display: grid; gap: 12px; }
+      #startup-shell .startup-card { border: 1px solid var(--shell-line); border-radius: 28px; overflow: hidden; }
+      #startup-shell .startup-photo { aspect-ratio: 16 / 10; background: var(--shell-line); }
+      #startup-shell .startup-copy { padding: 16px; min-height: 110px; }
+      #startup-shell .startup-copy .startup-shape { width: 60%; height: 20px; }
+      #startup-shell .startup-nav {
+        position: fixed;
+        inset: auto 12px calc(12px + env(safe-area-inset-bottom, 0px));
+        max-width: 448px;
+        height: 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-around;
+        background: white;
+        border: 1px solid var(--shell-line);
+        border-radius: 24px;
+      }
+      @media (min-width: 640px) {
+        #startup-shell .startup-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+        #startup-shell .startup-photo { aspect-ratio: 16 / 9; }
+        #startup-shell .startup-accent { margin-bottom: 14px; }
+      }
+      @media (min-width: 768px) {
+        #startup-shell .startup-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        #startup-shell .startup-nav { max-width: 512px; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="startup-shell" role="status" aria-busy="true" aria-label="Loading LocalEats Home">
+        <div class="startup-header" aria-hidden="true">
+          <div class="startup-row">
+            <span class="startup-shape startup-brand"></span><span class="startup-shape startup-location"></span>
+            <span class="startup-shape startup-dot"></span><span class="startup-shape startup-dot"></span><span class="startup-shape startup-dot"></span>
+          </div>
+          <div class="startup-row">
+            <span class="startup-shape"></span><span class="startup-shape"></span><span class="startup-shape"></span>
+            <span class="startup-shape"></span><span class="startup-shape"></span><span class="startup-shape"></span>
+          </div>
+        </div>
+        <div class="startup-main" aria-hidden="true">
+          <span class="startup-shape startup-title"></span><span class="startup-shape startup-subtitle"></span>
+          <span class="startup-shape startup-accent"></span>
+          <div class="startup-cards">
+            <div class="startup-card"><div class="startup-photo"></div><div class="startup-copy"><span class="startup-shape"></span></div></div>
+            <div class="startup-card"><div class="startup-photo"></div><div class="startup-copy"><span class="startup-shape"></span></div></div>
+            <div class="startup-card"><div class="startup-photo"></div><div class="startup-copy"><span class="startup-shape"></span></div></div>
+          </div>
+        </div>
+        <div class="startup-nav" aria-hidden="true">
+          <span class="startup-shape startup-dot"></span><span class="startup-shape startup-dot"></span><span class="startup-shape startup-dot"></span>
+          <span class="startup-shape startup-dot"></span><span class="startup-shape startup-dot"></span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
