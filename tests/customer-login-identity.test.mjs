@@ -20,11 +20,11 @@ function loginHarness({mounted=true,deferState=false}={}){
  const storage=new Map([["userProfile",JSON.stringify(profile)],["localeats_session","B"],["offline_orders_queue","B draft"]]);
  const deps={auth,loginMounted:{current:mounted},identifier:"a@example.test",password:"local-test",
   supabase:{auth:{signInWithPassword:()=>pending.promise}},
-  setAuthError:()=>{},setLoading:()=>{},setHasRememberedToken:()=>{},setIsSuccess:()=>{},
+  setAuthError:()=>{},setLoading:()=>{},setIsSuccess:()=>{},
   localStorage:{setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},
   setUserProfile:next=>{const apply=()=>profile=typeof next==="function"?next(profile):next;if(deferState)updates.push(apply);else apply();},
   upsertProfileWithRPC:async()=>{writes++;return{error:null};},fetchUserProfile:()=>{},
-  generateSecureToken:()=>"local-test-only",rememberMe:false,registerBiometrics:async()=>{},
+  rememberMe:false,
   scheduleLoginTask:()=>{},onLogin:()=>{},navigator:{onLine:true},console:{warn:()=>{},debug:()=>{}},
  };
  const run=new Function(...Object.keys(deps),loginCode)(...Object.values(deps));
@@ -56,25 +56,12 @@ test("password facade refuses old credential after a new same-UID login",async()
  assert.ok(result.error);assert.equal(result.data.session,null);
 });
 
-const biometricCode=callback("../src/screens/auth/LoginScreen.tsx","registerBiometrics");
-function biometricHarness(create){
- const auth={currentUser:{uid:"A",isAnonymous:false}},values=new Map([["biometric_credential_id","B-previous-key"]]);
- const deps={auth,biometricsEnabled:true,window:{PublicKeyCredential:{},crypto:globalThis.crypto,location:{hostname:"127.0.0.1"}},
-  navigator:{credentials:{create}},localStorage:{setItem:(k,v)=>values.set(k,v)},
-  console:{warn:()=>{},log:()=>{}},setNotification:()=>{},btoa:globalThis.btoa,
- };
- return {auth,values,run:new Function(...Object.keys(deps),biometricCode)(...Object.values(deps))};
-}
-test("late biometric enrollment cannot overwrite a new account's device key",async()=>{
- const pending=deferred(),h=biometricHarness(()=>pending.promise);const enroll=h.run("a@example.test");
- h.auth.currentUser={uid:"B",isAnonymous:false};pending.resolve({rawId:new Uint8Array([1,2,3]).buffer});await enroll;
- assert.equal(h.values.get("biometric_credential_id"),"B-previous-key");
-});
-test("failed biometric enrollment never manufactures a credential",async()=>{
- const h=biometricHarness(async()=>{throw new Error("Canceled");});await h.run("a@example.test");
- assert.equal(h.values.get("biometric_credential_id"),"B-previous-key");
-});
-test("current account can retain its real device credential",async()=>{
- const h=biometricHarness(async()=>({rawId:new Uint8Array([1,2,3]).buffer}));await h.run("a@example.test");
- assert.equal(h.values.get("biometric_credential_id"),"AQID");
+test("verified password sign-in clears obsolete biometric keys",async()=>{
+ const h=loginHarness();
+ h.storage.set("remember_me_secure_token","old-token");
+ h.storage.set("biometric_credential_id","old-device");
+ const login=h.run();h.pending.resolve(returnedA);await login;
+ assert.equal(h.storage.has("remember_me_secure_token"),false);
+ assert.equal(h.storage.has("biometric_credential_id"),false);
+ assert.equal(h.profile.id,"A");
 });
