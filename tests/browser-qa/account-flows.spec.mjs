@@ -167,6 +167,7 @@ test("switching from account A to B does not show A email or cache",async({page,
   const signOut = page.getByRole("button",{name:"Sign Out",exact:true});
   await signOut.focus();
   await signOut.press("Enter");
+  await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:25000});
   await page.goto(BASE,{waitUntil:"domcontentloaded"});
   await expect(page.getByText("Explore as Guest")).toBeVisible({timeout:25000});
   await login(page,accountB);
