@@ -14,9 +14,9 @@ function fixture(clock={now:1000}) {
     menu:async id=>{menus++;assert.equal(id,shop.id);return {menu_items:[item]};},
   };
   const map=(s,items)=>{
-    if(s.is_active!==true || s.distance_km>4 || s.distance_km<0 || !Number.isFinite(s.distance_km))
+    if(typeof s.is_active!=="boolean" || s.distance_km>4 || s.distance_km<0 || !Number.isFinite(s.distance_km))
       throw Error("Not a valid shop in 4 km");
-    return {...s,isOpen:true,menu:items.filter(m=>m.is_available)};
+    return {...s,isOpen:s.is_active,menu:items.filter(m=>m.is_available)};
   };
   return {reader:createNearbyCatalogReader(source,map,()=>clock.now),
     counts:()=>({catalogs,menus}),source,map,clock};
