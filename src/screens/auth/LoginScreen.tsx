@@ -788,11 +788,6 @@ export function LoginScreen({
                       Fingerprint / Face ID sign-in is coming soon. Use your password.
                     </p>
                   </div>
-                      <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
-                        Use Biometric Login (Fingerprint / Face ID)
-                      </span>
-                    </label>
-                  </div>
                 </div>
               </div>
 
