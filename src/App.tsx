@@ -258,6 +258,17 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import { createConfirmedProfileTransport } from "./lib/confirmedCustomerProfile";
+
+const confirmedProfileTransport=createConfirmedProfileTransport({
+  origin:import.meta.env.VITE_LOCALEATS_API_URL||"",
+  currentUser:()=>auth.currentUser,
+  readsEnabled:()=>import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true",
+  writesEnabled:()=>import.meta.env.VITE_PROFILE_WRITES_ENABLED==="true",
+});
+// Customer screens must never elevate access from a profile role or
+// user-editable Firebase metadata. Merchant/admin rights live on the server.
+const trustedProfileRole=(_value:unknown):UserProfile["role"]=>"user";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -462,18 +473,20 @@ export default function App() {
   const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    return safeLocalStorageGet("userProfile", {
-      fullName: "",
-      email: "",
-      phone: "",
-      city: SUPPORTED_CITIES[0],
-      address: "",
-      country: "South Africa",
-      role: "user",
-    });
+    const blank:UserProfile={
+      fullName: "",email: "",phone: "",city: SUPPORTED_CITIES[0],
+      address: "",country: "South Africa",role: "user"
+    };
+    // In server-owned mode a prior account's unscoped device cache must NEVER
+    // initialize another account's private profile.
+    return import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"
+      ? blank : safeLocalStorageGet("userProfile",blank);
   });
 
   useEffect(() => {
+    // Do not write private account data to unscoped legacy localStorage once
+    // the authoritative Firebase-owned profile service is activated.
+    if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true")return;
     if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
       safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
       if (!localStorage.getItem("remember_me_secure_token")) {
@@ -1487,6 +1500,28 @@ export default function App() {
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
     try {
+      if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"){
+        // If the verified API is selected, NEVER fall back to another user's
+        // Firestore/cache profile when authentication or server reads fail.
+        const result=await confirmedProfileTransport.read(userId);
+        if(result && canManageCustomerProfile(auth.currentUser,userId)){
+          // Populate solely from this verified account's server record. Never
+          // inherit missing fields from the prior account's UI state.
+          setUserProfile(_prev=>({
+            id:userId,role:trustedProfileRole(result.role),
+            fullName:typeof result.fullName==="string"?result.fullName:"",
+            email:typeof result.email==="string"?result.email:"",
+            phone:typeof result.phone==="string"?result.phone:"",
+            city:typeof result.city==="string"?result.city:SUPPORTED_CITIES[0],
+            address:typeof result.address==="string"?result.address:"",
+            country:typeof result.country==="string"?result.country:"South Africa",
+            photoURL:typeof result.photo_url==="string"?result.photo_url:"",
+            latitude:typeof result.latitude==="number"?result.latitude:undefined,
+            longitude:typeof result.longitude==="number"?result.longitude:undefined,
+          }));
+        }
+        return;
+      }
       let data: any = null;
       let error: any = null;
 
@@ -1846,59 +1881,59 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
-    const updated = { ...userProfile, ...data };
-    setUserProfile(updated);
-
-    if (session?.user?.id) {
-      const action = async () => {
-        // Sync user_metadata natively into Supabase Auth
-        const { error: authError } = await supabase.auth.updateUser({
-          data: {
-            full_name: updated.fullName,
-            fullName: updated.fullName,
-          }
-        });
-        
-        if (authError) {
-          console.warn("[handleUpdateProfile] Supabase Auth update notice:", authError.message);
-        }
-
-        const { error } = await upsertProfileWithRPC({
-          user_id: session.user.id,
-          fullName: updated.fullName,
-          email: updated.email,
-          phone: updated.phone,
-          city: updated.city,
-          address: updated.address,
-          country: updated.country,
-          role: updated.role,
-          photo_url: updated.photoURL,
-          language: updated.language || "en",
-          latitude: updated.latitude,
-          longitude: updated.longitude,
-        });
-
-        if (error) {
-          throw error;
-        }
-      };
-
-      if (showSuccess) {
-        await runWithProcessing(action, () => {
-          if (successCallback) successCallback();
-        });
-      } else {
-        // Just do the action without the success tick overlay if asked
-        try {
-          await action();
-        } catch (err: any) {
-          console.warn("Notice saving profile in background:", err);
-        } finally {
-          if (successCallback) successCallback();
-        }
+    const uid=session?.user?.id;
+    if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true" && userProfile.id!==uid)
+      throw Error("Your profile is still loading for this account. Please retry.");
+    if(!uid||!canManageCustomerProfile(auth.currentUser,uid)){
+      setNotification({type:"error",message:"Sign in with your registered account to save your profile."});
+      return;
+    }
+    const updated={...userProfile,...data};
+    const action=async()=>{
+      // Do not trust a local cache or a Firestore mirror as proof of saving.
+      // This server endpoint and both flags must be separately activated.
+      const saved=await confirmedProfileTransport.save(uid,{
+        fullName:updated.fullName,
+        phone:updated.phone,
+        city:updated.city||"",
+        address:updated.address||"",
+        country:updated.country||"South Africa",
+        photo_url:updated.photoURL||null,
+        language:updated.language||"en",
+        ...(typeof updated.latitude==="number"&&typeof updated.longitude==="number"
+            ? {latitude:updated.latitude,longitude:updated.longitude}
+            : {latitude:null,longitude:null})
+      });
+      if(!canManageCustomerProfile(auth.currentUser,uid))
+        throw Error("Your account changed while saving. Refresh and sign in.");
+      setUserProfile(prev=>({...prev,id:uid,
+        // Never apply unconfirmed client fields such as role or a stale UID.
+        fullName:typeof saved.fullName==="string"?saved.fullName:prev.fullName,
+        email:typeof saved.email==="string"?saved.email:prev.email,
+        phone:typeof saved.phone==="string"?saved.phone:prev.phone,
+        city:typeof saved.city==="string"?saved.city:prev.city,
+        address:typeof saved.address==="string"?saved.address:prev.address,
+        country:typeof saved.country==="string"?saved.country:prev.country,
+        role:trustedProfileRole(saved.role),
+        photoURL:saved.photo_url===null?"":typeof saved.photo_url==="string"?saved.photo_url:prev.photoURL,
+        latitude:typeof saved.latitude==="number"?saved.latitude:prev.latitude,
+        longitude:typeof saved.longitude==="number"?saved.longitude:prev.longitude,
+      }));
+      // Firebase display-name metadata is optional convenience only; the
+      // server-confirmed profile row above remains the authoritative receipt.
+      try{
+        await supabase.auth.updateUser({data:{full_name:updated.fullName,fullName:updated.fullName}});
+      }catch{}
+    };
+    if(showSuccess){
+      const confirmed=await runWithProcessing(async()=>{await action();return true;},
+        ()=>{successCallback?.();});
+      if(confirmed!==true)throw Error("The profile server did not confirm this save.");
+    }else{
+      try{await action();successCallback?.();}
+      catch(e){
+        setNotification({type:"error",message:e instanceof Error?e.message:"Profile save was not confirmed."});
       }
-    } else {
-      if (successCallback) successCallback();
     }
   };
 
@@ -1963,17 +1998,26 @@ export default function App() {
             localStorage.setItem("remember_me_secure_token", session.access_token || "true");
           }
 
-          // Seed user profile state immediately from session metadata
+          // Seed session identity without exposing a previous account's
+          // unscoped cached profile in verified server-owned mode.
           if (session.user) {
             const uMeta = session.user.user_metadata || {};
-            setUserProfile((prev) => ({
-              ...prev,
-              id: session.user.id,
-              email: session.user.email || prev.email || "",
-              fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
-              phone: uMeta.phone || prev.phone || "",
-              role: uMeta.role || prev.role || "customer",
-            }));
+            if(import.meta.env.VITE_PROFILE_BACKEND_ENABLED==="true"){
+              setUserProfile({
+                id:session.user.id,email:session.user.email||"",
+                fullName:"",phone:"",city:SUPPORTED_CITIES[0],
+                address:"",country:"South Africa",role:"user",
+              });
+            }else{
+              setUserProfile((prev) => ({
+                ...prev,
+                id: session.user.id,
+                email: session.user.email || prev.email || "",
+                fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
+                phone: uMeta.phone || prev.phone || "",
+                role: uMeta.role || prev.role || "customer",
+              }));
+            }
           }
 
           fetchUserProfile(session.user.id);
@@ -3025,7 +3069,7 @@ export default function App() {
                   onExplore={() => setCurrentScreen("home")}
                 />
               )}
-              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
+              {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (import.meta.env.VITE_PROFILE_BACKEND_ENABLED!=="true"||userProfile.id===session?.user?.id) && (
                 <CompleteProfileScreen
                   userProfile={userProfile}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
@@ -3473,7 +3517,7 @@ export default function App() {
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
               )}
-              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
+              {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (import.meta.env.VITE_PROFILE_BACKEND_ENABLED!=="true"||userProfile.id===session?.user?.id) && (
                 <ProfileScreen
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onSave={async (data) => {
