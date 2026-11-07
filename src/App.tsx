@@ -3428,7 +3428,10 @@ const HorizontalShopCard = ({
     <motion.div
       whileHover={shop.isOpen !== false ? { y: -4, scale: 1.01 } : undefined}
       whileTap={shop.isOpen !== false ? { scale: 0.98 } : undefined}
-      onClick={shop.isOpen !== false ? onClick : undefined}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(); } }}
       className={`flex flex-col gap-2 shrink-0 w-64 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-gray-100 dark:border-slate-800 transition-all active:scale-[0.98] group ${shop.isOpen !== false ? "cursor-pointer hover:border-slate-300/80 dark:hover:border-slate-600" : "opacity-60 grayscale-[0.5]"}`}
     >
       <div className="aspect-video w-full rounded-2xl overflow-hidden relative bg-slate-100 dark:bg-slate-800">
@@ -9043,6 +9046,11 @@ function StoreInfoScreen({
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (!getShopStatus(shop).isOpen) {
+            showAlert("Closed", "This shop is currently closed. Browse its menu now and order when it reopens.");
+            setSelectedItemForQuantity(null);
+            return;
+          }
           if (selectedItemForQuantity) {
             addToCart(
               selectedItemForQuantity,

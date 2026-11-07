@@ -43,8 +43,6 @@ export function LoginScreen({
   onSignUp,
   onGuestBrowse,
   setNotification,
-  biometricsEnabled,
-  onToggleBiometrics,
   triggerHaptic,
   setUserProfile,
   fetchUserProfile,
@@ -79,10 +77,7 @@ export function LoginScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(() => {
     try {
-      return (
-        !!localStorage.getItem("remember_me_secure_token") ||
-        !!localStorage.getItem("remembered_identifier")
-      );
+      return !!localStorage.getItem("remembered_identifier");
     } catch {
       return false;
     }
@@ -114,215 +109,8 @@ export function LoginScreen({
     suggestion: string;
   } | null>(null);
 
-  const [isScanningBiometrics, setIsScanningBiometrics] = useState(false);
-  const [hasRememberedToken, setHasRememberedToken] = useState(() => {
-    try {
-      return !!localStorage.getItem("remember_me_secure_token");
-    } catch {
-      return false;
-    }
-  });
-
-  // Implement Biometric login utilizing Web Authentication API with animated visual scanner fallback
-  const handleBiometricAuth = async () => {
-    if (!biometricsEnabled) {
-      setNotification({
-        message:
-          "Biometric login is disabled. Please enable it in Settings or on the login screen.",
-        type: "info",
-      });
-      return;
-    }
-
-    if (!window.PublicKeyCredential || !navigator.credentials) {
-      setNotification({
-        message:
-          "Your browser or device does not support Web Authentication (biometrics). Please enter your password.",
-        type: "error",
-      });
-      const pwdInput = document.getElementById("login-password-input");
-      if (pwdInput) {
-        pwdInput.focus();
-      }
-      return;
-    }
-
-    setLoading(true);
-    setIsScanningBiometrics(true);
-    try {
-      const challenge = new Uint8Array(32);
-      window.crypto.getRandomValues(challenge);
-
-      const credentialIdBase64 =
-        localStorage.getItem("biometric_credential_id") || "";
-      let allowCredentials: PublicKeyCredentialDescriptor[] = [];
-
-      if (credentialIdBase64 && !credentialIdBase64.startsWith("fallback_")) {
-        try {
-          const rawId = new Uint8Array(
-            atob(credentialIdBase64)
-              .split("")
-              .map((c) => c.charCodeAt(0))
-          );
-          allowCredentials.push({
-            id: rawId,
-            type: "public-key",
-          });
-        } catch (e) {
-          console.warn("Error parsing saved biometric credential ID", e);
-        }
-      }
-
-      const options: CredentialRequestOptions = {
-        publicKey: {
-          challenge,
-          timeout: 60000,
-          rpId: window.location.hostname || "localhost",
-          allowCredentials,
-          userVerification: "preferred",
-        },
-      };
-
-      console.log("Triggering WebAuthn API assertion...");
-      let assertionSucceeded = false;
-      try {
-        const assertion = await navigator.credentials.get(options);
-        if (assertion) {
-          assertionSucceeded = true;
-        }
-      } catch (webauthnError: any) {
-        console.warn(
-          "WebAuthn assertion failed or blocked in this environment:",
-          webauthnError
-        );
-        if (
-          webauthnError.name === "NotAllowedError" ||
-          webauthnError.message?.includes("cancel")
-        ) {
-          throw new Error(
-            "Biometric verification was canceled or failed. Please use your password."
-          );
-        }
-      }
-
-      // Simulate highly-interactive scanner countdown for complete visual fidelity
-      scheduleLoginTask(() => {
-        setIsScanningBiometrics(false);
-        const rememberedToken = localStorage.getItem(
-          "remember_me_secure_token"
-        );
-
-        if (rememberedToken) {
-          setIsSuccess(true);
-          setNotification({
-            message: "Biometric authentication successful!",
-            type: "success",
-          });
-          scheduleLoginTask(() => {
-            onLogin();
-          }, 1500);
-        } else {
-          setAuthError({
-            type: "generic",
-            title: "First-Time Sign-In Required",
-            message:
-              "To activate Fingerprint or Face ID, please log in with your email and password once first with 'Remember Me' checked.",
-            suggestion:
-              "Enter your password below to enable one-tap biometric access for future visits.",
-          });
-          const pwdInput = document.getElementById("login-password-input");
-          if (pwdInput) {
-            pwdInput.focus();
-          }
-        }
-        setLoading(false);
-      }, 2000);
-    } catch (err: any) {
-      setIsScanningBiometrics(false);
-      setLoading(false);
-      setAuthError({
-        type: "generic",
-        title: "Biometric Sign-In Notice",
-        message:
-          err.message || "Biometric sensor verification could not be completed.",
-        suggestion: "Please enter your password manually below to sign in.",
-      });
-      scheduleLoginTask(() => {
-        const pwdInput = document.getElementById("login-password-input");
-        if (pwdInput) {
-          pwdInput.focus();
-        }
-      }, 100);
-    }
-  };
-
-  const generateSecureToken = () => {
-    try {
-      const arr = new Uint8Array(32);
-      window.crypto.getRandomValues(arr);
-      return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
-    } catch {
-      return Math.random().toString(36).substring(2) + Date.now().toString(36);
-    }
-  };
-
-  const registerBiometrics = async (email: string) => {
-    if (!biometricsEnabled) return;
-    const identity = auth.currentUser;
-    if (!identity || identity.isAnonymous) return;
-    if (!window.PublicKeyCredential || !navigator.credentials) {
-      console.warn("WebAuthn is not supported on this browser.");
-      return;
-    }
-    try {
-      const challenge = new Uint8Array(32);
-      window.crypto.getRandomValues(challenge);
-      const userId = new Uint8Array(16);
-      window.crypto.getRandomValues(userId);
-
-      const creationOptions: CredentialCreationOptions = {
-        publicKey: {
-          challenge,
-          rp: {
-            name: "LocalEats",
-            id: window.location.hostname || "localhost",
-          },
-          user: {
-            id: userId,
-            name: email,
-            displayName: email,
-          },
-          pubKeyCredParams: [
-            { alg: -7, type: "public-key" }, // ES256
-            { alg: -257, type: "public-key" }, // RS256
-          ],
-          timeout: 60000,
-          attestation: "none",
-          authenticatorSelection: {
-            userVerification: "preferred",
-            authenticatorAttachment: "platform",
-          },
-        },
-      };
-
-      console.log("Creating biometric WebAuthn key pair...");
-      const credential = (await navigator.credentials.create(
-        creationOptions
-      )) as PublicKeyCredential;
-      if (auth.currentUser !== identity) return;
-      if (credential) {
-        localStorage.setItem(
-          "biometric_credential_id",
-          btoa(String.fromCharCode(...new Uint8Array(credential.rawId)))
-        );
-        console.log("Biometric registered successfully via WebAuthn API");
-      }
-    } catch (err: any) {
-      if (auth.currentUser !== identity) return;
-      console.warn("WebAuthn enrollment did not complete.", err);
-      setNotification({type:"info",message:"Biometric setup did not finish. You can continue using your password."});
-    }
-  };
+  // The app has no server-verified WebAuthn sign-in endpoint.
+  // Never treat localStorage or an unverified browser assertion as login.
 
   const handleLogin = async () => {
     if (!identifier || !password) {
@@ -365,7 +153,7 @@ export function LoginScreen({
           city: "Johannesburg",
           address: "",
           country: "South Africa",
-          role: "user",
+          role: "user", // UI role is ordinary Customer; never a staff role from metadata.
         };
 
         // App owns the profile cache and preserves any already verified row.
@@ -385,14 +173,11 @@ export function LoginScreen({
       }
 
       try {
-        localStorage.setItem(
-          "remember_me_secure_token",
-          generateSecureToken()
-        );
-        setHasRememberedToken(true);
+        // Remember Me stores only the identifier, never a fabricated auth token.
+        localStorage.removeItem("remember_me_secure_token");
+        localStorage.removeItem("biometric_credential_id");
         if (rememberMe) {
           localStorage.setItem("remembered_identifier", identifier.trim());
-          await registerBiometrics(identifier.trim());
         } else {
           localStorage.removeItem("remembered_identifier");
         }
@@ -732,52 +517,6 @@ export function LoginScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 min-h-screen">
-      {/* Full-Screen Biometric Scanning Overlay */}
-      {isScanningBiometrics && (
-        <div
-          id="biometric-overlay"
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-md"
-        >
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/50 dark:border-slate-800/50 p-8 rounded-[32px] shadow-xl flex flex-col items-center gap-6 max-w-sm text-center relative overflow-hidden">
-            {/* Scanning Glow Ring */}
-            <div className="relative w-28 h-28 flex items-center justify-center">
-              <div
-                className="absolute inset-0 rounded-full border-4 border-dashed border-primary/30 border-t-primary animate-spin"
-                style={{ animationDuration: "3s" }}
-              />
-              <div
-                className="absolute inset-2 bg-primary/10 rounded-full animate-ping"
-                style={{ animationDuration: "2s" }}
-              />
-              <Fingerprint className="w-14 h-14 text-primary relative z-10" />
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="font-black text-slate-900 dark:text-slate-100 text-lg tracking-tight">
-                Biometric Authentication
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium max-w-[240px]">
-                Please scan your fingerprint or position your face in front of
-                the camera sensor...
-              </p>
-            </div>
-
-            {/* Laser scanning bar line simulation */}
-            <div
-              className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-80"
-              style={{
-                top: "45%",
-                animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-              }}
-            />
-
-            <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-full border border-slate-200/30 dark:border-slate-700/30">
-              Biometric Sensor Active
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="relative flex min-h-screen w-full flex-col max-w-screen-xl mx-auto overflow-x-hidden p-6 md:p-12">
         <div className="max-w-md mx-auto w-full flex-1 flex flex-col justify-center gap-6">
           {/* Brand & Header Section */}
@@ -1056,30 +795,10 @@ export function LoginScreen({
                   </div>
 
                   <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/60 pt-2.5">
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div
-                        className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                          biometricsEnabled
-                            ? "bg-primary border-primary"
-                            : "border-slate-300 dark:border-slate-700"
-                        }`}
-                      >
-                        {biometricsEnabled && (
-                          <Check className="w-3 h-3 text-white" />
-                        )}
-                        <input
-                          type="checkbox"
-                          className="hidden"
-                          checked={biometricsEnabled}
-                          onChange={(e) =>
-                            onToggleBiometrics(e.target.checked)
-                          }
-                        />
-                      </div>
-                      <span className="text-sm text-slate-600 dark:text-slate-400 font-medium group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
-                        Use Biometric Login (Fingerprint / Face ID)
-                      </span>
-                    </label>
+                    <p className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 font-medium">
+                      <Fingerprint className="w-4 h-4" aria-hidden="true" />
+                      Fingerprint / Face ID sign-in is coming soon. Use your password.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1100,18 +819,6 @@ export function LoginScreen({
                   )}
                 </button>
 
-                {hasRememberedToken && biometricsEnabled && (
-                  <button
-                    type="button"
-                    id="biometric-login-btn"
-                    onClick={handleBiometricAuth}
-                    disabled={loading}
-                    className="w-full bg-slate-50 dark:bg-slate-900/40 border border-dashed border-primary/40 hover:border-primary hover:bg-primary/5 dark:hover:bg-primary/10 text-primary font-bold h-14 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-                  >
-                    <Fingerprint className="w-5 h-5 animate-pulse" />
-                    <span>Use Fingerprint / Face ID</span>
-                  </button>
-                )}
               </div>
             </form>
 
