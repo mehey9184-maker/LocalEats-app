@@ -23,7 +23,9 @@ test("customer password login, ordinary remember-email and recovery are retained
 test("customer app never derives authorization role from editable identity metadata",()=>{
  assert.doesNotMatch(src,/userMeta\.role|user_metadata\.role|is_admin:\s*userMeta|is_vendor:\s*userMeta/);
  const block=src.slice(src.indexOf("const handleLogin ="),src.indexOf("const handleForgotPassword ="));
- assert.equal((block.match(/role:\s*["']customer["']/g)||[]).length,2,
-  "Customer display and background profile sync must not trust user-editable role metadata");
+ assert.equal((block.match(/role:\s*["']user["']/g)||[]).length,1,
+  "Customer UI uses its ordinary nonstaff display role");
+ assert.equal((block.match(/role:\s*["']customer["']/g)||[]).length,1,
+  "Customer profile writes use the safe customer database role");
  assert.match(block,/supabase\.auth\.signInWithPassword/);
 });
