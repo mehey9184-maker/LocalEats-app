@@ -1,4 +1,4 @@
-import React, { useState, useRef, ChangeEvent, Suspense, lazy } from "react";
+import React, { useState, useRef, useEffect, ChangeEvent, Suspense, lazy } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -20,30 +20,59 @@ const AddressSearch = lazy(() => import("../../components/MapComponents").then((
 const LocationPickerMap = lazy(() => import("../../components/MapComponents").then(({LocationPickerMap}) => ({default:LocationPickerMap})));
 import { WidgetErrorBoundary } from "../../components/WidgetErrorBoundary";
 
+import { auth } from "../../lib/firebase";
+import { requireProfileEditBasis, type ProfileEditBasis, type ProfileSaveResult, type CustomerProfileState } from "../../lib/customerProfileState";
+import { recoverSignupProfileDraft, type SignupProfileDraft, createProfileEditSession, refreshProfileEditSession, editProfileField, profileEditPatch, acceptProfileEditSave } from "../../lib/customerProfileEditSession";
+
 export interface CompleteProfileScreenProps {
   userProfile: UserProfile;
+  recoveryDraft?: SignupProfileDraft | null;
+  onSaved?: () => void;
   onBack: () => void;
-  onSave: (data: Partial<UserProfile>) => void;
+  onSave: (data: Record<string, unknown>, basis: ProfileEditBasis) => Promise<ProfileSaveResult>;
+  profileBasis?: ProfileEditBasis | null;
+  profileLoadStatus?: CustomerProfileState["status"];
+  profileLoadError?: string | null;
+  onReloadProfile?: () => void;
   setNotification: (n: NotificationState) => void;
 }
 
 export function CompleteProfileScreen({
-  userProfile,
+  userProfile, recoveryDraft = null, onSaved,
   onBack,
   onSave,
   setNotification,
+  profileBasis = null, profileLoadStatus = "idle", profileLoadError, onReloadProfile,
 }: CompleteProfileScreenProps) {
-  const [email] = useState(userProfile.email);
-  const [address, setAddress] = useState(userProfile.address);
-  const [phone, setPhone] = useState(formatSAPhone(userProfile.phone));
-  const [fullName, setFullName] = useState(userProfile.fullName);
-  const [city, setCity] = useState(userProfile.city);
-  const [latitude, setLatitude] = useState<number | undefined>(
-    userProfile.latitude
-  );
-  const [longitude, setLongitude] = useState<number | undefined>(
-    userProfile.longitude
-  );
+  const email = userProfile.email;
+  const [profileDraft, setProfileDraft] = useState(() => createProfileEditSession(userProfile, profileBasis, formatSAPhone));
+  const { fullName, phone, city, address, latitude, longitude } = profileDraft.values;
+  const setFullName = (value: string) => setProfileDraft(previous => editProfileField(previous, "fullName", value));
+  const setPhone = (value: string) => setProfileDraft(previous => editProfileField(previous, "phone", value));
+  const setCity = (value: string) => setProfileDraft(previous => editProfileField(previous, "city", value));
+  const setAddress = (value: string) => setProfileDraft(previous => editProfileField(previous, "address", value));
+  const setLatitude = (value: number | undefined) => setProfileDraft(previous => editProfileField(previous, "latitude", value));
+  const setLongitude = (value: number | undefined) => setProfileDraft(previous => editProfileField(previous, "longitude", value));
+  const profileEditorMounted = useRef(true);
+  useEffect(() => { profileEditorMounted.current = true; return () => { profileEditorMounted.current = false; }; }, []);
+  useEffect(() => {
+    setProfileDraft(previous => refreshProfileEditSession(previous, userProfile, profileBasis, formatSAPhone));
+  }, [userProfile, profileBasis, profileDraft.dirty]);
+  const appliedRecovery = useRef<SignupProfileDraft | null>(null);
+  useEffect(() => {
+    if (!recoveryDraft || !profileBasis || recoveryDraft.identity !== auth.currentUser || profileBasis.identity !== recoveryDraft.identity || appliedRecovery.current === recoveryDraft) return;
+    appliedRecovery.current = recoveryDraft;
+    setProfileDraft(previous => recoverSignupProfileDraft(previous, recoveryDraft, formatSAPhone));
+  }, [recoveryDraft, profileBasis]);
+  const commitProfileChange = async (patch: Record<string, unknown>, submitted = profileDraft, photoOnly = false) => {
+    const basis = requireProfileEditBasis(submitted.basis, auth.currentUser);
+    if (!profileEditorMounted.current) throw new Error("This profile editor is closed.");
+    const result = await onSave(patch, basis);
+    if (!profileEditorMounted.current || auth.currentUser !== basis.identity) throw new Error("Your account changed or this editor was closed.");
+    if (!result?.basis || result.basis.identity !== basis.identity || result.profile?.id !== submitted.ownerId) throw new Error("Profile saving was not confirmed.");
+    setProfileDraft(previous => acceptProfileEditSave(previous, submitted, result, { photoOnly }, formatSAPhone));
+    return result;
+  };
 
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -54,6 +83,7 @@ export function CompleteProfileScreen({
   const [formErrors, setFormErrors] = useState<{ fullName?: string }>({});
 
   const handleSave = async () => {
+    if (isSaving || uploading) return;
     if (!fullName || !phone) {
       setNotification({
         message: "Please fill in all required fields to proceed.",
@@ -72,9 +102,23 @@ export function CompleteProfileScreen({
 
     setIsSaving(true);
     try {
-      await onSave({ fullName, phone, city, address, latitude, longitude });
+      const submitted = profileDraft;
+      requireProfileEditBasis(submitted.basis, auth.currentUser);
+      if (!profileEditorMounted.current) return;
+      const patch = profileEditPatch(submitted);
+      if (!Object.keys(patch).length) {
+        onSaved?.();
+        onBack();
+        return;
+      }
+      await commitProfileChange(patch, submitted);
+      setNotification({ message: "Profile saved to your account.", type: "success" });
+      onSaved?.();
+      onBack();
+    } catch (error) {
+      if (profileEditorMounted.current) setNotification({ message: error instanceof Error ? error.message : "Could not confirm your changes. Please retry.", type: "error" });
     } finally {
-      setIsSaving(false);
+      if (profileEditorMounted.current) setIsSaving(false);
     }
   };
 
@@ -93,6 +137,8 @@ export function CompleteProfileScreen({
         return;
       }
 
+      const submitted = profileDraft;
+      requireProfileEditBasis(submitted.basis, auth.currentUser);
       setUploading(true);
       setNotification({
         message: "Compressing photo to <200KB and uploading to Supabase Storage...",
@@ -103,9 +149,10 @@ export function CompleteProfileScreen({
 
       const publicUrl = await uploadAvatar(file, userProfile.id);
 
-      onSave({ photoURL: publicUrl });
+      // Storage upload and saving the avatar on the profile are separate steps.
+      await commitProfileChange({ photoURL: publicUrl }, submitted, true);
       setNotification({
-        message: "Profile picture uploaded & saved to Supabase (<200KB)!",
+        message: "Profile picture saved to your account.",
         type: "success",
       });
       setPreviewUrl(null);
@@ -143,9 +190,14 @@ export function CompleteProfileScreen({
     }
   };
 
-  const handleDeletePhoto = () => {
-    onSave({ photoURL: "" });
-    setPreviewUrl(null);
+  const handleDeletePhoto = async () => {
+    try {
+      await commitProfileChange({ photoURL: "" }, profileDraft, true);
+      setPreviewUrl(null);
+    } catch (error) {
+      console.warn("Avatar removal was not confirmed:", error);
+      setNotification({ message: "Could not remove your profile photo. Please retry.", type: "error" });
+    }
   };
 
   return (
@@ -164,13 +216,23 @@ export function CompleteProfileScreen({
           </h2>
         </div>
 
+        {(!profileDraft.basis || profileLoadStatus === "error") && <div role="status" className="mx-4 my-4 rounded-2xl bg-slate-100 dark:bg-slate-900 p-4 text-sm">
+          <p>{profileLoadStatus === "loading" ? "Loading your account details..." : profileLoadError || "Confirm your account details before saving."}</p>
+          {profileLoadStatus !== "loading" && <button type="button" onClick={onReloadProfile} className="mt-2 font-bold text-primary">Reload account details</button>}
+        </div>}
+        <button type="button" disabled={isSaving || uploading || profileLoadStatus === "loading"} className="mx-4 text-sm font-bold text-primary" onClick={() => {
+          if (profileDraft.dirty && !window.confirm("Reload saved account details and discard the changes in this form?")) return;
+          setProfileDraft(createProfileEditSession(userProfile, profileBasis, formatSAPhone));
+          onReloadProfile?.();
+        }}>Reload saved details</button>
+        <fieldset disabled={!profileDraft.basis || isSaving || uploading} className="contents">
         {/* Profile Photo Section */}
         <div className="flex p-8 max-w-md mx-auto w-full">
           <input
             type="file"
             accept="image/*"
             onChange={handleUpload}
-            disabled={uploading}
+            disabled={uploading || isSaving || !profileDraft.basis}
             ref={fileInputRef}
             className="hidden"
           />
@@ -179,7 +241,7 @@ export function CompleteProfileScreen({
             accept="image/*"
             capture="user"
             onChange={handleUpload}
-            disabled={uploading}
+            disabled={uploading || isSaving || !profileDraft.basis}
             ref={cameraInputRef}
             className="hidden"
           />
@@ -400,13 +462,14 @@ export function CompleteProfileScreen({
             <span className="text-primary font-medium">Terms of Service</span>
           </label>
         </div>
+        </fieldset>
       </div>
 
       {/* Sticky Save Button Container */}
       <div className="fixed bottom-0 left-0 right-0 p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] bg-white/80 dark:bg-slate-950/80 backdrop-blur-lg border-t border-primary/10 max-w-md mx-auto">
         <button
           onClick={handleSave}
-          disabled={isSaving}
+          disabled={isSaving || uploading || !profileDraft.basis}
           className="w-full bg-primary hover:bg-primary text-white font-black h-16 rounded-2xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 text-lg disabled:opacity-70 disabled:cursor-wait"
         >
           {isSaving ? (
@@ -416,7 +479,7 @@ export function CompleteProfileScreen({
             </>
           ) : (
             <>
-              Save Profile Info
+              {profileDraft.basis?.revision && !profileDraft.dirty ? "Continue" : "Save Profile Info"}
               <ArrowRight className="w-5 h-5" />
             </>
           )}

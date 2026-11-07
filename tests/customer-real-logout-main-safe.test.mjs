@@ -34,7 +34,7 @@ test("Firebase sign-out, not a mock navigation, is behind auth.signOut",()=>{
 
 test("private account state is cleaned only after successful sign-out",()=>{
   const body=app.slice(app.indexOf("const logoutCustomer = async () => {"),app.indexOf("const handleUpdateProfile = async ("));
-  for(const state of ["setSession(null)","setOrders([])","setNotifications([])","setCart([])","setFavorites([])","setPendingReview(null)","setUserProfile({"]){
+  for(const state of ["setSession(null)","setOrders([])","setNotifications([])","setCart([])","setFavorites([])","setPendingReview(null)","setUserProfile(emptyCustomerProfile())"]){
     assert.ok(body.includes(state),state);
   }
   for(const key of ["userProfile","favorites","cached_orders","pending_review","offline_profile_queue","app_notifications"]){

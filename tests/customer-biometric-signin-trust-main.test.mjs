@@ -25,7 +25,6 @@ test("customer app never derives authorization role from editable identity metad
  const block=src.slice(src.indexOf("const handleLogin ="),src.indexOf("const handleForgotPassword ="));
  assert.equal((block.match(/role:\s*["']user["']/g)||[]).length,1,
   "Customer UI uses its ordinary nonstaff display role");
- assert.equal((block.match(/role:\s*["']customer["']/g)||[]).length,1,
-  "Customer profile writes use the safe customer database role");
+ assert.doesNotMatch(block,/upsertProfileWithRPC|saveCustomerProfile|role:\s*["']customer["']/);
  assert.match(block,/supabase\.auth\.signInWithPassword/);
 });

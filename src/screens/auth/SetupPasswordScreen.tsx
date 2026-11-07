@@ -1,11 +1,15 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { ArrowLeft, Lock, Eye, EyeOff, CheckCircle, Loader2 } from "lucide-react";
 import { supabase, APP_URL } from "../../lib/supabase";
-import { upsertProfileWithRPC } from "../../lib/profileService";
+import { auth } from "../../lib/firebase";
+import type { ProfileActor } from "../../lib/customerProfileState";
+import type { SignupProfileDraft } from "../../lib/customerProfileEditSession";
+import { customerProfileApi } from "../../services/customerProfile";
 import { NotificationState, SignUpData } from "../../types";
 
 export interface SetupPasswordScreenProps {
-  onNext: () => void;
+  onNext: (identity: ProfileActor) => void;
+  onProfileIncomplete: (draft: SignupProfileDraft) => void;
   onBack: () => void;
   signupData: SignUpData;
   setNotification: (n: NotificationState) => void;
@@ -17,6 +21,7 @@ export interface SetupPasswordScreenProps {
 
 export function SetupPasswordScreen({
   onNext,
+  onProfileIncomplete,
   onBack,
   signupData,
   setNotification,
@@ -27,7 +32,9 @@ export function SetupPasswordScreen({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const signupInFlight = useRef(false);
   const handleSignUp = async () => {
+    if (loading || signupInFlight.current) return;
     if (!password || !confirmPassword) {
       setNotification({
         message: "Please fill in both password fields",
@@ -47,6 +54,7 @@ export function SetupPasswordScreen({
       return;
     }
 
+    signupInFlight.current = true;
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -71,33 +79,32 @@ export function SetupPasswordScreen({
         throw error;
       }
 
-      // Manually sync to profiles table in case trigger isn't set up
-      if (data.user) {
-        const { error: profileError } = await upsertProfileWithRPC({
-          user_id: data.user.id,
-          fullName: signupData.fullName,
-          email: signupData.email,
-          phone: signupData.phone,
-          role: "user",
-          city: "",
-          address: "",
-          country: "South Africa",
-          language: "en",
-          photo_url: "",
-          favorites: [],
-        });
-        if (profileError) {
-          console.error("Profile creation error on signup:", profileError);
-        }
+      const identity = data.firebaseUser;
+      const isCurrent = () => identity && auth.currentUser === identity && !identity.isAnonymous && identity.uid === data.user?.id;
+      if (!isCurrent()) throw new Error("Your account changed during signup. Sign in again to continue.");
+      try {
+        const snapshot = await customerProfileApi.read(identity.uid);
+        if (!isCurrent()) throw new Error("Your account changed during signup.");
+        // A concurrent creator must not be overwritten by registration defaults.
+        if (!snapshot.profile) await customerProfileApi.save(identity.uid, {
+          fullName: signupData.fullName, phone: signupData.phone,
+        }, null);
+        if (!isCurrent()) throw new Error("Your account changed during signup.");
+      } catch (profileError) {
+        if (!isCurrent()) throw new Error("Your account changed during signup. Sign in again to continue.");
+        onProfileIncomplete({ identity, fullName: signupData.fullName, phone: signupData.phone });
+        setNotification({ message: "Your account was created, but your profile details were not confirmed. Open Complete Profile to save them.", type: "error" });
+        return;
       }
-      
-      onNext();
+
+      onNext(identity);
     } catch (e: any) {
       setNotification({
         message: e.message || "An error occurred during signup",
         type: "error",
       });
     } finally {
+      signupInFlight.current = false;
       setLoading(false);
     }
   };

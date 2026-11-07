@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Utensils,
@@ -24,8 +24,7 @@ import {
 import { LocalEatsLogo } from "../../components/LocalEatsLogo";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { UserProfile, NotificationState } from "../../types";
-import { FirestoreService } from "../../lib/firebase";
-import { upsertProfileWithRPC } from "../../lib/profileService";
+import { auth } from "../../lib/firebase";
 
 export interface LoginScreenProps {
   onLogin: () => void;
@@ -48,6 +47,25 @@ export function LoginScreen({
   setUserProfile,
   fetchUserProfile,
 }: LoginScreenProps) {
+  const loginTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const loginMounted = useRef(false);
+  useEffect(() => {
+    loginMounted.current = true;
+    return () => {
+      loginMounted.current = false;
+      loginTimers.current.forEach(handle => clearTimeout(handle));
+      loginTimers.current.clear();
+    };
+  }, []);
+  const scheduleLoginTask = (task: () => void, delay: number) => {
+    if (!loginMounted.current) return;
+    const handle = setTimeout(() => {
+      loginTimers.current.delete(handle);
+      if (loginMounted.current) task();
+    }, delay);
+    loginTimers.current.add(handle);
+  };
+
   const [identifier, setIdentifier] = useState(() => {
     try {
       return localStorage.getItem("remembered_identifier") || "";
@@ -114,8 +132,12 @@ export function LoginScreen({
           password,
         });
       if (error) throw error;
+      const identity = auth.currentUser;
+      const isCurrent = () => auth.currentUser === identity &&
+        !!identity && !identity.isAnonymous && identity.uid === authData?.user?.id;
+      if (!isCurrent()) return;
 
-      // Ensure user profile in public.profiles table exists seamlessly
+      // Seed display metadata only for the account that actually completed sign-in.
       if (authData?.user) {
         const userMeta = authData.user.user_metadata || {};
         const freshFullName =
@@ -134,27 +156,16 @@ export function LoginScreen({
           role: "user", // UI role is ordinary Customer; never a staff role from metadata.
         };
 
-        // Immediately update localStorage and wipe any outdated cached data
-        localStorage.setItem("userProfile", JSON.stringify(freshProfile));
+        // App owns the profile cache and preserves any already verified row.
         localStorage.setItem("localeats_session", authData.user.id);
         localStorage.removeItem("offline_orders_queue");
 
         if (setUserProfile) {
-          setUserProfile(freshProfile);
+          setUserProfile((prev) => isCurrent() ? freshProfile : prev);
         }
 
-        // Authoritative sync to Supabase with background Firestore mirror
-        upsertProfileWithRPC({
-          user_id: authData.user.id,
-          email: authData.user.email || identifier.trim(),
-          fullName: freshFullName,
-          phone: userMeta.phone || "",
-          role: "customer",
-          city: "Johannesburg",
-          country: "South Africa",
-        }).catch((profileErr) => {
-          console.debug("[Profile Auto-Provision Notice]", profileErr);
-        });
+        // Login reads existing details; it must not overwrite persisted fields
+        // with incomplete authentication metadata.
 
         if (fetchUserProfile) {
           fetchUserProfile(authData.user.id);
@@ -174,8 +185,9 @@ export function LoginScreen({
         console.warn("Credential storage persist error:", e);
       }
 
+      if (!isCurrent()) return;
       setIsSuccess(true);
-      setTimeout(() => {
+      scheduleLoginTask(() => {
         onLogin();
       }, 1200);
     } catch (error: any) {

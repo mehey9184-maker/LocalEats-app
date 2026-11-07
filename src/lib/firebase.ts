@@ -16,6 +16,7 @@ import {
   orderBy,
   limit,
   onSnapshot,
+  connectFirestoreEmulator,
   serverTimestamp,
   DocumentData,
   QueryConstraint,
@@ -28,6 +29,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  connectAuthEmulator,
   User as FirebaseUser,
   signInAnonymously
 } from "firebase/auth";
@@ -52,6 +54,19 @@ let appInstance: FirebaseApp | null = null;
 let firestoreInstance: Firestore | null = null;
 let authInstance: Auth | null = null;
 let messagingInstance: Messaging | null = null;
+
+/** Explicit localhost-only QA; never enabled by Vercel preview/production bundles. */
+function useBrowserQaEmulators(): boolean {
+  if (!import.meta.env.DEV || import.meta.env.VITE_LOCAL_FIREBASE_EMULATORS !== "true") return false;
+  const hostname = typeof window !== "undefined" ? window.location.hostname : "";
+  if (firebaseConfig.projectId !== "demo-localeats-browser-qa" ||
+      !["localhost", "127.0.0.1"].includes(hostname) ||
+      firestoreDatabaseId !== "(default)") {
+    throw new Error("Unsafe Firebase QA environment: demo project, default database and loopback required.");
+  }
+  return true;
+}
+
 
 /**
  * Lazily initializes and returns Firebase App
@@ -93,6 +108,7 @@ export function getFirebaseFirestore(): Firestore {
       }
     }
   }
+  if (useBrowserQaEmulators()) connectFirestoreEmulator(firestoreInstance, "127.0.0.1", 8080);
   return firestoreInstance;
 }
 
@@ -105,6 +121,7 @@ export function getFirebaseAuth(): Auth {
   if (!authInstance) {
     const app = getFirebaseApp();
     authInstance = getAuth(app);
+    if (useBrowserQaEmulators()) connectAuthEmulator(authInstance, "http://127.0.0.1:9099", { disableWarnings: true });
   }
   return authInstance;
 }

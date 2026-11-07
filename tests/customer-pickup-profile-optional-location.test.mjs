@@ -9,7 +9,7 @@ test("pickup profile accepts name and phone without requiring rider coordinates"
   assert.doesNotMatch(screen,/if \(!latitude \|\| !longitude\)/);
   assert.doesNotMatch(screen,/if \(!fullName \|\| !phone \|\| !city \|\| !address\)/);
   assert.match(screen,/validateSAPhone\(phone\)/);
-  assert.match(screen,/await onSave\(\{ fullName, phone, city, address, latitude, longitude \}\)/);
+  assert.match(screen,/await commitProfileChange\(patch, submitted\)/);
 });
 
 test("the original location search remains optional, without rider instructions",()=>{

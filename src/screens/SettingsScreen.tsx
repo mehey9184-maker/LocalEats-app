@@ -18,6 +18,7 @@ import { UserProfile } from "../types";
 
 interface SettingsScreenProps {
   userProfile: UserProfile;
+  verifiedStaffRole?: "admin" | "merchant" | null;
   setUserProfile?: (profile: any) => void;
   forcedTheme?: string;
   onSetForcedTheme?: (theme: any) => void;
@@ -40,6 +41,7 @@ interface SettingsScreenProps {
 
 export function SettingsScreen({
   userProfile,
+  verifiedStaffRole = null,
   onBack,
   onLogout,
   onProfile,
@@ -54,8 +56,10 @@ export function SettingsScreen({
   triggerHaptic,
   isOnline = true,
 }: SettingsScreenProps) {
-  const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
-  const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
+  // Never trust client-cached role flags for staff/admin navigation.
+  // A separately verified backend claim must be supplied to unlock this UI.
+  const isAdmin = verifiedStaffRole === "admin";
+  const isMerchant = verifiedStaffRole === "merchant" || isAdmin;
 
   const handleAction = (cb?: () => void) => {
     if (triggerHaptic) triggerHaptic(10);
@@ -96,7 +100,7 @@ export function SettingsScreen({
                 {displayName}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {userProfile?.phone || userProfile?.email || "Manage delivery profile"}
+                {userProfile?.phone || userProfile?.email || "Sign in to manage your profile"}
               </p>
             </div>
           </div>
@@ -199,7 +203,7 @@ export function SettingsScreen({
               <ChevronRight className="w-5 h-5 text-slate-400" />
             </button>
 
-            {onShopDashboard && (
+            {isMerchant && onShopDashboard && (
               <button
                 onClick={() => handleAction(onShopDashboard)}
                 className="w-full p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/30 transition text-left"

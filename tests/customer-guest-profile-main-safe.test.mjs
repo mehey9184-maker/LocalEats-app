@@ -41,7 +41,8 @@ test("session restoration must never display a registered editor without matchin
 test("every known direct Profile/complete-profile route is protected",()=>{
   assert.match(source,/const navigateToProfile = useCallback/);
   assert.match(source,/setCurrentScreen\(profileDestination\(auth\.currentUser, session\?\.user\?\.id, requested\)\)/);
-  assert.equal((source.match(/navigateToProfile\("profile"\)/g)||[]).length,3);
+  // The account branch also exposes the existing Settings profile entry.
+  assert.equal((source.match(/navigateToProfile\("profile"\)/g)||[]).length,4);
   assert.equal((source.match(/navigateToProfile\("complete-profile"\)/g)||[]).length,2);
   assert.doesNotMatch(source,/setCurrentScreen\("profile"\)/);
   assert.doesNotMatch(source,/setCurrentScreen\("complete-profile"\)/);
