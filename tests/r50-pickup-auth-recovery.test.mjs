@@ -57,9 +57,9 @@ test('R5.0 actual API client remains recoverable on a new auth token without sto
  assert.deepEqual(res.orders,[{id:'new',user_id:'new-user'}]);
  assert.deepEqual(used,['Bearer fb-stale','Bearer fb-fresh']);
 });
-test('R5.0 history effect waits for Firebase hydration, rechecks identity, aborts stale reads and stops after a 401',()=>{
+test('R5.0 history effect waits for Firebase hydration/token changes, rechecks identity, aborts stale reads and stops after a 401',()=>{
  const s=app();
- assert.match(s,/onAuthStateChanged\(auth, user =>/);
+ assert.match(s,/onIdTokenChanged\(auth, user =>/);
  assert.match(s,/pickupHistoryIdentityMatches\(historyUserId,user\)/);
  assert.match(s,/requestedFirebaseUid !== auth\.currentUser\?\.uid/);
  assert.match(s,/if \(!active \|\| inFlight \|\| authBlocked\) return/);
