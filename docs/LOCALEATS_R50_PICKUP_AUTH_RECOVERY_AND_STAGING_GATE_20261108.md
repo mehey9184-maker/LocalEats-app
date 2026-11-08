@@ -1,3 +1,5 @@
+**R5.1 historical correction (8 November 2026):** See [R5.1 Customer Firebase auth](LOCALEATS_R51_FIREBASE_IDENTITY_RECOVERY_AND_STAGING_GATE_20261108.md). The old dual-provider hypothesis was incorrect for the inspected Customer login adapter. Historical tests remain isolated evidence, not hosted acceptance.
+
 # LocalEats Customer R5.0 — pickup authentication recovery and isolated staging acceptance
 
 **Owner request:** 8 November 2026, "Next recommended phase — R5.0". **Status:** DRAFT PR #82, isolated test-only approval; no merge or release. **Current result:** safe customer-side 401/identity mismatch recovery notice prepared and contract-tested. **Actual multi-provider sign-in recovery and real hosted staging/browser approval NOT COMPLETE.**
@@ -19,11 +21,11 @@
 
 ## Important unsolved identity-reconciliation blocker
 
-**Existing LoginScreen signs in through `supabase.auth.signInWithPassword`, not Firebase Auth**, whereas pickup API uses `auth.currentUser.getIdToken()`. Merely tapping **Open sign in** is not proven to renew a revoked Firebase token or establish an equivalent Firebase UID. The new error notice is truthful about failed pickup access, but the sign-in journey cannot be declared fully recovered until the app has an owner-approved secure identity-bridging contract and actual browser verification. Do **not** send the Supabase JWT as if it were a Firebase ID token; do not trust a local stored UID or email match; do not automatically provision/migrate user identities or weaken Supabase/Firebase authorization checks.
+**R5.1 correction: LoginScreen calls `supabase.auth.signInWithPassword`, but `src/lib/supabase.ts` delegates to Firebase `signInWithEmailAndPassword`. The session uses the Firebase UID and Firebase ID token.** Pickup also uses that same Firebase Auth instance. Merely tapping **Open sign in** is not proven to renew a revoked Firebase token or establish an equivalent Firebase UID. The new error notice is truthful about failed pickup access, but the sign-in journey cannot be declared fully recovered until the actual Firebase-backed sign-in path is verified in an isolated browser and against the API. Do **not** send the Supabase JWT as if it were a Firebase ID token; do not trust a local stored UID or email match; do not automatically provision/migrate user identities or weaken Supabase/Firebase authorization checks.
 
-The existing `logoutCustomer` calls Supabase `signOut` but is not, by itself, proof of Firebase sign-out; do not claim dual-provider logout until it is source-tested and separately remediated.
+`logoutCustomer` calls the legacy compatibility adapter's `signOut`, which invokes Firebase `signOut(auth)`. Client sign-out does not revoke already-issued ID tokens; verify private-cache cleanup and API protections separately.
 
-**A deliberate fail-closed identity mismatch may block otherwise real customers who have different provider UIDs.** That is a correctness limitation requiring a cryptographically server-verified identity-mapping strategy, **not** a reason to silently show another UID's orders or remove the guard. Browser tests must include existing accounts and an intentional mismatch.
+**Fail-closed identity mismatch still protects customer data.** The Firebase-backed adapter normally provides the same UID for Customer session and pickup authentication; diagnose any difference by inspecting actual configuration and account ownership, not by weakening guards. Browser tests must include existing accounts and an intentional mismatch.
 
 ## R5.0 actual hosted staging readiness checklist — NOT COMPLETE
 
@@ -38,6 +40,6 @@ Do not call a Vercel Preview an isolated staging environment without confirming 
 
 ## Phase outcome and next approval
 
-**R5.0 safe UI error recovery guard + offline tests:** implemented on Customer draft PR #82 with original design preserved. **R5.0 true customer Firebase re-login and hosted staging:** **BLOCKED** pending a secure verified mapping/dual-auth flow, isolated staging access, real Firebase/DB configuration, browser/manual acceptance and owner approval. Keep all three LocalEats Rewards PRs draft/unmerged; no Production, live order, database migration, staging mutation or payment activation from this phase.
+**R5.0 safe UI error recovery guard + offline tests:** implemented on Customer draft PR #82 with original design preserved. **R5.0 true customer Firebase re-login and hosted staging:** **BLOCKED** pending isolated staging, real Firebase/DB configuration, browser/manual acceptance and owner approval. R5.1 corrected the independent dual-auth assumption. Keep all three LocalEats Rewards PRs draft/unmerged; no Production, live order, database migration, staging mutation or payment activation from this phase.
 
 Suggested next phase (owner-gated): **R5.1 — Design and test secure Supabase ↔ Firebase identity reconciliation** in a fully isolated environment, then complete live-like Customer re-sign-in and logout across both providers before any release decision. Do not implement a cross-provider session shortcut based only on user-provided UID/email or frontend storage.
