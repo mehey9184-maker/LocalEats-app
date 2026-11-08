@@ -5,7 +5,7 @@ import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
 import {readPickupWithDeadline} from './services/pickupRead';
 import {pickupHistoryIdentityMatches,pickupHistoryNeedsSignIn} from './services/pickupHistoryAuth';
-import {onAuthStateChanged} from 'firebase/auth';
+import {onIdTokenChanged} from 'firebase/auth';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -2285,7 +2285,10 @@ export default function App() {
     refreshPickupHistory.current = () => { void refresh(); };
     // Wait for Firebase hydration; the Supabase session alone does not
     // prove ownership of the Firebase-authenticated pickup feed.
-    const stopListening = onAuthStateChanged(auth, user => {
+    // A same-UID fresh sign-in changes the Firebase token without necessarily
+    // changing the signed-in account; R5.0's account-only observer could stay blocked.
+    // Observe token changes too and still require the API to re-verify each request.
+    const stopListening = onIdTokenChanged(auth, user => {
       if (!active) return;
       if (!pickupHistoryIdentityMatches(historyUserId,user)) {
         requirePickupSignIn();
