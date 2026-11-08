@@ -24,7 +24,7 @@ jobs:
           CHUNK: ${{ matrix.chunk }}
         run: |
           set -euo pipefail
-          test "$(sha1sum public/logo.png | awk '{print $1}')" = "e1ba54098c57a9c99bafd72d4d593eb98a23b010"
+          test "$(git hash-object public/logo.png)" = "e1ba54098c57a9c99bafd72d4d593eb98a23b010"
           test "$(stat -c '%s' public/logo.png)" = "1276778"
           echo 'R52F_ASSET_PUBLIC_LOGO=public/logo.png'
           echo "R52F_CHUNK_INDEX=$CHUNK"
