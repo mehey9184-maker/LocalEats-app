@@ -34,11 +34,17 @@ export function resolveCustomerFirebaseConfig(
   };
   if (environmentOnly) {
     const databaseId = setting(env, "VITE_FIREBASE_FIRESTORE_DATABASE_ID");
-    // Never let a staging build use bundled production Firebase values.
+    // Hosted Firebase demo-* project IDs are emulator-only: they have no
+    // live Auth/Firestore service and must never pass hosted staging preflight.
+    // Reject a single mixed-in bundled Production field, not just projectId.
     const knownBundledProject = bundled.projectId?.trim() || "localeats-5e26e";
+    const mixesBundledValues = (Object.keys(required) as (keyof FirebaseWebConfig)[])
+      .some(key => Boolean(bundled[key]?.trim()) && required[key] === bundled[key]?.trim());
     if (Object.values(required).some(value => !value) || !databaseId ||
+        required.projectId.startsWith("demo-") ||
         required.projectId === knownBundledProject ||
-        required.projectId === "localeats-5e26e") {
+        required.projectId === "localeats-5e26e" ||
+        mixesBundledValues) {
       throw new Error("R52_STAGING_FIREBASE_CONFIG_INVALID");
     }
     return { config: required, firestoreDatabaseId: databaseId };
