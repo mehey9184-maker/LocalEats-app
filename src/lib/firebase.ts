@@ -40,6 +40,8 @@ import {resolveCustomerFirebaseConfig} from "./firebaseConfigPolicy";
 
 // R5.2: Environment-only staging is explicit and refuses bundled Firebase fallback.
 // Normal builds retain the exact historical values and precedence.
+// Staging mode must never reuse a pre-initialized Firebase app or Firestore fallback.
+const strictStagingFirebase = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment";
 const customerFirebaseSettings = resolveCustomerFirebaseConfig(import.meta.env, firebaseConfigJson);
 export const firebaseConfig = customerFirebaseSettings.config;
 export const firestoreDatabaseId = customerFirebaseSettings.firestoreDatabaseId;
@@ -58,12 +60,15 @@ export function getFirebaseApp(): FirebaseApp {
       try {
         appInstance = initializeApp(firebaseConfig);
       } catch (err) {
+        if (strictStagingFirebase) throw new Error("R52_STAGING_FIREBASE_APP_INIT_FAILED");
         console.warn("[Firebase] Init error, retrieving default app:", err);
         appInstance = getApp();
       }
     } else {
       appInstance = getApp();
     }
+    if (strictStagingFirebase && appInstance.options.projectId !== firebaseConfig.projectId)
+      throw new Error("R52_STAGING_FIREBASE_APP_PROJECT_MISMATCH");
   }
   return appInstance;
 }
@@ -79,6 +84,8 @@ export function getFirebaseFirestore(): Firestore {
         experimentalForceLongPolling: true,
       }, firestoreDatabaseId);
     } catch (e) {
+      // Never downgrade an explicitly selected staging database to (default).
+      if (strictStagingFirebase) throw new Error("R52_STAGING_FIRESTORE_INIT_FAILED");
       console.warn("[Firestore] Custom DB init fallback:", e);
       try {
         firestoreInstance = getFirestore(app);
