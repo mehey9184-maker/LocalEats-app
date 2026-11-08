@@ -152,3 +152,8 @@ Vercel Preview must NOT be treated as independent staging by default. Read-only 
 ## R5.2B staging resource gate (2026-11-08)
 
 Customer Preview's current draft branch lacks an exact Vercel deployment and branch-only credentials; its default Firebase Preview variables overlap Production. An older profile-preview branch has demo- Firebase project settings and is not proof of a real hosted Auth project. An existing separate Supabase Profile-Staging project currently exposes public.profiles only and needs a separately approved isolated pickup schema/fixtures before real staging acceptance. The API R5.2B offline metadata gate and docs are in API draft PR #124. No hosted account creation/revocation, real order, new infra, Production, merge or environment write is permitted by R5.2B. See docs/LOCALEATS_R52B_STAGING_RESOURCE_HANDOVER_20261108.md.
+
+
+## R5.2C Customer staging project safety — 2026-11-08
+
+R5.2C strict hosted-staging Firebase config rejects emulator-only demo- project IDs and individual fields copied from the bundled Production Firebase config, without changing normal builds. This is a tripwire, not proof of stage isolation. There is NO verified new real hosted Firebase staging project because Firebase project-management actions were unavailable; do not run hosted token revocation, sign-in tests or create new Auth users until separate real project, backend issuer, Vercel/Supabase isolation and exact Preview SHA are verified. Profile-Staging still lacks hosted pickup schema. No Production, database, Vercel, financial, ordering, or merge actions under this phase. See docs/LOCALEATS_R52C_REAL_FIREBASE_STAGE_CUSTOMER_HANDOVER_20261108.md.
