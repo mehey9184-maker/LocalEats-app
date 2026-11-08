@@ -36,17 +36,13 @@ import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "fir
 import { Shop, MenuItem } from "../types";
 import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
+import {resolveCustomerFirebaseConfig} from "./firebaseConfigPolicy";
 
-export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || "localeats-5e26e.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "localeats-5e26e",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigJson.storageBucket || "localeats-5e26e.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId || "281496568360",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId || "",
-};
-
-export const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)";
+// R5.2: Environment-only staging is explicit and refuses bundled Firebase fallback.
+// Normal builds retain the exact historical values and precedence.
+const customerFirebaseSettings = resolveCustomerFirebaseConfig(import.meta.env, firebaseConfigJson);
+export const firebaseConfig = customerFirebaseSettings.config;
+export const firestoreDatabaseId = customerFirebaseSettings.firestoreDatabaseId;
 
 let appInstance: FirebaseApp | null = null;
 let firestoreInstance: Firestore | null = null;
