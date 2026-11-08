@@ -137,3 +137,8 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## R5.1 Customer Firebase identity — draft clarification, 2026-11-08
+
+Actual Customer src/lib/supabase.ts is a Firebase-backed compatibility facade; its name is NOT proof of separate Supabase Auth. The real Firebase Auth UID/token also drives pickup API access. Do not create a cross-provider bridge based on browser UID/email or weaken the server's verifyIdToken(token, true) authorization. Pickup-history uses onIdTokenChanged for same-account reauthentication after 401; all R5.0 private-data cleanup and UI invariants remain. Emulator-based SDK tests are not hosted-staging/browser acceptance. R5.1 is draft-only; do not merge or change Production, security rules, service credentials, financial state or order flags.
