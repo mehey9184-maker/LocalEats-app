@@ -40,3 +40,7 @@ When the mode is NOT explicitly selected, existing environment-first and bundled
 - Owner separately reviews original Customer and Merchant UI, security evidence, privacy controls, isolated infrastructure and release prerequisites. No merge, Production ordering or LocalPay approval is included.
 
 **Current outcome:** R5.2 offline configuration hardening and safety checks are draft-only; actual hosted staging acceptance **BLOCKED** until the above evidence exists. Customer PR #82, API PR #124, Super Admin PR #4 remain draft/unmerged.
+
+
+### Additional read-only Supabase project discovery (8 November 2026)
+The connected Supabase account lists two independently identified active project references: **LocalEats** and **LocalEats-Profile-Staging**. The latter is a real separate project resource, so creation of another Supabase project may be unnecessary IF this staging project is suitable. It has NOT been proven to be the API PR's effective database or to contain appropriately synthetic pickup test data. Vercel still has unverified Preview/Production-overlapping SUPABASE_URL and service-role credential scopes, no exact current draft deployment, and Firebase isolation is not established. Do not redirect deployed applications, reuse Production credentials, query customer records, migrate schema, or create data without a reviewed isolation plan and owner approval.
