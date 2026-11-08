@@ -13,10 +13,11 @@ export type FirebaseWebConfig = {
 };
 type Environment = Record<string, unknown>;
 
-const setting = (env: Environment, key: string): string => {
+const rawSetting = (env: Environment, key: string): string => {
   const value = env[key];
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? value : "";
 };
+const setting = (env: Environment, key: string): string => rawSetting(env, key).trim();
 
 export function resolveCustomerFirebaseConfig(
   env: Environment,
@@ -42,17 +43,17 @@ export function resolveCustomerFirebaseConfig(
     }
     return { config: required, firestoreDatabaseId: databaseId };
   }
-  // Legacy selection for unopted-in deployments: do not modify Production UI.
+  // Preserve the exact pre-R5.2 environment-first/fallback selection for normal builds.
   return {
     config: {
-      apiKey: required.apiKey || bundled.apiKey || "",
-      authDomain: required.authDomain || bundled.authDomain || "localeats-5e26e.firebaseapp.com",
-      projectId: required.projectId || bundled.projectId || "localeats-5e26e",
-      storageBucket: required.storageBucket || bundled.storageBucket || "localeats-5e26e.firebasestorage.app",
-      messagingSenderId: required.messagingSenderId || bundled.messagingSenderId || "281496568360",
-      appId: required.appId || bundled.appId || "",
+      apiKey: rawSetting(env, "VITE_FIREBASE_API_KEY") || bundled.apiKey || "",
+      authDomain: rawSetting(env, "VITE_FIREBASE_AUTH_DOMAIN") || bundled.authDomain || "localeats-5e26e.firebaseapp.com",
+      projectId: rawSetting(env, "VITE_FIREBASE_PROJECT_ID") || bundled.projectId || "localeats-5e26e",
+      storageBucket: rawSetting(env, "VITE_FIREBASE_STORAGE_BUCKET") || bundled.storageBucket || "localeats-5e26e.firebasestorage.app",
+      messagingSenderId: rawSetting(env, "VITE_FIREBASE_MESSAGING_SENDER_ID") || bundled.messagingSenderId || "281496568360",
+      appId: rawSetting(env, "VITE_FIREBASE_APP_ID") || bundled.appId || "",
     },
-    firestoreDatabaseId: setting(env, "VITE_FIREBASE_FIRESTORE_DATABASE_ID") ||
+    firestoreDatabaseId: rawSetting(env, "VITE_FIREBASE_FIRESTORE_DATABASE_ID") ||
       bundled.firestoreDatabaseId || "(default)",
   };
 }
