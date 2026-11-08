@@ -65,5 +65,9 @@ test("R5.2 production code uses opt-in resolver, not implicit environment fallba
  assert.match(src,/resolveCustomerFirebaseConfig\(import\.meta\.env, firebaseConfigJson\)/);
  assert.match(src,/firebaseConfig = customerFirebaseSettings\.config/);
  assert.match(src,/firestoreDatabaseId = customerFirebaseSettings\.firestoreDatabaseId/);
+ assert.match(src,/strictStagingFirebase && appInstance\.options\.projectId !== firebaseConfig\.projectId/);
+ assert.match(src,/R52_STAGING_FIREBASE_APP_PROJECT_MISMATCH/);
+ assert.match(src,/R52_STAGING_FIRESTORE_INIT_FAILED/);
+ assert.match(src,/R52_STAGING_FIREBASE_APP_INIT_FAILED/);
  assert.doesNotMatch(src,/export const firebaseConfig = \{\s*apiKey: import\.meta\.env/);
 });
