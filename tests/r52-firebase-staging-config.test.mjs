@@ -13,9 +13,9 @@ const bundled={
 const staging={
  VITE_FIREBASE_CONFIG_SOURCE:"environment",
  VITE_FIREBASE_API_KEY:"fake-staging-only-key",
- VITE_FIREBASE_AUTH_DOMAIN:"demo-r52-staging.firebaseapp.com",
- VITE_FIREBASE_PROJECT_ID:"demo-r52-staging",
- VITE_FIREBASE_STORAGE_BUCKET:"demo-r52-staging.appspot.com",
+ VITE_FIREBASE_AUTH_DOMAIN:"r52c-staging-only-fixture.firebaseapp.com",
+ VITE_FIREBASE_PROJECT_ID:"r52c-staging-only-fixture",
+ VITE_FIREBASE_STORAGE_BUCKET:"r52c-staging-only-fixture.appspot.com",
  VITE_FIREBASE_MESSAGING_SENDER_ID:"123456789",
  VITE_FIREBASE_APP_ID:"fake-staging-app-id",
  VITE_FIREBASE_FIRESTORE_DATABASE_ID:"(default)",
@@ -33,9 +33,9 @@ test("R5.2 unchanged normal Firebase selection preserves existing Production/Pre
 
 test("R5.2 explicit staging uses only provided environment values, not production bundle",()=>{
  const r=resolveCustomerFirebaseConfig(staging,bundled);
- assert.equal(r.config.projectId,"demo-r52-staging");
+ assert.equal(r.config.projectId,"r52c-staging-only-fixture");
  assert.equal(r.config.apiKey,"fake-staging-only-key");
- assert.equal(r.config.authDomain,"demo-r52-staging.firebaseapp.com");
+ assert.equal(r.config.authDomain,"r52c-staging-only-fixture.firebaseapp.com");
  assert.equal(r.firestoreDatabaseId,"(default)");
  assert.notEqual(r.config.projectId,bundled.projectId);
 });
@@ -58,6 +58,30 @@ test("R5.2 strict staging refuses bundled legacy Firebase project even with comp
   ()=>resolveCustomerFirebaseConfig({...staging,VITE_FIREBASE_PROJECT_ID:"localeats-5e26e"}, {projectId:"new-bundled-project"}),
   /R52_STAGING_FIREBASE_CONFIG_INVALID/
  );
+});
+
+test("R5.2C hosted staging refuses Firebase demo emulator project IDs",()=>{
+ assert.throws(
+  ()=>resolveCustomerFirebaseConfig({...staging,VITE_FIREBASE_PROJECT_ID:"demo-r52c-emulator"},bundled),
+  /R52_STAGING_FIREBASE_CONFIG_INVALID/
+ );
+});
+
+test("R5.2C staging rejects any mixed-in production Firebase web field",()=>{
+ const fields={
+  VITE_FIREBASE_API_KEY:"apiKey",
+  VITE_FIREBASE_AUTH_DOMAIN:"authDomain",
+  VITE_FIREBASE_STORAGE_BUCKET:"storageBucket",
+  VITE_FIREBASE_MESSAGING_SENDER_ID:"messagingSenderId",
+  VITE_FIREBASE_APP_ID:"appId"
+ };
+ for(const [envName,bundledName] of Object.entries(fields)){
+  assert.throws(
+   ()=>resolveCustomerFirebaseConfig({...staging,[envName]:bundled[bundledName]},bundled),
+   /R52_STAGING_FIREBASE_CONFIG_INVALID/,
+   "unexpected Production value accepted in staging: "+envName
+  );
+ }
 });
 
 test("R5.2 production code uses opt-in resolver, not implicit environment fallback in staging",()=>{
