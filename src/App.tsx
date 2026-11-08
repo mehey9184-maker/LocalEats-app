@@ -4,6 +4,8 @@ import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCusto
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
 import {readPickupWithDeadline} from './services/pickupRead';
+import {pickupHistoryIdentityMatches,pickupHistoryNeedsSignIn} from './services/pickupHistoryAuth';
+import {onAuthStateChanged} from 'firebase/auth';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -2177,6 +2179,7 @@ export default function App() {
   const historyUserId = session?.user?.id;
   const [pickupHistory, setPickupHistory] = useState<{
     userId: string; orders: PickupOrder[] | null; error: boolean; refreshing: boolean;
+    authRequired?: boolean;
   } | null>(null);
   const refreshPickupHistory = useRef<() => void>(() => {});
 
@@ -2184,15 +2187,35 @@ export default function App() {
     let active = true;
     let inFlight = false;
     let inboxInFlight = false;
+    let authBlocked = false;
     let feedRequest:AbortController|null = null;
     setOrders([]);
     setNotifications([]);
     if (!historyUserId) {
       setPickupHistory(null);
+      refreshPickupHistory.current = () => {};
       return;
     }
+    const requirePickupSignIn = () => {
+      if (!active) return;
+      authBlocked = true;
+      feedRequest?.abort();
+      // No stale pickup history, global order tracker or private notifications
+      // can be shown after Firebase revocation or a Supabase/Firebase UID mismatch.
+      setOrders([]);
+      setNotifications([]);
+      setPickupHistory({
+        userId: historyUserId, orders: null, error: true,
+        refreshing: false, authRequired: true,
+      });
+    };
     const refresh = async () => {
-      if (!active || inFlight) return;
+      if (!active || inFlight || authBlocked) return;
+      if (!pickupHistoryIdentityMatches(historyUserId,auth.currentUser)) {
+        requirePickupSignIn();
+        return;
+      }
+      const requestedFirebaseUid = auth.currentUser?.uid;
       inFlight = true;
       const controller = new AbortController();
       feedRequest = controller;
@@ -2204,6 +2227,12 @@ export default function App() {
       }));
       try {
         const { orders: rows } = await readPickupWithDeadline(signal => customerPickupApi.orders(false,signal),{signal:controller.signal});
+        if (!active || authBlocked) return;
+        if (!pickupHistoryIdentityMatches(historyUserId,auth.currentUser) ||
+            requestedFirebaseUid !== auth.currentUser?.uid) {
+          requirePickupSignIn();
+          return;
+        }
         if (!Array.isArray(rows)) throw new Error("Invalid order history");
         const ownedOrders = rows.filter(order => order.user_id === historyUserId);
         if (active) {
@@ -2218,22 +2247,31 @@ export default function App() {
             status: order.status === "collected" ? "completed" : order.status === "ready_for_pickup" ? "ready" : order.status,
           })) as unknown as Order[]);
         }
-      } catch {
-        if (active) setPickupHistory(previous => ({
-          userId: historyUserId,
-          orders: previous?.userId === historyUserId ? previous.orders : null,
-          error: true,
-          refreshing: false,
-        }));
+      } catch (error) {
+        if (active && !authBlocked) {
+          if (pickupHistoryNeedsSignIn(error) ||
+              !pickupHistoryIdentityMatches(historyUserId,auth.currentUser) ||
+              requestedFirebaseUid !== auth.currentUser?.uid) {
+            requirePickupSignIn();
+          } else {
+            setPickupHistory(previous => ({
+              userId: historyUserId,
+              orders: previous?.userId === historyUserId ? previous.orders : null,
+              error: true, refreshing: false, authRequired: false,
+            }));
+          }
+        }
       } finally {
         if(feedRequest === controller) feedRequest = null;
         inFlight = false;
       }
-      if (!active || inboxInFlight || !pickupOrderingEnabled()) return;
+      if (!active || authBlocked || inboxInFlight || !pickupOrderingEnabled()) return;
       inboxInFlight = true;
       try {
         const inbox = await customerPickupApi.notifications();
-        if (active) setNotifications((inbox.notifications ?? []).map((event: any) => ({
+        if (active && !authBlocked &&
+            pickupHistoryIdentityMatches(historyUserId,auth.currentUser))
+          setNotifications((inbox.notifications ?? []).map((event: any) => ({
           id: event.id, title: "Pickup ready",
           message: "Your order is ready for collection. Pay at the shop before handover.",
           type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
@@ -2245,10 +2283,21 @@ export default function App() {
       }
     };
     refreshPickupHistory.current = () => { void refresh(); };
-    void refresh();
+    // Wait for Firebase hydration; the Supabase session alone does not
+    // prove ownership of the Firebase-authenticated pickup feed.
+    const stopListening = onAuthStateChanged(auth, user => {
+      if (!active) return;
+      if (!pickupHistoryIdentityMatches(historyUserId,user)) {
+        requirePickupSignIn();
+      } else {
+        authBlocked = false;
+        void refresh();
+      }
+    }, () => requirePickupSignIn());
     const timer = setInterval(refresh, 30000);
     return () => {
       active = false;
+      stopListening();
       refreshPickupHistory.current = () => {};
       feedRequest?.abort();
       clearInterval(timer);
@@ -3134,6 +3183,7 @@ export default function App() {
                       orders={currentPickupHistory?.orders ?? null}
                       error={currentPickupHistory?.error ?? false}
                       refreshing={currentPickupHistory?.refreshing ?? true}
+                      authRequired={currentPickupHistory?.authRequired ?? false}
                       shops={visibleShops}
                       changesEnabled={pickupOrderingEnabled()}
                       hasPendingCancellation={hasPendingPickupCancellation}
@@ -3541,6 +3591,7 @@ export default function App() {
                   orders={currentPickupHistory?.orders ?? null}
                   error={currentPickupHistory?.error ?? false}
                   refreshing={currentPickupHistory?.refreshing ?? true}
+                  authRequired={currentPickupHistory?.authRequired ?? false}
                   onRetry={() => refreshPickupHistory.current()}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   onSignIn={() => setCurrentScreen("login")}
