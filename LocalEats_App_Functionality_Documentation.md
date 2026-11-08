@@ -256,3 +256,10 @@ The existing Super Admin approval workflow, Merchant effective availability, and
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## R5.1 Customer Firebase identity correction and draft recovery (2026-11-08)
+
+Owner approved draft-only R5.1. The Customer src/lib/supabase.ts is a Supabase-shaped compatibility wrapper whose password/Google sign-in, getSession, getUser and signOut use Firebase Auth. The session user ID equals Firebase UID and the pickup API bearer uses Firebase getIdToken; the backend remains independently authoritative and uses Supabase as a database. Earlier claims that Customer Login and pickup use two independently authenticated providers were incorrect for this inspected code.
+
+The pickup history watcher now uses onIdTokenChanged, which allows a fresh SAME-UID sign-in after revoked-token 401 to retry an API-verified read without assuming the Firebase UID must change. Existing abort, account-switch, anonymous, 401 cleanup and non-auth Retry behavior remain; no UI or ordering changes. Tests: tests/r51-firebase-auth-contract.test.mjs and tests/r51/firebase-auth-recovery-emulator.test.mjs, with a credential-free isolated PR workflow. Hosted staging and browser/manual acceptance are NOT complete; see docs/LOCALEATS_R51_FIREBASE_IDENTITY_RECOVERY_AND_STAGING_GATE_20261108.md. No Production, merge, live order, database or LocalPay operation is authorized.
