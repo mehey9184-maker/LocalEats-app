@@ -142,3 +142,8 @@ The initial HTML reserves the Home header, card grid and bottom navigation befor
 ## R5.1 Customer Firebase identity — draft clarification, 2026-11-08
 
 Actual Customer src/lib/supabase.ts is a Firebase-backed compatibility facade; its name is NOT proof of separate Supabase Auth. The real Firebase Auth UID/token also drives pickup API access. Do not create a cross-provider bridge based on browser UID/email or weaken the server's verifyIdToken(token, true) authorization. Pickup-history uses onIdTokenChanged for same-account reauthentication after 401; all R5.0 private-data cleanup and UI invariants remain. Emulator-based SDK tests are not hosted-staging/browser acceptance. R5.1 is draft-only; do not merge or change Production, security rules, service credentials, financial state or order flags.
+
+
+## R5.2 Customer Preview isolation STOP rule — 2026-11-08
+
+Vercel Preview must NOT be treated as independent staging by default. Read-only Vercel metadata showed Firebase configuration variables scoped to BOTH Preview and Production and no exact current Customer draft deployment. Never use such preview to create/revoke Firebase users, run hosted pickup-account/browser tests, modify shop/merchant records, or measure meaningful production-like performance. The optional strict VITE_FIREBASE_CONFIG_SOURCE=environment configuration mode fails closed on missing Firebase fields or known bundled Production project, but still requires independent proof of separate Firebase, Supabase and API environments. src/lib/firebaseConfigPolicy.ts is draft-only with synthetic tests. Existing normal startup/config precedence and UI remain unchanged. See docs/LOCALEATS_R52_HOSTED_STAGING_ISOLATION_GATE_20261108.md. No Production, merge, writes, payment or Rewards activation.
