@@ -1,6 +1,8 @@
-/** Only an authenticated Firebase account that matches the active Supabase
- * session may access the pickup history. This mirrors Profile's existing
- * fail-closed identity rule; it does not link the two auth providers. */
+/** Only an authenticated nonanonymous Firebase account matching the active
+ * session may access pickup history. The legacy `supabase.auth` Customer
+ * adapter delegates to Firebase Auth; matching UIDs here is a fail-closed
+ * continuity guard, not evidence of two independently authenticated users.
+ * The API must still verify each Firebase ID token and its revocation status. */
 export const pickupHistoryIdentityMatches = (
   sessionUid: string | null | undefined,
   firebaseUser: { uid: string; isAnonymous?: boolean } | null | undefined,
