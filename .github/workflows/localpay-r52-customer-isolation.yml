@@ -1,0 +1,49 @@
+name: LocalEats R5.2 — Customer Firebase Isolated Staging Preflight (No Hosted Access)
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/lib/firebase.ts'
+      - 'src/lib/firebaseConfigPolicy.ts'
+      - 'tests/r52-firebase-staging-config.test.mjs'
+      - '.github/workflows/localpay-r52-customer-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-config-preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      PICKUP_WRITES_ENABLED: 'false'
+      REWARDS_ACTIVATION_ENABLED: 'false'
+      LOCALPAY_LIVE_WALLET_ENABLED: 'false'
+    steps:
+      - name: Checkout only isolated draft without credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Node 22 static tests, no Firebase SDK or hosted services
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Refuse any connected database or Firebase service secrets
+        run: |
+          test -z "${FIREBASE_PROJECT_ID:-}"
+          test -z "${FIREBASE_PRIVATE_KEY:-}"
+          test -z "${SUPABASE_URL:-}"
+          test -z "${DATABASE_URL:-}"
+          test -z "${VITE_FIREBASE_PROJECT_ID:-}"
+          test -z "${VITE_LOCALEATS_API_URL:-}"
+          test "$VITE_PICKUP_ORDERING_ENABLED" = false
+          test "$REWARDS_ACTIVATION_ENABLED" = false
+      - name: Test opt-in strict staging and unchanged legacy Firebase selection
+        run: node --experimental-strip-types --test tests/r52-firebase-staging-config.test.mjs
+      - name: Refuse R5.2 live data and wallet activation
+        run: |
+          test ! -e src/rewards/r52LocalPayWallet.ts
+          test -f src/lib/firebaseConfigPolicy.ts

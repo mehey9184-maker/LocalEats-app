@@ -4,7 +4,7 @@ import type {PickupOrder} from '../pickup/client';
 import type {Shop} from '../types';
 
 interface Props {
- signedIn:boolean; orders:PickupOrder[]|null; error:boolean; refreshing:boolean; shops:Shop[];
+ signedIn:boolean; orders:PickupOrder[]|null; error:boolean; refreshing:boolean; authRequired?:boolean; shops:Shop[];
  changesEnabled:boolean; hasPendingCancellation:(order:PickupOrder)=>boolean;
  onCancel:(order:PickupOrder,reason:string)=>Promise<unknown>;
  onBack:()=>void; onRetry:()=>void; onHistory:()=>void; onSignIn:()=>void; onBrowse:()=>void;
@@ -15,7 +15,7 @@ const descriptions:Record<string,string>={pending:'Waiting for the shop to accep
  preparing:'The shop has accepted your order and is preparing your food.',ready_for_pickup:'Your order is ready. Collect it at the shop.'};
 
 export function PickupTrackingScreen(props:Props){
- const {signedIn,orders,error,refreshing,shops,changesEnabled,onBack,onRetry,onHistory,onSignIn,onBrowse}=props;
+ const {signedIn,orders,error,refreshing,authRequired=false,shops,changesEnabled,onBack,onRetry,onHistory,onSignIn,onBrowse}=props;
  const [editing,setEditing]=useState<string|null>(null),[reason,setReason]=useState('');
  const [busy,setBusy]=useState<string|null>(null),[notice,setNotice]=useState(''),[actionError,setActionError]=useState('');
  const locked=useRef(false);
@@ -31,12 +31,12 @@ export function PickupTrackingScreen(props:Props){
   <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3">
    <button type="button" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 flex items-center justify-center rounded-xl"><ArrowLeft className="w-5 h-5"/></button>
    <h1 className="flex-1 text-lg font-black text-slate-900 dark:text-white">Track pickup</h1>
-   <button type="button" onClick={onRetry} disabled={!signedIn||refreshing} aria-label="Refresh pickup status" className="min-h-11 min-w-11 flex items-center justify-center rounded-xl disabled:opacity-50"><RefreshCw className={`w-5 h-5 ${refreshing?'motion-safe:animate-spin':''}`}/></button>
+   <button type="button" onClick={onRetry} disabled={!signedIn||refreshing||authRequired} aria-label="Refresh pickup status" className="min-h-11 min-w-11 flex items-center justify-center rounded-xl disabled:opacity-50"><RefreshCw className={`w-5 h-5 ${refreshing?'motion-safe:animate-spin':''}`}/></button>
   </header>
   <main className="max-w-2xl mx-auto p-4 space-y-4">
    {notice&&<p role="status" className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-900">{notice}</p>}
    {actionError&&<p role="alert" className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-900">{actionError}</p>}
-   {signedIn&&error&&<div className="rounded-2xl border border-amber-200 p-4"><p role="status" className="text-sm">{orders?.length?'Couldn’t refresh pickup status. These details are from the last successful update.':'Couldn’t load pickup status.'}</p><button type="button" onClick={onRetry} disabled={refreshing} className="mt-2 min-h-11 px-4 rounded-xl border border-slate-300 disabled:opacity-50">{refreshing?'Retrying…':'Retry'}</button></div>}
+   {signedIn&&error&&<div className="rounded-2xl border border-amber-200 p-4"><p role="status" className="text-sm">{authRequired?'We couldn’t verify your pickup account. Open sign in to check your session. No order changes were made.':orders?.length?'Couldn’t refresh pickup status. These details are from the last successful update.':'Couldn’t load pickup status.'}</p>{authRequired?<button type="button" onClick={onSignIn} className="mt-2 min-h-11 px-4 rounded-xl border border-slate-300">Open sign in</button>:<button type="button" onClick={onRetry} disabled={refreshing} className="mt-2 min-h-11 px-4 rounded-xl border border-slate-300 disabled:opacity-50">{refreshing?'Retrying…':'Retry'}</button>}</div>}
    {!signedIn?<section className="py-16 text-center"><h2 className="font-bold">Sign in to track your pickup</h2><button type="button" onClick={onSignIn} className="mt-4 min-h-11 px-6 rounded-xl bg-orange-600 text-white font-bold">Sign in</button></section>
    :orders===null&&!error?<div role="status" aria-label="Loading pickup orders" className="space-y-4">{[1,2].map(n=><div key={n} className="h-64 rounded-3xl border border-slate-200 bg-white dark:bg-slate-800 motion-safe:animate-pulse"/>)}</div>
    :!error&&active.length===0?<section className="py-16 text-center"><ShoppingBag className="w-12 h-12 mx-auto text-orange-500"/><h2 className="mt-4 font-bold">No active pickups</h2><button type="button" onClick={onBrowse} className="mt-4 min-h-11 px-6 rounded-xl bg-orange-600 text-white font-bold">Browse nearby kitchens</button></section>

@@ -1,0 +1,71 @@
+name: LocalEats R5.2F — Original Logo Byte Proof (Draft Only)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/r52f-original-logo-proof.yml'
+permissions:
+  contents: read
+jobs:
+  logo-byte-proof:
+    name: Original logo chunk ${{ matrix.chunk }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Export only the committed public logo bytes for staging evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib
+          blob = Path('public/logo.png').read_bytes()
+          assert len(blob) == 1276778, 'Unexpected logo size, refuse transfer'
+          assert blob[:8] == bytes([137,80,78,71,13,10,26,10]), 'Expected PNG signature'
+          encoded = base64.b64encode(blob).decode('ascii')
+          chunk_index = ${{ matrix.chunk }}
+          width = (len(encoded) + 7) // 8
+          piece = encoded[chunk_index*width:(chunk_index+1)*width]
+          print('R52F_BEGIN_LOGO_PART %d TOTAL_B64 %d BYTES %d SHA256 %s' % (
+            chunk_index, len(encoded), len(blob), hashlib.sha256(blob).hexdigest()))
+          for offset in range(0,len(piece),960):
+            print('R52F_LOGO_DATA ' + piece[offset:offset+960])
+          print('R52F_END_LOGO_PART %d' % chunk_index)
+          PY
+
+  full-customer-source-manifest:
+    name: Original Customer source SHA1 manifest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Read-only SHA1 and byte lengths of committed Customer runtime files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          roots = {
+              "index.html", "package.json", "package-lock.json",
+              "vite.config.ts", "tsconfig.json", "vercel.json",
+              "firebase-applet-config.json", "legacyOrderGuards.ts", "server.ts"
+          }
+          paths = [p for p in Path("src").rglob("*") if p.is_file()]
+          paths += [p for p in Path("public").rglob("*") if p.is_file()]
+          paths += [Path(p) for p in roots]
+          records = sorted((p.as_posix() for p in paths))
+          assert len(records) == 127 and len(set(records)) == 127, "Wrong runtime file count"
+          for filename in records:
+              raw = Path(filename).read_bytes()
+              print("R52F_SOURCE_SHA1 %s %s %d" % (filename, hashlib.sha1(raw).hexdigest(), len(raw)))
+          print("R52F_SOURCE_TOTAL %d" % len(records))
+          PY

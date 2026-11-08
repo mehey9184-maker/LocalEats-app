@@ -7,6 +7,7 @@ interface OrderHistoryScreenProps {
   orders: PickupOrder[] | null;
   error: boolean;
   refreshing: boolean;
+  authRequired?: boolean;
   shops: Shop[];
   onBack: () => void;
   onRetry: () => void;
@@ -16,7 +17,7 @@ interface OrderHistoryScreenProps {
 }
 
 export function OrderHistoryScreen({
-  signedIn, orders, error, refreshing, shops, onBack, onRetry, onSignIn, onBrowse, onStoreInfo,
+  signedIn, orders, error, refreshing, authRequired = false, shops, onBack, onRetry, onSignIn, onBrowse, onStoreInfo,
 }: OrderHistoryScreenProps) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 pb-28">
@@ -48,12 +49,23 @@ export function OrderHistoryScreen({
         {signedIn && error && (
           <div className="rounded-2xl border border-amber-200 p-4 dark:border-amber-800">
             <p role="status" className="text-sm text-slate-700 dark:text-slate-200">
-              {orders?.length ? "Couldn’t refresh pickup orders. The status below is from the last successful update." : "Couldn’t load pickup orders."}
+              {authRequired
+                ? "We couldn’t verify the account for your pickup orders. Please sign in again. Your orders have not been deleted."
+                : orders?.length
+                  ? "Couldn’t refresh pickup orders. The status below is from the last successful update."
+                  : "Couldn’t load pickup orders."}
             </p>
-            <button type="button" onClick={onRetry} disabled={refreshing}
-              className="mt-2 min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold disabled:opacity-50 dark:border-slate-600">
-              {refreshing ? "Retrying…" : "Retry"}
-            </button>
+            {authRequired ? (
+              <button type="button" onClick={onSignIn}
+                className="mt-2 min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold dark:border-slate-600">
+                Open sign in
+              </button>
+            ) : (
+              <button type="button" onClick={onRetry} disabled={refreshing}
+                className="mt-2 min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold disabled:opacity-50 dark:border-slate-600">
+                {refreshing ? "Retrying…" : "Retry"}
+              </button>
+            )}
           </div>
         )}
         {!signedIn ? (

@@ -137,3 +137,28 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## R5.1 Customer Firebase identity — draft clarification, 2026-11-08
+
+Actual Customer src/lib/supabase.ts is a Firebase-backed compatibility facade; its name is NOT proof of separate Supabase Auth. The real Firebase Auth UID/token also drives pickup API access. Do not create a cross-provider bridge based on browser UID/email or weaken the server's verifyIdToken(token, true) authorization. Pickup-history uses onIdTokenChanged for same-account reauthentication after 401; all R5.0 private-data cleanup and UI invariants remain. Emulator-based SDK tests are not hosted-staging/browser acceptance. R5.1 is draft-only; do not merge or change Production, security rules, service credentials, financial state or order flags.
+
+
+## R5.2 Customer Preview isolation STOP rule — 2026-11-08
+
+Vercel Preview must NOT be treated as independent staging by default. Read-only Vercel metadata showed Firebase configuration variables scoped to BOTH Preview and Production and no exact current Customer draft deployment. Never use such preview to create/revoke Firebase users, run hosted pickup-account/browser tests, modify shop/merchant records, or measure meaningful production-like performance. The optional strict VITE_FIREBASE_CONFIG_SOURCE=environment configuration mode fails closed on missing Firebase fields or known bundled Production project, but still requires independent proof of separate Firebase, Supabase and API environments. src/lib/firebaseConfigPolicy.ts is draft-only with synthetic tests. Existing normal startup/config precedence and UI remain unchanged. See docs/LOCALEATS_R52_HOSTED_STAGING_ISOLATION_GATE_20261108.md. No Production, merge, writes, payment or Rewards activation.
+
+
+## R5.2B staging resource gate (2026-11-08)
+
+Customer Preview's current draft branch lacks an exact Vercel deployment and branch-only credentials; its default Firebase Preview variables overlap Production. An older profile-preview branch has demo- Firebase project settings and is not proof of a real hosted Auth project. An existing separate Supabase Profile-Staging project currently exposes public.profiles only and needs a separately approved isolated pickup schema/fixtures before real staging acceptance. The API R5.2B offline metadata gate and docs are in API draft PR #124. No hosted account creation/revocation, real order, new infra, Production, merge or environment write is permitted by R5.2B. See docs/LOCALEATS_R52B_STAGING_RESOURCE_HANDOVER_20261108.md.
+
+
+## R5.2C Customer staging project safety — 2026-11-08
+
+R5.2C strict hosted-staging Firebase config rejects emulator-only demo- project IDs and individual fields copied from the bundled Production Firebase config, without changing normal builds. This is a tripwire, not proof of stage isolation. There is NO verified new real hosted Firebase staging project because Firebase project-management actions were unavailable; do not run hosted token revocation, sign-in tests or create new Auth users until separate real project, backend issuer, Vercel/Supabase isolation and exact Preview SHA are verified. Profile-Staging still lacks hosted pickup schema. No Production, database, Vercel, financial, ordering, or merge actions under this phase. See docs/LOCALEATS_R52C_REAL_FIREBASE_STAGE_CUSTOMER_HANDOVER_20261108.md.
+
+
+## R5.2D — Separate Customer Vercel staging shell (2026-11-08)
+
+Real Customer staging project `localeats-customer-staging-r52d` was created INDEPENDENT of the live `project-x7cvt` Vercel project; dedicated API staging `localeats-api-staging-r52d` also created. Both are intentionally unlinked to Git, Preview disabled, no domain/deployments, and environment vars are Preview-only with write flags false. Customer strict VITE_FIREBASE_CONFIG_SOURCE=environment points to owner-created `localeats-staging`; Web API key and Web App ID were placed in staging-only Vercel (not git). **VITE_LOCALEATS_API_URL not yet set**, API Admin secrets and staging Supabase pickup schema not yet available, so DO NOT link Git/deploy/sign in/revoke Firebase users or claim browser acceptance. See docs/LOCALEATS_R52D_DEDICATED_VERCEL_CUSTOMER_STAGING_20261108.md. No Production, merges, financial or orders changes.
