@@ -40,6 +40,19 @@ export const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
 const app = express();
 const PORT = 3000;
 
+// R5.2F: isolate any accidental Customer-side legacy server route in STAGING.
+// Production has no LOCALEATS_STAGING_ONLY flag, preserving its existing behavior.
+// Do not register hosted Customer-server writes in the first place; this is a
+// second, explicit guard should the legacy server ever be run in staging.
+app.use((req, res, next) => {
+  if (process.env.LOCALEATS_STAGING_ONLY === "true" &&
+      !["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase()) &&
+      (req.path === "/api" || req.path.startsWith("/api/"))) {
+    return res.status(403).json({error: "STAGING_CUSTOMER_WRITES_DISABLED"});
+  }
+  next();
+});
+
 app.use(legacyOrderGuard);
 app.use(express.json({ limit: "10mb" }));
 
