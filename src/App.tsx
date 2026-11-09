@@ -1414,7 +1414,7 @@ export default function App() {
           type: "info",
         });
       },
-      { timeout: 15005, enableHighAccuracy: false, maximumAge: 300000 },
+      { timeout: 15005, enableHighAccuracy: false, maximumAge: import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment" ? 0 : 300000 },
     );
   }, []);
 
@@ -2438,6 +2438,9 @@ export default function App() {
   }, [pendingReview]);
 
   useEffect(() => {
+    // The isolated staging Home already requests GPS via requestLocation().
+    // Do not launch a second shorter GPS read that can clear a valid test location.
+    if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment") return;
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
