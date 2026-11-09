@@ -259,6 +259,7 @@ import {
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
+import { activeCustomerIdentityMatches, emptyCustomerProfile, ownCustomerProfileBase } from "./services/customerProfileIsolation";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -475,15 +476,28 @@ export default function App() {
       role: "user",
     });
   });
+  // A render or a cached profile does not establish account ownership.
+  // This ref tracks the account last accepted from a verified Firebase session.
+  const verifiedProfileUidRef = useRef<string | null>(userProfile.id || null);
+
+  useEffect(() => {
+    if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment") {
+      // Delete any raw ID token left by a previous staging build.
+      localStorage.removeItem("remember_me_secure_token");
+    }
+  }, []);
 
   useEffect(() => {
     if (userProfile && (userProfile.fullName || userProfile.email || userProfile.phone)) {
       safeLocalStorageSet("userProfile", JSON.stringify(userProfile));
-      if (!localStorage.getItem("remember_me_secure_token")) {
-        localStorage.setItem("remember_me_secure_token", userProfile.id || userProfile.email || "true");
+      // A remember-me hint is not authentication. Strict staging never stores it.
+      if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE !== "environment" &&
+          activeCustomerIdentityMatches(userProfile.id, auth.currentUser?.uid) &&
+          session?.user?.id === userProfile.id) {
+        localStorage.setItem("remember_me_secure_token", "true");
       }
     }
-  }, [userProfile]);
+  }, [userProfile, session?.user?.id]);
 
   // Always hold the first render until Firebase knows whether this is a
   // returning customer or a guest; IndexedDB auth is not synchronous.
@@ -1491,6 +1505,9 @@ export default function App() {
   }, []);
 
   const fetchUserProfile = useCallback(async (userId: string, retries = 2) => {
+    // Use the live Firebase UID, not a cached profile, browser user ID or old closure.
+    const requestStillOwned = () => activeCustomerIdentityMatches(userId, auth.currentUser?.uid);
+    if (!requestStillOwned()) return;
     try {
       let data: any = null;
       let error: any = null;
@@ -1498,6 +1515,7 @@ export default function App() {
       // 1. Direct Firestore profile retrieval for real-time customer identity
       try {
         const firestoreProfile = await FirestoreService.getProfile(userId);
+        if (!requestStillOwned()) return;
         if (firestoreProfile) {
           data = firestoreProfile;
         }
@@ -1509,16 +1527,20 @@ export default function App() {
       if (!data) {
         try {
           const { getApiAuthHeaders } = await import("./lib/apiAuth");
+          if (!requestStillOwned()) return;
           const headers = await getApiAuthHeaders();
-          
+          if (!requestStillOwned()) return;
+
           const response = await fetch(`/api/profiles/${userId}`, {
             headers: {
               ...headers
             }
           });
           
+          if (!requestStillOwned()) return;
           if (response.ok) {
             const result = await response.json();
+            if (!requestStillOwned()) return;
             if (result.profile) {
               data = result.profile;
             }
@@ -1543,29 +1565,38 @@ export default function App() {
         console.info("[Profile] Database query note:", error.message || error);
       }
 
+      if (!requestStillOwned()) return;
       if (data) {
-        setUserProfile((prev) => ({
-          ...prev,
-          id: data.user_id || data.id || userId,
-          fullName: data.fullName || data.full_name || data.name || prev.fullName || "",
-          email: data.email || prev.email || "",
-          phone: data.phone || prev.phone || "",
-          city: data.city || prev.city || "Johannesburg",
-          address: data.address || data.default_address || prev.address || "",
-          country: data.country || prev.country || "South Africa",
-          role: data.role || prev.role || "customer",
-          photoURL: data.photo_url || data.avatar_url || data.photoURL || prev.photoURL || "",
-          latitude: data.current_latitude || data.latitude || prev.latitude,
-          longitude: data.current_longitude || data.longitude || prev.longitude,
-        }));
+        // Reject a returned profile that names a different owner.
+        if ((data.user_id && data.user_id !== userId) ||
+            (data.id && data.id !== userId)) return;
+        setUserProfile((prev) => {
+          if (!requestStillOwned()) return prev;
+          const base = ownCustomerProfileBase(prev, userId);
+          return {
+            ...base,
+            id: userId,
+            fullName: data.fullName || data.full_name || data.name || base.fullName || "",
+            email: data.email || base.email || "",
+            phone: data.phone || base.phone || "",
+            city: data.city || base.city || "Johannesburg",
+            address: data.address || data.default_address || base.address || "",
+            country: data.country || base.country || "South Africa",
+            role: data.role || base.role || "user",
+            photoURL: data.photo_url || data.avatar_url || data.photoURL || base.photoURL || "",
+            latitude: data.current_latitude ?? data.latitude ?? base.latitude,
+            longitude: data.current_longitude ?? data.longitude ?? base.longitude,
+          };
+        });
         if (data.favorites && Array.isArray(data.favorites)) {
-          setFavorites(data.favorites);
+          setFavorites((previous) => requestStillOwned() ? data.favorites : previous);
         }
       } else if (!error || error.code === "PGRST116" || !data) {
         // If profile row doesn't exist in database yet (e.g. wiped database or trigger delayed),
         // sync from current session metadata and auto-upsert to prevent empty state.
         try {
           const { data: authUserData } = await supabase.auth.getUser();
+          if (!requestStillOwned()) return;
           const authUser = authUserData?.user;
           if (authUser && authUser.id === userId) {
             const userMeta = authUser.user_metadata || {};
@@ -1573,14 +1604,18 @@ export default function App() {
             const fallbackPhone = userMeta.phone || "";
             const fallbackRole = userMeta.role || "customer";
 
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
-            }));
+            setUserProfile((prev) => {
+              if (!requestStillOwned()) return prev;
+              const base = ownCustomerProfileBase(prev, userId);
+              return {
+                ...base,
+                id: userId,
+                email: authUser.email || base.email || "",
+                fullName: fallbackName || base.fullName || "",
+                phone: fallbackPhone || base.phone || "",
+                role: fallbackRole,
+              };
+            });
 
             // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
             upsertProfileWithRPC({
@@ -1623,8 +1658,10 @@ export default function App() {
         console.info("[Profile] Notice fetching user profile:", err?.message || err);
       }
 
-      if (isNetworkError && retries > 0) {
-        setTimeout(() => fetchUserProfile(userId, retries - 1), 3000);
+      if (isNetworkError && retries > 0 && requestStillOwned()) {
+        setTimeout(() => {
+          if (requestStillOwned()) void fetchUserProfile(userId, retries - 1);
+        }, 3000);
       }
     }
   }, []);
@@ -1963,22 +2000,36 @@ export default function App() {
             console.info("[Auth] Session validation note:", validateErr);
           }
 
+          // Firebase is the sole session authority; a delayed restoration of
+          // Customer A must never rehydrate A after Customer B signs in.
+          if (!activeCustomerIdentityMatches(session.user.id, auth.currentUser?.uid)) {
+            clearTimeout(slowTimer);
+            setIsRestoringSession(false);
+            return;
+          }
           setSession(session);
-          if (!localStorage.getItem("remember_me_secure_token")) {
-            localStorage.setItem("remember_me_secure_token", session.access_token || "true");
+          verifiedProfileUidRef.current = session.user.id;
+          if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE !== "environment") {
+            localStorage.setItem("remember_me_secure_token", "true");
+          } else {
+            localStorage.removeItem("remember_me_secure_token");
           }
 
-          // Seed user profile state immediately from session metadata
+          // Seed only from the verified account's own metadata; never A's cache.
           if (session.user) {
             const uMeta = session.user.user_metadata || {};
-            setUserProfile((prev) => ({
-              ...prev,
-              id: session.user.id,
-              email: session.user.email || prev.email || "",
-              fullName: uMeta.full_name || uMeta.fullName || uMeta.name || prev.fullName || session.user.email?.split("@")[0] || "",
-              phone: uMeta.phone || prev.phone || "",
-              role: uMeta.role || prev.role || "customer",
-            }));
+            setUserProfile((prev) => {
+              if (!activeCustomerIdentityMatches(session.user.id, auth.currentUser?.uid)) return prev;
+              const base = ownCustomerProfileBase(prev, session.user.id);
+              return {
+                ...base,
+                id: session.user.id,
+                email: session.user.email || base.email || "",
+                fullName: uMeta.full_name || uMeta.fullName || uMeta.name || session.user.email?.split("@")[0] || "",
+                phone: uMeta.phone || base.phone || "",
+                role: uMeta.role || base.role || "user",
+              };
+            });
           }
 
           fetchUserProfile(session.user.id);
@@ -2063,6 +2114,31 @@ export default function App() {
         setCurrentScreen("reset-password");
         setIsRestoringSession(false);
         return;
+      }
+      if (session && !activeCustomerIdentityMatches(session.user.id, auth.currentUser?.uid)) return;
+      if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment") {
+        if (session) {
+          if (verifiedProfileUidRef.current && verifiedProfileUidRef.current !== session.user.id) {
+            setCart([]);
+            setFavorites([]);
+            setOrders([]);
+            setNotifications([]);
+          }
+          verifiedProfileUidRef.current = session.user.id;
+          setUserProfile((prev) => ownCustomerProfileBase(prev, session.user.id));
+        } else if (_event === "SIGNED_OUT") {
+          verifiedProfileUidRef.current = null;
+          setUserProfile(emptyCustomerProfile());
+          setCart([]);
+          setFavorites([]);
+          setOrders([]);
+          setNotifications([]);
+          for (const key of ["userProfile", "favorites", "cart", "cached_orders",
+            "app_notifications", "localeats_session", "remember_me_secure_token",
+            "offline_orders_queue", "offline_profile_queue"]) {
+            localStorage.removeItem(key);
+          }
+        }
       }
       setSession(session);
       if (session) {
