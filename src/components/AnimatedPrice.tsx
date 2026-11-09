@@ -22,8 +22,9 @@ export function AnimatedPrice({ value, className = "", prefix = "R " }: Animated
     }
 
     const controls = animate(displayedRef.current, target, {
-      duration: 0.28,
-      ease: "easeOut",
+      duration: 0.82,
+      // Fast at first, then an increasingly gentle deceleration to the exact price.
+      ease: [0.16, 1, 0.3, 1],
       onUpdate: (latest) => {
         displayedRef.current = latest;
         setDisplayValue(latest);
