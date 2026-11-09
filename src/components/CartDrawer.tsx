@@ -15,6 +15,7 @@ import {
 import { BottomSheet } from "./BottomSheet";
 import { CartItem, Shop } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
+import { AnimatedPrice } from "./AnimatedPrice";
 import { DEFAULT_MENU_IMAGE } from "../utils";
 
 interface CartDrawerProps {
@@ -259,7 +260,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200/60 dark:border-slate-700/60 space-y-2 mt-4">
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
                   <span>Subtotal ({totalItemsCount} {totalItemsCount === 1 ? "item" : "items"})</span>
-                  <span className="font-bold text-slate-900 dark:text-white">R {subtotal.toFixed(2)}</span>
+                  <span className="font-bold text-slate-900 dark:text-white"><AnimatedPrice value={subtotal} /></span>
                 </div>
                 <div className="flex justify-between text-xs text-slate-600 dark:text-slate-300 font-medium">
                   <span>{fulfillment === "collection" ? "Pickup fee" : "Estimated Delivery"}</span>
@@ -272,7 +273,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div className="border-t border-slate-200 dark:border-slate-700 pt-2 flex justify-between text-sm font-black text-slate-900 dark:text-white">
                   <span>{fulfillment === "collection" ? "Estimated pay at shop" : "Est. Total"}</span>
                   <span className="text-orange-600 dark:text-orange-400 font-mono">
-                    R {estimatedTotal.toFixed(2)}
+                    <AnimatedPrice value={estimatedTotal} />
                   </span>
                 </div>
               </div>
@@ -292,7 +293,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span>Proceed to Checkout</span>
                 </div>
                 <div className="flex items-center gap-1.5 font-mono text-sm">
-                  <span>R {estimatedTotal.toFixed(2)}</span>
+                  <span><AnimatedPrice value={estimatedTotal} /></span>
                   <ArrowRight className="w-4 h-4" />
                 </div>
               </button>

@@ -32,7 +32,7 @@ import {
   lazy,
   Suspense,
 } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Toaster, toast } from "sonner";
 import { MapLegend } from "./components/MapLegend";
 import QRCode from "qrcode";
@@ -293,6 +293,7 @@ import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
+import { scheduleCartFlight, type CartFlightRect } from "./utils/cartFlyMotion";
 import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
@@ -2468,6 +2469,7 @@ export default function App() {
       quantity: number = 1,
       specialInstructions: string = "",
       selectedCustomizations: { name: string; price: number }[] = [],
+      sourceRect?: CartFlightRect,
     ) => {
       if (!shopId || shopId === "null" || shopId === "undefined") {
         toast.error("Cannot add item to cart: Shop information is missing.");
@@ -2499,6 +2501,29 @@ export default function App() {
         });
       };
 
+      const isSameCustomization = (
+        a: { name: string; price: number }[],
+        b: { name: string; price: number }[],
+      ) => {
+        if (a.length !== b.length) return false;
+        const sortedA = [...a].sort((x, y) => x.name.localeCompare(y.name));
+        const sortedB = [...b].sort((x, y) => x.name.localeCompare(y.name));
+        return sortedA.every(
+          (val, index) =>
+            val.name === sortedB[index].name &&
+            val.price === sortedB[index].price,
+        );
+      };
+
+      // A full cart row cannot accept more items; don't animate a rejected add.
+      const matchingRow = cart.find(row =>
+        row.id === immutableBaseItem.id &&
+        row.shopId === String(shopId) &&
+        row.specialInstructions === String(specialInstructions) &&
+        isSameCustomization(row.selectedCustomizations || [], secureCustomizations)
+      );
+      if (matchingRow && matchingRow.quantity >= MAX_PICKUP_ITEM_QUANTITY) return;
+
       // Check if cart has items from a different shop
       if (cart.length > 0 && cart.some((i) => i.shopId !== shopId)) {
         const existingShopName =
@@ -2510,6 +2535,7 @@ export default function App() {
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             triggerHaptic([100, 50, 100]); // Stronger pulse for clear
             setCart([buildCartItemNode(quantity)]);
+            scheduleCartFlight(sourceRect, immutableBaseItem.image);
             setNotification({
               message: `Started new cart with ${item.name}`,
               type: "success",
@@ -2524,20 +2550,6 @@ export default function App() {
       triggerHaptic([50, 30, 50]); // Premium double-pulse haptic
       setCart((prev) => {
         // Find matching item with same ID, instructions, and customizations
-        const isSameCustomization = (
-          a: { name: string; price: number }[],
-          b: { name: string; price: number }[],
-        ) => {
-          if (a.length !== b.length) return false;
-          const sortedA = [...a].sort((x, y) => x.name.localeCompare(y.name));
-          const sortedB = [...b].sort((x, y) => x.name.localeCompare(y.name));
-          return sortedA.every(
-            (val, index) =>
-              val.name === sortedB[index].name &&
-              val.price === sortedB[index].price,
-          );
-        };
-
         const existing = prev.find(
           (i) =>
             i.id === item.id &&
@@ -2566,6 +2578,7 @@ export default function App() {
           buildCartItemNode(quantity),
         ];
       });
+      scheduleCartFlight(sourceRect, immutableBaseItem.image);
       // Notification removed for cleaner UI
     },
     [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
@@ -7873,9 +7886,11 @@ const QuantityModal = ({
     quantity: number,
     specialInstructions: string,
     selectedCustomizations: { name: string; price: number }[],
+    sourceRect?: CartFlightRect,
   ) => void;
   shopAway?: boolean;
 }) => {
+  const reducedMotion = useReducedMotion();
   const [quantity, setQuantity] = useState(1);
   const [specialInstructions, setSpecialInstructions] = useState("");
   const [selectedCustomizations, setSelectedCustomizations] = useState<
@@ -8024,7 +8039,13 @@ const QuantityModal = ({
                 <Minus className="w-8 h-8" />
               </button>
               <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">
-                {quantity}
+                <motion.span
+                  key={quantity}
+                  initial={reducedMotion ? false : { opacity: 0.8, y: 6, scale: 0.93 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                  className="inline-block tabular-nums"
+                >{quantity}</motion.span>
               </span>
               <button
                 type="button"
@@ -8053,9 +8074,9 @@ const QuantityModal = ({
 
         <div className="mt-8 flex gap-4">
           <button
-            onClick={() => {
+            onClick={(event) => {
               if (shopAway) return;
-              onConfirm(quantity, specialInstructions, selectedCustomizations);
+              onConfirm(quantity, specialInstructions, selectedCustomizations, event.currentTarget.getBoundingClientRect());
             }}
             disabled={shopAway}
             className={`flex-1 h-16 text-white font-black rounded-3xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 cursor-pointer ${
@@ -8166,6 +8187,7 @@ function StoreInfoScreen({
     quantity?: number,
     specialInstructions?: string,
     selectedCustomizations?: { name: string; price: number }[],
+    sourceRect?: CartFlightRect,
   ) => void;
   showAlert: (title: string, message: string) => void;
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
@@ -9388,7 +9410,7 @@ function StoreInfoScreen({
         item={selectedItemForQuantity}
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
-        onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+        onConfirm={(quantity, specialInstructions, selectedCustomizations, sourceRect) => {
           if (!getShopStatus(shop).isOpen) {
             showAlert("Closed", "This shop is currently closed. Browse its menu now and order when it reopens.");
             setSelectedItemForQuantity(null);
@@ -9401,6 +9423,7 @@ function StoreInfoScreen({
               quantity,
               specialInstructions,
               selectedCustomizations,
+              sourceRect,
             );
             setSelectedItemForQuantity(null);
           }
