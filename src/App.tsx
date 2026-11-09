@@ -260,6 +260,7 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { activeCustomerIdentityMatches, emptyCustomerProfile, ownCustomerProfileBase } from "./services/customerProfileIsolation";
+import { C1DIdentityPanel } from "./components/C1DIdentityPanel";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -2882,6 +2883,8 @@ export default function App() {
 
   return (
     <div className="relative w-full max-w-[100vw] overflow-x-hidden">
+      {/* Owner-invoked C1D read-only diagnostics. Null in normal Customer browsing. */}
+      <C1DIdentityPanel />
 
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
