@@ -1961,10 +1961,21 @@ export default function App() {
       getResilientSession(3000).then(async ({ data: { session } }) => {
         if (!active) return;
         if (session) {
+          // Do not allow a stale restored A session to run against newly active B.
+          if (!activeCustomerIdentityMatches(session.user.id, auth.currentUser?.uid)) {
+            clearTimeout(slowTimer);
+            setIsRestoringSession(false);
+            return;
+          }
           // Verify session validity with Supabase auth service to catch wiped DB or revoked tokens
           try {
             const { data: userData, error: userError } = await supabase.auth.getUser();
             if (!active) return;
+            if (!activeCustomerIdentityMatches(session.user.id, auth.currentUser?.uid)) {
+              clearTimeout(slowTimer);
+              setIsRestoringSession(false);
+              return;
+            }
             if (userError || !userData?.user) {
               const errMsg = (userError?.message || "").toLowerCase();
               if (errMsg.includes("invalid") || errMsg.includes("not found") || errMsg.includes("sub claim") || errMsg.includes("jwt") || errMsg.includes("user_not_found")) {
@@ -2006,6 +2017,15 @@ export default function App() {
             clearTimeout(slowTimer);
             setIsRestoringSession(false);
             return;
+          }
+          if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
+              verifiedProfileUidRef.current &&
+              verifiedProfileUidRef.current !== session.user.id) {
+            // A stored guest/local cart is not proof it belongs to the new UID.
+            setCart([]);
+            setFavorites([]);
+            setOrders([]);
+            setNotifications([]);
           }
           setSession(session);
           verifiedProfileUidRef.current = session.user.id;
