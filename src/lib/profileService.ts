@@ -24,6 +24,10 @@ export interface ProfileUpsertData {
   favorites?: any[];
 }
 
+// C1B: hosted staging login may call legacy profile sync automatically.
+// The isolated Customer build must never queue or send profile writes.
+const stagingIdentityReadOnly = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment";
+
 // Active retry timeout handles to prevent duplicate timers
 const activeRetryTimers: Map<string, any> = new Map();
 
@@ -68,6 +72,7 @@ function calculateBackoffDelay(attempt: number, baseDelay = 1000, maxDelay = 300
  * If the last error was a permanent schema/type failure, retries are skipped.
  */
 export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAttempt = 0) {
+  if (stagingIdentityReadOnly) return; // No cross-account background writes in isolated staging.
   if (typeof window === "undefined" || !profileData.user_id) return;
   const userId = profileData.user_id;
 
@@ -123,6 +128,7 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
  * Direct synchronization multi-channel executor
  */
 async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ success: boolean; data?: any; error?: any }> {
+  if (stagingIdentityReadOnly) return { success: false, error: new Error("C1B_STAGING_PROFILE_WRITES_DISABLED") };
   if (!profileData.user_id) {
     return { success: false, error: new Error("User ID is required") };
   }
@@ -198,6 +204,9 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
  * persistent offline queue fallback, and exponential backoff retries.
  */
 export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Promise<{ data: any; error: any }> {
+  // Must precede local cache mutation, queueing, network calls and Firestore mirror.
+  // A staging Firebase login should authenticate only; it is not profile consent.
+  if (stagingIdentityReadOnly) return { data: null, error: new Error("C1B_STAGING_PROFILE_WRITES_DISABLED") };
   if (!profileData.user_id) {
     return { data: null, error: new Error("User ID is required for profile upsert") };
   }
@@ -284,6 +293,8 @@ export async function findOffendingProfilePhones() {
  * Iterates through all queued offline profile sync items and processes them
  */
 export async function processOfflineProfileQueue() {
+  // Old queued writes may belong to a different signed-in test identity.
+  if (stagingIdentityReadOnly) return;
   if (typeof window === "undefined" || !navigator.onLine) return;
   const queue: QueuedProfile[] = getProfileSyncQueue();
   if (!queue || queue.length === 0) return;

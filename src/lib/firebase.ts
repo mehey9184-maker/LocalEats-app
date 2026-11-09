@@ -489,6 +489,7 @@ export const FirestoreService = {
   },
 
   async saveProfile(userId: string, profileData: any, retries = 1, backoffMs = 500): Promise<void> {
+    if (strictStagingFirebase) throw new Error("C1B_STAGING_FIRESTORE_PROFILE_WRITES_DISABLED");
     if (!userId) return;
     for (let i = 0; i < retries; i++) {
       try {
@@ -539,6 +540,7 @@ export const FirestoreService = {
 
   // Push token registration
   async savePushToken(userId: string, token: string): Promise<void> {
+    if (strictStagingFirebase) throw new Error("C1B_STAGING_PUSH_WRITES_DISABLED");
     const tokenDoc = doc(db, "user_push_tokens", `${userId}_${token.slice(-10)}`);
     await setDoc(tokenDoc, {
       user_id: userId,
@@ -927,6 +929,7 @@ export async function onForegroundMessage(callback: (payload: any) => void): Pro
  * Upserts the FCM push token into Firestore and Supabase fallback
  */
 export async function syncPushTokenToSupabase(userId: string, fcmToken: string): Promise<boolean> {
+  if (strictStagingFirebase) return false;
   if (!userId || !fcmToken) return false;
 
   try {
@@ -941,6 +944,7 @@ export async function syncPushTokenToSupabase(userId: string, fcmToken: string):
  * High-level helper: requests token and syncs to Firestore user_push_tokens
  */
 export async function registerAndSyncPushToken(userId?: string): Promise<string | null> {
+  if (strictStagingFirebase) return null;
   if (!userId) return null;
   try {
     const token = await requestNotificationPermissionAndGetToken().catch(() => null);
