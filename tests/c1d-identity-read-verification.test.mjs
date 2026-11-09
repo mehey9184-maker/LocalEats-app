@@ -62,7 +62,7 @@ test("C1D two allowlisted GETs with a valid test identity, sanitized result and 
   assert.ok(seen.every(x=>x.auth.startsWith("Bearer fb-")));
   assert.deepEqual(result.results.map(x=>x.ownership),["match","empty"]);
   assert.deepEqual(result.results.map(x=>x.noStore),[true,true]);
-  assert.deepEqual(result.results.map(x=>x.corsMatches),[true,true]);
+  assert.deepEqual(result.results.map(x=>x.browserReadable),[true,true]);
   const exported=JSON.stringify(result);
   assert.doesNotMatch(exported,/tester-A|A-private|synthetic-test-value|Authorization|Bearer/);
 });
