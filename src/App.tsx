@@ -6498,7 +6498,7 @@ function DiscoverScreen({
                 </div>
               );
             }) // close map
-            )} // close ternary
+            )}
             {filteredShops.length === 0 && (
               <div className="col-span-full py-16 px-4 flex flex-col items-center text-center animate-in fade-in slide-in-from-bottom-6 duration-500 max-w-lg mx-auto">
                 <div className="relative mb-6">

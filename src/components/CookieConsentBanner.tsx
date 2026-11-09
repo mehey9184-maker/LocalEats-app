@@ -100,7 +100,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                 </button>
               </div>
               <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
-                We use cookies and local storage to save your cart, remember delivery addresses, and personalize local restaurant picks.
+                We use cookies and local storage to save your cart, remember location preferences, and personalize local restaurant picks.
               </p>
             </div>
           </div>
@@ -188,7 +188,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                     <span className="text-xs font-extrabold uppercase tracking-wider">Cart & Location Persistence</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-                    Saves your active food basket and recent delivery pins locally on your device so you don't lose progress.
+                    Saves your active food basket and recent selected locations locally on your device so you don't lose progress.
                   </p>
                 </div>
                 <input
