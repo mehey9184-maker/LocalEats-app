@@ -59,7 +59,7 @@ export const FloatingCartButton: React.FC<FloatingCartButtonProps> = ({
           aria-label="View shopping cart"
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="relative w-8 h-8 rounded-xl bg-orange-600 flex items-center justify-center text-white shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+            <div data-localeats-cart-target="true" className="relative w-8 h-8 rounded-xl bg-orange-600 flex items-center justify-center text-white shrink-0 shadow-sm group-hover:scale-105 transition-transform">
               <ShoppingBag className="w-4 h-4" />
               <span className="absolute -top-1 -right-1 bg-white text-orange-600 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
                 {totalCount}
