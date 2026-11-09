@@ -1889,6 +1889,11 @@ export default function App() {
     showSuccess: boolean = true,
     successCallback?: () => void,
   ) => {
+    // Profile writes are intentionally disabled in the isolated Customer staging build.
+    // Never update Firebase Auth metadata or optimistic local UI in this mode.
+    if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment") {
+      throw new Error("Profile saving is unavailable in Customer Preview. No changes were saved.");
+    }
     const updated = { ...userProfile, ...data };
     setUserProfile(updated);
 
@@ -6898,6 +6903,9 @@ function ProfileScreen({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  // The Customer Preview is configured as read-only for profile and avatar data.
+  // Form state may be viewed/edited locally; it is not a confirmed cloud profile.
+  const stagingProfileReadOnly = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment";
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const fullNameRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -6989,6 +6997,10 @@ function ProfileScreen({
 
   // Step 2 of Upload: User confirms in dialog -> Compresses (<200KB) & Uploads to Supabase
   const handleConfirmUploadAndSave = async () => {
+    if (stagingProfileReadOnly) {
+      setNotification({ type: "info", message: "Profile photo uploads are disabled in Preview. Nothing was saved." });
+      return;
+    }
     if (!croppedFileToConfirm) return;
     if (!isOnline) {
       setNotification({ message: "No internet connection. Cannot upload photo.", type: "error" });
@@ -7124,6 +7136,10 @@ function ProfileScreen({
   };
 
   const handleDeletePhoto = async () => {
+    if (stagingProfileReadOnly) {
+      setNotification({ type: "info", message: "Profile photo changes are disabled in Preview." });
+      return;
+    }
     const saveFunc = onUpdateProfile || onSave;
     if (saveFunc) {
       await saveFunc({ photoURL: "" });
@@ -7133,6 +7149,10 @@ function ProfileScreen({
   };
 
   const handleUpdateProfile = async () => {
+    if (stagingProfileReadOnly) {
+      setNotification({ type: "info", message: "Profile saving is disabled in Customer Preview. Nothing was saved to cloud." });
+      return;
+    }
     if (isSaving || uploading) return;
 
     if (!isOnline) {
@@ -7293,9 +7313,9 @@ function ProfileScreen({
                   e.stopPropagation();
                   setShowGalleryModal(true);
                 }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
-                title="Choose photo from gallery"
+                disabled={uploading || stagingProfileReadOnly}
+                className="px-3 py-1.5 bg-primary text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={stagingProfileReadOnly ? "Profile photo uploading is disabled in Preview" : "Choose photo from gallery"}
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span className="text-[11px] font-black">Gallery</span>
@@ -7306,9 +7326,9 @@ function ProfileScreen({
                   e.stopPropagation();
                   startCamera();
                 }}
-                disabled={uploading}
-                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 border-emerald-500/30"
-                title="Take photo using camera"
+                disabled={uploading || stagingProfileReadOnly}
+                className="px-3 py-1.5 bg-slate-900 dark:bg-slate-700 text-white rounded-full shadow-lg border-2 border-white dark:border-slate-800 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 border-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={stagingProfileReadOnly ? "Profile photo uploading is disabled in Preview" : "Take photo using camera"}
               >
                 <Camera className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="text-[11px] font-black">Take Photo</span>
@@ -7317,7 +7337,7 @@ function ProfileScreen({
           </div>
 
           <div className="text-center mt-6">
-            {(userProfile.photoURL || previewUrl) && (
+            {(userProfile.photoURL || previewUrl) && !stagingProfileReadOnly && (
               <button
                 type="button"
                 onClick={handleDeletePhoto}
@@ -7334,7 +7354,22 @@ function ProfileScreen({
 
           {/* Loyalty Tier Badge */}
           <div className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 rounded-2xl p-4 flex flex-col items-center gap-3 shadow-sm mt-1">
-            {completedOrdersCount >= 10 ? (
+            {stagingProfileReadOnly ? (
+              <div className="flex flex-col items-center w-full">
+                <div className="w-14 h-14 bg-gradient-to-tr from-amber-700 via-orange-500 to-amber-600 rounded-2xl flex items-center justify-center border border-orange-400 shadow-sm">
+                  <Award className="w-8 h-8 text-amber-100" />
+                </div>
+                <div className="mt-2.5 text-center">
+                  <span className="text-[10px] bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-400 px-3 py-1 rounded-full font-black uppercase tracking-widest border border-orange-200 dark:border-orange-900/30">
+                    Rewards coming later
+                  </span>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-2">
+                    Rewards are not active in Preview. No purchases earn prizes yet.
+                  </p>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden mt-3" aria-label="Rewards progress is not active"></div>
+              </div>
+            ) : completedOrdersCount >= 10 ? (
               // Gold Tier VIP
               <div className="flex flex-col items-center w-full">
                 <div className="relative w-full max-w-[100vw] overflow-x-hidden">
@@ -7400,7 +7435,29 @@ function ProfileScreen({
           {/* WhatsApp-Style Sync Status Card */}
           <div className="-mt-2 mb-2">
             <AnimatePresence mode="wait">
-              {justSaved ? (
+              {stagingProfileReadOnly ? (
+                <motion.div
+                  key="preview-only"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-3 flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                    <div>
+                      <p className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                        Account signed in · profile saving disabled
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                        Changes in this form are not saved to the cloud.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-[10px] font-mono text-amber-700 dark:text-amber-300">
+                    Preview only
+                  </span>
+                </motion.div>
+              ) : justSaved ? (
                 <motion.div
                   key="saved"
                   initial={{ opacity: 0, scale: 0.96 }}
@@ -7497,7 +7554,7 @@ function ProfileScreen({
                   </span>
                 ) : fullName.trim() ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Saved
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> {stagingProfileReadOnly ? "From sign-in" : "Saved"}
                   </span>
                 ) : null}
               </div>
@@ -7530,7 +7587,7 @@ function ProfileScreen({
                   </span>
                 ) : validateSAPhone(phone) ? (
                   <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300/60 px-2 py-0.5 rounded-md flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Verified
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" /> {stagingProfileReadOnly ? "Format valid" : "Verified"}
                   </span>
                 ) : null}
               </div>
@@ -7619,7 +7676,7 @@ function ProfileScreen({
         <div className="pt-8 space-y-4">
           <button
             onClick={handleUpdateProfile}
-            disabled={isSaving || uploading}
+            disabled={isSaving || uploading || stagingProfileReadOnly}
             className={`w-full py-4 font-bold rounded-2xl shadow-xl transition-all text-sm flex items-center justify-center gap-2 cursor-pointer ${
               justSaved
                 ? "bg-emerald-600 text-white shadow-emerald-600/30 scale-[1.02]"
@@ -7628,7 +7685,12 @@ function ProfileScreen({
                 : "bg-slate-900 dark:bg-slate-800 text-white shadow-slate-900/10 hover:bg-slate-800"
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            {isSaving ? (
+            {stagingProfileReadOnly ? (
+              <>
+                <ShieldCheck className="w-5 h-5 text-slate-400" />
+                <span>Profile saving unavailable in Preview</span>
+              </>
+            ) : isSaving ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
                 <span>Saving to Account & Device...</span>
@@ -7718,7 +7780,7 @@ function ProfileScreen({
       )}
 
       {/* Confirmation Dialog Modal before permanent Supabase upload */}
-      {showConfirmModal && croppedPreviewUrlToConfirm && (
+      {!stagingProfileReadOnly && showConfirmModal && croppedPreviewUrlToConfirm && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-xl flex flex-col items-center text-center space-y-5 relative">
             <button
