@@ -16,6 +16,7 @@ import { BottomSheet } from "./BottomSheet";
 import { CartItem, Shop } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
 import { AnimatedPrice } from "./AnimatedPrice";
+import { PickupReviewModal } from "./PickupReviewModal";
 import { DEFAULT_MENU_IMAGE } from "../utils";
 
 interface CartDrawerProps {
@@ -39,6 +40,7 @@ interface CartDrawerProps {
   ) => void;
   onClearCart: () => void;
   onProceedToCheckout: () => void;
+  onReturnToCart: () => void;
   triggerHaptic?: (pattern?: number | number[]) => void;
 }
 
@@ -52,8 +54,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onRemoveItem,
   onClearCart,
   onProceedToCheckout,
+  onReturnToCart,
   triggerHaptic,
 }) => {
+  const [isReviewOpen, setIsReviewOpen] = React.useState(false);
+  const previewReviewOnly = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
+    import.meta.env.VITE_PICKUP_ORDERING_ENABLED !== "true";
+  const closeReview = React.useCallback(() => setIsReviewOpen(false), []);
   const activeShopId = cart.length > 0 ? cart[0].shopId : null;
   const activeShop = shops.find((s) => s.id === activeShopId);
 
@@ -68,12 +75,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const estimatedTotal = subtotal > 0 ? subtotal + estDeliveryFee + serviceFee : 0;
 
   const handleCheckoutClick = () => {
+    if (!cart.length) return;
     if (triggerHaptic) triggerHaptic(15);
+    if (previewReviewOnly) {
+      onClose();
+      setIsReviewOpen(true);
+      return;
+    }
     onClose();
     onProceedToCheckout();
   };
 
   return (
+    <>
     <BottomSheet
       isOpen={isOpen}
       onClose={onClose}
@@ -290,7 +304,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span className="bg-white/20 px-2 py-0.5 rounded-md text-[11px]">
                     {totalItemsCount}
                   </span>
-                  <span>Proceed to Checkout</span>
+                  <span>{previewReviewOnly ? "Review Pickup Order" : "Proceed to Checkout"}</span>
                 </div>
                 <div className="flex items-center gap-1.5 font-mono text-sm">
                   <span><AnimatedPrice value={estimatedTotal} /></span>
@@ -302,5 +316,20 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         )}
       </div>
     </BottomSheet>
+    {previewReviewOnly && (
+      <PickupReviewModal
+        isOpen={isReviewOpen}
+        cart={cart}
+        shop={activeShop}
+        onClose={closeReview}
+        onReturnToCart={() => {
+          setIsReviewOpen(false);
+          onReturnToCart();
+        }}
+        onChangeQuantity={onUpdateQuantity}
+        onRemoveItem={onRemoveItem}
+      />
+    )}
+    </>
   );
 };
