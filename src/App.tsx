@@ -8041,9 +8041,9 @@ const QuantityModal = ({
               <span className="text-5xl font-black text-slate-900 dark:text-white min-w-[60px] text-center">
                 <motion.span
                   key={quantity}
-                  initial={reducedMotion ? false : { opacity: 0.75, y: 5, scale: 0.88 }}
+                  initial={reducedMotion ? false : { opacity: 0.8, y: 6, scale: 0.93 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                   className="inline-block tabular-nums"
                 >{quantity}</motion.span>
               </span>
