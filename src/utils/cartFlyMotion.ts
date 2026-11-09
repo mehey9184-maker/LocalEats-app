@@ -15,6 +15,33 @@ export function cartFlightDisplacement(source: CartFlightRect, destination: Cart
   return { start, dx: end.x - start.x, dy: end.y - start.y };
 }
 
+export const CART_FLIGHT_DURATION_MS = 1050;
+
+/** Starts with momentum and smoothly approaches zero velocity at arrival. */
+export function cartFlightEaseOut(elapsedFraction: number): number {
+  const t = Math.max(0, Math.min(1, elapsedFraction));
+  return 1 - (1 - t) * (1 - t);
+}
+
+export function cartFlightKeyframes(dx: number, dy: number): Keyframe[] {
+  const bend = Math.min(80, Math.max(22, Math.abs(dy) * 0.11));
+  // Sampling lets the browser animate transforms on the compositor while
+  // keeping the full path continuous, including the curved vertical lift.
+  return Array.from({ length: 41 }, (_, index) => {
+    const elapsed = index / 40;
+    const progress = cartFlightEaseOut(elapsed);
+    const x = dx * progress;
+    const y = dy * progress - 2 * bend * progress * (1 - progress);
+    const scale = 1 - 0.78 * progress;
+    const opacity = elapsed < 0.82 ? 1 : Math.max(0, (1 - elapsed) / 0.18);
+    return {
+      transform: `translate3d(${x}px,${y}px,0) scale(${scale})`,
+      opacity,
+      offset: elapsed,
+    };
+  });
+}
+
 export function scheduleCartFlight(source: CartFlightRect | undefined, image?: string): void {
   if (!source || typeof window === "undefined" || typeof document === "undefined") return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
@@ -68,11 +95,13 @@ export function scheduleCartFlight(source: CartFlightRect | undefined, image?: s
       flyingItem.remove();
       return;
     }
-    const flight = flyingItem.animate([
-      { transform: "translate3d(0,0,0) scale(1)", opacity: 1, offset: 0 },
-      { transform: `translate3d(${dx * .45}px,${dy * .42 - 52}px,0) scale(.83)`, opacity: 1, offset: .48 },
-      { transform: `translate3d(${dx}px,${dy}px,0) scale(.20)`, opacity: 0, offset: 1 },
-    ], { duration: 480, easing: "cubic-bezier(.2,.75,.2,1)", fill: "forwards" });
+    // Pre-sample a continuous ease-out curve and small arc for compositor-driven
+    // movement. No sudden speed change at a mid-flight waypoint.
+    const flight = flyingItem.animate(cartFlightKeyframes(dx, dy), {
+      duration: CART_FLIGHT_DURATION_MS,
+      easing: "linear",
+      fill: "forwards",
+    });
     void flight.finished.catch(() => undefined).finally(() => flyingItem.remove());
   }), 45);
 }
