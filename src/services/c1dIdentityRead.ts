@@ -16,7 +16,7 @@ export interface C1DSafeResult {
   ownership: C1DOwnership;
   count: number | null;
   noStore: boolean;
-  corsMatches: boolean;
+  browserReadable: boolean;
 }
 
 export type C1DReport = {
@@ -46,7 +46,7 @@ export function c1dStagingEnabled(env: Record<string, unknown>, hostname: string
 
 export async function runC1DReadOnlyChecks(
   getIdentity: () => SessionIdentity | null,
-  browserOrigin: string,
+  _browserOrigin: string,
   transport: typeof fetch,
   signal?: AbortSignal,
 ): Promise<C1DReport> {
@@ -108,7 +108,10 @@ export async function runC1DReadOnlyChecks(
       ownership,
       count,
       noStore: (response.headers.get("cache-control") || "").toLowerCase().includes("no-store"),
-      corsMatches: response.headers.get("access-control-allow-origin") === browserOrigin,
+      // A successful cross-origin fetch exposes HTTP status and JSON; browsers
+      // normally hide Access-Control-Allow-Origin from JavaScript. Do not
+      // report a false CORS failure by comparing an unreadable response header.
+      browserReadable: response.type !== "opaque" && response.type !== "opaqueredirect",
     });
   }
   return { outcome: "completed", authenticated: true, results };
