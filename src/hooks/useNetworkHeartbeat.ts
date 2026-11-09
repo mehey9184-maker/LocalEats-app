@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import {checkStagingCatalogHealth, isolatedCustomerStaging} from '../services/stagingCatalogHealth';
 import { pushGlobalErrorLog } from '../main';
 
 export interface PingSample {
@@ -66,20 +67,24 @@ export function useNetworkHeartbeat(intervalMs = 15000, enabled = true) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout threshold
 
-        const { error } = await supabase
-          .from('shops')
-          .select('id')
-          .limit(1)
-          .abortSignal(controller.signal);
-
-        clearTimeout(timeoutId);
+        try {
+          if (isolatedCustomerStaging) {
+            const ok = await checkStagingCatalogHealth(controller.signal);
+            if (!ok) throw new Error('Staging pickup catalogue is unavailable');
+          } else {
+            const { error } = await supabase
+              .from('shops')
+              .select('id')
+              .limit(1)
+              .abortSignal(controller.signal);
+            if (error) throw new Error(error.message || 'Supabase query error');
+          }
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         const endTime = performance.now();
         latencyMs = Math.round(endTime - startTime);
-
-        if (error) {
-          throw new Error(error.message || 'Supabase query error');
-        }
 
         success = true;
         consecutiveFailuresRef.current = 0;
