@@ -54,3 +54,26 @@ Current isolated Customer branch regression run:
 **C1D automated read-only verifier: PASS. Hosted valid-identity acceptance: PENDING owner browser results.**
 
 The C1D testing panel is not an authenticated authorization grant. The real API must continue to authorize every request. Do not merge, enable live pickup/rewards/payments, modify Firebase accounts, create database fixtures, or mark full identity readiness complete until the outstanding evidence and separate owner approvals are satisfied.
+
+
+## Owner screenshot acceptance — 10 November 2026 (two disposable accounts)
+
+The owner submitted screenshots of the isolated Customer staging C1D diagnostics for the two created Firebase accounts, `tester` and `tester2`. **Do not upload or reproduce the screenshots in GitHub**: they contain account contact information. Only de-identified status results are recorded here.
+
+| C1D result | Account A | Account B |
+| --- | --- | --- |
+| Firebase account state | signed in | signed in |
+| `GET /api/v1/profiles/me` | HTTP 404 `PROFILE_NOT_FOUND` | HTTP 404 `PROFILE_NOT_FOUND` |
+| `GET /api/v1/orders` | HTTP 503 `DATABASE_UNAVAILABLE` | HTTP 503 `DATABASE_UNAVAILABLE` |
+| `Cache-Control` | `no-store` for both | `no-store` for both |
+| CORS diagnostic label | `not confirmed` | `not confirmed` |
+
+**Interpretation:** These are read-path responses for signed-in staging sessions and are consistent with absent profile records and the unprovisioned orders schema. Neither response contains persisted private customer records to compare. **Positive owner isolation remains unproven**, and C1D **must not** receive full sign-off.
+
+**Additional UI trust defects verified through code review:**
+
+1. `src/App.tsx` in `ProfileScreen` displays `All details verified & saved`, `Synced to cloud` and `Saved` whenever the form is not dirty, rather than when there is a durable backend save receipt. This contradicts both screenshot API 404 results; staging profile writes remain disabled. The profile Save handler may also display success when its callback does not return an authoritative receipt. Fix is required before making public claims of cloud persistence, without changing the original UI layout.
+2. The profile reward tier currently uses `5 more to Silver` and reaches Gold at 10 completed orders. Those display thresholds do not match the previously approved draft reward concept of Bronze after **4 qualifying kota purchases** and a separate Silver mission; moreover, Rewards is not activated. Do not treat orders completed as automatically equivalent to qualifying reward purchases. Correct/hide the unapproved promotional claims before launch.
+3. The C1D panel compares `response.headers.get("access-control-allow-origin")` to the page origin. Browsers cannot normally read that cross-origin response header without an `Access-Control-Expose-Headers` opt-in. Because the panel successfully read structured JSON/error statuses from both cross-origin API requests, its `CORS: not confirmed` likely reflects a test-instrumentation false negative, not evidence of a blocked fetch. Improve the diagnostic rather than modifying API CORS policies on this evidence.
+
+**Next gate:** targeted Preview-only C1E correctness cleanup for misleading profile save/verification, reward status, and CORS diagnostic; then, only with separately approved migrations and backup, provision minimal synthetic staging profile/order fixtures for true two-identity row-level isolation. No production, database or hosted-account mutation has been performed in C1D.
