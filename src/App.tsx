@@ -1450,6 +1450,8 @@ export default function App() {
   );
 
   const requestNotificationPermission = useCallback(async () => {
+    // C1B: hosted staging identity tests must not prompt for or register push tokens.
+    if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment") return;
     if (!("Notification" in window)) {
       return;
     }
