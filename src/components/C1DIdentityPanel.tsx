@@ -136,10 +136,10 @@ export function C1DIdentityPanel() {
               {result.code && <p className="mt-1 text-[11px] text-slate-500">Response code: {result.code}</p>}
               {result.count !== null && <p className="mt-1 text-[11px] text-slate-500">Order count: {result.count}</p>}
               <p className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
-                {result.noStore && result.corsMatches
+                {result.noStore && result.browserReadable
                   ? <CheckCircle2 size={13} className="text-emerald-600" aria-hidden="true"/>
                   : <AlertTriangle size={13} className="text-amber-600" aria-hidden="true"/>}
-                No-store: {result.noStore ? "yes" : "NO"} · CORS: {result.corsMatches ? "correct" : "not confirmed"}
+                No-store: {result.noStore ? "yes" : "NO"} · Browser API read: {result.browserReadable ? "allowed" : "blocked"}
               </p>
             </div>
           ))}
