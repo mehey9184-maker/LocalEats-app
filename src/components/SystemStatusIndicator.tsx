@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { WifiOff, CloudOff, RefreshCw, XCircle } from 'lucide-react';
 import { FirestoreService } from '../lib/firebase';
+import {checkStagingCatalogHealth, isolatedCustomerStaging} from '../services/stagingCatalogHealth';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function SystemStatusIndicator() {
@@ -32,7 +33,18 @@ export default function SystemStatusIndicator() {
       
       try {
         if (isMounted) setSupabaseStatus('checking');
-        const ok = await FirestoreService.healthCheck();
+        let ok: boolean;
+        if (isolatedCustomerStaging) {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          try {
+            ok = await checkStagingCatalogHealth(controller.signal);
+          } finally {
+            clearTimeout(timeout);
+          }
+        } else {
+          ok = await FirestoreService.healthCheck();
+        }
         if (isMounted) setSupabaseStatus(ok ? 'ok' : 'error');
       } catch (err) {
         if (isMounted) setSupabaseStatus('error');
@@ -101,9 +113,11 @@ export default function SystemStatusIndicator() {
               </div>
               <div className="flex flex-col">
                 <span className="text-xs font-semibold text-slate-200">
-                  {supabaseStatus === 'error' ? 'Database Unreachable' : supabaseStatus === 'checking' ? 'Checking Database...' : 'Database Connected'}
+                  {isolatedCustomerStaging
+                    ? (supabaseStatus === 'error' ? 'Pickup API Unavailable' : supabaseStatus === 'checking' ? 'Checking Pickup API...' : 'Pickup API Connected')
+                    : (supabaseStatus === 'error' ? 'Database Unreachable' : supabaseStatus === 'checking' ? 'Checking Database...' : 'Database Connected')}
                 </span>
-                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">Using offline cache</span>}
+                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">{isolatedCustomerStaging ? 'Catalogue connection needs attention' : 'Using offline cache'}</span>}
               </div>
             </div>
           </div>
