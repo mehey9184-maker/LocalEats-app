@@ -3639,6 +3639,7 @@ export default function App() {
             fulfillment="collection"
             isOpen={isCartDrawerOpen}
             onClose={() => setIsCartDrawerOpen(false)}
+            onReturnToCart={() => setIsCartDrawerOpen(true)}
             cart={cart}
             shops={shops}
             onUpdateQuantity={updateCartQuantity}
