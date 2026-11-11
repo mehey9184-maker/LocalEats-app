@@ -3233,22 +3233,30 @@ export default function App() {
                     riderComment,
                   ) => {
                     try {
-                      // 1. Save Shop Review
-                      const dbShopId = typeof pendingReview.shopId === "number"
-                        ? pendingReview.shopId
-                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
-
-                      const dbOrderId = typeof pendingReview.orderId === "number"
-                        ? pendingReview.orderId
-                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
-                          ? pendingReview.orderId
-                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
+                      // Server authority first: no review writes based on a local
+                      // pending_review cache, simulated order, or stale history.
+                      if (!pickupOrderingEnabled()) {
+                        throw new Error("Pickup reviews are not enabled in this Preview.");
+                      }
+                      const uid = auth.currentUser?.uid;
+                      if (!uid || uid !== session?.user?.id) {
+                        throw new Error("Sign in to review your own collected order.");
+                      }
+                      const confirmed = await customerPickupApi.order(pendingReview.orderId);
+                      if (!confirmed.order || !isVerifiedCollectedKota(confirmed.order, uid) ||
+                          confirmed.order.shop_id !== pendingReview.shopId) {
+                        throw new Error("This collected kota order could not be verified.");
+                      }
+                      // Use the actual server IDs rather than fabricating an
+                      // integer from an opaque shop/order identifier.
+                      const dbShopId = confirmed.order.shop_id;
+                      const dbOrderId = confirmed.order.id;
 
                       const { error: shopErr } = await supabase
                         .from("reviews")
                         .insert({
                           shop_id: dbShopId,
-                          user_id: userProfile?.id || session?.user?.id,
+                          user_id: uid,
                           username: userProfile.fullName || "Anonymous",
                           rating,
                           comment,
@@ -3298,17 +3306,18 @@ export default function App() {
                         }
                       }
 
+                      rememberReviewedKota(uid, confirmed.order.id);
+                      setKotaReviewRevision(value => value + 1);
+                      setPendingReview(null);
+                      setCurrentScreen("home");
                       showAlert(
                         "Feedback Submitted",
-                        "Thank you for helping us improve! 🔥",
+                        "Thanks for reviewing your kota! 🔥",
                       );
                     } catch (err) {
                       console.error("Error saving review:", err);
-                      showAlert("Error", "Failed to save your review.");
+                      showAlert("Error", "Your review was not saved. Please retry; no install invitation was unlocked.");
                     }
-
-                    setPendingReview(null);
-                    setCurrentScreen("order-history");
                   }}
                 />
               )}
