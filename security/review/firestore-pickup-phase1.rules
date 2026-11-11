@@ -27,8 +27,9 @@ service cloud.firestore {
       );
     }
 
+    // Includes deleted fields: a client must not remove an immutable field.
     function unchanged(field) {
-      return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
     }
 
     // Locks critical financial, payment, customer, and shop identity fields
@@ -63,8 +64,16 @@ service cloud.firestore {
     match /shops/{shopId} {
       // Public read for customer storefront discovery & vendor sync
       allow read: if true;
-      allow create: if isAuthenticated() && request.resource.data.owner_id == request.auth.uid;
-      allow update, delete: if isAuthenticated() && resource.data.owner_id == request.auth.uid;
+      // New shop provisioning and approval belong to the trusted platform API.
+      allow create, delete: if false;
+      allow update: if isAuthenticated() && resource.data.owner_id == request.auth.uid &&
+        unchanged('owner_id') &&
+        unchanged('approval_status') &&
+        unchanged('archived_at') &&
+        unchanged('is_verified') &&
+        unchanged('is_approved') &&
+        unchanged('subscription_tier') &&
+        unchanged('subscription_status');
     }
 
     // =====================================================================
@@ -121,10 +130,11 @@ service cloud.firestore {
       // Private rider details are visible only to their own authenticated account.
       allow read: if isAuthenticated() && request.auth.uid == riderId;
       // Rider creates their own profile document
-      allow create: if isAuthenticated() && (request.auth.uid == riderId || request.auth.uid == request.resource.data.id);
-      // Rider updates operational status and GPS telemetry; server-managed stats remain locked
-      allow update: if isAuthenticated() && (request.auth.uid == riderId || request.auth.uid == resource.data.id) &&
-                    riderFinancialsAndRatingsUnchanged();
+      allow create: if isAuthenticated() && request.auth.uid == riderId &&
+                    request.resource.data.id == riderId;
+      // Path identity is authoritative; a forged id field cannot grant access.
+      allow update: if isAuthenticated() && request.auth.uid == riderId &&
+                    unchanged('id') && riderFinancialsAndRatingsUnchanged();
       allow delete: if false;
     }
 
@@ -141,7 +151,7 @@ service cloud.firestore {
       allow create: if isShopOwner(request.resource.data.shop_id);
 
       // Updates: Merchant manages pairing; Rider only updates operational status
-      allow update: if (isShopOwner(resource.data.shop_id) && unchanged('shop_id')) ||
+      allow update: if (isShopOwner(resource.data.shop_id) && unchanged('shop_id') && unchanged('rider_id')) ||
         (isAuthenticated() && resource.data.rider_id == request.auth.uid &&
          unchanged('shop_id') &&
          unchanged('rider_id') &&
@@ -149,6 +159,24 @@ service cloud.firestore {
 
       // Deletion restricted to the shop owner
       allow delete: if isShopOwner(resource.data.shop_id);
+    }
+
+    // The legacy Merchant client represents a shop sender by its shop ID,
+    // whereas customers and riders use their own Firebase UID.
+    function validChatSender(data) {
+      let orderData = get(/databases/$(database)/documents/orders/$(string(data.order_id))).data;
+      return (
+        (data.sender_type == 'shop' &&
+         isShopOwner(orderData.shop_id) &&
+         data.sender_id == string(orderData.shop_id) &&
+         string(data.shop_id) == string(orderData.shop_id)) ||
+        (data.sender_type == 'customer' &&
+         orderData.user_id == request.auth.uid &&
+         data.sender_id == request.auth.uid) ||
+        (data.sender_type == 'rider' &&
+         orderData.rider_id == request.auth.uid &&
+         data.sender_id == request.auth.uid)
+      );
     }
 
     // =====================================================================
@@ -159,7 +187,9 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isOrderParticipant(resource.data.order_id);
 
       // Creation validates order participation using the incoming request payload
-      allow create: if isAuthenticated() && isOrderParticipant(request.resource.data.order_id);
+      allow create: if isAuthenticated() &&
+                    isOrderParticipant(request.resource.data.order_id) &&
+                    validChatSender(request.resource.data);
 
       // Updates strictly restricted to read-receipt timestamps
       allow update: if isAuthenticated() && isOrderParticipant(resource.data.order_id) &&
@@ -180,7 +210,9 @@ service cloud.firestore {
         isShopOwner(resource.data.shop_id)
       );
       allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid;
-      allow update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid &&
+                    unchanged('user_id') && unchanged('shop_id');
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
     }
 
     // =====================================================================
