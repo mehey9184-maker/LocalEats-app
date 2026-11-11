@@ -15,12 +15,27 @@ export function isVerifiedCollectedKota(order: PickupOrder, uid: string): boolea
 }
 
 const completedKey = (uid: string) => "localeats_kota_review_completed_v1:" + uid;
-export function reviewedKotaOrderIds(uid: string): Set<string> {
-  if (!uid) return new Set();
+const skippedKey = (uid: string) => "localeats_kota_review_skipped_v1:" + uid;
+function readIds(key: string): Set<string> {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(completedKey(uid)) ?? "[]");
+    const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
     return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === "string").slice(-100) : []);
   } catch { return new Set(); }
+}
+export function skippedKotaReviewIds(uid: string): Set<string> {
+  return uid ? readIds(skippedKey(uid)) : new Set();
+}
+export function rememberSkippedKotaReview(uid: string, orderId: string): void {
+  if (!uid || !orderId) return;
+  try {
+    const ids = Array.from(skippedKotaReviewIds(uid));
+    if (!ids.includes(orderId)) ids.push(orderId);
+    window.localStorage.setItem(skippedKey(uid), JSON.stringify(ids.slice(-100)));
+  } catch {}
+}
+export function reviewedKotaOrderIds(uid: string): Set<string> {
+  if (!uid) return new Set();
+  return readIds(completedKey(uid));
 }
 /** Called ONLY after the review request has actually succeeded. */
 export function rememberReviewedKota(uid: string, orderId: string): void {
