@@ -210,6 +210,9 @@ import { SplashScreen } from "./screens/SplashScreen";
 
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { InstallAppInvite } from "./components/InstallAppInvite";
+import {
+  isVerifiedCollectedKota, nextUnreviewedKota, reviewedKotaOrderIds, rememberReviewedKota,
+} from "./services/kotaReviewInstallFlow";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
@@ -603,10 +606,9 @@ export default function App() {
   const [showQRScanner, setShowQRScanner] = useState(false);
 
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(
-    () => {
-      return safeLocalStorageGet("pending_review", null);
-    },
+    () => safeLocalStorageGet("pending_review", null),
   );
+  const [kotaReviewRevision, setKotaReviewRevision] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -2261,6 +2263,54 @@ export default function App() {
   }, [currentScreen]);
 
   const currentPickupHistory = pickupHistory?.userId === historyUserId ? pickupHistory : null;
+  // Only the authenticated API's current, successful pickup read can verify
+  // that a customer collected a real kota. A cached/stale read never qualifies.
+  const kotaHistoryVerified = Boolean(
+    pickupOrderingEnabled() && historyUserId &&
+    canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+    currentPickupHistory?.userId === historyUserId &&
+    currentPickupHistory.orders !== null &&
+    !currentPickupHistory.error && !currentPickupHistory.refreshing,
+  );
+  const reviewedKotas = useMemo(
+    () => reviewedKotaOrderIds(historyUserId ?? ""),
+    [historyUserId, kotaReviewRevision],
+  );
+  const pendingCollectedKota = useMemo(
+    () => nextUnreviewedKota(
+      currentPickupHistory?.orders ?? null, historyUserId ?? "",
+      kotaHistoryVerified, reviewedKotas,
+    ),
+    [currentPickupHistory?.orders, historyUserId, kotaHistoryVerified, reviewedKotas],
+  );
+  const postReviewInstallEligible = kotaHistoryVerified && Boolean(
+    currentPickupHistory?.orders?.some(order =>
+      isVerifiedCollectedKota(order, historyUserId ?? "") && reviewedKotas.has(order.id)),
+  );
+  useEffect(() => {
+    if (!kotaHistoryVerified) return;
+    // A locally stored pending review from a different user or an unverified
+    // order cannot open the review screen or authorize a review write.
+    if (pendingReview && !currentPickupHistory?.orders?.some(
+      order => order.id === pendingReview.orderId &&
+        isVerifiedCollectedKota(order, historyUserId ?? ""),
+    )) {
+      setPendingReview(null);
+      return;
+    }
+    if (pendingReview || !pendingCollectedKota ||
+      !["home", "order-history", "order-tracking"].includes(currentScreen)) return;
+    setPendingReview({
+      orderId: pendingCollectedKota.id,
+      shopId: pendingCollectedKota.shop_id,
+      shopName: visibleShops.find(shop => shop.id === pendingCollectedKota.shop_id)?.name,
+      productName: pendingCollectedKota.items.find(item =>
+        /(^|[^a-z])kota([^a-z]|$)/i.test(item.name))?.name ?? "Kota",
+      snoozeCount: 0,
+      nextReminder: Date.now(),
+    });
+  }, [kotaHistoryVerified, currentPickupHistory?.orders, pendingCollectedKota,
+      pendingReview, currentScreen, historyUserId, visibleShops]);
 
   const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
     setLoadingShops(true);
@@ -2370,21 +2420,19 @@ export default function App() {
   );
 
   useEffect(() => {
-    // Handle review reminder timer only (Storage is managed by top hook)
-    if (pendingReview && pendingReview.nextReminder) {
-      const now = Date.now();
-      const delay = Math.max(0, pendingReview.nextReminder - now);
-
-      if (delay === 0) {
-        setCurrentScreen("review");
-      } else {
-        const timer = setTimeout(() => {
-          setCurrentScreen("review");
-        }, delay);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [pendingReview]);
+    // A reminder cannot interrupt checkout or open for stale/other-user data.
+    const verified = kotaHistoryVerified && pendingReview &&
+      currentPickupHistory?.orders?.some(order =>
+        order.id === pendingReview.orderId &&
+        isVerifiedCollectedKota(order, historyUserId ?? ""));
+    if (!verified || !pendingReview?.nextReminder ||
+      !["home", "order-history", "order-tracking"].includes(currentScreen)) return;
+    const delay = Math.max(0, pendingReview.nextReminder - Date.now());
+    if (delay === 0) { setCurrentScreen("review"); return; }
+    const timer = window.setTimeout(() => setCurrentScreen("review"), delay);
+    return () => window.clearTimeout(timer);
+  }, [pendingReview, currentScreen, historyUserId, kotaHistoryVerified,
+      currentPickupHistory?.orders, setCurrentScreen]);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -2722,9 +2770,11 @@ export default function App() {
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
           <InstallAppInvite
-            eligible={Boolean(canManageCustomerProfile(auth.currentUser, session?.user?.id) && !isRestoringSession)}
+            eligible={Boolean(canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+              !isRestoringSession && postReviewInstallEligible)}
             allowAutoShow={currentScreen === "home" && !isCartDrawerOpen &&
-              !isAddressModalOpen && processingState === "idle"}
+              !isAddressModalOpen && processingState === "idle" && !pendingReview}
+            delayMs={0}
             appName="LocalEats"
             storageKey="localeats_customer_install_defer_v2"
             variant="customer"
