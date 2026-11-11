@@ -45,5 +45,7 @@ jobs:
         run: node --test tests/customer-smoothness-ux1.test.mjs
       - name: TypeScript
         run: npm run lint
+      - name: Verify real PWA install invitation and browser support
+        run: node --experimental-strip-types --test tests/pwa-install-invite.test.mjs tests/customer-kota-review-install.test.mjs
       - name: Full client build
         run: npm run build

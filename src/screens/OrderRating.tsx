@@ -106,7 +106,8 @@ export function OrderRating({
             </div>
           </div>
 
-          {/* Rider Rating */}
+          {/* Rider fields only belong to actual rider deliveries, not pickup kota orders. */}
+          {pendingReview.riderName && (
           <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-2">
               Courier Delivery Rating {pendingReview.riderName ? `(${pendingReview.riderName})` : ""}
@@ -139,6 +140,7 @@ export function OrderRating({
               />
             </div>
           </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex items-center gap-3 pt-2">

@@ -209,6 +209,11 @@ import {
 import { SplashScreen } from "./screens/SplashScreen";
 
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
+import { InstallAppInvite } from "./components/InstallAppInvite";
+import {
+  isVerifiedCollectedKota, nextUnreviewedKota, reviewedKotaOrderIds, rememberReviewedKota,
+  skippedKotaReviewIds, rememberSkippedKotaReview,
+} from "./services/kotaReviewInstallFlow";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
@@ -602,10 +607,9 @@ export default function App() {
   const [showQRScanner, setShowQRScanner] = useState(false);
 
   const [pendingReview, setPendingReview] = useState<PendingReview | null>(
-    () => {
-      return safeLocalStorageGet("pending_review", null);
-    },
+    () => safeLocalStorageGet("pending_review", null),
   );
+  const [kotaReviewRevision, setKotaReviewRevision] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -2260,6 +2264,62 @@ export default function App() {
   }, [currentScreen]);
 
   const currentPickupHistory = pickupHistory?.userId === historyUserId ? pickupHistory : null;
+  // Only the authenticated API's current, successful pickup read can verify
+  // that a customer collected a real kota. A cached/stale read never qualifies.
+  const kotaHistoryVerified = Boolean(
+    pickupOrderingEnabled() && historyUserId &&
+    canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+    currentPickupHistory?.userId === historyUserId &&
+    currentPickupHistory.orders !== null &&
+    !currentPickupHistory.error && !currentPickupHistory.refreshing,
+  );
+  const reviewedKotas = useMemo(
+    () => reviewedKotaOrderIds(historyUserId ?? ""),
+    [historyUserId, kotaReviewRevision],
+  );
+  const alreadyHandledKotaReviews = useMemo(() => new Set([
+    ...reviewedKotas,
+    ...skippedKotaReviewIds(historyUserId ?? ""),
+  ]), [historyUserId, kotaReviewRevision, reviewedKotas]);
+  const pendingCollectedKota = useMemo(
+    () => nextUnreviewedKota(
+      currentPickupHistory?.orders ?? null, historyUserId ?? "",
+      kotaHistoryVerified, alreadyHandledKotaReviews,
+    ),
+    [currentPickupHistory?.orders, historyUserId, kotaHistoryVerified, alreadyHandledKotaReviews],
+  );
+  // The review is optional. The install invitation may follow either a
+  // successfully submitted review or an explicitly skipped review. Never gate
+  // access to a useful app feature behind posting a rating.
+  const postReviewInstallEligible = kotaHistoryVerified && Boolean(
+    currentPickupHistory?.orders?.some(order =>
+      isVerifiedCollectedKota(order, historyUserId ?? "") &&
+      alreadyHandledKotaReviews.has(order.id)),
+  );
+  useEffect(() => {
+    if (!kotaHistoryVerified) return;
+    // A locally stored pending review from a different user or an unverified
+    // order cannot open the review screen or authorize a review write.
+    if (pendingReview && !currentPickupHistory?.orders?.some(
+      order => order.id === pendingReview.orderId &&
+        isVerifiedCollectedKota(order, historyUserId ?? ""),
+    )) {
+      setPendingReview(null);
+      return;
+    }
+    if (pendingReview || !pendingCollectedKota ||
+      !["home", "order-history", "order-tracking"].includes(currentScreen)) return;
+    setPendingReview({
+      orderId: pendingCollectedKota.id,
+      shopId: pendingCollectedKota.shop_id,
+      shopName: visibleShops.find(shop => shop.id === pendingCollectedKota.shop_id)?.name,
+      productName: pendingCollectedKota.items.find(item =>
+        /(^|[^a-z])kota([^a-z]|$)/i.test(item.name))?.name ?? "Kota",
+      snoozeCount: 0,
+      nextReminder: Date.now(),
+    });
+  }, [kotaHistoryVerified, currentPickupHistory?.orders, pendingCollectedKota,
+      pendingReview, currentScreen, historyUserId, visibleShops]);
 
   const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
     setLoadingShops(true);
@@ -2369,21 +2429,19 @@ export default function App() {
   );
 
   useEffect(() => {
-    // Handle review reminder timer only (Storage is managed by top hook)
-    if (pendingReview && pendingReview.nextReminder) {
-      const now = Date.now();
-      const delay = Math.max(0, pendingReview.nextReminder - now);
-
-      if (delay === 0) {
-        setCurrentScreen("review");
-      } else {
-        const timer = setTimeout(() => {
-          setCurrentScreen("review");
-        }, delay);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [pendingReview]);
+    // A reminder cannot interrupt checkout or open for stale/other-user data.
+    const verified = kotaHistoryVerified && pendingReview &&
+      currentPickupHistory?.orders?.some(order =>
+        order.id === pendingReview.orderId &&
+        isVerifiedCollectedKota(order, historyUserId ?? ""));
+    if (!verified || !pendingReview?.nextReminder ||
+      !["home", "order-history", "order-tracking"].includes(currentScreen)) return;
+    const delay = Math.max(0, pendingReview.nextReminder - Date.now());
+    if (delay === 0) { setCurrentScreen("review"); return; }
+    const timer = window.setTimeout(() => setCurrentScreen("review"), delay);
+    return () => window.clearTimeout(timer);
+  }, [pendingReview, currentScreen, historyUserId, kotaHistoryVerified,
+      currentPickupHistory?.orders, setCurrentScreen]);
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -2720,6 +2778,16 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
+          <InstallAppInvite
+            eligible={Boolean(canManageCustomerProfile(auth.currentUser, session?.user?.id) &&
+              !isRestoringSession && postReviewInstallEligible)}
+            allowAutoShow={currentScreen === "home" && !isCartDrawerOpen &&
+              !isAddressModalOpen && processingState === "idle" && !pendingReview}
+            delayMs={0}
+            appName="LocalEats"
+            storageKey="localeats_customer_install_defer_v2"
+            variant="customer"
+          />
           <GlobalChatListener 
             activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
             currentScreen={currentScreen} 
@@ -3147,7 +3215,10 @@ export default function App() {
                   </Suspense>
                 </WidgetErrorBoundary>
               )}
-              {currentScreen === "review" && pendingReview && (
+              {currentScreen === "review" && pendingReview && kotaHistoryVerified &&
+                currentPickupHistory?.orders?.some(order =>
+                  order.id === pendingReview.orderId &&
+                  isVerifiedCollectedKota(order, historyUserId ?? "")) && (
                 <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
@@ -3163,6 +3234,10 @@ export default function App() {
                         type: "info",
                       });
                     } else {
+                      // Skipping a review must not cause the same order to
+                      // re-open another review immediately.
+                      if (historyUserId) rememberSkippedKotaReview(historyUserId, pendingReview.orderId);
+                      setKotaReviewRevision(value => value + 1);
                       setPendingReview(null);
                       setCurrentScreen("home");
                     }
@@ -3174,22 +3249,30 @@ export default function App() {
                     riderComment,
                   ) => {
                     try {
-                      // 1. Save Shop Review
-                      const dbShopId = typeof pendingReview.shopId === "number"
-                        ? pendingReview.shopId
-                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
-
-                      const dbOrderId = typeof pendingReview.orderId === "number"
-                        ? pendingReview.orderId
-                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
-                          ? pendingReview.orderId
-                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
+                      // Server authority first: no review writes based on a local
+                      // pending_review cache, simulated order, or stale history.
+                      if (!pickupOrderingEnabled()) {
+                        throw new Error("Pickup reviews are not enabled in this Preview.");
+                      }
+                      const uid = auth.currentUser?.uid;
+                      if (!uid || uid !== session?.user?.id) {
+                        throw new Error("Sign in to review your own collected order.");
+                      }
+                      const confirmed = await customerPickupApi.order(pendingReview.orderId);
+                      if (!confirmed.order || !isVerifiedCollectedKota(confirmed.order, uid) ||
+                          confirmed.order.shop_id !== pendingReview.shopId) {
+                        throw new Error("This collected kota order could not be verified.");
+                      }
+                      // Use the actual server IDs rather than fabricating an
+                      // integer from an opaque shop/order identifier.
+                      const dbShopId = confirmed.order.shop_id;
+                      const dbOrderId = confirmed.order.id;
 
                       const { error: shopErr } = await supabase
                         .from("reviews")
                         .insert({
                           shop_id: dbShopId,
-                          user_id: userProfile?.id || session?.user?.id,
+                          user_id: uid,
                           username: userProfile.fullName || "Anonymous",
                           rating,
                           comment,
@@ -3239,17 +3322,18 @@ export default function App() {
                         }
                       }
 
+                      rememberReviewedKota(uid, confirmed.order.id);
+                      setKotaReviewRevision(value => value + 1);
+                      setPendingReview(null);
+                      setCurrentScreen("home");
                       showAlert(
                         "Feedback Submitted",
-                        "Thank you for helping us improve! 🔥",
+                        "Thanks for reviewing your kota! 🔥",
                       );
                     } catch (err) {
                       console.error("Error saving review:", err);
-                      showAlert("Error", "Failed to save your review.");
+                      showAlert("Error", "Your review was not saved. Please retry; no install invitation was unlocked.");
                     }
-
-                    setPendingReview(null);
-                    setCurrentScreen("order-history");
                   }}
                 />
               )}
