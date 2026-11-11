@@ -16,6 +16,7 @@
     }
   ],
   "firestore": {
+    "database": "ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe",
     "predeploy": ["node scripts/verify-firestore-deploy.cjs"],
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
