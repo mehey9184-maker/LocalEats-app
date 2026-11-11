@@ -113,7 +113,22 @@ service cloud.firestore {
     // =====================================================================
     match /users/{userId} {
       // Authenticated users read and write only their own profile
-      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Clients may create ordinary accounts, never an elevated role or approval.
+      allow create: if isAuthenticated() && request.auth.uid == userId &&
+        request.resource.data.get('role', 'customer') in ['customer', 'user'] &&
+        request.resource.data.get('is_admin', false) == false &&
+        request.resource.data.get('is_vendor', false) == false &&
+        request.resource.data.get('is_merchant', false) == false &&
+        !request.resource.data.keys().hasAny(['permissions', 'claims', 'admin_roles']);
+      // App profile editing must not grant permissions, shops, credit or rewards.
+      allow update: if isAuthenticated() && request.auth.uid == userId &&
+        unchanged('role') && unchanged('is_admin') && unchanged('is_vendor') &&
+        unchanged('is_merchant') && unchanged('permissions') && unchanged('claims') &&
+        unchanged('shop_id') && unchanged('permanent_owner_id') &&
+        unchanged('approval_status') && unchanged('verification_status') &&
+        unchanged('loyaltyPoints') && unchanged('wallet_balance');
+      allow delete: if false;
     }
 
     // =====================================================================
@@ -131,7 +146,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && request.auth.uid == riderId;
       // Rider creates their own profile document
       allow create: if isAuthenticated() && request.auth.uid == riderId &&
-                    request.resource.data.id == riderId;
+                    request.resource.data.id == riderId &&
+                    request.resource.data.get('verification_status', 'pending') == 'pending' &&
+                    request.resource.data.get('total_earnings', 0) == 0 &&
+                    request.resource.data.get('total_deliveries', 0) == 0 &&
+                    request.resource.data.get('active_points', 0) == 0 &&
+                    request.resource.data.get('rating', 0) == 0;
       // Path identity is authoritative; a forged id field cannot grant access.
       allow update: if isAuthenticated() && request.auth.uid == riderId &&
                     unchanged('id') && riderFinancialsAndRatingsUnchanged();
