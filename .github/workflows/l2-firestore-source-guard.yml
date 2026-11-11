@@ -1,4 +1,4 @@
-name: L2C Firestore unsafe deployment fail-closed guard
+name: L2C Firestore named database and approval fail-closed guard
 
 on:
   pull_request:
@@ -26,9 +26,17 @@ jobs:
         run: |
           node --test tests/firestore-release-guard.test.cjs
           node -e "const c=require('./firebase.json'); if(!(c.firestore.predeploy||[]).includes('node scripts/verify-firestore-deploy.cjs')) process.exit(1)"
-      - name: Ensure unsafe root rules cannot be deployed from main
+      - name: Require explicit rules-hash approval and refuse wrong Firebase project
+        shell: bash
         run: |
-          if node scripts/verify-firestore-deploy.cjs > /tmp/guard.log 2>&1;then
-            echo "Unsafe Firebase rules were accepted";exit 1
+          set -euo pipefail
+          if GCLOUD_PROJECT=localeats-5e26e node scripts/verify-firestore-deploy.cjs > /tmp/guard.log 2>&1;then
+            echo "Unapproved Firebase rules were accepted"; exit 1
           fi
-          grep -q 'FIRESTORE_RULES_UNRESTRICTED_ACCESS_BLOCKED' /tmp/guard.log
+          grep -q 'FIRESTORE_RULES_RELEASE_HASH_NOT_APPROVED' /tmp/guard.log
+          approved_sha=$(sha256sum firestore.rules | awk '{print $1}')
+          GCLOUD_PROJECT=localeats-5e26e LOCALEATS_FIRESTORE_RELEASE_APPROVED_SHA256="$approved_sha" node scripts/verify-firestore-deploy.cjs
+          if GCLOUD_PROJECT=wrong-project LOCALEATS_FIRESTORE_RELEASE_APPROVED_SHA256="$approved_sha" node scripts/verify-firestore-deploy.cjs > /tmp/wrong-project.log 2>&1;then
+            echo "Wrong Firebase project accepted"; exit 1
+          fi
+          grep -q 'FIRESTORE_DEPLOY_WRONG_FIREBASE_PROJECT' /tmp/wrong-project.log
