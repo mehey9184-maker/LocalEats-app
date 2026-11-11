@@ -15,10 +15,10 @@ test("PWA: existing standalone manifest remains active and brand identity is cor
 });
 test("PWA: optional invitation only after verified sign-in, with real user choice and iOS steps",()=>{
   assert.match(app,/import \{ InstallAppInvite \} from "\.\/components\/InstallAppInvite"/);
-  assert.match(app,/storageKey="localeats_customer_install_defer_v1"/);
+  assert.match(app,/storageKey="localeats_customer_install_defer_v2"/);
   assert.match(app,/appName="LocalEats"/);
   assert.match(app,/eligible=\{Boolean\(/);
-  assert.match(app,/session\?\.user\?\.id/); assert.match(app,/currentScreen === "home"/); assert.match(app,/!isCartDrawerOpen && !isAddressModalOpen/);
+  assert.match(app,/session\?\.user\?\.id/); assert.match(app,/currentScreen === "home"/); assert.match(app,/!isCartDrawerOpen &&\s+!isAddressModalOpen/);
   assert.match(ui,/Install now/);
   assert.match(ui,/Maybe later/);
   assert.match(ui,/Add to Home Screen/);
@@ -28,7 +28,17 @@ test("PWA: optional invitation only after verified sign-in, with real user choic
   assert.match(ui,/hasDeferredInstall\(storageKey\)/);
   assert.match(bridge,/window\.addEventListener\("beforeinstallprompt"/);
   assert.match(bridge,/window\.addEventListener\("appinstalled"/);
-  assert.match(bridge,/days = 14/);
+  assert.match(bridge,/INSTALL_REMINDER_HOURS = 20/);
+  assert.match(bridge,/AUTO_INSTALL_DELAY_MS = 10 \* 60 \* 1000/);
+  assert.match(bridge,/hours = INSTALL_REMINDER_HOURS/);
+  assert.match(bridge,/const installedMarker = "localeats_pwa_installed_verified_v1"/);
+  assert.match(ui,/let remaining = AUTO_INSTALL_DELAY_MS/);
+  assert.match(ui,/document.addEventListener\("visibilitychange", sync\)/);
+  assert.match(ui,/document.removeEventListener\("visibilitychange", sync\)/);
+  assert.match(ui,/document.visibilityState !== "visible"/);
+  assert.match(ui,/allowAutoShow && ready/);
+  assert.match(ui,/!hasDeferredInstall\(storageKey\) && canPrompt/);
+  assert.match(app,/allowAutoShow=\{/);
   assert.doesNotMatch(ui,/window\.location\.href/);
 });
 test("PWA: browser eligibility, cancellation, already-installed state and respectful cooldown",async()=>{
@@ -56,12 +66,14 @@ test("PWA: browser eligibility, cancellation, already-installed state and respec
   assert.equal(service.availableInstallEvent(),null);
   assert.equal(changes,2);
   assert.equal(service.hasDeferredInstall("test"),false);
-  service.deferInstallOffer("test",14);
+  service.deferInstallOffer("test");
   assert.equal(service.hasDeferredInstall("test"),true);
-  assert.equal(service.hasDeferredInstall("test",Date.now()+15*86400000),false);
+  assert.equal(service.hasDeferredInstall("test",Date.now()+19*3600000),true);
+  assert.equal(service.hasDeferredInstall("test",Date.now()+21*3600000),false);
   navigator.userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)";
   assert.equal(service.appleMobileBrowser(),true);
   handlers.get("appinstalled")(new Event("appinstalled"));
   assert.equal(service.appAlreadyInstalled(),true);
+  assert.equal(window.localStorage.getItem("localeats_pwa_installed_verified_v1"),"true");
   unsubscribe();
 });
