@@ -39,6 +39,15 @@ function verifyFirestoreRelease(source, approvedSha256) {
   if(!source.includes("match /{document=**}") || !/allow\s+read,\s*write:\s*if\s+false\s*;/.test(source)) {
     throw new Error("FIRESTORE_RULES_DEFAULT_DENY_REQUIRED");
   }
+  const orderRules=source.split("match /orders/{orderId} {")[1]?.split("match /users/{userId} {")[0]||"";
+  const riderRules=source.split("match /rider_profiles/{riderId} {")[1]?.split("match /rider_connections/{connId} {")[0]||"";
+  if(!orderRules.includes("allow create: if false;") ||
+     !orderRules.includes("allow update: if false;") ||
+     !orderRules.includes("allow delete: if false;") ||
+     /delivery_status\\s*==\\s*[\\\"']finding_rider[\\\"']/.test(orderRules) ||
+     !riderRules.includes("request.auth.uid == riderId")) {
+    throw new Error("FIRESTORE_RULES_PICKUP_API_AUTHORITY_REQUIRED");
+  }
   const actual=createHash("sha256").update(source,"utf8").digest("hex");
   if(!/^[0-9a-f]{64}$/.test(approvedSha256||"") || approvedSha256!==actual) {
     throw new Error("FIRESTORE_RULES_RELEASE_HASH_NOT_APPROVED");
