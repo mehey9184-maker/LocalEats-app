@@ -41,6 +41,8 @@ jobs:
           }
           console.log("Safe baseline: no P7 simulated GPS, menu placement or fake checkout.");
           JS
+      - name: Customer UX1 navigation and bottom-sheet safety regressions
+        run: node --test tests/customer-smoothness-ux1.test.mjs
       - name: TypeScript
         run: npm run lint
       - name: Full client build
