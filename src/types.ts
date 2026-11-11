@@ -60,6 +60,7 @@ export type PendingReview = {
   orderId: string;
   shopId: string;
   productName: string;
+  shopName?: string;
   snoozeCount: number;
   nextReminder?: number;
 };
