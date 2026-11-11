@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'security/review/**'
+      - 'firestore.rules'
+      - 'firebase.json'
       - 'tests/firestore-pickup-review.test.cjs'
       - '.github/workflows/firestore-pickup-review.yml'
   workflow_dispatch:

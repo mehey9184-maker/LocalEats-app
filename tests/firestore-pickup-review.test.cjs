@@ -5,10 +5,10 @@ const {initializeTestEnvironment,assertFails,assertSucceeds}=require("@firebase/
 const {doc,getDoc,setDoc,updateDoc,deleteField}=require("firebase/firestore");
 
 test("deployed baseline demonstrates direct order changes and broad rider visibility; candidate blocks them",async()=>{
- for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false]]){
+ for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false],["firestore.rules",false]]){
   const env=await initializeTestEnvironment({
    projectId:"demo-pickup-rules",firestore:{host:"127.0.0.1",port:8080,
-    rules:readFileSync("security/review/"+name,"utf8")}
+    rules:readFileSync(name==="firestore.rules"?name:"security/review/"+name,"utf8")}
   });
   try{
    await env.withSecurityRulesDisabled(async context=>{
@@ -49,4 +49,17 @@ test("deployed baseline demonstrates direct order changes and broad rider visibi
    }
   }finally{await env.clearFirestore();await env.cleanup();}
  }
+});
+
+
+test("deployable root rules are deny-by-default, not the old public read/write file",()=>{
+ const root=readFileSync("firestore.rules","utf8");
+ const candidate=readFileSync("security/review/firestore-pickup-phase1.rules","utf8");
+ assert.equal(root,candidate,"Root firebase.json MUST deploy the isolated pickup-reviewed rules, not permissive legacy rules.");
+ assert.match(root,/match \/\{document=\*\*\} \{\s*allow read, write: if false;/);
+ assert.match(root,/match \/orders\/\{orderId} \{[\s\S]*?allow create: if false;[\s\S]*?allow update: if false;[\s\S]*?allow delete: if false;/);
+ assert.match(root,/match \/payments\/\{paymentId} \{[\s\S]*?allow write: if false;/);
+ const bad=[...root.matchAll(/allow\s+(?:read,\s*write|write|create|update|delete)\s*:\s*if\s+true\s*;/g)];
+ assert.equal(bad.length,0,"No unconditional private writes in deployment rules.");
+ assert.match(readFileSync("firebase.json","utf8"),/"rules":\s*"firestore.rules"/);
 });
