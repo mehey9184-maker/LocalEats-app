@@ -1,0 +1,34 @@
+name: Customer P1 protected push and Ready inbox
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/lib/firebase.ts'
+      - 'src/App.tsx'
+      - 'public/firebase-messaging-sw.js'
+      - 'tests/customer-push-p1.test.mjs'
+      - '.github/workflows/customer-push-p1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-push-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Test isolated push worker, token and reconnect contracts
+        run: node --test tests/customer-push-p1.test.mjs
+      - name: Validate Customer types and Production-safe build
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run build
