@@ -13,9 +13,9 @@ function verifyFirestoreRelease(source, approvedSha256) {
   if(typeof source!=="string"||!source.startsWith("rules_version = '2';")) {
     throw new Error("FIRESTORE_RULES_SOURCE_MISSING_OR_UNEXPECTED");
   }
-  // Broad, unconditional access is not permitted for any collection in this release.
-  // Public shop/menu reads will require a separately reviewed, scoped rule.
-  if(/\ballow\s+[^:;]+:\s*if\s+true\s*;/m.test(source)) {
+  // Unconditional writes are forbidden. Public shop/menu reads may be allowed
+  // only after the exact reviewed ruleset hash has been independently approved.
+  if(/\ballow\s+[^:;]*\b(?:write|create|update|delete)\b[^:;]*:\s*if\s+true\s*;/m.test(source)) {
     throw new Error("FIRESTORE_RULES_UNRESTRICTED_ACCESS_BLOCKED");
   }
   if(!source.includes("match /{document=**}") || !/allow\s+read,\s*write:\s*if\s+false\s*;/.test(source)) {
