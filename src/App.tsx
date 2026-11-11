@@ -3206,7 +3206,10 @@ export default function App() {
                   </Suspense>
                 </WidgetErrorBoundary>
               )}
-              {currentScreen === "review" && pendingReview && (
+              {currentScreen === "review" && pendingReview && kotaHistoryVerified &&
+                currentPickupHistory?.orders?.some(order =>
+                  order.id === pendingReview.orderId &&
+                  isVerifiedCollectedKota(order, historyUserId ?? "")) && (
                 <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
