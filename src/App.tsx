@@ -1807,6 +1807,14 @@ export default function App() {
   // A failed logout must not pretend success or expose a stale guest view.
   const logoutCustomer = async () => {
     try {
+      // Revoke while the account's Firebase identity still exists. Cap the
+      // attempt so a network outage cannot prevent a user from signing out.
+      if (session?.user?.id && typeof navigator !== "undefined" && navigator.onLine) {
+        await Promise.race([
+          revokePickupPushSubscription(session.user.id).catch(() => false),
+          new Promise(resolve => setTimeout(resolve, 1200)),
+        ]);
+      }
       const { error } = await supabase.auth.signOut();
       if (error) {
         setNotification({ type: "error", message: "Sign out failed. Please try again." });
@@ -2224,7 +2232,7 @@ export default function App() {
         if(feedRequest === controller) feedRequest = null;
         inFlight = false;
       }
-      if (!active || inboxInFlight || !pickupOrderingEnabled()) return;
+      if (!active || inboxInFlight) return;
       inboxInFlight = true;
       try {
         const inbox = await customerPickupApi.notifications();
@@ -2241,12 +2249,25 @@ export default function App() {
     };
     refreshPickupHistory.current = () => { void refresh(); };
     void refresh();
-    const timer = setInterval(refresh, 30000);
+    // FCM is a wake-up hint, not the source of order state. Verify server
+    // history on focus, reconnect, push and every 30 seconds while visible.
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible" && navigator.onLine) void refresh();
+    };
+    const timer = setInterval(refreshVisible, 30000);
+    window.addEventListener("focus", refreshVisible);
+    window.addEventListener("online", refreshVisible);
+    window.addEventListener("localeats-pickup-ready", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
     return () => {
       active = false;
       refreshPickupHistory.current = () => {};
       feedRequest?.abort();
       clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      window.removeEventListener("online", refreshVisible);
+      window.removeEventListener("localeats-pickup-ready", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
     };
   }, [historyUserId]);
 
@@ -3998,8 +4019,10 @@ function HomeScreen({
   });
 
   const handleRequestNotifications = async () => {
-    showAlert("Notifications not enabled", "Ready notifications require pickup database activation. No push subscription has been saved."); return;
-
+    if (!pickupOrderingEnabled()) {
+      showAlert("Pickup notifications not active yet", "Orders remain visible in your history. Push can be enabled during the approved pickup pilot.");
+      return;
+    }
     if (typeof window === "undefined" || !("Notification" in window)) {
       showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
       return;
@@ -4009,12 +4032,10 @@ function HomeScreen({
       const permission = await Notification.requestPermission();
       setNotificationPermissionStatus(permission);
       if (permission === "granted") {
-        toast.success("Order Notifications Enabled! 🔔", {
-          description: "You'll now receive real-time push alerts on meal preparation, packing, and live delivery status.",
-          duration: 5000,
-        });
-        if (session?.user?.id) {
-          registerAndSyncPushToken(session.user.id).catch(() => {});
+        if (session?.user?.id && await registerAndSyncPushToken(session.user.id)) {
+          toast.success("Pickup Ready notifications connected.");
+        } else {
+          toast.error("Push registration unavailable. Your Orders page will still update.");
         }
       } else if (permission === "denied") {
         toast.error("Notifications Blocked", {
