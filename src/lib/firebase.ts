@@ -882,17 +882,22 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
       return null;
     }
 
-    const registration = await navigator.serviceWorker.getRegistration("/firebase-messaging-sw.js").catch(() => null);
-    if (!registration) return null;
-
+    // Do NOT register the FCM worker at "/" — that would replace the PWA
+    // worker and could break offline app installation/navigation.
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
+      scope: "/firebase-cloud-messaging-push-scope/",
+    });
     const messaging = await getFirebaseMessaging().catch(() => null);
     if (!messaging) return null;
 
-    const vapidKey = customVapidKey || import.meta.env.VITE_FIREBASE_VAPID_KEY || undefined;
+    // The matching public Web Push certificate must be configured in Firebase.
+    // Never silently use the SDK's generic/default VAPID key in Production.
+    const vapidKey = customVapidKey || import.meta.env.VITE_FIREBASE_VAPID_KEY;
+    if (!vapidKey) return null;
 
     const token = await getToken(messaging, {
       serviceWorkerRegistration: registration,
-      vapidKey: vapidKey || undefined,
+      vapidKey,
     }).catch(() => null);
 
     return token || null;
@@ -920,32 +925,54 @@ export async function onForegroundMessage(callback: (payload: any) => void): Pro
   }
 }
 
-/**
- * Upserts the FCM push token into Firestore and Supabase fallback
- */
-export async function syncPushTokenToSupabase(userId: string, fcmToken: string): Promise<boolean> {
-  if (!userId || !fcmToken) return false;
-
+// FCM tokens are sensitive bearer-like device identifiers: do not write them
+// to localStorage or public Firestore collections. Only a random installation
+// ID (not an auth token) is persisted to support retries and sign-out revocation.
+function pickupPushInstallationKey(uid: string): string {
+  return "localeats-pickup-push-installation:" + uid;
+}
+function pickupPushInstallationId(uid: string): string | null {
+  if (typeof window === "undefined" || !uid || !crypto?.randomUUID) return null;
+  const key = pickupPushInstallationKey(uid);
   try {
-    await FirestoreService.savePushToken(userId, fcmToken).catch(() => {});
-    return true;
-  } catch (_) {
-    return false;
-  }
+    const existing = localStorage.getItem(key);
+    if (existing && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(existing)) return existing;
+    const created = crypto.randomUUID();
+    localStorage.setItem(key, created);
+    return created;
+  } catch { return null; }
 }
 
-/**
- * High-level helper: requests token and syncs to Firestore user_push_tokens
- */
-export async function registerAndSyncPushToken(userId?: string): Promise<string | null> {
-  if (!userId) return null;
+/** Server-owned pickup push subscription: only success after API persistence. */
+export async function syncPushTokenToSupabase(userId: string, fcmToken: string): Promise<boolean> {
+  if (!userId || !fcmToken || auth.currentUser?.uid !== userId) return false;
+  const installationId = pickupPushInstallationId(userId);
+  if (!installationId) return false;
   try {
-    const token = await requestNotificationPermissionAndGetToken().catch(() => null);
-    if (token) {
-      await syncPushTokenToSupabase(userId, token).catch(() => {});
-    }
-    return token;
-  } catch (_) {
-    return null;
-  }
+    const {customerPickupApi} = await import("../services/customerPickup");
+    const result = await customerPickupApi.subscribe(installationId, fcmToken);
+    return result?.success === true;
+  } catch { return false; }
+}
+
+/** Explicitly revoke the current account's server subscription before logout. */
+export async function revokePickupPushSubscription(userId: string): Promise<boolean> {
+  if (!userId || auth.currentUser?.uid !== userId) return false;
+  let installationId: string | null = null;
+  try { installationId = localStorage.getItem(pickupPushInstallationKey(userId)); }
+  catch { return false; }
+  if (!installationId) return true;
+  try {
+    const {customerPickupApi} = await import("../services/customerPickup");
+    const result = await customerPickupApi.revoke(installationId);
+    return result?.success === true;
+  } catch { return false; }
+}
+
+/** Returns an FCM token only after the protected pickup API registered it. */
+export async function registerAndSyncPushToken(userId?: string): Promise<string | null> {
+  if (!userId || auth.currentUser?.uid !== userId) return null;
+  const token = await requestNotificationPermissionAndGetToken();
+  if (!token) return null;
+  return await syncPushTokenToSupabase(userId, token) ? token : null;
 }
