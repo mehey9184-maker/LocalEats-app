@@ -19,29 +19,16 @@ service cloud.firestore {
     // Resolves order participant (Customer, Assigned Rider, or Merchant)
     function isOrderParticipant(orderId) {
       let orderPath = /databases/$(database)/documents/orders/$(string(orderId));
-      let orderData = exists(orderPath) ? get(orderPath).data : null;
-      return isAuthenticated() && orderData != null && (
-        orderData.user_id == request.auth.uid ||
-        orderData.rider_id == request.auth.uid ||
-        isShopOwner(orderData.shop_id)
+      return isAuthenticated() && exists(orderPath) && (
+        get(orderPath).data.user_id == request.auth.uid ||
+        get(orderPath).data.rider_id == request.auth.uid ||
+        isShopOwner(get(orderPath).data.shop_id)
       );
     }
 
     // Includes deleted fields: a client must not remove an immutable field.
     function unchanged(field) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
-    }
-
-    // Locks critical financial, payment, customer, and shop identity fields
-    function orderFinancialsAndCoreUnchanged() {
-      return unchanged('total_price') &&
-             unchanged('subtotal') &&
-             unchanged('delivery_fee') &&
-             unchanged('service_fee') &&
-             unchanged('payment_status') &&
-             unchanged('payment_method') &&
-             unchanged('user_id') &&
-             unchanged('shop_id');
     }
 
     // Locks server-authoritative rider stats, verification, and ratings

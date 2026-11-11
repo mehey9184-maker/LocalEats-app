@@ -35,6 +35,7 @@ test("deployed baseline demonstrates direct order changes and broad rider visibi
    await assertSucceeds(getDoc(doc(rider,"rider_profiles/rider")));
    await assertFails(getDoc(doc(stranger,"users/customer")));
    await assertFails(getDoc(doc(stranger,"orders/order")));
+   await assertFails(setDoc(doc(customer,"chat_messages/no-order"),{order_id:"missing",sender_id:"customer",sender_type:"customer",content:"invalid"}));
    await assertFails(getDoc(doc(guest,"orders/order")));
    const check=baseline?assertSucceeds:assertFails;
    await check(updateDoc(doc(customer,"orders/order"),{status:"collected"}));
