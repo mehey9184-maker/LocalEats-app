@@ -63,7 +63,7 @@ test("customer UX1 excludes pickup activation and remains source-compatible with
   assert.match(app,/fetchShopsData/);
   assert.match(app,/ShopCard/);
   assert.match(app,/BottomNavigation/);
-  assert.match(app,/BottomSheet/);
+  assert.match(cart,/import \{ BottomSheet \} from "\.\/BottomSheet"/);
   assert.match(shopCard,/getShopStatus\(shop\)/);
   assert.match(cart,/onProceedToCheckout/);
   assert.doesNotMatch(nav,/onNavigate\("checkout"\)/);
