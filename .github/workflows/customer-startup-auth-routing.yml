@@ -39,8 +39,11 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Startup routing and existing pickup regressions
         run: node --experimental-strip-types --test tests/customer-first-paint.test.mjs tests/startup-guides.test.mjs tests/customer-startup-auth-routing.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-page-splitting-main.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs
-      - name: Install isolated test browser
-        run: npx playwright install --with-deps chromium
+      - name: Install isolated test browser without runner apt dependencies
+        # Ubuntu runners provide standard browser libs; --with-deps fetches
+        # optional fonts through a flaky apt mirror and blocks useful tests.
+        # This still downloads and RUNS the real Chromium browser walkthrough.
+        run: npx playwright install chromium
       - name: Mobile startup, keyboard and reduced motion walkthrough
         run: node tests/startup-browser.mjs
       - name: Type check
