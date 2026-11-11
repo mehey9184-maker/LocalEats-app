@@ -9,6 +9,24 @@ const {resolve}=require("node:path");
 const ROOT=resolve(__dirname,"..");
 const path=resolve(ROOT,"firestore.rules");
 
+// Prevent a deployment to (default), to another Firebase project, or from a
+// different local rules file. The in-app SDK uses a named Firestore database.
+function verifyFirestoreTarget(config, activeProject) {
+  const expectedProject="localeats-5e26e";
+  const expectedDb="ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe";
+  const f=config?.firestore;
+  if(!f || Array.isArray(f) || f.database!==expectedDb || f.rules!=="firestore.rules") {
+    throw new Error("FIRESTORE_DEPLOY_WRONG_DATABASE_OR_RULES_SOURCE");
+  }
+  if(activeProject!==expectedProject) {
+    throw new Error("FIRESTORE_DEPLOY_WRONG_FIREBASE_PROJECT");
+  }
+  if(!Array.isArray(f.predeploy) || !f.predeploy.includes("node scripts/verify-firestore-deploy.cjs")) {
+    throw new Error("FIRESTORE_DEPLOY_GUARD_NOT_CONFIGURED");
+  }
+  return expectedDb;
+}
+
 function verifyFirestoreRelease(source, approvedSha256) {
   if(typeof source!=="string"||!source.startsWith("rules_version = '2';")) {
     throw new Error("FIRESTORE_RULES_SOURCE_MISSING_OR_UNEXPECTED");
@@ -29,6 +47,7 @@ function verifyFirestoreRelease(source, approvedSha256) {
 }
 if(require.main===module){
   try {
+    verifyFirestoreTarget(JSON.parse(readFileSync(resolve(ROOT,"firebase.json"),"utf8")),process.env.GCLOUD_PROJECT);
     verifyFirestoreRelease(readFileSync(path,"utf8"),process.env.LOCALEATS_FIRESTORE_RELEASE_APPROVED_SHA256);
     console.log("FIRESTORE_DEPLOY_GUARD_APPROVED");
   } catch (e) {
@@ -36,4 +55,4 @@ if(require.main===module){
     process.exitCode=1;
   }
 }
-module.exports={verifyFirestoreRelease};
+module.exports={verifyFirestoreRelease,verifyFirestoreTarget};
