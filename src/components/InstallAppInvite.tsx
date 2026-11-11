@@ -3,6 +3,7 @@ import { Download, Smartphone, X, Share2 } from "lucide-react";
 import {
   appAlreadyInstalled,
   appleMobileBrowser,
+  AUTO_INSTALL_DELAY_MS,
   availableInstallEvent,
   consumeInstallEvent,
   deferInstallOffer,
@@ -15,6 +16,8 @@ type Props = {
   appName: string;
   storageKey: string;
   variant: "customer" | "merchant";
+  /** Only Home may present an automatic invitation; active time counts on other signed-in screens. */
+  allowAutoShow?: boolean;
 };
 
 /**
@@ -22,7 +25,7 @@ type Props = {
  * Requires a verified login and a settled home view (provided by the parent).
  * Chromium prompts only from a real click. iOS has a manual home-screen flow.
  */
-export function InstallAppInvite({ eligible, appName, storageKey, variant }: Props) {
+export function InstallAppInvite({ eligible, allowAutoShow = true, appName, storageKey, variant }: Props) {
   const [, rerender] = useState(0);
   const [ready, setReady] = useState(false);
   const [dismissedHere, setDismissedHere] = useState(false);
@@ -34,13 +37,43 @@ export function InstallAppInvite({ eligible, appName, storageKey, variant }: Pro
   useEffect(() => {
     setReady(false);
     if (!eligible) return;
-    const timer = window.setTimeout(() => setReady(true), 2800);
-    return () => window.clearTimeout(timer);
+    // Count only foreground time. Do not count time spent in a hidden browser
+    // tab, or reset the timer merely because a logged-in person changes pages.
+    let remaining = AUTO_INSTALL_DELAY_MS;
+    let startedAt: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const stop = () => {
+      if (timer !== null) { window.clearTimeout(timer); timer = null; }
+      if (startedAt !== null) {
+        remaining = Math.max(0, remaining - (Date.now() - startedAt));
+        startedAt = null;
+      }
+    };
+    const sync = () => {
+      stop();
+      if (document.visibilityState !== "visible") return;
+      if (remaining <= 0) { setReady(true); return; }
+      startedAt = Date.now();
+      timer = window.setTimeout(() => {
+        remaining = 0;
+        startedAt = null;
+        timer = null;
+        setReady(true);
+      }, remaining);
+    };
+    document.addEventListener("visibilitychange", sync);
+    sync();
+    return () => { stop(); document.removeEventListener("visibilitychange", sync); };
   }, [eligible]);
 
-  if (!eligible || !ready || dismissedHere || appAlreadyInstalled() || hasDeferredInstall(storageKey)) return null;
+  const installed = appAlreadyInstalled();
   const onAppleDevice = appleMobileBrowser();
-  if (!onAppleDevice && !availableInstallEvent() && !help && !busy) return null;
+  const canPrompt = Boolean(availableInstallEvent());
+  // Never present automatic installation instructions if this browser has no
+  // real native install event. iOS can still use manual browser instructions.
+  const showAutomatic = Boolean(eligible && allowAutoShow && ready && !dismissedHere && !installed &&
+    !hasDeferredInstall(storageKey) && canPrompt);
+  if (!showAutomatic) return null;
 
   const later = () => {
     deferInstallOffer(storageKey);
