@@ -2,7 +2,7 @@ const {test}=require("node:test");
 const {readFileSync}=require("node:fs");
 const assert=require("node:assert/strict");
 const {initializeTestEnvironment,assertFails,assertSucceeds}=require("@firebase/rules-unit-testing");
-const {doc,getDoc,setDoc,updateDoc,deleteField}=require("firebase/firestore");
+const {doc,getDoc,setDoc,updateDoc,deleteDoc,deleteField}=require("firebase/firestore");
 
 test("deployed baseline demonstrates direct order changes and broad rider visibility; candidate blocks them",async()=>{
  for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false],["firestore.rules",false]]){
@@ -62,4 +62,67 @@ test("deployable root rules are deny-by-default, not the old public read/write f
  const bad=[...root.matchAll(/allow\s+(?:read,\s*write|write|create|update|delete)\s*:\s*if\s+true\s*;/g)];
  assert.equal(bad.length,0,"No unconditional private writes in deployment rules.");
  assert.match(readFileSync("firebase.json","utf8"),/"rules":\s*"firestore.rules"/);
+});
+
+
+test("L2C: reviewed and deployable rules enforce sender identity, shop authority and rider ownership",async()=>{
+ for(const file of ["firestore.rules","security/review/firestore-pickup-phase1.rules"]){
+  const env=await initializeTestEnvironment({
+    projectId:"demo-pickup-rules",
+    firestore:{host:"127.0.0.1",port:8080,rules:readFileSync(file,"utf8")}
+  });
+  try{
+    await env.withSecurityRulesDisabled(async ctx=>{
+      const db=ctx.firestore();
+      await Promise.all([
+        setDoc(doc(db,"shops/shop"),{owner_id:"merchant",name:"My synthetic shop",approval_status:"approved"}),
+        setDoc(doc(db,"orders/order"),{user_id:"customer",shop_id:"shop",rider_id:"rider",delivery_status:"none",status:"pending"}),
+        setDoc(doc(db,"rider_profiles/rider"),{id:"rider",total_earnings:0,verification_status:"pending"}),
+        setDoc(doc(db,"shop_followers/follower"),{user_id:"customer",shop_id:"shop"})
+      ]);
+    });
+    const customer=env.authenticatedContext("customer").firestore();
+    const merchant=env.authenticatedContext("merchant").firestore();
+    const rider=env.authenticatedContext("rider").firestore();
+    const stranger=env.authenticatedContext("stranger").firestore();
+    await assertSucceeds(updateDoc(doc(merchant,"shops/shop"),{name:"Updated my shop"}));
+    await assertFails(setDoc(doc(customer,"shops/fake-shop"),{owner_id:"customer",approval_status:"approved"}));
+    await assertFails(updateDoc(doc(merchant,"shops/shop"),{owner_id:"stranger"}));
+    await assertFails(updateDoc(doc(merchant,"shops/shop"),{owner_id:deleteField()}));
+    await assertFails(updateDoc(doc(merchant,"shops/shop"),{approval_status:"pending"}));
+    await assertFails(updateDoc(doc(merchant,"shops/shop"),{archived_at:"2099-01-01"}));
+    await assertFails(deleteDoc(doc(merchant,"shops/shop")));
+    await assertFails(getDoc(doc(stranger,"rider_profiles/rider")));
+    await assertSucceeds(getDoc(doc(rider,"rider_profiles/rider")));
+    await assertFails(setDoc(doc(rider,"rider_profiles/another-rider"),{id:"rider"}));
+    await assertFails(updateDoc(doc(rider,"rider_profiles/rider"),{id:deleteField()}));
+    await assertFails(updateDoc(doc(rider,"rider_profiles/rider"),{verification_status:"approved"}));
+    await assertFails(updateDoc(doc(customer,"shop_followers/follower"),{shop_id:"fake"}));
+    await assertFails(updateDoc(doc(customer,"shop_followers/follower"),{user_id:"stranger"}));
+
+    await assertSucceeds(setDoc(doc(merchant,"chat_messages/merchant-msg"),{
+       order_id:"order",shop_id:"shop",sender_id:"shop",sender_type:"shop",content:"Ready!"
+    }));
+    await assertSucceeds(setDoc(doc(customer,"chat_messages/customer-msg"),{
+       order_id:"order",shop_id:"shop",sender_id:"customer",sender_type:"customer",content:"Thank you"
+    }));
+    await assertFails(setDoc(doc(customer,"chat_messages/impersonate-shop"),{
+       order_id:"order",shop_id:"shop",sender_id:"shop",sender_type:"shop",content:"Fake!"
+    }));
+    await assertFails(setDoc(doc(customer,"chat_messages/impersonate-user"),{
+       order_id:"order",shop_id:"shop",sender_id:"merchant",sender_type:"customer",content:"Fake!"
+    }));
+    await assertFails(setDoc(doc(stranger,"chat_messages/not-a-participant"),{
+       order_id:"order",shop_id:"shop",sender_id:"stranger",sender_type:"customer",content:"Fake!"
+    }));
+    await assertFails(getDoc(doc(stranger,"chat_messages/customer-msg")));
+    await assertSucceeds(getDoc(doc(customer,"chat_messages/merchant-msg")));
+    await assertFails(updateDoc(doc(customer,"chat_messages/merchant-msg"),{content:"Changed"}));
+    await assertFails(updateDoc(doc(customer,"chat_messages/merchant-msg"),{sender_id:deleteField()}));
+    await assertSucceeds(updateDoc(doc(customer,"chat_messages/merchant-msg"),{is_read:true}));
+  }finally{
+    await env.clearFirestore();
+    await env.cleanup();
+  }
+ }
 });
