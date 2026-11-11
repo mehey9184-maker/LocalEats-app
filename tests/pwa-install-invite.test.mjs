@@ -34,6 +34,13 @@ test("native one-click install only; no false how-to fallback or already-install
   assert.match(ui,/document.visibilityState !== "visible"/);
   
   assert.match(app,/postReviewInstallEligible/);
+  assert.match(app,/alreadyHandledKotaReviews.has\(order.id\)/);
+  assert.match(app,/skippedKotaReviewIds\(historyUserId/);
+  assert.match(app,/rememberSkippedKotaReview\(historyUserId, pendingReview.orderId\)/);
+  assert.match(app,/rememberReviewedKota\(uid, confirmed.order.id\)/);
+  assert.match(app,/isVerifiedCollectedKota\(order, historyUserId \?\? ""\)/);
+  assert.match(app,/!pendingReview/);
+  assert.match(app,/delayMs=\{0\}/);
   assert.match(app,/delayMs=\{0\}/);
   assert.match(app,/currentScreen === "home"/);
   
