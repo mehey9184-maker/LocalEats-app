@@ -2288,9 +2288,13 @@ export default function App() {
     ),
     [currentPickupHistory?.orders, historyUserId, kotaHistoryVerified, alreadyHandledKotaReviews],
   );
+  // The review is optional. The install invitation may follow either a
+  // successfully submitted review or an explicitly skipped review. Never gate
+  // access to a useful app feature behind posting a rating.
   const postReviewInstallEligible = kotaHistoryVerified && Boolean(
     currentPickupHistory?.orders?.some(order =>
-      isVerifiedCollectedKota(order, historyUserId ?? "") && reviewedKotas.has(order.id)),
+      isVerifiedCollectedKota(order, historyUserId ?? "") &&
+      alreadyHandledKotaReviews.has(order.id)),
   );
   useEffect(() => {
     if (!kotaHistoryVerified) return;
