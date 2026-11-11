@@ -2722,7 +2722,7 @@ export default function App() {
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
           <InstallAppInvite
-            eligible={Boolean(session?.user?.id && !isRestoringSession && currentScreen === "home" &&
+            eligible={Boolean(canManageCustomerProfile(auth.currentUser, session?.user?.id) && !isRestoringSession && currentScreen === "home" &&
               !isCartDrawerOpen && !isAddressModalOpen && processingState === "idle")}
             appName="LocalEats"
             storageKey="localeats_customer_install_defer_v1"
