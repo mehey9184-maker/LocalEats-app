@@ -1,0 +1,34 @@
+name: L2C Firestore unsafe deployment fail-closed guard
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'firebase.json'
+      - 'scripts/verify-firestore-deploy.cjs'
+      - 'tests/firestore-release-guard.test.cjs'
+      - '.github/workflows/l2-firestore-source-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-firebase-deploy-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout source without GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify Firebase config hooks and safety behavior
+        run: |
+          node --test tests/firestore-release-guard.test.cjs
+          node -e "const c=require('./firebase.json'); if(!(c.firestore.predeploy||[]).includes('node scripts/verify-firestore-deploy.cjs')) process.exit(1)"
+      - name: Ensure unsafe root rules cannot be deployed from main
+        run: |
+          if node scripts/verify-firestore-deploy.cjs > /tmp/guard.log 2>&1;then
+            echo "Unsafe Firebase rules were accepted";exit 1
+          fi
+          grep -q 'FIRESTORE_RULES_UNRESTRICTED_ACCESS_BLOCKED' /tmp/guard.log
