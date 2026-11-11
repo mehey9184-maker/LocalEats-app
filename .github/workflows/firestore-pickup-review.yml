@@ -7,6 +7,8 @@ on:
       - 'firestore.rules'
       - 'firebase.json'
       - 'tests/firestore-pickup-review.test.cjs'
+      - 'tests/firestore-release-guard.test.cjs'
+      - 'scripts/verify-firestore-deploy.cjs'
       - '.github/workflows/firestore-pickup-review.yml'
   workflow_dispatch:
 permissions:
@@ -28,6 +30,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - run: npm ci --no-audit --no-fund
+      - name: Verify the named production database target and fail-closed deployment guard
+        run: node --test tests/firestore-release-guard.test.cjs
       - name: Test synthetic baseline and review candidate in emulator
         env:
           CI: 'true'
