@@ -209,6 +209,7 @@ import {
 import { SplashScreen } from "./screens/SplashScreen";
 
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
+import { InstallAppInvite } from "./components/InstallAppInvite";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
@@ -2720,6 +2721,13 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
+          <InstallAppInvite
+            eligible={Boolean(session?.user?.id && !isRestoringSession && currentScreen === "home" &&
+              !isCartDrawerOpen && !isAddressModalOpen && processingState === "idle")}
+            appName="LocalEats"
+            storageKey="localeats_customer_install_defer_v1"
+            variant="customer"
+          />
           <GlobalChatListener 
             activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
             currentScreen={currentScreen} 
