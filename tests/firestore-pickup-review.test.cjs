@@ -5,10 +5,10 @@ const {initializeTestEnvironment,assertFails,assertSucceeds}=require("@firebase/
 const {doc,getDoc,setDoc,updateDoc,deleteField}=require("firebase/firestore");
 
 test("deployed baseline demonstrates direct order changes and broad rider visibility; candidate blocks them",async()=>{
- for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false]]){
+ for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false],["firestore.rules",false]]){
   const env=await initializeTestEnvironment({
    projectId:"demo-pickup-rules",firestore:{host:"127.0.0.1",port:8080,
-    rules:readFileSync("security/review/"+name,"utf8")}
+    rules:readFileSync(name==="firestore.rules"?name:"security/review/"+name,"utf8")}
   });
   try{
    await env.withSecurityRulesDisabled(async context=>{
