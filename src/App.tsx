@@ -212,6 +212,7 @@ import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { InstallAppInvite } from "./components/InstallAppInvite";
 import {
   isVerifiedCollectedKota, nextUnreviewedKota, reviewedKotaOrderIds, rememberReviewedKota,
+  skippedKotaReviewIds, rememberSkippedKotaReview,
 } from "./services/kotaReviewInstallFlow";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
@@ -2276,12 +2277,16 @@ export default function App() {
     () => reviewedKotaOrderIds(historyUserId ?? ""),
     [historyUserId, kotaReviewRevision],
   );
+  const alreadyHandledKotaReviews = useMemo(() => new Set([
+    ...reviewedKotas,
+    ...skippedKotaReviewIds(historyUserId ?? ""),
+  ]), [historyUserId, kotaReviewRevision, reviewedKotas]);
   const pendingCollectedKota = useMemo(
     () => nextUnreviewedKota(
       currentPickupHistory?.orders ?? null, historyUserId ?? "",
-      kotaHistoryVerified, reviewedKotas,
+      kotaHistoryVerified, alreadyHandledKotaReviews,
     ),
-    [currentPickupHistory?.orders, historyUserId, kotaHistoryVerified, reviewedKotas],
+    [currentPickupHistory?.orders, historyUserId, kotaHistoryVerified, alreadyHandledKotaReviews],
   );
   const postReviewInstallEligible = kotaHistoryVerified && Boolean(
     currentPickupHistory?.orders?.some(order =>
@@ -3225,6 +3230,10 @@ export default function App() {
                         type: "info",
                       });
                     } else {
+                      // Skipping a review must not cause the same order to
+                      // re-open another review immediately.
+                      if (historyUserId) rememberSkippedKotaReview(historyUserId, pendingReview.orderId);
+                      setKotaReviewRevision(value => value + 1);
                       setPendingReview(null);
                       setCurrentScreen("home");
                     }
