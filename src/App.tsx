@@ -255,7 +255,7 @@ import {
   MY_KOTA_TEST_STORE,
   mergeShopsCatalogs,
 } from "./utils";
-import { auth, onForegroundMessage, registerAndSyncPushToken, FirestoreService } from "./lib/firebase";
+import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
@@ -1430,39 +1430,26 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
+  // Only a user gesture may request permission. Permission alone is not a
+  // successful subscription: require a persisted, authenticated API token.
   const subscribeToPushNotifications = useCallback(
     async (customUserId?: string) => {
-      const targetUserId = customUserId || session?.user?.id;
-      if (!targetUserId) return;
+      const uid = customUserId || session?.user?.id;
+      if (!uid || uid !== auth.currentUser?.uid ||
+          typeof window === "undefined" || !("Notification" in window)) return;
       try {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-           await registerAndSyncPushToken(targetUserId);
-        }
-      } catch (err) {
-        console.debug("[Push] Notice:", err);
+        const permission = Notification.permission === "granted"
+          ? "granted" : await Notification.requestPermission();
+        if (permission !== "granted") return;
+        const saved = await registerAndSyncPushToken(uid);
+        if (saved) toast.success("Pickup notifications connected.");
+        else toast.error("Push unavailable. Check your Orders page for updates.");
+      } catch {
+        toast.error("Push could not connect. Orders remain available.");
       }
     },
-    [session]
+    [session?.user?.id]
   );
-
-  const requestNotificationPermission = useCallback(async () => {
-    if (!("Notification" in window)) {
-      return;
-    }
-    try {
-      if (Notification.permission !== "denied") {
-        const permission = await Notification.requestPermission();
-        if (permission === "granted") {
-          if (session?.user?.id) {
-            // Sync with push notifications in background
-            subscribeToPushNotifications(session.user.id).catch(() => {});
-            registerAndSyncPushToken(session.user.id).catch(() => {});
-          }
-        }
-      }
-    } catch (_) {}
-  }, [session, subscribeToPushNotifications]);
 
   // Listen for FCM foreground web push messages and display sonner toast notifications
   useEffect(() => {
@@ -1474,14 +1461,22 @@ export default function App() {
         description: body,
         duration: 5000,
       });
+      if (payload.data?.type === "pickup_ready") {
+        window.dispatchEvent(new Event("localeats-pickup-ready"));
+      }
     }).then((unsub) => {
       unsubscribe = unsub;
     }).catch(console.warn);
 
-    return () => {
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
+    const workerMessage = (event: MessageEvent) => {
+      if (event.data?.type === "localeats-pickup-ready") {
+        window.dispatchEvent(new Event("localeats-pickup-ready"));
       }
+    };
+    navigator.serviceWorker?.addEventListener("message", workerMessage);
+    return () => {
+      navigator.serviceWorker?.removeEventListener("message", workerMessage);
+      if (typeof unsubscribe === "function") unsubscribe();
     };
   }, []);
 
@@ -1624,15 +1619,15 @@ export default function App() {
     }
   }, []);
 
-  // Sync FCM Web Push Token to user_push_tokens in Supabase when session or profile is active
+  // Refresh only previously granted push permissions. Firebase Auth, not a
+  // cached profile, is the device-subscription identity.
   useEffect(() => {
-    const activeUserId = session?.user?.id || userProfile?.id;
-    if (activeUserId) {
-      registerAndSyncPushToken(activeUserId).catch((err) => {
-        console.warn("[FCM] Auto push token registration notice:", err);
-      });
+    const uid = session?.user?.id;
+    if (uid && auth.currentUser?.uid === uid &&
+        typeof Notification !== "undefined" && Notification.permission === "granted") {
+      void registerAndSyncPushToken(uid);
     }
-  }, [session?.user?.id, userProfile?.id]);
+  }, [session?.user?.id]);
 
   // Account switch detection: Clear old user profile and sync immediately with new active session
   useEffect(() => {
@@ -1989,7 +1984,7 @@ export default function App() {
             ];
             return preLoginScreens.includes(prev) ? "home" : prev;
           });
-          requestNotificationPermission();
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") void registerAndSyncPushToken(session.user.id);
         } else {
           // No active auth session found
           if (typeof navigator !== "undefined" && !navigator.onLine && hasCachedUser) {
@@ -2077,7 +2072,7 @@ export default function App() {
           }
           return prev;
         });
-        requestNotificationPermission();
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") void registerAndSyncPushToken(session.user.id);
       } else {
         if (_event === "SIGNED_OUT") {
           localStorage.removeItem("remember_me_secure_token");
