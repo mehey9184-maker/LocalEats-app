@@ -126,3 +126,35 @@ test("L2C: reviewed and deployable rules enforce sender identity, shop authority
   }
  }
 });
+
+
+test("L2C: signed-in users cannot mint admin roles, wallet credit or approved rider profiles",async()=>{
+ for(const file of ["firestore.rules","security/review/firestore-pickup-phase1.rules"]){
+  const env=await initializeTestEnvironment({
+   projectId:"demo-pickup-rules",
+   firestore:{host:"127.0.0.1",port:8080,rules:readFileSync(file,"utf8")}
+  });
+  try{
+   await env.withSecurityRulesDisabled(async ctx=>{
+    await setDoc(doc(ctx.firestore(),"users/customer"),{name:"Before",role:"customer",is_admin:false});
+   });
+   const customer=env.authenticatedContext("customer").firestore();
+   const stranger=env.authenticatedContext("stranger").firestore();
+   const newUser=env.authenticatedContext("new-user").firestore();
+   const rider=env.authenticatedContext("new-rider").firestore();
+   await assertSucceeds(updateDoc(doc(customer,"users/customer"),{name:"After"}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{role:"admin"}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{role:deleteField()}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{is_admin:true}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{is_admin:deleteField()}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{shop_id:"shop"}));
+   await assertFails(updateDoc(doc(customer,"users/customer"),{wallet_balance:100000}));
+   await assertFails(updateDoc(doc(stranger,"users/customer"),{name:"Hacked"}));
+   await assertFails(setDoc(doc(newUser,"users/new-user"),{role:"admin",is_admin:true}));
+   await assertFails(setDoc(doc(newUser,"users/new-user"),{role:"merchant",is_vendor:true}));
+   await assertSucceeds(setDoc(doc(newUser,"users/new-user"),{role:"customer",name:"Legit"}));
+   await assertFails(setDoc(doc(rider,"rider_profiles/new-rider"),{id:"new-rider",verification_status:"approved",total_earnings:100}));
+   await assertSucceeds(setDoc(doc(rider,"rider_profiles/new-rider"),{id:"new-rider",verification_status:"pending",total_earnings:0,full_name:"Test only"}));
+  }finally{await env.clearFirestore();await env.cleanup();}
+ }
+});
