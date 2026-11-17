@@ -863,6 +863,12 @@ export default function App() {
   const [notification, setNotification] = useState<NotificationState>(null);
   // Set only after a server-verified pickup; this never affects order state.
   const [postOrderPushPrompt, setPostOrderPushPrompt] = useState<{uid:string;orderId:string}|null>(null);
+  useEffect(() => {
+    // Never retain a previous account's unshown notification reminder.
+    if (postOrderPushPrompt && postOrderPushPrompt.uid !== session?.user?.id) {
+      setPostOrderPushPrompt(null);
+    }
+  }, [session?.user?.id, postOrderPushPrompt]);
 
   // Auto-dismiss transient (non-persistent) custom notification toasts after 4 seconds
   useEffect(() => {
@@ -5012,7 +5018,7 @@ function HomeScreen({
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
                   {activeOrders.length > 0
                     ? "You have pickups in progress. Enable optional notifications for updates when the shop prepares your food and marks it Ready for collection."
-                    : "Ready notifications require pickup database activation. Push is optional and best effort."}
+                    : "Alerts are optional. Turn them on now; your Orders page remains the source of truth."}
                 </p>
               </div>
             </div>
