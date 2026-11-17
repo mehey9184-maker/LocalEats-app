@@ -1,4 +1,5 @@
 import React from "react";
+import {auth, ensureCustomerPushWorkerActive, registerAndSyncPushToken} from "../lib/firebase";
 import {
   ArrowLeft,
   User,
@@ -12,6 +13,7 @@ import {
   ChevronRight,
   Wifi,
   Smartphone,
+  BellRing,
   Info,
 } from "lucide-react";
 import { UserProfile } from "../types";
@@ -36,6 +38,132 @@ interface SettingsScreenProps {
   triggerHaptic?: (duration?: number) => void;
   isOnline?: boolean;
   [key: string]: any;
+}
+
+/**
+ * Local-only notification checks. They do not generate pickup orders,
+ * write receipts, or report OS delivery from a Firebase provider response.
+ */
+function CustomerNotificationCheck() {
+  const [permission, setPermission] = React.useState<string>("checking");
+  const [busy, setBusy] = React.useState<"registration"|"display"|null>(null);
+  const [registrationStatus, setRegistrationStatus] = React.useState("");
+  const [displayStatus, setDisplayStatus] = React.useState("");
+
+  React.useEffect(() => {
+    const refresh = () => {
+      setPermission(typeof window !== "undefined" && "Notification" in window
+        ? Notification.permission : "unsupported");
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+
+  const enableAlerts = async () => {
+    if (busy) return;
+    setBusy("registration");
+    setRegistrationStatus("");
+    try {
+      if (!("Notification" in window) || !("serviceWorker" in navigator) || !window.isSecureContext) {
+        setRegistrationStatus("Browser notifications are not available in this browser or connection.");
+        return;
+      }
+      // Only this explicit button click is permitted to request browser consent.
+      const allowed = Notification.permission === "default"
+        ? await Notification.requestPermission()
+        : Notification.permission;
+      setPermission(allowed);
+      if (allowed !== "granted") {
+        setRegistrationStatus("Notifications are blocked. Allow this website in Chrome site settings and enable Chrome in Windows notifications.");
+        return;
+      }
+      // Isolated Preview must not register tokens against the Production API.
+      if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) {
+        setRegistrationStatus("Browser permission allowed. Preview does not register a device with the Production API.");
+        return;
+      }
+      const uid = auth.currentUser?.uid;
+      if (!uid) {
+        setRegistrationStatus("Sign in to LocalEats to register order alerts for this device.");
+        return;
+      }
+      const confirmed = await registerAndSyncPushToken(uid);
+      setRegistrationStatus(confirmed
+        ? "Order alerts registered with LocalEats for this account. Windows display still requires a device check."
+        : "Device registration could not be confirmed. Your pickup status remains available in the app.");
+    } catch {
+      setRegistrationStatus("Notification registration failed. Check Chrome permission and your connection.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const testLocalAlert = async () => {
+    if (busy) return;
+    setBusy("display");
+    setDisplayStatus("");
+    try {
+      if (!("Notification" in window) || !("serviceWorker" in navigator) || !window.isSecureContext) {
+        setDisplayStatus("This browser cannot show service-worker notifications.");
+        return;
+      }
+      if (Notification.permission !== "granted") {
+        setDisplayStatus("First allow notifications for this website using the Enable alerts button.");
+        return;
+      }
+      const registration = await ensureCustomerPushWorkerActive();
+      const tag = "localeats-customer-browser-check-" + Date.now();
+      await registration.showNotification("LocalEats browser notification check", {
+        body: "Browser-only test. No order, payment or Firebase send was created.",
+        icon: "/logo.png",
+        tag,
+        data: {type: "customer_local_test"},
+      });
+      const found = await registration.getNotifications({tag});
+      setDisplayStatus(found.length > 0
+        ? "Chrome reports a local notification. Check for a banner or open Windows Notification Center. Visible delivery still needs your confirmation."
+        : "Chrome accepted the local display request, but the alert was not listed. Check Chrome site permission and Windows Settings → System → Notifications, including Do not disturb.");
+    } catch {
+      setDisplayStatus("Chrome could not display the local alert. Check site permission, service workers and Windows notification settings.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section aria-label="Pickup notification settings" className="rounded-3xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="p-2 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+          <BellRing className="w-5 h-5" aria-hidden="true"/>
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">Pickup notifications</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Browser permission: {permission}</p>
+        </div>
+      </div>
+      <p className="text-xs text-slate-600 dark:text-slate-300">
+        Notifications help you notice when food is ready. Track pickup remains the source of your actual order status.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => { void enableAlerts(); }} disabled={!!busy}
+          className="min-h-11 rounded-xl bg-orange-600 text-white px-4 py-2 text-xs font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+          {busy === "registration" ? "Checking registration…" : "Enable order alerts"}
+        </button>
+        <button type="button" onClick={() => { void testLocalAlert(); }} disabled={!!busy}
+          className="min-h-11 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 px-4 py-2 text-xs font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+          {busy === "display" ? "Testing browser…" : "Test browser alert"}
+        </button>
+      </div>
+      {registrationStatus && <p role="status" aria-live="polite" className="text-xs text-slate-700 dark:text-slate-200">{registrationStatus}</p>}
+      {displayStatus && <p role="status" aria-live="polite" className="text-xs text-slate-700 dark:text-slate-200">{displayStatus}</p>}
+      <p className="text-[11px] text-slate-500 dark:text-slate-400">The browser-only test does not send a Firebase message or create an order.</p>
+    </section>
+  );
 }
 
 export function SettingsScreen({
@@ -172,6 +300,9 @@ export function SettingsScreen({
             )}
           </div>
         </div>
+
+        {/* Browser-only push check; preserves the existing Settings controls. */}
+        <CustomerNotificationCheck />
 
         {/* Shortcuts / Navigation */}
         <div>
