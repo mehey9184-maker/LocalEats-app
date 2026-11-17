@@ -4363,10 +4363,15 @@ function HomeScreen({
       <div className="space-y-6">
         {cards(within,0)}
         {outside.length>0 && (
-          <section aria-label="More shops outside your pickup area" className="space-y-3">
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-700 dark:text-slate-200">More shops outside your pickup area</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Browse real menus. Ordering is available only within 4 km of your current location.</p>
+          <section aria-label="More shops outside your pickup area" className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-3 sm:p-5 dark:border-slate-700 dark:bg-slate-900/40">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">More shops outside your pickup area</h3>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Over 4 km away · Browse real menus, but ordering is unavailable here.</p>
+              </div>
+              <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                Browse only
+              </span>
             </div>
             {cards(outside,within.length)}
           </section>
@@ -10030,22 +10035,10 @@ function ExploreScreen({
               sortedShops.map((shop) => {
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
-
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const outsidePickupArea = isOutsidePickupArea(shop);
+                // Verified distance from the location-scoped catalogue, never an invented GPS fallback.
+                const distanceVal = typeof shop.distance === "number" && Number.isFinite(shop.distance)
+                  ? shop.distance : null;
 
                 return (
                   <div
@@ -10054,20 +10047,25 @@ function ExploreScreen({
                       setSelectedShopId(shop.id);
                       triggerHaptic(10);
                     }}
-                    className="group bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600 transition-all duration-300 flex flex-col cursor-pointer"
+                    className={`group rounded-[32px] overflow-hidden border transition-all duration-300 flex flex-col cursor-pointer ${outsidePickupArea
+                      ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:border-slate-400"
+                      : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600"}`}
                   >
                     <div className="h-44 relative overflow-hidden">
                       <BlurUpImage
                         src={shop.logo || DEFAULT_SHOP_LOGO}
                         alt={shop.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${outsidePickupArea ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                         blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                       />
+                      {outsidePickupArea && (
+                        <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />
+                      )}
 
                       {/* Distance Float Indicator */}
                       {distanceVal !== null && (
-                        <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
-                          <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
+                        <div className={`absolute top-4 left-4 font-black text-[10px] uppercase tracking-wide px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1 ${outsidePickupArea ? "bg-white text-slate-900 border border-slate-300" : "bg-orange-600 text-white"}`}>
+                          <Compass className="w-3 h-3" aria-hidden="true" />
                           <span>{distanceVal.toFixed(1)} km away</span>
                         </div>
                       )}
@@ -10088,7 +10086,11 @@ function ExploreScreen({
 
                       {/* Speed/Opening Overlays */}
                       <div className="absolute bottom-4 left-4 flex gap-1.5 flex-wrap">
-                        {status.isOpen ? (
+                        {outsidePickupArea ? (
+                          <span className="bg-white text-slate-900 border border-slate-300 font-black text-[11px] whitespace-nowrap uppercase tracking-wide px-2 py-1 rounded-md shadow-sm">
+                            Outside 4 km · Browse only
+                          </span>
+                        ) : status.isOpen ? (
                           <span className="bg-emerald-500 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                             Open Now
                           </span>
@@ -10136,10 +10138,10 @@ function ExploreScreen({
                             onStoreInfo(shop.id);
                             triggerHaptic(10);
                           }}
-                          className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                          className={`flex-grow py-3 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${outsidePickupArea ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>{outsidePickupArea ? "Browse Menu Only" : "Order Menu"}</span>
                         </button>
 
                         <button
