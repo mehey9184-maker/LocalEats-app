@@ -113,7 +113,7 @@ export const ActiveOrderMiniTracker: React.FC<ActiveOrderMiniTrackerProps> = ({
 
   return (
     <AnimatePresence>
-      <div className={`fixed ${hasCart ? "bottom-[152px] sm:bottom-[160px]" : "bottom-[74px] sm:bottom-[80px]"} left-0 right-0 z-40 px-3 sm:px-4 pointer-events-none flex justify-center`}>
+      <div className={`fixed ${hasCart ? "bottom-[calc(var(--customer-bottom-nav-clearance)+5.5rem)]" : "bottom-[var(--customer-bottom-nav-clearance)]"} left-0 right-0 z-40 px-3 sm:px-4 pointer-events-none flex justify-center`}>
         {minimized ? (
           <motion.button
             key="minimized-pill"
