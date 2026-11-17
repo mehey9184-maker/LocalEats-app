@@ -115,10 +115,10 @@ body {
 
 /* Mobile-first responsive tweaks for small viewport devices (<380px) */
 @media (max-width: 380px) {
-  html {
-    font-size: 14.5px;
-  }
-
+  /* Keep the browser's normal 16px root size even on very small phones.
+   * Icon-label and layout adjustments must fit the viewport rather than
+   * making every customer's text smaller (important at zoom/text scaling).
+   */
   .px-4 {
     padding-left: 0.625rem !important;
     padding-right: 0.625rem !important;
