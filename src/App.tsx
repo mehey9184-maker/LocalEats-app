@@ -284,7 +284,7 @@ const ExploreMapCanvas = lazy(() => import("./components/OptionalMapCanvases").t
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
 import { StartupExperience } from "./components/StartupExperience";
-import { BottomNavigation } from "./components/BottomNavigation";
+import { BottomNavigation, customerNavScreens } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
 
 import { ShopChatModal } from "./components/ShopChatModal";
@@ -3066,7 +3066,7 @@ export default function App() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
-              className="h-full w-full"
+              className={`h-full w-full ${customerNavScreens.includes(currentScreen) ? "customer-nav-page" : ""}`}
             >
               {currentScreen === "splash" && (
                 <SplashScreen
@@ -5920,7 +5920,7 @@ function DiscoverScreen({
         </div>
       </header>
 
-      <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
+      <main className="customer-nav-inner-scroll flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
         {/* Dedicated Promo Code & Flyer Scanner Action Card */}
         {onScanFlyer && (
           <div className="px-6 pt-4 pb-1">
@@ -7071,7 +7071,7 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="customer-nav-inner-scroll flex-1 overflow-y-auto p-6 space-y-8">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
           <input
@@ -9901,7 +9901,7 @@ function ExploreScreen({
 
       {layoutMode === "list" ? (
         /* Gorgeous, Premium Responsive Shop List Layout */
-        <div className="flex-grow overflow-y-auto px-4 pb-28 pt-28 space-y-4">
+        <div className="customer-nav-inner-scroll flex-grow overflow-y-auto px-4 pt-28 space-y-4">
           <div className="max-w-lg mx-auto flex flex-col gap-4">
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
             <Suspense fallback={null}>
