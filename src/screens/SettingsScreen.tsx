@@ -143,7 +143,7 @@ function CustomerNotificationCheck() {
         </div>
         <div>
           <h2 className="text-sm font-bold text-slate-900 dark:text-white">Pickup notifications</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Browser permission: {permission}</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{permission === "granted" ? "On by default · browser allowed" : permission === "denied" ? "Blocked in browser settings" : permission === "default" ? "Needs your permission once" : "Browser notifications unavailable"}</p>
         </div>
       </div>
       <p className="text-xs text-slate-600 dark:text-slate-300">
@@ -152,7 +152,7 @@ function CustomerNotificationCheck() {
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => { void enableAlerts(); }} disabled={!!busy}
           className="min-h-11 rounded-xl bg-orange-600 text-white px-4 py-2 text-xs font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
-          {busy === "registration" ? "Checking registration…" : "Enable order alerts"}
+          {busy === "registration" ? "Checking registration…" : permission === "granted" ? "Check order alerts" : "Enable order alerts"}
         </button>
         <button type="button" onClick={() => { void testLocalAlert(); }} disabled={!!busy}
           className="min-h-11 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 px-4 py-2 text-xs font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
