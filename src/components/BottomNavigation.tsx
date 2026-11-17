@@ -11,6 +11,12 @@ interface BottomNavigationProps {
   isOnline?: boolean;
 }
 
+/** Shared screen scope: only these pages reserve space for persistent navigation. */
+export const customerNavScreens: ReadonlyArray<Screen> = [
+  "home", "discover", "explore", "order-tracking", "order-history",
+  "profile", "notifications", "settings", "store-info", "contact",
+];
+
 export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   currentScreen,
   onNavigate,
@@ -18,19 +24,32 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   triggerHaptic,
   isOnline = true,
 }) => {
-  // Screens where the persistent bottom navigation should be visible
-  const customerNavScreens: Screen[] = [
-    "home",
-    "discover",
-    "explore",
-    "order-tracking",
-    "order-history",
-    "profile",
-    "notifications",
-    "settings",
-    "store-info",
-    "contact",
-  ];
+  // Keep content below this overlay reachable, even with large text or the
+  // iPhone/Android home indicator. Use the actual rendered navigation height
+  // instead of assuming a hard-coded number of pixels.
+  const barRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const element = barRef.current;
+    if (!element) return;
+    const updateClearance = () => {
+      const measured = element.getBoundingClientRect().height;
+      if (measured > 0) {
+        document.documentElement.style.setProperty(
+          "--customer-bottom-nav-clearance", `${Math.ceil(measured + 16)}px`
+        );
+      }
+    };
+    updateClearance();
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updateClearance) : null;
+    observer?.observe(element);
+    window.addEventListener("resize", updateClearance, { passive: true });
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateClearance);
+      document.documentElement.style.removeProperty("--customer-bottom-nav-clearance");
+    };
+  }, [currentScreen]);
 
   if (!customerNavScreens.includes(currentScreen)) {
     return null;
@@ -47,7 +66,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
     currentScreen === "order-tracking" || currentScreen === "order-history";
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 px-3 sm:px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/80 via-slate-100/40 to-transparent dark:from-slate-950/80 dark:via-slate-950/40 pointer-events-none flex flex-col items-center justify-end transition-all">
+    <div ref={barRef} data-customer-bottom-nav="true" className="fixed bottom-0 left-0 right-0 z-50 px-3 sm:px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/80 via-slate-100/40 to-transparent dark:from-slate-950/80 dark:via-slate-950/40 pointer-events-none flex flex-col items-center justify-end transition-all">
       <nav
         id="persistent-bottom-navigation"
         className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-[24px] sm:rounded-[28px] border border-slate-200/70 dark:border-slate-800/80 px-2 py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto"
