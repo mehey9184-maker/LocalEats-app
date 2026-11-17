@@ -8,7 +8,7 @@ export class PickupApiError extends Error {
 }
 export type PickupQuote={can_submit?:boolean;lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;delivery_fee_minor?:number;discount_minor?:number;tip_minor?:number;subtotal_minor:number;pricing_fingerprint:string};
 type ApiResponse={success?:boolean;code?:string;error?:string;order?:PickupOrder;replayed?:boolean;orders?:PickupOrder[];
- shops?:{id:string;name:string;location:string;distance_km:number}[];
+ shops?:{id:string;name:string;location:string;distance_km?:number;lat?:number;lng?:number;latitude?:number;longitude?:number;is_active?:boolean}[];
  menu_items?:{id:string;name:string;price:number;is_available:boolean}[];quote?:PickupQuote;
  notifications?:{id:string;order_id:string}[];events?:{id:string;kind:string;occurred_at:string;details?:{reason?:string}}[]};
 export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):string {
