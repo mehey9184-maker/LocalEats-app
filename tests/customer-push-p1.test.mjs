@@ -100,7 +100,7 @@ test("no automatic permission dialogs; pickup inbox reconciles when push is lost
  assert.match(app,/await customerPickupApi\.notifications\(\)/);
  assert.doesNotMatch(app,/inboxInFlight \|\| !pickupOrderingEnabled\(\)/);
  assert.match(app,/revokePickupPushSubscription\(session\.user\.id\)/);
- assert.match(app,/toast\.error\("Push registration unavailable/);
+ assert.match(app,/toast\.error\("Registration not confirmed\. Follow your pickup in Orders\."/);
 });
 
 test("transient notifications do not cover the Settings header or repeatedly interrupt refresh",()=>{
