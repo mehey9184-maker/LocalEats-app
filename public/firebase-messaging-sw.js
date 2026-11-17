@@ -11,7 +11,9 @@ self.addEventListener('notificationclick', event => {
     const match = pages.find(page => new URL(page.url).origin === self.location.origin);
     if (match) {
       await match.focus();
-      match.postMessage({type:'localeats-pickup-ready'});
+      if (event.notification.data?.type === 'pickup_ready') {
+        match.postMessage({type:'localeats-pickup-ready'});
+      }
       return;
     }
     await clients.openWindow(destination);
@@ -29,7 +31,7 @@ messaging.onBackgroundMessage(payload => {
   if (payload.notification) return;
   if (payload.data?.type !== 'pickup_ready') return;
   const eventId = String(payload.data.event_id || 'ready').slice(0,80);
-  self.registration.showNotification('Your kota is ready for collection', {
+  return self.registration.showNotification('Your kota is ready for collection', {
     body:'Open LocalEats to check your order. Pay at the shop before collection.',
     icon:'/logo.png',badge:'/logo.png',
     tag:'localeats-pickup-'+eventId,
