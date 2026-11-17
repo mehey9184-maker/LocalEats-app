@@ -59,7 +59,7 @@ test("floating cart, active pickup tracker and help never sit underneath the nav
   const help = read("src/components/AppHelp.tsx");
   assert.match(cart, /bottom-\[var\(--customer-bottom-nav-clearance\)\]/);
   assert.match(tracker, /bottom-\[var\(--customer-bottom-nav-clearance\)\]/);
-  assert.match(tracker, /bottom-\[calc\(var\(--customer-bottom-nav-clearance\)\+5\.5rem\)\]/);
+  assert.match(tracker, /bottom-\[calc\(var\(--customer-bottom-nav-clearance\)_\+_5\.5rem\)\]/);
   assert.equal((help.match(/bottom-\[var\(--customer-bottom-nav-clearance\)\]/g)||[]).length,2);
   assert.doesNotMatch(cart,/fixed bottom-20/);
   assert.doesNotMatch(tracker,/bottom-\[74px\]/);
