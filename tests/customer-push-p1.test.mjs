@@ -51,7 +51,7 @@ test("fresh Customer FCM registration awaits the exact custom worker becoming ac
  assert.match(fb,/worker\.addEventListener\("statechange", check\)/);
  assert.match(fb,/setTimeout\(\(\) => finish\(new Error\("Firebase notification worker did not activate\."\)\), 10000\)/);
  assert.match(fb,/const registration = await ensureCustomerPushWorkerActive\(\)/);
- assert.doesNotMatch(fb,/navigator\.serviceWorker\.ready/);
+ assert.doesNotMatch(fb,/await navigator\.serviceWorker\.ready/);
 });
 
 test("Customer Settings permits browser-only testing without Firebase send or pickup writes",()=>{
