@@ -112,3 +112,28 @@ test("transient notifications do not cover the Settings header or repeatedly int
  assert.match(app,/Ready notifications could not refresh\. Retry; no state was inferred\./);
  assert.match(app,/setInterval\(refreshVisible, 30000\)/);
 });
+
+test("account dropdown paints above the filter bar so Settings remains visible",()=>{
+ const homeHeader=app.slice(app.indexOf('id="home-sticky-header"'),app.indexOf('</header>',app.indexOf('id="home-sticky-header"')));
+ assert.match(homeHeader,/max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2\.5 flex items-center justify-between gap-2\.5 w-full relative z-20/);
+ assert.match(homeHeader,/id="settings-menu-toggle-btn"/);
+ assert.match(homeHeader,/<Settings className="w-5 h-5/);
+ assert.match(homeHeader,/relative z-0 overflow-hidden border-t border-slate-100/);
+ assert.ok(homeHeader.indexOf('id="settings-menu-toggle-btn"') < homeHeader.indexOf('home-filter-chips-bar'),"dropdown should be anchored in the top header row");
+});
+
+test("previously granted customer push is on by default without unprompted browser permission requests",()=>{
+ assert.match(app,/Customer push is on by default once the browser has already granted it/);
+ assert.match(app,/Notification\.permission !== "granted"/);
+ assert.match(app,/registerAndSyncPushToken\(uid\)\.catch\(\(\) => null\)/);
+ assert.match(app,/window\.addEventListener\("focus", revalidateAllowedPush\)/);
+ assert.match(app,/window\.addEventListener\("online", revalidateAllowedPush\)/);
+ assert.match(app,/document\.addEventListener\("visibilitychange", onVisible\)/);
+ assert.match(app,/lastAttempt < 300000/);
+ assert.match(app,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
+ assert.match(settings,/On by default · browser allowed/);
+ assert.match(settings,/Blocked in browser settings/);
+ assert.match(settings,/Needs your permission once/);
+ assert.match(settings,/permission === "granted" \? "Check order alerts"/);
+ assert.doesNotMatch(app,/useEffect\(\(\) => \{\s*Notification\.requestPermission\(\)/);
+});
