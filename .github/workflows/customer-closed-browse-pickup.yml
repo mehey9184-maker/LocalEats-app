@@ -1,4 +1,4 @@
-name: Customer approved closed shops — menu browse without order
+name: Customer shop browse + bottom navigation visibility
 on:
   pull_request:
     branches: [main]
@@ -7,6 +7,12 @@ on:
       - 'src/services/pickupMapping.ts'
       - 'tests/customer-closed-browse-main.test.mjs'
       - 'tests/customer-outside-pickup-area-preview.test.mjs'
+      - 'tests/customer-bottom-navigation-safe-area.test.mjs'
+      - 'src/components/BottomNavigation.tsx'
+      - 'src/components/FloatingCartButton.tsx'
+      - 'src/components/ActiveOrderMiniTracker.tsx'
+      - 'src/components/AppHelp.tsx'
+      - 'src/index.css'
       - 'src/components/ShopCard.tsx'
       - 'src/pickup/client.ts'
       - 'src/services/customerPickup.ts'
@@ -31,7 +37,7 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: TypeScript check
         run: npm run lint
-      - name: Run closed-shop mapping and nearby-catalog caching tests
-        run: node --experimental-strip-types --test tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-outside-pickup-area-preview.test.mjs
+      - name: Run closed-shop, discovery and bottom-navigation regression tests
+        run: node --experimental-strip-types --test tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-outside-pickup-area-preview.test.mjs tests/customer-bottom-navigation-safe-area.test.mjs
       - name: Verify Customer build
         run: npm run build
