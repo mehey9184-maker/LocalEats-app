@@ -20,13 +20,18 @@
     letter-spacing: -0.02em;
   }
 
+  /* Buttons and links may own their own Motion transform.
+     Global active scaling caused a second competing press animation. */
   button, a {
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
-
-  button:active, a:active {
-    transform: scale(0.98);
-    transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+  button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
+  button:disabled {
+    cursor: not-allowed;
   }
 }
 
@@ -370,4 +375,24 @@ body {
   [class*="animate-[shimmer"] {
     animation: none !important;
   }
+}
+
+/* Customer UX1: subtle opt-in press feedback. Do not animate every link or
+   override transforms driven by Motion or existing shop card designs. */
+@media (prefers-reduced-motion: no-preference) {
+  .le-customer-press {
+    transition-property: scale, background-color, border-color, color, opacity;
+    transition-duration: 140ms;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .le-customer-press:active:not(:disabled) { scale: 0.985; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within { scroll-behavior: auto !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .le-customer-press { scale: 1 !important; }
 }
