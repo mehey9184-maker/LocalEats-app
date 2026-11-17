@@ -73,6 +73,7 @@ export function CheckoutScreen({
   shops,
   onBack,
   onConfirm,
+  onVerifiedPickupPlaced,
   onIncompleteProfile,
   cart,
   setCart,
@@ -91,6 +92,7 @@ export function CheckoutScreen({
   shops: Shop[];
   onBack: () => void;
   onConfirm: () => void;
+  onVerifiedPickupPlaced?: (orderId: string) => void;
   onIncompleteProfile: () => void;
   cart: CartItem[];
   setCart: Dispatch<SetStateAction<CartItem[]>>;
@@ -944,9 +946,12 @@ export function CheckoutScreen({
     setLoading(retry ? "retry" : "submit");
     setPickupQuoteError("");
     try {
-      await submitPickupQuote(retry ? null : pickupQuote);
+      const verifiedOrder = await submitPickupQuote(retry ? null : pickupQuote);
       setCart([]);
       onConfirm();
+      // Only a persisted, authenticated pickup response may show the optional
+      // notification reminder. A failed quote, retry or simulation cannot.
+      onVerifiedPickupPlaced?.(verifiedOrder.id);
     } catch (error) {
       setPickupQuoteError(error instanceof Error ? error.message : "Submission remains unconfirmed.");
     } finally {
