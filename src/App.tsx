@@ -1619,14 +1619,42 @@ export default function App() {
     }
   }, []);
 
-  // Refresh only previously granted push permissions. Firebase Auth, not a
-  // cached profile, is the device-subscription identity.
+  // Customer push is on by default once the browser has already granted it.
+  // Never ask permission on startup; only a customer click may trigger that.
+  // The production-origin gate prevents Preview from writing device tokens to
+  // a Production API. Inbox/status polling is the fallback if push is missing.
   useEffect(() => {
     const uid = session?.user?.id;
-    if (uid && auth.currentUser?.uid === uid &&
-        typeof Notification !== "undefined" && Notification.permission === "granted") {
-      void registerAndSyncPushToken(uid);
-    }
+    if (!uid || typeof window === "undefined" || typeof Notification === "undefined") return;
+    if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return;
+    let stopped = false;
+    let inFlight = false;
+    let lastAttempt = 0;
+    const revalidateAllowedPush = () => {
+      if (stopped || inFlight || Notification.permission !== "granted" ||
+          !navigator.onLine || auth.currentUser?.uid !== uid) return;
+      const now = Date.now();
+      // Avoid re-registering on every focus or repeated visibility changes.
+      if (now - lastAttempt < 300000) return;
+      lastAttempt = now;
+      inFlight = true;
+      void registerAndSyncPushToken(uid).catch(() => null).finally(() => {
+        inFlight = false;
+      });
+    };
+    revalidateAllowedPush();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") revalidateAllowedPush();
+    };
+    window.addEventListener("focus", revalidateAllowedPush);
+    window.addEventListener("online", revalidateAllowedPush);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      window.removeEventListener("focus", revalidateAllowedPush);
+      window.removeEventListener("online", revalidateAllowedPush);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [session?.user?.id]);
 
   // Account switch detection: Clear old user profile and sync immediately with new active session
@@ -4362,7 +4390,7 @@ function HomeScreen({
             : "border-slate-100 dark:border-slate-850"
         }`}
       >
-        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative z-20">
           
           {/* Logo & Address Quick-Switcher */}
           <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -4516,7 +4544,9 @@ function HomeScreen({
                       setIsSettingsOpen(false);
                     }}
                   />
-                  <div className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div role="menu"
+                     aria-label="Settings and account"
+                     className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -4871,7 +4901,7 @@ function HomeScreen({
                 animate={{ height: "auto", opacity: 1, y: 0 }}
                 exit={{ height: 0, opacity: 0, y: -6 }}
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+                className="relative z-0 overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
               >
                 <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
