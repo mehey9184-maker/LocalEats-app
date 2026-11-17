@@ -1,5 +1,5 @@
 import type { PickupOrder } from "./pickup/client";
-import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
+import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
@@ -284,7 +284,7 @@ const ExploreMapCanvas = lazy(() => import("./components/OptionalMapCanvases").t
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
 import { StartupExperience } from "./components/StartupExperience";
-import { BottomNavigation } from "./components/BottomNavigation";
+import { BottomNavigation, customerNavScreens } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
 
 import { ShopChatModal } from "./components/ShopChatModal";
@@ -2496,6 +2496,13 @@ export default function App() {
         return;
       }
 
+      // Protect every add entry point using the verified location-scoped list.
+      // The authoritative API separately enforces the same 4 km limit.
+      const targetShop=visibleShops.find(s=>s.id===shopId);
+      if (!targetShop || !isWithinPickupArea(targetShop)) {
+        toast.error("Outside your pickup area. Browse the menu, but ordering is available only within 4 km.");
+        return;
+      }
       // Defensive Copy and Deep Freeze of Pricing Core Data
       const secureCustomizations = [...selectedCustomizations].map((c) => 
         Object.freeze({ name: String(c.name), price: Number(c.price) })
@@ -2590,7 +2597,7 @@ export default function App() {
       });
       // Notification removed for cleaner UI
     },
-    [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
+    [cart, shops, visibleShops, showConfirm, triggerHaptic, setNotification, setCart],
   );
 
   const removeFromCart = useCallback(
@@ -3059,7 +3066,7 @@ export default function App() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
-              className="h-full w-full"
+              className={`h-full w-full ${customerNavScreens.includes(currentScreen) ? "customer-nav-page" : ""}`}
             >
               {currentScreen === "splash" && (
                 <SplashScreen
@@ -4233,7 +4240,9 @@ function HomeScreen({
       const statusA = getShopStatus(a);
       const statusB = getShopStatus(b);
 
-      // 1. Prioritize Open shops
+      const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+      if (outsideA!==outsideB) return outsideA ? 1 : -1;
+      // Within each group prioritize operational shops.
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
@@ -4247,28 +4256,9 @@ function HomeScreen({
         return getMinPrepTime(a) - getMinPrepTime(b);
       }
 
-      // Default 'recommended' sort (Distance -> Special -> Rating)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
-      }
+      // Use the verified Haversine distances, not invented fallback pins.
+      if (userLocation && typeof a.distance==="number" && typeof b.distance==="number" &&
+          Math.abs(a.distance-b.distance)>0.001) return a.distance-b.distance;
 
       // Prioritize "Local Eats Special"
       if (a.is_special && !b.is_special) return -1;
@@ -4352,19 +4342,40 @@ function HomeScreen({
   );
 
   const renderedShopList = useMemo(() => {
-    return (
+    const within=sortedShops.filter(shop=>!isOutsidePickupArea(shop));
+    const outside=sortedShops.filter(isOutsidePickupArea);
+    const cards=(entries:Shop[],offset:number)=>(
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
-        {sortedShops.map((shop,index) => (
+        {entries.map((shop,index)=>(
           <ShopCard
             key={shop.id}
             shop={shop}
-            priorityImage={index === 0}
+            priorityImage={offset+index===0}
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
+      </div>
+    );
+    return (
+      <div className="space-y-6">
+        {cards(within,0)}
+        {outside.length>0 && (
+          <section aria-label="More shops outside your pickup area" className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-3 sm:p-5 dark:border-slate-700 dark:bg-slate-900/40">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">More shops outside your pickup area</h3>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Over 4 km away · Browse real menus, but ordering is unavailable here.</p>
+              </div>
+              <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                Browse only
+              </span>
+            </div>
+            {cards(outside,within.length)}
+          </section>
+        )}
       </div>
     );
   }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
@@ -5801,17 +5812,8 @@ function DiscoverScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
@@ -5829,6 +5831,9 @@ function DiscoverScreen({
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
     const statusB = getShopStatus(b);
+    // Visibly orderable nearby shops should appear before browse-only shops.
+    const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+    if(outsideA!==outsideB) return outsideA ? 1 : -1;
 
     // If sorting by smart priority:
     if (sortPriority === "smart") {
@@ -5836,48 +5841,18 @@ function DiscoverScreen({
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
-      // 2. Distance Sort (Nearby Priority)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+      // 2. Rank by the location-verified Haversine kilometres.
+      if (userLocation && typeof a.distance==="number" && typeof b.distance==="number" &&
+          Math.abs(a.distance-b.distance)>0.001) return a.distance-b.distance;
 
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) {
-          return distA - distB;
-        }
-      }
-      
       // 3. Rating Sort
       return b.rating - a.rating;
     }
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
-      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
-      return distA - distB;
+      const distA=typeof a.distance==="number" ? a.distance : Infinity;
+      const distB=typeof b.distance==="number" ? b.distance : Infinity;
+      return distA-distB;
     }
 
     if (sortPriority === "rating") {
@@ -5945,7 +5920,7 @@ function DiscoverScreen({
         </div>
       </header>
 
-      <main className="pb-32 flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
+      <main className="customer-nav-inner-scroll flex-grow overflow-y-auto max-w-screen-xl mx-auto w-full">
         {/* Dedicated Promo Code & Flyer Scanner Action Card */}
         {onScanFlyer && (
           <div className="px-6 pt-4 pb-1">
@@ -6377,19 +6352,23 @@ function DiscoverScreen({
               sortedShops.map((shop) => {
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
+                const outsidePickupArea = isOutsidePickupArea(shop);
                 return (
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
+                  className={`group rounded-[32px] overflow-hidden transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border cursor-pointer flex flex-col h-full transform ${outsidePickupArea
+                    ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400"
+                    : "bg-white dark:bg-slate-900 shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] border-slate-100/60 dark:border-slate-800/60"}`}
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
                       src={shop.logo || DEFAULT_SHOP_LOGO}
                       alt={shop.name}
-                      className="w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700"
+                      className={`w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700 ${outsidePickupArea ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                     />
+                    {outsidePickupArea && <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />}
 
                     {/* Floating Heart Follow Badge */}
                     <button
@@ -6423,20 +6402,15 @@ function DiscoverScreen({
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
-                      <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Pickup at shop
+                      <div className={`text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm ${outsidePickupArea ? "bg-slate-700" : "bg-orange-600"}`}>
+                        {outsidePickupArea ? "Browse menu only" : "Pickup at shop"}
                       </div>
-                      {(() => {
-                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
-                        return distanceVal !== null ? (
-                          <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
-                            <Navigation className="w-2.5 h-2.5" />
-                            {distanceVal.toFixed(1)} km
-                          </div>
-                        ) : null;
-                      })()}
+                      {typeof shop.distance==="number" && Number.isFinite(shop.distance) && (
+                        <div className="bg-slate-950/80 text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
+                          <Navigation className="w-2.5 h-2.5" aria-hidden="true" />
+                          {shop.distance.toFixed(1)} km
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -6455,6 +6429,11 @@ function DiscoverScreen({
                           <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 font-medium">
                             {shop.address}
                           </p>
+                          {outsidePickupArea && (
+                            <p className="mt-2 inline-flex rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                              Outside 4 km · Ordering unavailable
+                            </p>
+                          )}
                           {!status.isOpen && (
                             <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">
                               Opens {status.nextOpeningTime || "Soon"}
@@ -6480,10 +6459,10 @@ function DiscoverScreen({
                         onSelectShop(shop.id);
                         triggerHaptic(10);
                       }}
-                      className="w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className={`w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${outsidePickupArea ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                     >
                       <Store className="w-4 h-4" />
-                      View Menu & Order
+                      {outsidePickupArea ? "Browse Menu Only" : "View Menu & Order"}
                     </button>
                   </div>
                 </div>
@@ -6508,7 +6487,7 @@ function DiscoverScreen({
                 
                 <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
                   {shops.length === 0
-                    ? "No approved, available pickup shops found within 4 km of your real location."
+                    ? "No approved pickup shops were found for your location. Check your location or retry."
                     : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
                 </p>
 
@@ -7092,7 +7071,7 @@ function ProfileScreen({
         </h2>
       </div>
 
-      <main className="flex-1 overflow-y-auto p-6 space-y-8">
+      <main className="customer-nav-inner-scroll flex-1 overflow-y-auto p-6 space-y-8">
         {/* Profile Photo */}
         <div className="flex flex-col items-center gap-4">
           <input
@@ -8270,6 +8249,7 @@ function StoreInfoScreen({
 
 
   const storeStatus = getStoreStatus();
+  const outsidePickupArea = isOutsidePickupArea(shop);
   const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
@@ -8552,6 +8532,15 @@ function StoreInfoScreen({
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
+      {outsidePickupArea && (
+        <div role="status" className="mx-4 mt-4 rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 px-4 py-3">
+          <p className="font-bold text-slate-900 dark:text-white">Outside your pickup area</p>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            This shop is {typeof shop.distance === "number" ? shop.distance.toFixed(1)+" km" : "outside 4 km"} from your current location.
+            LocalEats currently supports ordering within 4 km. You can browse the real menu, but ordering is unavailable here.
+          </p>
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
@@ -9375,6 +9364,11 @@ function StoreInfoScreen({
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (outsidePickupArea) {
+            showAlert("Outside your pickup area", "You can browse the menu, but this shop is beyond the 4 km ordering area.");
+            setSelectedItemForQuantity(null);
+            return;
+          }
           if (!getShopStatus(shop).isOpen) {
             showAlert("Closed", "This shop is currently closed. Browse its menu now and order when it reopens.");
             setSelectedItemForQuantity(null);
@@ -9576,17 +9570,8 @@ function ExploreScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return (
@@ -9602,27 +9587,15 @@ function ExploreScreen({
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
     const statusB = getShopStatus(b);
+    const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+    if(outsideA!==outsideB) return outsideA ? 1 : -1;
     if (statusA.isOpen && !statusB.isOpen) return -1;
     if (!statusA.isOpen && statusB.isOpen) return 1;
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
+      const distA=typeof a.distance==="number" ? a.distance : Infinity;
+      const distB=typeof b.distance==="number" ? b.distance : Infinity;
+      return distA-distB;
     }
 
     if (sortPriority === "name") {
@@ -9928,7 +9901,7 @@ function ExploreScreen({
 
       {layoutMode === "list" ? (
         /* Gorgeous, Premium Responsive Shop List Layout */
-        <div className="flex-grow overflow-y-auto px-4 pb-28 pt-28 space-y-4">
+        <div className="customer-nav-inner-scroll flex-grow overflow-y-auto px-4 pt-28 space-y-4">
           <div className="max-w-lg mx-auto flex flex-col gap-4">
             {/* Power User Quick Reorder & Favorites Shortcut Widget */}
             <Suspense fallback={null}>
@@ -10009,22 +9982,10 @@ function ExploreScreen({
               sortedShops.map((shop) => {
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
-
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const outsidePickupArea = isOutsidePickupArea(shop);
+                // Verified distance from the location-scoped catalogue, never an invented GPS fallback.
+                const distanceVal = typeof shop.distance === "number" && Number.isFinite(shop.distance)
+                  ? shop.distance : null;
 
                 return (
                   <div
@@ -10033,20 +9994,25 @@ function ExploreScreen({
                       setSelectedShopId(shop.id);
                       triggerHaptic(10);
                     }}
-                    className="group bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600 transition-all duration-300 flex flex-col cursor-pointer"
+                    className={`group rounded-[32px] overflow-hidden border transition-all duration-300 flex flex-col cursor-pointer ${outsidePickupArea
+                      ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:border-slate-400"
+                      : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600"}`}
                   >
                     <div className="h-44 relative overflow-hidden">
                       <BlurUpImage
                         src={shop.logo || DEFAULT_SHOP_LOGO}
                         alt={shop.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${outsidePickupArea ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                         blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                       />
+                      {outsidePickupArea && (
+                        <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />
+                      )}
 
                       {/* Distance Float Indicator */}
                       {distanceVal !== null && (
-                        <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
-                          <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
+                        <div className={`absolute top-4 left-4 font-black text-[10px] uppercase tracking-wide px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1 ${outsidePickupArea ? "bg-white text-slate-900 border border-slate-300" : "bg-orange-600 text-white"}`}>
+                          <Compass className="w-3 h-3" aria-hidden="true" />
                           <span>{distanceVal.toFixed(1)} km away</span>
                         </div>
                       )}
@@ -10067,7 +10033,11 @@ function ExploreScreen({
 
                       {/* Speed/Opening Overlays */}
                       <div className="absolute bottom-4 left-4 flex gap-1.5 flex-wrap">
-                        {status.isOpen ? (
+                        {outsidePickupArea ? (
+                          <span className="bg-white text-slate-900 border border-slate-300 font-black text-[11px] whitespace-nowrap uppercase tracking-wide px-2 py-1 rounded-md shadow-sm">
+                            Outside 4 km · Browse only
+                          </span>
+                        ) : status.isOpen ? (
                           <span className="bg-emerald-500 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                             Open Now
                           </span>
@@ -10115,10 +10085,10 @@ function ExploreScreen({
                             onStoreInfo(shop.id);
                             triggerHaptic(10);
                           }}
-                          className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                          className={`flex-grow py-3 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${outsidePickupArea ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>{outsidePickupArea ? "Browse Menu Only" : "Order Menu"}</span>
                         </button>
 
                         <button

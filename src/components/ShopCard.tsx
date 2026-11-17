@@ -8,11 +8,14 @@ import {
   Sparkles,
   ShoppingBag,
   MapPin,
+  MapPinOff,
+  BookOpen,
   Flame,
 } from "lucide-react";
 import { Shop, MenuItem } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
 import {shopRatingLabel,pickupDistanceLabel} from '../services/catalogFacts';
+import {isOutsidePickupArea} from '../services/pickupMapping';
 import {
   getShopStatus,
   isShopAway,
@@ -38,6 +41,7 @@ export const ShopCard = memo(
     priorityImage?: boolean;
   }) => {
     const status = getShopStatus(shop);
+    const outsidePickupArea = isOutsidePickupArea(shop);
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
@@ -93,14 +97,27 @@ export const ShopCard = memo(
           triggerHaptic();
           onStoreInfo(shop.id);
         }}
-        className={`flex flex-col bg-white dark:bg-slate-900 rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 w-full h-full active:scale-[0.98] transform ${
-          !status.isOpen ? "opacity-80" : ""
+        role="button"
+        tabIndex={0}
+        aria-label={outsidePickupArea
+          ? `${shop.name}. ${distanceStr} away. Outside the 4 kilometer pickup area. Browse menu only.`
+          : `${shop.name}. ${distanceStr} away. View menu.`}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            triggerHaptic();
+            onStoreInfo(shop.id);
+          }
+        }}
+        className={`flex flex-col rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border w-full h-full active:scale-[0.98] transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${
+          outsidePickupArea
+            ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400 dark:hover:border-slate-600"
+            : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
         }`}
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
-        <div className={`aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0 ${
-          !status.isOpen ? "grayscale-[0.35]" : ""
-        }`}>
+        <div className="aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
               <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
@@ -112,23 +129,29 @@ export const ShopCard = memo(
               src={heroImage}
               alt={shop.name}
               priority={priorityImage}
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+              className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${
+                outsidePickupArea ? "grayscale-[0.85] saturate-[0.35] contrast-[0.9]" : !status.isOpen ? "grayscale-[0.35]" : ""
+              }`}
               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
             />
           )}
 
           {/* Gradient Overlay for Text Contrast */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
+          {/* Wash only the photo, never its status or text, so the reason stays legible. */}
+          {outsidePickupArea && (
+            <div aria-hidden="true" className="absolute inset-0 z-[1] bg-white/50 dark:bg-slate-950/45 pointer-events-none" />
+          )}
 
           {/* Absolute Overlays: Gastro Highlights */}
           <div className="absolute top-3 left-3 flex flex-col gap-1 z-10">
-            {shop.is_special ? (
+            {shop.is_special && !outsidePickupArea ? (
               <span className="inline-flex items-center gap-1 bg-gradient-to-r from-orange-600 to-amber-500 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-md backdrop-blur-md">
                 <Flame className="w-3 h-3 fill-current" />
                 Township Favourite
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 bg-black/60 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md">
+              <span className="inline-flex items-center gap-1 bg-slate-900/85 text-white text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md">
                 {priceTier} • {shop.category || "Local Spot"}
               </span>
             )}
@@ -137,13 +160,16 @@ export const ShopCard = memo(
           {/* Status & ETA Badge */}
           <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10">
             <span
-              className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-md backdrop-blur-md border ${
-                status.isOpen
-                  ? "bg-emerald-500/90 text-white border-emerald-400/80"
-                  : "bg-slate-900/85 text-slate-200 border-slate-700"
+              className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide px-2.5 py-1.5 rounded-full shadow-md backdrop-blur-md border ${
+                outsidePickupArea
+                  ? "bg-white text-slate-900 border-slate-400 dark:bg-slate-100 dark:text-slate-900"
+                  : status.isOpen
+                    ? "bg-emerald-500/90 text-white border-emerald-400/80"
+                    : "bg-slate-900/85 text-slate-200 border-slate-700"
               }`}
             >
-              {status.isOpen ? "Open Now" : "Closed"}
+              {outsidePickupArea && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+              {outsidePickupArea ? "Outside 4 km" : status.isOpen ? "Open Now" : "Closed"}
             </span>
 
             {/* Heart indicator for Followed */}
@@ -157,8 +183,10 @@ export const ShopCard = memo(
           {/* Bottom Floating Pill inside Hero: ETA and Distance */}
           <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-white text-[11px] font-bold z-10 drop-shadow-sm">
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
-              <ShoppingBag className="w-3 h-3 text-orange-400" />
-              <span>{etaStr}</span>
+              {outsidePickupArea
+                ? <BookOpen className="w-3 h-3 text-white" aria-hidden="true" />
+                : <ShoppingBag className="w-3 h-3 text-orange-400" aria-hidden="true" />}
+              <span>{outsidePickupArea ? "Browse menu only" : etaStr}</span>
             </div>
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <MapPin className="w-3 h-3 text-amber-400" />
@@ -193,12 +221,20 @@ export const ShopCard = memo(
           </div>
 
           <div className="flex items-center gap-2 mt-auto pt-1 overflow-hidden flex-wrap">
+            {outsidePickupArea && (
+              <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+                <MapPinOff className="w-4 h-4 shrink-0 text-slate-700 dark:text-slate-200" aria-hidden="true" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                  Outside pickup area · Browse menu only · Ordering unavailable
+                </span>
+              </div>
+            )}
             {isShopAway(shop) && (
               <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md animate-pulse border border-rose-200 dark:border-rose-900/40">
                 ⚠️ Temporarily Away
               </span>
             )}
-            {!status.isOpen && (
+            {!status.isOpen && !outsidePickupArea && (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
                 Opens {status.nextOpeningTime || "Soon"}
               </span>
@@ -259,7 +295,8 @@ export const MenuItemCard = memo(
     onSelect?: (item: MenuItem) => void;
   }) => {
     const status = getShopStatus(shop);
-    const isUnavailable = !status.isOpen || item.is_available === false || isShopAway(shop);
+    const outsidePickupArea = isOutsidePickupArea(shop);
+    const isUnavailable = outsidePickupArea || !status.isOpen || item.is_available === false || isShopAway(shop);
 
     return (
       <motion.div
@@ -271,6 +308,10 @@ export const MenuItemCard = memo(
         whileTap={{ scale: 0.98 }}
         className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all cursor-pointer shadow-xs"
         onClick={() => {
+          if (outsidePickupArea) {
+            showAlert("Outside your pickup area", "This shop is more than 4 km away. You can browse its real menu, but ordering is unavailable from your current location.");
+            return;
+          }
           if (!status.isOpen) {
             showAlert(
               "Closed",
@@ -351,9 +392,11 @@ export const MenuItemCard = memo(
               }`}
             >
               <span>
-                {!status.isOpen
-                  ? "Closed"
-                  : isShopAway(shop)
+                {outsidePickupArea
+                  ? "Outside area"
+                  : !status.isOpen
+                    ? "Closed"
+                    : isShopAway(shop)
                     ? "Away"
                     : item.is_available === false
                       ? "Sold Out"

@@ -14,8 +14,8 @@ function fixture(clock={now:1000}) {
     menu:async id=>{menus++;assert.equal(id,shop.id);return {menu_items:[item]};},
   };
   const map=(s,items)=>{
-    if(typeof s.is_active!=="boolean" || s.distance_km>4 || s.distance_km<0 || !Number.isFinite(s.distance_km))
-      throw Error("Not a valid shop in 4 km");
+    if(typeof s.is_active!=="boolean" || s.distance_km<0 || !Number.isFinite(s.distance_km))
+      throw Error("Not a valid approved shop");
     return {...s,isOpen:s.is_active,menu:items.filter(m=>m.is_available)};
   };
   return {reader:createNearbyCatalogReader(source,map,()=>clock.now),
@@ -50,7 +50,7 @@ test("location changes never inherit previous 4 km or menu results",async()=>{
   assert.deepEqual(f.counts(),{catalogs:2,menus:2});
 });
 
-test("explicit refresh bypasses fresh TTL and rejects obsolete availability",async()=>{
+test("explicit refresh bypasses fresh TTL while distant approved shops remain in read-only catalog",async()=>{
   const f=fixture();
   await f.reader(point);
   await f.reader(point,{force:true});
@@ -59,7 +59,7 @@ test("explicit refresh bypasses fresh TTL and rejects obsolete availability",asy
     shops:async()=>({shops:[{...shop,distance_km:4.1}]}),
     menu:async()=>({menu_items:[item]}),
   },f.map);
-  await assert.rejects(()=>reader(point),/4 km/);
+  assert.equal((await reader(point)).shops[0].distance_km,4.1);
 });
 
 test("same-location concurrent refreshes share one request",async()=>{

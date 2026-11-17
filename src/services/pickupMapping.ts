@@ -1,4 +1,22 @@
 import type {CartItem,Shop} from "../types";
+export const PICKUP_ORDER_RADIUS_KM=4;
+/** Discovery visibility is not the same as permission to place an order. */
+export function isOutsidePickupArea(shop:Pick<Shop,"distance">):boolean {
+ return typeof shop.distance==="number" && Number.isFinite(shop.distance) && shop.distance>PICKUP_ORDER_RADIUS_KM;
+}
+export function isWithinPickupArea(shop:Pick<Shop,"distance">):boolean {
+ return typeof shop.distance==="number" && Number.isFinite(shop.distance) &&
+  shop.distance>=0 && shop.distance<=PICKUP_ORDER_RADIUS_KM;
+}
+export function pickupDistanceKm(origin:{lat:number;lng:number},shop:{lat?:number;lng?:number;latitude?:number;longitude?:number}):number {
+ requireRealLocation(origin);
+ const lat=shop.lat ?? shop.latitude,lng=shop.lng ?? shop.longitude;
+ requireRealLocation({lat:lat as number,lng:lng as number});
+ const rad=Math.PI/180;
+ const a=Math.sin((lat!-origin.lat)*rad/2)**2+
+   Math.cos(origin.lat*rad)*Math.cos(lat!*rad)*Math.sin((lng!-origin.lng)*rad/2)**2;
+ return 6371*2*Math.atan2(Math.sqrt(Math.max(0,a)),Math.sqrt(Math.max(0,1-a)));
+}
 export function requireRealLocation(point:{lat:number;lng:number}|null) {
  if(!point || !Number.isFinite(point.lat) || Math.abs(point.lat)>90 || !Number.isFinite(point.lng) || Math.abs(point.lng)>180)
   throw new Error("Allow your real location to find available pickup shops within 4 km. No default location is used.");
@@ -7,7 +25,7 @@ export function requireRealLocation(point:{lat:number;lng:number}|null) {
 export function mapPickupShop(shop:any,items:any[]):Shop {
  const lat=shop.lat ?? shop.latitude,lng=shop.lng ?? shop.longitude;
  requireRealLocation({lat,lng});
- if(!shop.id || typeof shop.name!=="string" || typeof shop.is_active!=="boolean" || !Number.isFinite(shop.distance_km) || shop.distance_km>4 || shop.distance_km<0)
+ if(!shop.id || typeof shop.name!=="string" || typeof shop.is_active!=="boolean" || !Number.isFinite(shop.distance_km) || shop.distance_km<0)
   throw new Error("The service returned an ineligible pickup shop.");
  const menu=items.filter(item=>item.is_available===true).map(item=>{
   if(!item.id || typeof item.name!=="string" || typeof item.price!=="number" || !Number.isFinite(item.price) || item.price<0)

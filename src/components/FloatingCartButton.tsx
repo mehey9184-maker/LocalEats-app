@@ -47,7 +47,7 @@ export const FloatingCartButton: React.FC<FloatingCartButtonProps> = ({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.95 }}
         transition={{ type: "spring", stiffness: 400, damping: 28 }}
-        className="fixed bottom-20 left-4 right-4 md:left-auto md:right-6 md:w-80 z-40"
+        className="fixed bottom-[var(--customer-bottom-nav-clearance)] left-4 right-4 md:left-auto md:right-6 md:w-80 z-40"
       >
         <button
           type="button"
