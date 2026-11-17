@@ -6,6 +6,10 @@ on:
       - 'src/App.tsx'
       - 'src/services/pickupMapping.ts'
       - 'tests/customer-closed-browse-main.test.mjs'
+      - 'tests/customer-outside-pickup-area-preview.test.mjs'
+      - 'src/components/ShopCard.tsx'
+      - 'src/pickup/client.ts'
+      - 'src/services/customerPickup.ts'
       - 'tests/customer-nearby-cache-main.test.mjs'
       - '.github/workflows/customer-closed-browse-pickup.yml'
   workflow_dispatch:
@@ -28,6 +32,6 @@ jobs:
       - name: TypeScript check
         run: npm run lint
       - name: Run closed-shop mapping and nearby-catalog caching tests
-        run: node --experimental-strip-types --test tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs
+        run: node --experimental-strip-types --test tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/customer-outside-pickup-area-preview.test.mjs
       - name: Verify Customer build
         run: npm run build
