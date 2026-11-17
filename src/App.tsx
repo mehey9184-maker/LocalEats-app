@@ -2800,7 +2800,8 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
-          {postOrderPushPrompt?.uid === session?.user?.id &&
+          {postOrderPushPrompt !== null &&
+            postOrderPushPrompt.uid === session?.user?.id &&
             typeof Notification !== "undefined" && Notification.permission !== "granted" && (
               <CustomerPostOrderPushPrompt
                 onEnable={() => subscribeToPushNotifications(postOrderPushPrompt.uid)}
