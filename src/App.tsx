@@ -3583,8 +3583,6 @@ export default function App() {
               {currentScreen === "contact" && (
                 <ContactScreen
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
-                  userProfile={userProfile}
-                  showAlert={showAlert}
                 />
               )}
               {currentScreen === "checkout" && (
