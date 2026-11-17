@@ -41,6 +41,26 @@
   --sal: env(safe-area-inset-left, 0px);
 }
 
+/* Persistent Customer tab bar collision guard.
+ * The bar measures its real height on mount/resize; the CSS fallback covers
+ * small screens before measurement and includes the device home-indicator inset.
+ * This is scoped to navigation screens: checkout/login/full-screen dialogs keep
+ * their existing layouts and order/payment affordances.
+ */
+:root {
+  --customer-bottom-nav-clearance: calc(7.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.customer-nav-page > :first-child {
+  padding-bottom: var(--customer-bottom-nav-clearance);
+  scroll-padding-bottom: var(--customer-bottom-nav-clearance);
+}
+
+.customer-nav-page .customer-nav-inner-scroll {
+  padding-bottom: var(--customer-bottom-nav-clearance);
+  scroll-padding-bottom: var(--customer-bottom-nav-clearance);
+}
+
 /* Global text wrapping to prevent overflow on small screens */
 * {
   overflow-wrap: break-word;
