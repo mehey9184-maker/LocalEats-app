@@ -17,9 +17,10 @@ test('different instructions for one menu item retain their quantity labels in o
  assert.deepEqual(intent.items,[{menu_item_id:item.id,quantity:3,notes:'1 ×: No atchar\n2 ×: No special instructions'}]);
  assert.throws(()=>pickupCartIntent([{...item,quantity:11},{...item,quantity:10}],point,'Test','0712345678','cash'),/20/);
 });
-test('discovery never substitutes coordinates or accepts invalid or outside-radius API data',()=>{
+test('discovery uses verified coordinates and displays approved shops outside the checkout radius',()=>{
  for(const p of [null,{lat:NaN,lng:28},{lat:100,lng:28}])assert.throws(()=>requireRealLocation(p));
- assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]));
+ const far=mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]);
+ assert.equal(far.distance,4.1);
  const closed=mapPickupShop({id:'s',name:'Shop',is_active:false,lat:point.lat,lng:point.lng,distance_km:1},[]);
  assert.equal(closed.is_active,false);
  assert.equal(closed.isOpen,false);
