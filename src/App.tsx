@@ -256,6 +256,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
@@ -860,6 +861,8 @@ export default function App() {
   });
 
   const [notification, setNotification] = useState<NotificationState>(null);
+  // Set only after a server-verified pickup; this never affects order state.
+  const [postOrderPushPrompt, setPostOrderPushPrompt] = useState<{uid:string;orderId:string}|null>(null);
 
   // Auto-dismiss transient (non-persistent) custom notification toasts after 4 seconds
   useEffect(() => {
@@ -1430,22 +1433,41 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
-  // Only a user gesture may request permission. Permission alone is not a
-  // successful subscription: require a persisted, authenticated API token.
+  // Browser alert consent is independent of the real-order activation gate.
+  // Request permission only after a click. Preview never registers its device
+  // token with the Production pickup API; Orders is always the status fallback.
   const subscribeToPushNotifications = useCallback(
-    async (customUserId?: string) => {
-      const uid = customUserId || session?.user?.id;
-      if (!uid || uid !== auth.currentUser?.uid ||
-          typeof window === "undefined" || !("Notification" in window)) return;
+    async (customUserId?: string): Promise<boolean> => {
+      if (typeof window === "undefined" || !("Notification" in window) ||
+          !("serviceWorker" in navigator) || !window.isSecureContext) {
+        toast.error("Browser notifications are unavailable here. Orders still show updates.");
+        return false;
+      }
       try {
-        const permission = Notification.permission === "granted"
-          ? "granted" : await Notification.requestPermission();
-        if (permission !== "granted") return;
+        const permission = Notification.permission === "default"
+          ? await Notification.requestPermission() : Notification.permission;
+        if (permission !== "granted") {
+          toast.error(permission === "denied"
+            ? "Notifications blocked. Allow LocalEats in Chrome site settings and Windows notifications."
+            : "Notifications not enabled. You can turn them on later.");
+          return false;
+        }
+        if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) {
+          toast.info("Browser permission allowed for Preview. Live pickup alerts use the Production site.");
+          return false;
+        }
+        const uid = customUserId || session?.user?.id;
+        if (!uid || uid !== auth.currentUser?.uid) {
+          toast.info("Sign in to LocalEats to connect alerts to your account.");
+          return false;
+        }
         const saved = await registerAndSyncPushToken(uid);
-        if (saved) toast.success("Pickup notifications connected.");
-        else toast.error("Push unavailable. Check your Orders page for updates.");
+        if (saved) toast.success("Pickup notifications registered for this device.");
+        else toast.error("Registration not confirmed. Follow your pickup in Orders.");
+        return !!saved;
       } catch {
         toast.error("Push could not connect. Orders remain available.");
+        return false;
       }
     },
     [session?.user?.id]
@@ -1849,6 +1871,7 @@ export default function App() {
         return;
       }
       setSession(null);
+      setPostOrderPushPrompt(null);
       setCart([]);
       setFavorites([]);
       setOrders([]);
@@ -2771,6 +2794,13 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
+          {postOrderPushPrompt?.uid === session?.user?.id &&
+            typeof Notification !== "undefined" && Notification.permission !== "granted" && (
+              <CustomerPostOrderPushPrompt
+                onEnable={() => subscribeToPushNotifications(postOrderPushPrompt.uid)}
+                onDismiss={() => setPostOrderPushPrompt(null)}
+              />
+            )}
           <GlobalChatListener 
             activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
             currentScreen={currentScreen} 
@@ -3162,6 +3192,7 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   orderAgainEnabled={orderAgainEnabled}
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
+                  onEnableNotifications={() => subscribeToPushNotifications()}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
                   onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
@@ -3563,6 +3594,14 @@ export default function App() {
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
+                  onVerifiedPickupPlaced={(orderId: string) => {
+                    // Only the authenticated, successful API submission calls this.
+                    const uid = session?.user?.id;
+                    if (uid && orderId && auth.currentUser?.uid === uid &&
+                        typeof Notification !== "undefined" && Notification.permission !== "granted") {
+                      setPostOrderPushPrompt({uid, orderId});
+                    }
+                  }}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
                         navigateToProfile("complete-profile");
@@ -3841,6 +3880,7 @@ function HomeScreen({
   isOnline,
   orderAgainEnabled = true,
   onEnableOrderAgain,
+  onEnableNotifications,
   dataSaverEnabled,
   isSyncing = false,
   onOpenAddressSwitcher,
@@ -3885,6 +3925,7 @@ function HomeScreen({
   isOnline: boolean;
   orderAgainEnabled?: boolean;
   onEnableOrderAgain?: () => void;
+  onEnableNotifications: () => Promise<boolean>;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
   onOpenAddressSwitcher?: () => void;
@@ -4060,31 +4101,11 @@ function HomeScreen({
   });
 
   const handleRequestNotifications = async () => {
-    if (!pickupOrderingEnabled()) {
-      showAlert("Pickup notifications not active yet", "Orders remain visible in your history. Push can be enabled during the approved pickup pilot.");
-      return;
-    }
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
-      return;
-    }
     triggerHaptic?.(15, "button_press");
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermissionStatus(permission);
-      if (permission === "granted") {
-        if (session?.user?.id && await registerAndSyncPushToken(session.user.id)) {
-          toast.success("Pickup Ready notifications connected.");
-        } else {
-          toast.error("Push registration unavailable. Your Orders page will still update.");
-        }
-      } else if (permission === "denied") {
-        toast.error("Notifications Blocked", {
-          description: "You can enable notifications anytime in your browser site permissions.",
-        });
-      }
-    } catch (err) {
-      console.debug("Notice on notification permission:", err);
+    // The click-only permission flow works even while ordering is disabled.
+    await onEnableNotifications();
+    if (typeof Notification !== "undefined") {
+      setNotificationPermissionStatus(Notification.permission);
     }
   };
 
