@@ -4544,9 +4544,7 @@ function HomeScreen({
                       setIsSettingsOpen(false);
                     }}
                   />
-                  <div role="menu"
-                     aria-label="Settings and account"
-                     className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="absolute top-10 right-0 w-52 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-100 dark:border-slate-700 z-[110] py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
