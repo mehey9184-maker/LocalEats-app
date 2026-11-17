@@ -2187,6 +2187,9 @@ export default function App() {
     let active = true;
     let inFlight = false;
     let inboxInFlight = false;
+    // Never repeat the same transient inbox error every 30 seconds while
+    // the API is unavailable; the Orders screen still preserves its error state.
+    let readyInboxErrorShown = false;
     let feedRequest:AbortController|null = null;
     setOrders([]);
     setNotifications([]);
@@ -2236,13 +2239,17 @@ export default function App() {
       inboxInFlight = true;
       try {
         const inbox = await customerPickupApi.notifications();
+        readyInboxErrorShown = false;
         if (active) setNotifications((inbox.notifications ?? []).map((event: any) => ({
           id: event.id, title: "Pickup ready",
           message: "Your order is ready for collection. Pay at the shop before handover.",
           type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
         })) as unknown as AppNotification[]);
       } catch {
-        if (active) setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
+        if (active && !readyInboxErrorShown) {
+          readyInboxErrorShown = true;
+          setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
+        }
       } finally {
         inboxInFlight = false;
       }
@@ -2817,10 +2824,12 @@ export default function App() {
           <AnimatePresence>
             {notification && (
               <motion.div
-                initial={{ opacity: 0, y: -100 }}
-                animate={{ opacity: 1, y: notification.persistent ? 0 : 20 }}
-                exit={{ opacity: 0, y: -100 }}
-                className={`fixed ${notification.persistent ? "inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm" : "top-0 left-0 right-0"} z-[100] px-4 pointer-events-none`}
+                initial={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
+                className={`fixed ${notification.persistent
+                  ? "inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+                  : "bottom-[calc(6.5rem+env(safe-area-inset-bottom,0px))] left-3 right-3 sm:bottom-4 sm:left-auto sm:right-4 flex justify-end"} z-[100] pointer-events-none`}
               >
                 <motion.div
                   {...(!notification.persistent
@@ -2852,7 +2861,9 @@ export default function App() {
                         whileDrag: { scale: 0.98, opacity: 0.85 },
                       }
                     : {})}
-                  className={`${notification.persistent ? "w-full max-w-xs" : "max-w-md mx-auto relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
+                  className={`${notification.persistent
+                    ? "w-full max-w-xs p-6 rounded-3xl"
+                    : "w-full max-w-sm relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl p-4 rounded-2xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-xl flex flex-col gap-3 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
                 >
                   {!notification.persistent && (
                     <div className="flex justify-center -mt-3.5 -mb-1 shrink-0">
@@ -2882,7 +2893,9 @@ export default function App() {
                     {!notification.persistent && (
                       <button
                         onClick={() => setNotification(null)}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0"
+                        type="button"
+                        aria-label="Dismiss notification"
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"
                       >
                         <X className="w-5 h-5 text-gray-500 dark:text-slate-400" />
                       </button>
