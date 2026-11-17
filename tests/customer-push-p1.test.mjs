@@ -8,6 +8,8 @@ const fb=read("src/lib/firebase.ts");
 const app=read("src/App.tsx");
 const cfg=JSON.parse(read("firebase-applet-config.json"));
 const settings=read("src/screens/SettingsScreen.tsx");
+const checkout=read("src/screens/CheckoutScreen.tsx");
+const prompt=read("src/components/CustomerPostOrderPushPrompt.tsx");
 
 test("customer FCM worker uses complete matching PUBLIC Firebase config and data-only events",()=>{
  const seen={};
@@ -136,4 +138,48 @@ test("previously granted customer push is on by default without unprompted brows
  assert.match(settings,/Needs your permission once/);
  assert.match(settings,/permission === "granted" \? "Check order alerts"/);
  assert.doesNotMatch(app,/useEffect\(\(\) => \{\s*Notification\.requestPermission\(\)/);
+});
+
+test("Home push consent is available without turning on real pickup ordering",()=>{
+ const home=app.slice(app.indexOf("const handleRequestNotifications = async () =>"),app.indexOf("const handleDismissNotificationBanner ="));
+ assert.ok(home.includes("await onEnableNotifications()"));
+ assert.ok(!home.includes("pickupOrderingEnabled()"),"Browser consent should not be gated by pickup ordering");
+ assert.ok(!home.includes("Pickup notifications not active yet"));
+ assert.match(app,/onEnableNotifications=\{\(\) => subscribeToPushNotifications\(\)\}/);
+ const consent=app.slice(app.indexOf("const subscribeToPushNotifications = useCallback("),app.indexOf("// Listen for FCM foreground"));
+ assert.match(consent,/Notification\.permission === "default"\s*\? await Notification\.requestPermission\(\) : Notification\.permission/);
+ assert.match(consent,/if \(permission !== "granted"\)/);
+ assert.match(consent,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
+ assert.match(consent,/uid !== auth\.currentUser\?\.uid/);
+ assert.match(consent,/return !!saved;/);
+ assert.doesNotMatch(consent,/pickupOrderingEnabled\(\)/);
+});
+
+test("post-order consent appears ONLY after verified pickup server response",()=>{
+ const submit=checkout.slice(checkout.indexOf("const submitReviewedPickup = async (retry: boolean) =>"),checkout.indexOf("const orderingEnabled = pickupOrderingEnabled();"));
+ assert.match(submit,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return/);
+ assert.match(submit,/const verifiedOrder = await submitPickupQuote\(retry \? null : pickupQuote\);/);
+ assert.match(submit,/onConfirm\(\);[\s\S]*onVerifiedPickupPlaced\?\.\(verifiedOrder\.id\);/);
+ assert.ok(submit.indexOf("onVerifiedPickupPlaced?.(verifiedOrder.id)") > submit.indexOf("await submitPickupQuote("));
+ assert.ok(submit.indexOf("onVerifiedPickupPlaced?.(verifiedOrder.id)") < submit.indexOf("} catch (error)"));
+ assert.doesNotMatch(submit.slice(submit.indexOf("} catch (error)")),/onVerifiedPickupPlaced/);
+ assert.match(checkout,/onVerifiedPickupPlaced\?: \(orderId: string\) => void/);
+ assert.match(app,/onVerifiedPickupPlaced=\{\(orderId: string\) =>/);
+ assert.match(app,/auth\.currentUser\?\.uid === uid/);
+ assert.match(app,/Notification\.permission !== "granted"/);
+ assert.match(app,/setPostOrderPushPrompt\(\{uid, orderId\}\)/);
+ assert.match(app,/postOrderPushPrompt\?\.uid === session\?\.user\?\.id/);
+ assert.match(app,/setPostOrderPushPrompt\(null\)/);
+});
+
+test("post-order dialog does not silently request permissions or modify an order",()=>{
+ assert.match(prompt,/role="dialog" aria-modal="true"/);
+ assert.match(prompt,/Get notified when your food is ready/);
+ assert.match(prompt,/Your pickup order was placed/);
+ assert.match(prompt,/Enable notifications/);
+ assert.match(prompt,/Maybe later/);
+ assert.match(prompt,/Orders, even without notifications/);
+ assert.match(prompt,/onClick=\{\(\) => \{ void enable\(\); \}\}/);
+ assert.match(prompt,/const registered = await onEnable\(\)/);
+ assert.doesNotMatch(prompt,/Notification\.requestPermission|submitPickupQuote|customerPickupApi|createOrder|setCurrentScreen|pickup_order_command/);
 });
