@@ -32,7 +32,7 @@ export function AppHelp({
       {hasActiveDelivery ? (
         <AnimatePresence>
           {shouldShowButton && (
-            <div className="fixed bottom-[92px] right-4 md:right-6 md:bottom-6 z-[90]">
+            <div className="fixed bottom-[var(--customer-bottom-nav-clearance)] right-4 md:right-6 z-[90]">
               <DeliveryChatWidget 
                 orderId={activeOrder.id} 
                 userId={userProfile?.id || ""} 
