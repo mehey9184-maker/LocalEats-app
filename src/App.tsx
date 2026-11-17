@@ -11,7 +11,6 @@ import {readPickupWithDeadline} from './services/pickupRead';
 
 // removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
-import { DiagnosticTool } from "./components/DiagnosticTool";
 import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
@@ -292,7 +291,6 @@ import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
-import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
@@ -460,7 +458,6 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
-  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     return safeLocalStorageGet("userProfile", {
@@ -3202,7 +3199,6 @@ export default function App() {
                   onEnableNotifications={() => subscribeToPushNotifications()}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
-                  onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
                   onOpenCart={() => setIsCartDrawerOpen(true)}
                 />
               )}
@@ -3693,22 +3689,6 @@ export default function App() {
             triggerHaptic={triggerHaptic}
           />
 
-          {/* Address Quick-Switcher Modal */}
-          <AddressSwitcherModal
-            isOpen={isAddressModalOpen}
-            onClose={() => setIsAddressModalOpen(false)}
-            userProfile={userProfile}
-            onSaveAddress={async (newAddress, coords) => {
-              await handleUpdateProfile({ address: newAddress }, true);
-              if (coords) {
-                setUserLocation(coords);
-              }
-            }}
-            onRequestLocation={requestLocation}
-            currentLocationCoords={userLocation}
-            triggerHaptic={triggerHaptic}
-          />
-
           <QRScannerModal
             isOpen={showQRScanner}
             onClose={() => setShowQRScanner(false)}
@@ -3890,7 +3870,6 @@ function HomeScreen({
   onEnableNotifications,
   dataSaverEnabled,
   isSyncing = false,
-  onOpenAddressSwitcher,
   onOpenCart,
 }: {
   userProfile: UserProfile;
@@ -3935,7 +3914,6 @@ function HomeScreen({
   onEnableNotifications: () => Promise<boolean>;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
-  onOpenAddressSwitcher?: () => void;
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
@@ -4420,27 +4398,9 @@ function HomeScreen({
       >
         <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative z-20">
           
-          {/* Logo & Address Quick-Switcher */}
+          {/* Logo — keep the Home header clean; location selection remains in Map/Profile. */}
           <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             <LocalEatsLogo width={105} height={26} className="shrink-0 scale-100 origin-left" />
-            
-            {onOpenAddressSwitcher && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (triggerHaptic) triggerHaptic(8);
-                  onOpenAddressSwitcher();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800/90 hover:bg-orange-50 dark:hover:bg-orange-950/40 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-all cursor-pointer max-w-[120px] xs:max-w-[160px] sm:max-w-[220px] truncate group"
-                title="Change delivery address"
-              >
-                <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] sm:text-xs font-bold truncate">
-                  {userProfile.address ? userProfile.address.split(",")[0] : "Set Address"}
-                </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
-              </button>
-            )}
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
@@ -7573,8 +7533,6 @@ function ProfileScreen({
           </button>
         </div>
 
-        {/* Diagnostic Tool for debugging split-brain auth */}
-        <DiagnosticTool />
       </main>
 
       {/* Cropper Modal */}
