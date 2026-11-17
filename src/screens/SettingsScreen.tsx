@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Wifi,
   Smartphone,
+  BellRing,
   Info,
 } from "lucide-react";
 import { UserProfile } from "../types";
@@ -35,7 +36,77 @@ interface SettingsScreenProps {
   onToggleDataSaver?: () => void;
   triggerHaptic?: (duration?: number) => void;
   isOnline?: boolean;
+  onSubscribeToPush?: () => Promise<boolean>;
   [key: string]: any;
+}
+
+/** Customer notification preference; no developer test controls. */
+function CustomerNotificationSettings({onEnable}: {onEnable: () => Promise<boolean>}) {
+  const [permission, setPermission] = React.useState<string>("checking");
+  const [busy, setBusy] = React.useState(false);
+  const [status, setStatus] = React.useState("");
+
+  React.useEffect(() => {
+    const refresh = () => setPermission(
+      typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported"
+    );
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
+
+  const enable = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus("");
+    try {
+      // The parent handles explicit user consent and account-scoped registration.
+      const connected = await onEnable();
+      const allowed = typeof Notification !== "undefined" && Notification.permission === "granted";
+      setPermission(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+      setStatus(connected
+        ? "Device registered for pickup alerts. Your Orders page remains the source of truth."
+        : allowed
+          ? "Browser permission is allowed, but device registration is not yet confirmed. Check Orders for status."
+          : "You can enable notifications in your browser settings anytime. Orders will still show updates.");
+    } catch {
+      setStatus("Notification registration is unavailable. Order updates remain in Orders.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-label="Pickup notification settings" className="rounded-3xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="p-2 rounded-xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400">
+          <BellRing className="w-5 h-5" aria-hidden="true"/>
+        </div>
+        <div>
+          <h2 className="text-sm font-bold text-slate-900 dark:text-white">Pickup notifications</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {permission === "granted"
+              ? "Browser alerts allowed · automatically enabled when registered"
+              : permission === "denied" ? "Blocked in browser settings"
+              : permission === "default" ? "Enable when you are ready"
+              : "Browser alerts unavailable"}
+          </p>
+        </div>
+      </div>
+      <p className="text-xs text-slate-600 dark:text-slate-300">
+        Notifications are optional. Your order status is always available in Orders.
+      </p>
+      <button type="button" onClick={() => { void enable(); }} disabled={busy || permission === "unsupported"}
+        className="min-h-11 rounded-xl bg-orange-600 text-white px-4 py-2 text-xs font-bold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500">
+        {busy ? "Connecting…" : permission === "granted" ? "Reconnect order alerts" : "Enable order alerts"}
+      </button>
+      {status && <p role="status" aria-live="polite" className="text-xs text-slate-700 dark:text-slate-200">{status}</p>}
+    </section>
+  );
 }
 
 export function SettingsScreen({
@@ -53,6 +124,7 @@ export function SettingsScreen({
   onToggleDataSaver,
   triggerHaptic,
   isOnline = true,
+  onSubscribeToPush,
 }: SettingsScreenProps) {
   const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
   const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
@@ -172,6 +244,9 @@ export function SettingsScreen({
             )}
           </div>
         </div>
+
+        {/* Customer-facing notification preference; no test controls. */}
+        {onSubscribeToPush && <CustomerNotificationSettings onEnable={onSubscribeToPush} />}
 
         {/* Shortcuts / Navigation */}
         <div>

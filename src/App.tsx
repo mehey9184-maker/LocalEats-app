@@ -11,7 +11,6 @@ import {readPickupWithDeadline} from './services/pickupRead';
 
 // removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
-import { DiagnosticTool } from "./components/DiagnosticTool";
 import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
@@ -256,6 +255,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
 
@@ -291,7 +291,6 @@ import { ShopChatModal } from "./components/ShopChatModal";
 import { QuickReorderWidget } from "./components/QuickReorderWidget";
 import { CartDrawer } from "./components/CartDrawer";
 import { FloatingCartButton } from "./components/FloatingCartButton";
-import { AddressSwitcherModal } from "./components/AddressSwitcherModal";
 
 import { AnimatedPrice } from "./components/AnimatedPrice";
 import {
@@ -459,7 +458,6 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
-  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
     return safeLocalStorageGet("userProfile", {
@@ -860,6 +858,14 @@ export default function App() {
   });
 
   const [notification, setNotification] = useState<NotificationState>(null);
+  // Set only after a server-verified pickup; this never affects order state.
+  const [postOrderPushPrompt, setPostOrderPushPrompt] = useState<{uid:string;orderId:string}|null>(null);
+  useEffect(() => {
+    // Never retain a previous account's unshown notification reminder.
+    if (postOrderPushPrompt && postOrderPushPrompt.uid !== session?.user?.id) {
+      setPostOrderPushPrompt(null);
+    }
+  }, [session?.user?.id, postOrderPushPrompt]);
 
   // Auto-dismiss transient (non-persistent) custom notification toasts after 4 seconds
   useEffect(() => {
@@ -1430,22 +1436,41 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
-  // Only a user gesture may request permission. Permission alone is not a
-  // successful subscription: require a persisted, authenticated API token.
+  // Browser alert consent is independent of the real-order activation gate.
+  // Request permission only after a click. Preview never registers its device
+  // token with the Production pickup API; Orders is always the status fallback.
   const subscribeToPushNotifications = useCallback(
-    async (customUserId?: string) => {
-      const uid = customUserId || session?.user?.id;
-      if (!uid || uid !== auth.currentUser?.uid ||
-          typeof window === "undefined" || !("Notification" in window)) return;
+    async (customUserId?: string): Promise<boolean> => {
+      if (typeof window === "undefined" || !("Notification" in window) ||
+          !("serviceWorker" in navigator) || !window.isSecureContext) {
+        toast.error("Browser notifications are unavailable here. Orders still show updates.");
+        return false;
+      }
       try {
-        const permission = Notification.permission === "granted"
-          ? "granted" : await Notification.requestPermission();
-        if (permission !== "granted") return;
+        const permission = Notification.permission === "default"
+          ? await Notification.requestPermission() : Notification.permission;
+        if (permission !== "granted") {
+          toast.error(permission === "denied"
+            ? "Notifications blocked. Allow LocalEats in Chrome site settings and Windows notifications."
+            : "Notifications not enabled. You can turn them on later.");
+          return false;
+        }
+        if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) {
+          toast.info("Browser permission allowed for Preview. Live pickup alerts use the Production site.");
+          return false;
+        }
+        const uid = customUserId || session?.user?.id;
+        if (!uid || uid !== auth.currentUser?.uid) {
+          toast.info("Sign in to LocalEats to connect alerts to your account.");
+          return false;
+        }
         const saved = await registerAndSyncPushToken(uid);
-        if (saved) toast.success("Pickup notifications connected.");
-        else toast.error("Push unavailable. Check your Orders page for updates.");
+        if (saved) toast.success("Pickup notifications registered for this device.");
+        else toast.error("Registration not confirmed. Follow your pickup in Orders.");
+        return !!saved;
       } catch {
         toast.error("Push could not connect. Orders remain available.");
+        return false;
       }
     },
     [session?.user?.id]
@@ -1619,14 +1644,42 @@ export default function App() {
     }
   }, []);
 
-  // Refresh only previously granted push permissions. Firebase Auth, not a
-  // cached profile, is the device-subscription identity.
+  // Customer push is on by default once the browser has already granted it.
+  // Never ask permission on startup; only a customer click may trigger that.
+  // The production-origin gate prevents Preview from writing device tokens to
+  // a Production API. Inbox/status polling is the fallback if push is missing.
   useEffect(() => {
     const uid = session?.user?.id;
-    if (uid && auth.currentUser?.uid === uid &&
-        typeof Notification !== "undefined" && Notification.permission === "granted") {
-      void registerAndSyncPushToken(uid);
-    }
+    if (!uid || typeof window === "undefined" || typeof Notification === "undefined") return;
+    if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return;
+    let stopped = false;
+    let inFlight = false;
+    let lastAttempt = 0;
+    const revalidateAllowedPush = () => {
+      if (stopped || inFlight || Notification.permission !== "granted" ||
+          !navigator.onLine || auth.currentUser?.uid !== uid) return;
+      const now = Date.now();
+      // Avoid re-registering on every focus or repeated visibility changes.
+      if (now - lastAttempt < 300000) return;
+      lastAttempt = now;
+      inFlight = true;
+      void registerAndSyncPushToken(uid).catch(() => null).finally(() => {
+        inFlight = false;
+      });
+    };
+    revalidateAllowedPush();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") revalidateAllowedPush();
+    };
+    window.addEventListener("focus", revalidateAllowedPush);
+    window.addEventListener("online", revalidateAllowedPush);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      window.removeEventListener("focus", revalidateAllowedPush);
+      window.removeEventListener("online", revalidateAllowedPush);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [session?.user?.id]);
 
   // Account switch detection: Clear old user profile and sync immediately with new active session
@@ -1821,6 +1874,7 @@ export default function App() {
         return;
       }
       setSession(null);
+      setPostOrderPushPrompt(null);
       setCart([]);
       setFavorites([]);
       setOrders([]);
@@ -2187,6 +2241,9 @@ export default function App() {
     let active = true;
     let inFlight = false;
     let inboxInFlight = false;
+    // Never repeat the same transient inbox error every 30 seconds while
+    // the API is unavailable; the Orders screen still preserves its error state.
+    let readyInboxErrorShown = false;
     let feedRequest:AbortController|null = null;
     setOrders([]);
     setNotifications([]);
@@ -2236,13 +2293,17 @@ export default function App() {
       inboxInFlight = true;
       try {
         const inbox = await customerPickupApi.notifications();
+        readyInboxErrorShown = false;
         if (active) setNotifications((inbox.notifications ?? []).map((event: any) => ({
           id: event.id, title: "Pickup ready",
           message: "Your order is ready for collection. Pay at the shop before handover.",
           type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
         })) as unknown as AppNotification[]);
       } catch {
-        if (active) setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
+        if (active && !readyInboxErrorShown) {
+          readyInboxErrorShown = true;
+          setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
+        }
       } finally {
         inboxInFlight = false;
       }
@@ -2736,6 +2797,14 @@ export default function App() {
       <AnimatePresence mode="wait">
         <div className="relative w-full max-w-[100vw] overflow-x-hidden">
           <Toaster position="top-center" expand={true} richColors closeButton />
+          {postOrderPushPrompt !== null &&
+            postOrderPushPrompt.uid === session?.user?.id &&
+            typeof Notification !== "undefined" && Notification.permission !== "granted" && (
+              <CustomerPostOrderPushPrompt
+                onEnable={() => subscribeToPushNotifications(postOrderPushPrompt.uid)}
+                onDismiss={() => setPostOrderPushPrompt(null)}
+              />
+            )}
           <GlobalChatListener 
             activeOrders={orders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.status !== "delivered")} 
             currentScreen={currentScreen} 
@@ -2817,10 +2886,12 @@ export default function App() {
           <AnimatePresence>
             {notification && (
               <motion.div
-                initial={{ opacity: 0, y: -100 }}
-                animate={{ opacity: 1, y: notification.persistent ? 0 : 20 }}
-                exit={{ opacity: 0, y: -100 }}
-                className={`fixed ${notification.persistent ? "inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm" : "top-0 left-0 right-0"} z-[100] px-4 pointer-events-none`}
+                initial={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
+                className={`fixed ${notification.persistent
+                  ? "inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+                  : "bottom-[calc(6.5rem+env(safe-area-inset-bottom,0px))] left-3 right-3 sm:bottom-4 sm:left-auto sm:right-4 flex justify-end"} z-[100] pointer-events-none`}
               >
                 <motion.div
                   {...(!notification.persistent
@@ -2852,7 +2923,9 @@ export default function App() {
                         whileDrag: { scale: 0.98, opacity: 0.85 },
                       }
                     : {})}
-                  className={`${notification.persistent ? "w-full max-w-xs" : "max-w-md mx-auto relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white p-6 rounded-3xl shadow-xl flex flex-col gap-4 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
+                  className={`${notification.persistent
+                    ? "w-full max-w-xs p-6 rounded-3xl"
+                    : "w-full max-w-sm relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl p-4 rounded-2xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-xl flex flex-col gap-3 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
                 >
                   {!notification.persistent && (
                     <div className="flex justify-center -mt-3.5 -mb-1 shrink-0">
@@ -2882,7 +2955,9 @@ export default function App() {
                     {!notification.persistent && (
                       <button
                         onClick={() => setNotification(null)}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0"
+                        type="button"
+                        aria-label="Dismiss notification"
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"
                       >
                         <X className="w-5 h-5 text-gray-500 dark:text-slate-400" />
                       </button>
@@ -3121,9 +3196,9 @@ export default function App() {
                   triggerHaptic={triggerHaptic}
                   orderAgainEnabled={orderAgainEnabled}
                   onEnableOrderAgain={() => setOrderAgainEnabled(true)}
+                  onEnableNotifications={() => subscribeToPushNotifications()}
                   dataSaverEnabled={dataSaverEnabled}
                   isSyncing={isSyncing}
-                  onOpenAddressSwitcher={() => setIsAddressModalOpen(true)}
                   onOpenCart={() => setIsCartDrawerOpen(true)}
                 />
               )}
@@ -3522,6 +3597,14 @@ export default function App() {
                       isOnline={isOnline}
                       onBack={() => setCurrentScreen(previousScreen || "home")}
                       onConfirm={() => {setOrderAgainEnabled(true);setCurrentScreen("order-history");}}
+                  onVerifiedPickupPlaced={(orderId: string) => {
+                    // Only the authenticated, successful API submission calls this.
+                    const uid = session?.user?.id;
+                    if (uid && orderId && auth.currentUser?.uid === uid &&
+                        typeof Notification !== "undefined" && Notification.permission !== "granted") {
+                      setPostOrderPushPrompt({uid, orderId});
+                    }
+                  }}
                       onIncompleteProfile={() => {
                         setPreviousScreen("checkout");
                         navigateToProfile("complete-profile");
@@ -3603,22 +3686,6 @@ export default function App() {
               setPreviousScreen(currentScreen);
               setCurrentScreen("checkout");
             }}
-            triggerHaptic={triggerHaptic}
-          />
-
-          {/* Address Quick-Switcher Modal */}
-          <AddressSwitcherModal
-            isOpen={isAddressModalOpen}
-            onClose={() => setIsAddressModalOpen(false)}
-            userProfile={userProfile}
-            onSaveAddress={async (newAddress, coords) => {
-              await handleUpdateProfile({ address: newAddress }, true);
-              if (coords) {
-                setUserLocation(coords);
-              }
-            }}
-            onRequestLocation={requestLocation}
-            currentLocationCoords={userLocation}
             triggerHaptic={triggerHaptic}
           />
 
@@ -3800,9 +3867,9 @@ function HomeScreen({
   isOnline,
   orderAgainEnabled = true,
   onEnableOrderAgain,
+  onEnableNotifications,
   dataSaverEnabled,
   isSyncing = false,
-  onOpenAddressSwitcher,
   onOpenCart,
 }: {
   userProfile: UserProfile;
@@ -3844,9 +3911,9 @@ function HomeScreen({
   isOnline: boolean;
   orderAgainEnabled?: boolean;
   onEnableOrderAgain?: () => void;
+  onEnableNotifications: () => Promise<boolean>;
   dataSaverEnabled?: boolean;
   isSyncing?: boolean;
-  onOpenAddressSwitcher?: () => void;
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
@@ -4019,31 +4086,11 @@ function HomeScreen({
   });
 
   const handleRequestNotifications = async () => {
-    if (!pickupOrderingEnabled()) {
-      showAlert("Pickup notifications not active yet", "Orders remain visible in your history. Push can be enabled during the approved pickup pilot.");
-      return;
-    }
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      showAlert("Notifications Not Supported", "Push notifications are not supported by your current browser.");
-      return;
-    }
     triggerHaptic?.(15, "button_press");
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermissionStatus(permission);
-      if (permission === "granted") {
-        if (session?.user?.id && await registerAndSyncPushToken(session.user.id)) {
-          toast.success("Pickup Ready notifications connected.");
-        } else {
-          toast.error("Push registration unavailable. Your Orders page will still update.");
-        }
-      } else if (permission === "denied") {
-        toast.error("Notifications Blocked", {
-          description: "You can enable notifications anytime in your browser site permissions.",
-        });
-      }
-    } catch (err) {
-      console.debug("Notice on notification permission:", err);
+    // The click-only permission flow works even while ordering is disabled.
+    await onEnableNotifications();
+    if (typeof Notification !== "undefined") {
+      setNotificationPermissionStatus(Notification.permission);
     }
   };
 
@@ -4349,29 +4396,11 @@ function HomeScreen({
             : "border-slate-100 dark:border-slate-850"
         }`}
       >
-        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative">
+        <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-2 sm:py-2.5 flex items-center justify-between gap-2.5 w-full relative z-20">
           
-          {/* Logo & Address Quick-Switcher */}
+          {/* Logo — keep the Home header clean; location selection remains in Map/Profile. */}
           <div className={`flex items-center gap-2 sm:gap-3 relative min-w-0 shrink transition-opacity duration-300 ${isHeaderSearching ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
             <LocalEatsLogo width={105} height={26} className="shrink-0 scale-100 origin-left" />
-            
-            {onOpenAddressSwitcher && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (triggerHaptic) triggerHaptic(8);
-                  onOpenAddressSwitcher();
-                }}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800/90 hover:bg-orange-50 dark:hover:bg-orange-950/40 border border-slate-200/60 dark:border-slate-700/60 text-slate-700 dark:text-slate-200 hover:text-orange-600 dark:hover:text-orange-400 transition-all cursor-pointer max-w-[120px] xs:max-w-[160px] sm:max-w-[220px] truncate group"
-                title="Change delivery address"
-              >
-                <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 group-hover:scale-110 transition-transform" />
-                <span className="text-[11px] sm:text-xs font-bold truncate">
-                  {userProfile.address ? userProfile.address.split(",")[0] : "Set Address"}
-                </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
-              </button>
-            )}
           </div>
 
           {/* Absolute Search Overlay (Appears on click) */}
@@ -4858,7 +4887,7 @@ function HomeScreen({
                 animate={{ height: "auto", opacity: 1, y: 0 }}
                 exit={{ height: 0, opacity: 0, y: -6 }}
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                className="overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
+                className="relative z-0 overflow-hidden border-t border-slate-100 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md"
               >
                 <div className="max-w-screen-xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
                   <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5 -mx-3 px-3 sm:-mx-4 sm:px-4 mask-gradient items-center touch-pan-x">
@@ -4950,7 +4979,7 @@ function HomeScreen({
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed font-medium">
                   {activeOrders.length > 0
                     ? "You have pickups in progress. Enable optional notifications for updates when the shop prepares your food and marks it Ready for collection."
-                    : "Ready notifications require pickup database activation. Push is optional and best effort."}
+                    : "Alerts are optional. Turn them on now; your Orders page remains the source of truth."}
                 </p>
               </div>
             </div>
@@ -7504,8 +7533,6 @@ function ProfileScreen({
           </button>
         </div>
 
-        {/* Diagnostic Tool for debugging split-brain auth */}
-        <DiagnosticTool />
       </main>
 
       {/* Cropper Modal */}

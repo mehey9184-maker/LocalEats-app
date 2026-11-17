@@ -867,6 +867,49 @@ export async function getFirebaseMessaging(): Promise<Messaging | null> {
 }
 
 /**
+ * The Firebase registration uses a separate scope from the root offline PWA.
+ * Browser-only diagnostics may call this after a user's explicit click.
+ * Do not use navigator.serviceWorker.ready: it resolves the root PWA worker,
+ * not necessarily the custom Firebase registration.
+ */
+export async function ensureCustomerPushWorkerActive(): Promise<ServiceWorkerRegistration> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    throw new Error("This browser does not support service workers.");
+  }
+  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
+    scope: "/firebase-cloud-messaging-push-scope/",
+  });
+  if (registration.active?.state === "activated") return registration;
+  return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+    const workers = [registration.installing, registration.waiting, registration.active]
+      .filter((worker): worker is ServiceWorker => !!worker);
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const cleanup = () => {
+      clearTimeout(timer);
+      workers.forEach(worker => worker.removeEventListener("statechange", check));
+    };
+    const finish = (error?: Error) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(registration);
+    };
+    const check = () => {
+      if (registration.active?.state === "activated") {
+        finish();
+      } else if (workers.length > 0 && workers.every(worker => worker.state === "redundant")) {
+        finish(new Error("Firebase notification worker installation failed."));
+      }
+    };
+    workers.forEach(worker => worker.addEventListener("statechange", check));
+    timer = setTimeout(() => finish(new Error("Firebase notification worker did not activate.")), 10000);
+    check();
+  });
+}
+
+/**
  * Checks browser support, requests permission, registers service worker, and retrieves FCM token.
  */
 export async function requestNotificationPermissionAndGetToken(customVapidKey?: string): Promise<string | null> {
@@ -882,11 +925,9 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
       return null;
     }
 
-    // Do NOT register the FCM worker at "/" — that would replace the PWA
-    // worker and could break offline app installation/navigation.
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", {
-      scope: "/firebase-cloud-messaging-push-scope/",
-    });
+    // Never replace the root PWA/offline worker. Firebase needs the custom
+    // registration to be ACTIVE before calling getToken (fresh install race).
+    const registration = await ensureCustomerPushWorkerActive();
     const messaging = await getFirebaseMessaging().catch(() => null);
     if (!messaging) return null;
 
@@ -915,7 +956,7 @@ export async function onForegroundMessage(callback: (payload: any) => void): Pro
     if (!messaging) return;
 
     return onMessage(messaging, (payload) => {
-      console.debug("[FCM] Received foreground notification:", payload);
+      // Do not log push payloads: they can contain per-order metadata.
       try {
         callback(payload);
       } catch (_) {}
