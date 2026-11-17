@@ -1,5 +1,5 @@
 import type { PickupOrder } from "./pickup/client";
-import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
+import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
@@ -2496,6 +2496,13 @@ export default function App() {
         return;
       }
 
+      // Protect every add entry point using the verified location-scoped list.
+      // The authoritative API separately enforces the same 4 km limit.
+      const targetShop=visibleShops.find(s=>s.id===shopId);
+      if (!targetShop || !isWithinPickupArea(targetShop)) {
+        toast.error("Outside your pickup area. Browse the menu, but ordering is available only within 4 km.");
+        return;
+      }
       // Defensive Copy and Deep Freeze of Pricing Core Data
       const secureCustomizations = [...selectedCustomizations].map((c) => 
         Object.freeze({ name: String(c.name), price: Number(c.price) })
@@ -2590,7 +2597,7 @@ export default function App() {
       });
       // Notification removed for cleaner UI
     },
-    [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
+    [cart, shops, visibleShops, showConfirm, triggerHaptic, setNotification, setCart],
   );
 
   const removeFromCart = useCallback(
@@ -4233,7 +4240,9 @@ function HomeScreen({
       const statusA = getShopStatus(a);
       const statusB = getShopStatus(b);
 
-      // 1. Prioritize Open shops
+      const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+      if (outsideA!==outsideB) return outsideA ? 1 : -1;
+      // Within each group prioritize operational shops.
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
@@ -4247,28 +4256,9 @@ function HomeScreen({
         return getMinPrepTime(a) - getMinPrepTime(b);
       }
 
-      // Default 'recommended' sort (Distance -> Special -> Rating)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
-      }
+      // Use the verified Haversine distances, not invented fallback pins.
+      if (userLocation && typeof a.distance==="number" && typeof b.distance==="number" &&
+          Math.abs(a.distance-b.distance)>0.001) return a.distance-b.distance;
 
       // Prioritize "Local Eats Special"
       if (a.is_special && !b.is_special) return -1;
@@ -4352,19 +4342,35 @@ function HomeScreen({
   );
 
   const renderedShopList = useMemo(() => {
-    return (
+    const within=sortedShops.filter(shop=>!isOutsidePickupArea(shop));
+    const outside=sortedShops.filter(isOutsidePickupArea);
+    const cards=(entries:Shop[],offset:number)=>(
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
-        {sortedShops.map((shop,index) => (
+        {entries.map((shop,index)=>(
           <ShopCard
             key={shop.id}
             shop={shop}
-            priorityImage={index === 0}
+            priorityImage={offset+index===0}
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
+      </div>
+    );
+    return (
+      <div className="space-y-6">
+        {cards(within,0)}
+        {outside.length>0 && (
+          <section aria-label="More shops outside your pickup area" className="space-y-3">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-700 dark:text-slate-200">More shops outside your pickup area</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Browse real menus. Ordering is available only within 4 km of your current location.</p>
+            </div>
+            {cards(outside,within.length)}
+          </section>
+        )}
       </div>
     );
   }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
@@ -8270,6 +8276,7 @@ function StoreInfoScreen({
 
 
   const storeStatus = getStoreStatus();
+  const outsidePickupArea = isOutsidePickupArea(shop);
   const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
@@ -8552,6 +8559,15 @@ function StoreInfoScreen({
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
+      {outsidePickupArea && (
+        <div role="status" className="mx-4 mt-4 rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 px-4 py-3">
+          <p className="font-bold text-slate-900 dark:text-white">Outside your pickup area</p>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            This shop is {typeof shop.distance === "number" ? shop.distance.toFixed(1)+" km" : "outside 4 km"} from your current location.
+            LocalEats currently supports ordering within 4 km. You can browse the real menu, but ordering is unavailable here.
+          </p>
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
@@ -9375,6 +9391,11 @@ function StoreInfoScreen({
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (outsidePickupArea) {
+            showAlert("Outside your pickup area", "You can browse the menu, but this shop is beyond the 4 km ordering area.");
+            setSelectedItemForQuantity(null);
+            return;
+          }
           if (!getShopStatus(shop).isOpen) {
             showAlert("Closed", "This shop is currently closed. Browse its menu now and order when it reopens.");
             setSelectedItemForQuantity(null);
