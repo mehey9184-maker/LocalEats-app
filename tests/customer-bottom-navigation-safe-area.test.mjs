@@ -76,3 +76,20 @@ test("checkout and authentication screens do not inherit persistent-nav screen s
   assert.match(app, /currentScreen === "checkout"/);
   assert.match(app, /currentScreen === "order-history"/);
 });
+
+test("Customer primary icon labels are readable, semantically accurate and keyboard navigable",()=>{
+  assert.match(nav,/import \{ Home, Compass, MapPin, ClipboardList, User \} from "lucide-react"/);
+  assert.doesNotMatch(nav,/<ShoppingBag/);
+  assert.match(nav,/<ClipboardList aria-hidden="true"/);
+  assert.match(nav,/aria-label="Customer main navigation"/);
+  assert.equal((nav.match(/aria-current=\{/g)||[]).length,5);
+  assert.equal((nav.match(/min-h-\[52px\]/g)||[]).length,5);
+  assert.equal((nav.match(/text-\[11px\] sm:text-xs font-semibold/g)||[]).length,5);
+  assert.equal((nav.match(/focus-visible:outline-orange-500/g)||[]).length,5);
+  for(const label of ["Home","Discover","Map","Orders","Profile"]) {
+    assert.match(nav,new RegExp('aria-label="' + label + '"'));
+  }
+  assert.doesNotMatch(css,/html\s*\{\s*font-size:\s*14\.5px/);
+  assert.match(css,/@media \(max-width: 380px\)/);
+  assert.match(app,/customerNavScreens\.includes\(currentScreen\)/);
+});
