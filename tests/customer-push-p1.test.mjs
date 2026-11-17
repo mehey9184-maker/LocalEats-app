@@ -56,24 +56,18 @@ test("fresh Customer FCM registration awaits the exact custom worker becoming ac
  assert.doesNotMatch(fb,/await navigator\.serviceWorker\.ready/);
 });
 
-test("Customer Settings permits browser-only testing without Firebase send or pickup writes",()=>{
+test("Customer Settings has a real notification preference, not a diagnostic test",()=>{
  assert.match(settings,/Pickup notifications/);
  assert.match(settings,/Enable order alerts/);
- assert.match(settings,/Test browser alert/);
- assert.match(settings,/const testLocalAlert = async \(\) =>/);
- assert.match(settings,/Notification\.permission !== "granted"/);
- assert.match(settings,/ensureCustomerPushWorkerActive\(\)/);
- assert.match(settings,/registration\.showNotification\("LocalEats browser notification check"/);
- assert.match(settings,/registration\.getNotifications\(\{tag\}\)/);
- assert.match(settings,/No order, payment or Firebase send was created/);
- const local=settings.slice(settings.indexOf("const testLocalAlert = async () =>"),settings.indexOf("return (",settings.indexOf("const testLocalAlert = async () =>")));
- assert.doesNotMatch(local,/customerPickupApi|fetch\(|getIdToken|sendTestPush|pickup_create_order/);
- assert.match(settings,/Notification\.requestPermission\(\)/);
- assert.match(settings,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
- assert.match(settings,/Preview does not register a device with the Production API/);
- assert.match(settings,/<CustomerNotificationCheck \/>/);
+ assert.match(settings,/Reconnect order alerts/);
+ assert.match(settings,/const connected = await onEnable\(\)/);
+ assert.match(settings,/<CustomerNotificationSettings onEnable=\{onSubscribeToPush\} \/>/);
+ assert.match(settings,/Browser alerts allowed · automatically enabled when registered/);
+ assert.match(settings,/Notifications are optional/);
+ assert.match(settings,/onSubscribeToPush\?: \(\) => Promise<boolean>/);
+ assert.doesNotMatch(settings,/Test browser alert|testLocalAlert|showNotification|getNotifications|CustomerNotificationCheck|customer_local_test/);
+ assert.doesNotMatch(settings,/Notification\.requestPermission\(\)/);
 });
-
 test("background Ready notification returns a display promise and browser-only click is not an order hint",()=>{
  assert.match(sw,/return self\.registration\.showNotification\('Your kota is ready for collection'/);
  assert.match(sw,/event\.notification\.data\?\.type === 'pickup_ready'/);
@@ -133,10 +127,10 @@ test("previously granted customer push is on by default without unprompted brows
  assert.match(app,/document\.addEventListener\("visibilitychange", onVisible\)/);
  assert.match(app,/lastAttempt < 300000/);
  assert.match(app,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
- assert.match(settings,/On by default · browser allowed/);
+ assert.match(settings,/Browser alerts allowed · automatically enabled when registered/);
  assert.match(settings,/Blocked in browser settings/);
- assert.match(settings,/Needs your permission once/);
- assert.match(settings,/permission === "granted" \? "Check order alerts"/);
+ assert.match(settings,/Enable when you are ready/);
+ assert.match(settings,/permission === "granted" \? "Reconnect order alerts"/);
  assert.doesNotMatch(app,/useEffect\(\(\) => \{\s*Notification\.requestPermission\(\)/);
 });
 
@@ -183,4 +177,15 @@ test("post-order dialog does not silently request permissions or modify an order
  assert.match(prompt,/onClick=\{\(\) => \{ void enable\(\); \}\}/);
  assert.match(prompt,/const registered = await onEnable\(\)/);
  assert.doesNotMatch(prompt,/Notification\.requestPermission|submitPickupQuote|customerPickupApi|createOrder|setCurrentScreen|pickup_order_command/);
+});
+
+test("public Customer UI does not expose the removed Home address shortcut or developer test panels",()=>{
+ const header=app.slice(app.indexOf('id="home-sticky-header"'),app.indexOf("</header>",app.indexOf('id="home-sticky-header"')));
+ assert.match(header,/LocalEatsLogo width=\{105\}/);
+ assert.doesNotMatch(header,/Set Address|Address Quick-Switcher|onOpenAddressSwitcher|Change delivery address/);
+ assert.doesNotMatch(app,/AddressSwitcherModal|onOpenAddressSwitcher|isAddressModalOpen|<DiagnosticTool/);
+ assert.match(app,/onRequestLocation=\{requestLocation\}/);
+ assert.match(app,/navigateToProfile\("profile"\)/);
+ assert.match(app,/onSubscribeToPush=\{subscribeToPushNotifications\}/);
+ assert.doesNotMatch(settings,/Test browser alert/);
 });
