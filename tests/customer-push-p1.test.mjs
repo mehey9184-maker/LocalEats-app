@@ -168,7 +168,8 @@ test("post-order consent appears ONLY after verified pickup server response",()=
  assert.match(app,/auth\.currentUser\?\.uid === uid/);
  assert.match(app,/Notification\.permission !== "granted"/);
  assert.match(app,/setPostOrderPushPrompt\(\{uid, orderId\}\)/);
- assert.match(app,/postOrderPushPrompt\?\.uid === session\?\.user\?\.id/);
+ assert.match(app,/postOrderPushPrompt !== null/);
+ assert.match(app,/postOrderPushPrompt\.uid === session\?\.user\?\.id/);
  assert.match(app,/setPostOrderPushPrompt\(null\)/);
 });
 
