@@ -7,6 +7,7 @@ const sw=read("public/firebase-messaging-sw.js");
 const fb=read("src/lib/firebase.ts");
 const app=read("src/App.tsx");
 const cfg=JSON.parse(read("firebase-applet-config.json"));
+const settings=read("src/screens/SettingsScreen.tsx");
 
 test("customer FCM worker uses complete matching PUBLIC Firebase config and data-only events",()=>{
  const seen={};
@@ -41,6 +42,42 @@ test("customer FCM worker uses a dedicated scope rather than replacing the PWA w
  assert.doesNotMatch(fb,/getRegistration\("\/firebase-messaging-sw\.js"\)/);
  assert.match(fb,/VITE_FIREBASE_VAPID_KEY/);
  assert.match(fb,/if \(!vapidKey\) return null/);
+});
+test("fresh Customer FCM registration awaits the exact custom worker becoming active",()=>{
+ assert.match(fb,/export async function ensureCustomerPushWorkerActive\(\): Promise<ServiceWorkerRegistration>/);
+ assert.match(fb,/register\("\/firebase-messaging-sw\.js", \{/);
+ assert.match(fb,/scope: "\/firebase-cloud-messaging-push-scope\/",/);
+ assert.match(fb,/registration\.active\?\.state === "activated"/);
+ assert.match(fb,/worker\.addEventListener\("statechange", check\)/);
+ assert.match(fb,/setTimeout\(\(\) => finish\(new Error\("Firebase notification worker did not activate\."\)\), 10000\)/);
+ assert.match(fb,/const registration = await ensureCustomerPushWorkerActive\(\)/);
+ assert.doesNotMatch(fb,/navigator\.serviceWorker\.ready/);
+});
+
+test("Customer Settings permits browser-only testing without Firebase send or pickup writes",()=>{
+ assert.match(settings,/Pickup notifications/);
+ assert.match(settings,/Enable order alerts/);
+ assert.match(settings,/Test browser alert/);
+ assert.match(settings,/const testLocalAlert = async \(\) =>/);
+ assert.match(settings,/Notification\.permission !== "granted"/);
+ assert.match(settings,/ensureCustomerPushWorkerActive\(\)/);
+ assert.match(settings,/registration\.showNotification\("LocalEats browser notification check"/);
+ assert.match(settings,/registration\.getNotifications\(\{tag\}\)/);
+ assert.match(settings,/No order, payment or Firebase send was created/);
+ const local=settings.slice(settings.indexOf("const testLocalAlert = async () =>"),settings.indexOf("return (",settings.indexOf("const testLocalAlert = async () =>")));
+ assert.doesNotMatch(local,/customerPickupApi|fetch\(|getIdToken|sendTestPush|pickup_create_order/);
+ assert.match(settings,/Notification\.requestPermission\(\)/);
+ assert.match(settings,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
+ assert.match(settings,/Preview does not register a device with the Production API/);
+ assert.match(settings,/<CustomerNotificationCheck \/>/);
+});
+
+test("background Ready notification returns a display promise and browser-only click is not an order hint",()=>{
+ assert.match(sw,/return self\.registration\.showNotification\('Your kota is ready for collection'/);
+ assert.match(sw,/event\.notification\.data\?\.type === 'pickup_ready'/);
+ assert.match(sw,/if \(payload\.notification\) return;/);
+ assert.match(sw,/if \(payload\.data\?\.type !== 'pickup_ready'\) return;/);
+ assert.doesNotMatch(sw,/order_id.*body:/);
 });
 test("device token is stored only by authenticated pickup API and success requires persistence",()=>{
  assert.match(fb,/auth\.currentUser\?\.uid !== userId/);
