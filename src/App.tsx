@@ -5812,17 +5812,8 @@ function DiscoverScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
@@ -9579,17 +9570,8 @@ function ExploreScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return (
@@ -9605,27 +9587,15 @@ function ExploreScreen({
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
     const statusB = getShopStatus(b);
+    const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+    if(outsideA!==outsideB) return outsideA ? 1 : -1;
     if (statusA.isOpen && !statusB.isOpen) return -1;
     if (!statusA.isOpen && statusB.isOpen) return 1;
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
+      const distA=typeof a.distance==="number" ? a.distance : Infinity;
+      const distB=typeof b.distance==="number" ? b.distance : Infinity;
+      return distA-distB;
     }
 
     if (sortPriority === "name") {
