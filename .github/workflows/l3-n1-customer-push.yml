@@ -54,13 +54,17 @@ jobs:
           VITE_LOCALEATS_API_URL: "https://localeats-api-staging-r52d.vercel.app"
           VITE_CUSTOMER_PUSH_STAGING_ORIGIN: "https://localeats-customer-staging-r52d.vercel.app"
         run: |
-          npm run build
+          # Vercel builds this project with direct "vite build" instead of
+          # package.json. Verify that direct invocation also writes the staging
+          # FCM worker; a Production worker in Preview is a safety regression.
+          npx vite build
           node --input-type=module -e '
             import {readFileSync} from "node:fs";
             import assert from "node:assert/strict";
             const worker=readFileSync("dist/firebase-messaging-sw.js","utf8");
             const pwa=readFileSync("dist/sw.js","utf8");
             assert.match(worker,/"projectId":"localeats-staging"/);
+            assert.doesNotMatch(worker,/"authDomain":"localeats-5e26e.firebaseapp.com"/);
             assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
             assert.match(pwa,/localeats-staging/);
             assert.match(worker,/customer_push_test/);
