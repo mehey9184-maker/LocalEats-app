@@ -87,7 +87,7 @@ export function SplashScreen({
         </header>
 
         {/* Bottom Action Section */}
-        <section className="mt-auto w-full px-6 pb-12 bottom-inset max-w-2xl">
+        <section className="customer-welcome-actions mt-auto w-full px-6 pb-12 bottom-inset max-w-2xl">
           {/* Value Proposition */}
           <div className="mb-8">
             <h2 className="text-4xl md:text-5xl font-extrabold text-white leading-tight tracking-tight">

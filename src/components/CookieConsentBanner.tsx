@@ -100,7 +100,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                 </button>
               </div>
               <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
-                We use cookies and local storage to save your cart, remember delivery addresses, and personalize local restaurant picks.
+                We use cookies and local storage to keep you signed in, remember your cart, and save your preferences.
               </p>
             </div>
           </div>
@@ -180,7 +180,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                 />
               </div>
 
-              {/* Category 2: Cart & Address Persistence */}
+              {/* Category 2: Cart & Location Persistence */}
               <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start justify-between gap-3">
                 <div className="space-y-1 min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
@@ -188,7 +188,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                     <span className="text-xs font-extrabold uppercase tracking-wider">Cart & Location Persistence</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-                    Saves your active food basket and recent delivery pins locally on your device so you don't lose progress.
+                    Remembers your basket and preferences on this device.
                   </p>
                 </div>
                 <input
@@ -207,7 +207,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                     <span className="text-xs font-extrabold uppercase tracking-wider">Personalized Recommendations</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-                    Displays nearby trending local township kitchens, custom deal discounts, and quick reorder shortcuts.
+                    Uses your preferences to suggest local kitchens.
                   </p>
                 </div>
                 <input
@@ -226,7 +226,7 @@ export const CookieConsentBanner = ({enabled=true,onDismiss}:{enabled?:boolean;o
                     <span className="text-xs font-extrabold uppercase tracking-wider">Performance Analytics</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-                    Helps us monitor app speed, fix broken restaurant links, and optimize rider dispatch maps.
+                    Helps us understand app performance and find broken links.
                   </p>
                 </div>
                 <input
