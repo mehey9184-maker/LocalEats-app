@@ -31,11 +31,12 @@ jobs:
           cache: npm
       - name: Install locked Customer dependencies
         run: npm ci --no-audit --no-fund
-      - name: Install isolated headless Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Verify runner Chrome
+        run: google-chrome --version
       - name: Verify first-visit welcome Log In and privacy notice hit targets
         run: node tests/l3-popia-welcome-browser.mjs
         env:
+          L3_BROWSER_CHANNEL: chrome
           L3_BROWSER_ARTIFACT_DIR: /tmp/localeats-l3-screens
       - name: Check TypeScript
         run: npm run lint
