@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+    import React, {useState} from 'react';
+    import {createRoot} from 'react-dom/client';
+    import {SplashScreen} from '../src/screens/SplashScreen.tsx';
+    import {PopiaLegalDrawer} from '../src/components/PopiaLegalDrawer.tsx';
+    import '../src/index.css';
+    function Harness() {
+      const [loginCount,setLoginCount]=useState(0);
+      // Match App.tsx: one #root > div wrapper owns the app's global safe-area
+      // styles. Without it, those styles incorrectly make POPIA full-height.
+      return React.createElement('div',{className:'relative w-full max-w-[100vw] overflow-x-hidden'},
+        React.createElement(SplashScreen,{
+          session:null,userProfile:null,
+          onNext:()=>{},
+          onGuestBrowse:()=>{},
+          onLogin:()=>setLoginCount(count=>count+1),
+        }),
+        React.createElement(PopiaLegalDrawer),
+        React.createElement('output',{'data-testid':'l3-login-clicks','aria-live':'polite'},String(loginCount))
+      );
+    }
+    createRoot(document.getElementById('root')).render(React.createElement(Harness));
+  </script>
+</body>
+</html>

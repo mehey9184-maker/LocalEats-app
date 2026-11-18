@@ -1,5 +1,7 @@
 # LocalEats App Functionality Documentation
 
+The Customer consent banner and its preferences describe the current pickup experience. The recovered welcome-screen spacing made Log In clickable at 390px. At 320px, the first-visit notice still intercepts Log In. The consent behavior is unchanged.
+
 ## Overview
 LocalEats is a comprehensive food discovery and ordering application for local legendary Kota joints, featuring user authentication, profile setup, smart dispatch, and a seamless checkout experience with real-time live map tracking.
 
