@@ -1480,6 +1480,15 @@ export default function App() {
   useEffect(() => {
     let unsubscribe: (() => void) | void;
     onForegroundMessage((payload) => {
+      if (payload?.data?.type === "customer_push_test") {
+        // Confirm foreground receipt without interpreting it as an order.
+        // Never show untrusted payload text or mark payment/collection Ready.
+        toast.success("LocalEats notification test", {
+          description: "Test reached this open app. No order was created.",
+          duration: 6000,
+        });
+        return;
+      }
       const title = payload.notification?.title || payload.data?.title || "LocalEats Notification";
       const body = payload.notification?.body || payload.data?.body || payload.data?.message || "You have an update regarding your order.";
       toast.success(title, {
