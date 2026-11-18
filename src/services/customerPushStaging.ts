@@ -15,6 +15,7 @@ export const CUSTOMER_STAGING_API_ORIGINS = [
   "https://localeats-api-staging-r52d.vercel.app",
   "https://localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app",
   "https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app",
+  "https://localeats-api-staging-r52d-git-54267e-mehey9184-makers-projects.vercel.app",
 ] as const;
 
 export function isVerifiedCustomerPushStagingContext(c:CustomerPushStagingContext):boolean {
