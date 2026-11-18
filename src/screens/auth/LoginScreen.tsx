@@ -26,6 +26,7 @@ import { supabase, APP_URL } from "../../lib/supabase";
 import { UserProfile, NotificationState } from "../../types";
 import { FirestoreService } from "../../lib/firebase";
 import { upsertProfileWithRPC } from "../../lib/profileService";
+import {isVerifiedStagingLogin} from "../../services/stagingFirebaseAuthErrors";
 
 export interface LoginScreenProps {
   onLogin: () => void;
@@ -85,6 +86,8 @@ export function LoginScreen({
       | "user_not_found"
       | "rate_limited"
       | "email_unconfirmed"
+      | "staging_configuration"
+      | "staging_disabled"
       | "generic";
     title: string;
     message: string;
@@ -181,6 +184,14 @@ export function LoginScreen({
     } catch (error: any) {
       const rawMsg =
         error?.message || error?.error_description || String(error || "");
+      const stageLogin=isVerifiedStagingLogin({
+        origin:typeof window!=="undefined"?window.location.origin:"",
+        projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+        orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED
+      });
+      const stageCategory=stageLogin && typeof error?.category==="string" ? error.category : "";
+
       const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
       const isNetworkErr =
         rawMsg === "Failed to fetch" ||
@@ -204,7 +215,21 @@ export function LoginScreen({
         rawMsg.toLowerCase().includes("rate limit") ||
         error?.status === 429;
 
-      if (isOffline) {
+      if (stageCategory === "service") {
+        setAuthError({
+          type: "staging_configuration",
+          title: "Staging Sign-In Configuration",
+          message: "This staging app cannot complete Firebase sign-in because its authentication service is not configured correctly.",
+          suggestion: "Check that Email/Password sign-in is enabled in the localeats-staging Firebase project and that the staging Web app settings match.",
+        });
+      } else if (stageCategory === "disabled") {
+        setAuthError({
+          type: "staging_disabled",
+          title: "Staging Account Disabled",
+          message: "This test account is disabled in Firebase Authentication.",
+          suggestion: "Check the user status in the localeats-staging Firebase Console before trying again.",
+        });
+      } else if (isOffline) {
         setAuthError({
           type: "offline",
           title: "You're Offline",
@@ -213,7 +238,7 @@ export function LoginScreen({
           suggestion:
             "Check your Wi-Fi or mobile data, or browse our menu as a guest.",
         });
-      } else if (isNetworkErr) {
+      } else if (isNetworkErr || stageCategory === "network") {
         setAuthError({
           type: "server_unreachable",
           title: "Unable to Connect",
@@ -222,7 +247,7 @@ export function LoginScreen({
           suggestion:
             "Tap Retry Connection below, or browse our menu as a guest.",
         });
-      } else if (isInvalidCreds) {
+      } else if (isInvalidCreds || stageCategory === "credentials") {
         setAuthError({
           type: "invalid_credentials",
           title: "Sign-In Details Don't Match",
@@ -247,7 +272,7 @@ export function LoginScreen({
           suggestion:
             "Check your email inbox (and spam folder) for your confirmation link.",
         });
-      } else if (isRateLimited) {
+      } else if (isRateLimited || stageCategory === "rate_limited") {
         setAuthError({
           type: "rate_limited",
           title: "Too Many Login Attempts",

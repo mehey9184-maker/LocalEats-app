@@ -1,5 +1,6 @@
 
 import { auth } from "./firebase";
+import {classifyStagingFirebaseLoginFailure,isVerifiedStagingLogin} from "../services/stagingFirebaseAuthErrors";
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -107,6 +108,19 @@ export const supabase: any = {
         const session = await formatSession(userCredential.user);
         return { data: { session, user: session.user }, error: null };
       } catch (e) {
+        // Stage diagnostics must distinguish Firebase service/configuration
+        // errors from incorrect credentials. Other environments retain the
+        // original compatibility behavior.
+        if(typeof window!=="undefined" && isVerifiedStagingLogin({
+          origin:window.location.origin,
+          projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+          configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+          orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED
+        })){
+          const failure=classifyStagingFirebaseLoginFailure(e);
+          return {data:{session:null,user:null},
+            error:{message:failure.message,code:failure.code,category:failure.category}};
+        }
         let msg = "Invalid email or password";
         if (e.code === 'auth/user-not-found') msg = "Invalid login credentials";
         if (e.code === 'auth/wrong-password') msg = "Invalid login credentials";
