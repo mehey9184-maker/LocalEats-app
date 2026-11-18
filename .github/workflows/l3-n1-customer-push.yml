@@ -12,6 +12,7 @@ on:
       - 'src/screens/SettingsScreen.tsx'
       - 'src/pickup/client.ts'
       - 'scripts/l3-n2-staging-fcm.mjs'
+      - 'vite.config.ts'
       - 'src/lib/firebase.ts'
       - 'src/sw.ts'
       - 'package.json'
@@ -38,6 +39,7 @@ jobs:
         env:
           LOCALEATS_STAGING_ONLY: "true"
           VERCEL_ENV: "preview"
+          VERCEL_URL: "localeats-customer-staging-r52d-ci2c83ab.vercel.app"
           VITE_FIREBASE_CONFIG_SOURCE: "environment"
           VITE_FIREBASE_API_KEY: "synthetic-public-firebase-key"
           VITE_FIREBASE_AUTH_DOMAIN: "localeats-staging.firebaseapp.com"
@@ -60,4 +62,10 @@ jobs:
             assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
             assert.match(pwa,/localeats-staging/);
             assert.match(worker,/customer_push_test/);
+            const fs=await import("node:fs");
+            const paths=fs.readdirSync("dist/assets").filter(x=>x.endsWith(".js"));
+            assert.ok(paths.some(path=>fs.readFileSync("dist/assets/"+path,"utf8")
+              .includes("https://localeats-customer-staging-r52d-ci2c83ab.vercel.app")),
+              "Expected exact Vercel Preview origin to be compiled into the Client");
+
           '
