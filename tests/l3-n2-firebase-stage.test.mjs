@@ -38,6 +38,13 @@ test("staging rejects Firebase Production fallback, missing VAPID, incorrect API
 
  assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://localeats-api-staging-r52d.vercel.app/path"}));
 });
+test("actual Vercel Preview URL takes priority and unknown Vercel project fails closed",()=>{
+ const livePreview="localeats-customer-staging-r52d-q4t5tjjgt.vercel.app";
+ assert.equal(isolatedStagingFirebaseConfig({...staging(),VERCEL_URL:livePreview,
+   VITE_CUSTOMER_PUSH_STAGING_ORIGIN:"https://unrelated-preview.vercel.app"}).projectId,"localeats-staging");
+ assert.throws(()=>isolatedStagingFirebaseConfig({...staging(),VERCEL_URL:"project-x7cvt-customer.vercel.app"}));
+ assert.throws(()=>isolatedStagingFirebaseConfig({...staging(),VERCEL_URL:"localeats-customer-staging-r52d.attacker.example"}));
+});
 test("only compiled custom worker is repointed, never the source",()=>{
  const dir=mkdtempSync(join(tmpdir(),"local-fcm-stage-"));
  const worker=join(dir,"firebase-messaging-sw.js");
