@@ -13,9 +13,12 @@ import {
   Wifi,
   Smartphone,
   BellRing,
+  Download,
   Info,
 } from "lucide-react";
 import { UserProfile } from "../types";
+import { InstallAppHelp } from "../components/InstallAppHelp";
+import { useAppInstallation } from "../hooks/useAppInstallation";
 
 interface SettingsScreenProps {
   userProfile: UserProfile;
@@ -126,6 +129,7 @@ export function SettingsScreen({
   isOnline = true,
   onSubscribeToPush,
 }: SettingsScreenProps) {
+  const installation = useAppInstallation();
   const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
   const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
 
@@ -138,6 +142,7 @@ export function SettingsScreen({
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 pb-24">
+      {installation.showHelp && <InstallAppHelp appName="LocalEats" instructions={installation.instructions} onClose={installation.closeHelp} />}
       {/* Header */}
       <div className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -181,6 +186,18 @@ export function SettingsScreen({
             Preferences & UI
           </h2>
           <div className="bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 rounded-3xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-700/50">
+            {installation.available && (
+              <button type="button" onClick={() => { void installation.install(); }} disabled={installation.busy}
+                className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/30 disabled:opacity-70 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-600">
+                <span className="shrink-0 rounded-xl bg-orange-50 p-2 text-orange-600 dark:bg-orange-950/40 dark:text-orange-400">
+                  <Download className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span className="flex-1 text-sm font-bold text-slate-900 dark:text-white">
+                  {installation.busy ? "Opening install prompt…" : "Install LocalEats"}
+                </span>
+                <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" aria-hidden="true" />
+              </button>
+            )}
             {/* Dark Mode Toggle */}
             <div className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
