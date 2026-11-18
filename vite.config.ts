@@ -13,6 +13,18 @@ export default defineConfig(({mode}) => {
     env.VERCEL_ENV === "preview" && env.VERCEL_URL
     ? "https://" + env.VERCEL_URL
     : env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN || "";
+  // L3-N3: Preview-only pairing for the isolated Customer notification-test
+  // branch. A draft-only build uses the corresponding API branch alias;
+  // other previews and Production keep their existing configured API URL.
+  const l3n3IsolatedPreview =
+    env.LOCALEATS_STAGING_ONLY === "true" &&
+    env.VERCEL_ENV === "preview" &&
+    env.VERCEL_GIT_COMMIT_REF === "review/l3-n3-customer-api-pairing" &&
+    env.VITE_FIREBASE_PROJECT_ID === "localeats-staging" &&
+    env.VITE_PICKUP_ORDERING_ENABLED === "false";
+  const stagedApiOrigin = l3n3IsolatedPreview
+    ? "https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"
+    : env.VITE_LOCALEATS_API_URL || "";
   return {
     plugins: [
       react(),
@@ -55,6 +67,7 @@ export default defineConfig(({mode}) => {
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN': JSON.stringify(stagingPushOrigin),
+      'import.meta.env.VITE_LOCALEATS_API_URL': JSON.stringify(stagedApiOrigin),
     },
     resolve: {
       alias: {
