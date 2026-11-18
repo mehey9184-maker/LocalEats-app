@@ -14,7 +14,8 @@ const valid=()=>({
 
 test("registered staging Customer origin and deployed stage API are accepted",()=>{
  assert.equal(isVerifiedCustomerPushStagingContext(valid()),true);
- assert.equal(CUSTOMER_STAGING_API_ORIGINS.length,3);
+ assert.equal(CUSTOMER_STAGING_API_ORIGINS.length,4);
+ assert.equal(isVerifiedCustomerPushStagingContext({...valid(),apiUrl:"https://localeats-api-staging-r52d-git-54267e-mehey9184-makers-projects.vercel.app"}),true);
  assert.equal(isVerifiedCustomerPushStagingContext({...valid(),apiUrl:"https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"}),true);
  assert.equal(isVerifiedCustomerPushStagingContext({...valid(),origin:"https://localeats-customer-staging-r52d-nkto1i618.vercel.app",configuredOrigin:"https://localeats-customer-staging-r52d-nkto1i618.vercel.app"}),true);
  assert.equal(isVerifiedCustomerPushStagingContext({...valid(),apiUrl:"https://localeats-api-staging-r52d.vercel.app"}),true);
