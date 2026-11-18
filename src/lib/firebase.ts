@@ -36,8 +36,19 @@ import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "fir
 import { Shop, MenuItem } from "../types";
 import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
+import {isVerifiedCustomerPushStagingContext} from "../services/customerPushStaging";
 
-export const firebaseConfig = {
+// Environment-mode staging never falls back to bundled Production Firebase
+// identifiers. Production and existing bundle-mode builds retain their defaults.
+const environmentFirebaseConfig = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment";
+export const firebaseConfig = environmentFirebaseConfig ? {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+} : {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey || "",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || "localeats-5e26e.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "localeats-5e26e",
@@ -45,8 +56,12 @@ export const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId || "281496568360",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId || "",
 };
-
-export const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)";
+if (environmentFirebaseConfig && Object.values(firebaseConfig).some(v=>!v)) {
+  throw Error("Staging Firebase configuration is incomplete.");
+}
+export const firestoreDatabaseId = environmentFirebaseConfig
+  ? (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "(default)")
+  : (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)");
 
 let appInstance: FirebaseApp | null = null;
 let firestoreInstance: Firestore | null = null;
@@ -1016,4 +1031,31 @@ export async function registerAndSyncPushToken(userId?: string): Promise<string 
   const token = await requestNotificationPermissionAndGetToken();
   if (!token) return null;
   return await syncPushTokenToSupabase(userId, token) ? token : null;
+}
+
+
+/**
+ * Manually triggered staging-device diagnostic. The server performs the final
+ * Firebase UID / installation / quota checks. "true" means FCM accepted,
+ * NOT that the operating system displayed a notification.
+ */
+export async function sendIsolatedCustomerPushTest(userId:string):Promise<boolean> {
+  if (typeof window==="undefined" || !userId || auth.currentUser?.uid!==userId) return false;
+  if (!isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    })) return false;
+  let installation:string|null=null;
+  try { installation=localStorage.getItem(pickupPushInstallationKey(userId)); } catch {return false;}
+  if (!installation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installation)) return false;
+  try {
+    const {customerPickupApi}=await import("../services/customerPickup");
+    const result=await customerPickupApi.customerDeviceTest(installation);
+    return result?.success===true;
+  } catch {return false;}
 }

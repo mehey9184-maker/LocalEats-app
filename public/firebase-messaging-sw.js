@@ -29,6 +29,18 @@ messaging.onBackgroundMessage(payload => {
   // The SDK already displays notification payloads; only display data-only
   // messages here to avoid duplicated browser notifications.
   if (payload.notification) return;
+  // Data-only, private L3-N1 test. Never attach customer/order information or
+  // confuse a test with a genuine Ready event. Only the isolated API can send it.
+  if (payload.data?.type === 'customer_push_test') {
+    const testId = String(payload.data.test_id || '');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(testId)) return;
+    return self.registration.showNotification('LocalEats notification test', {
+      body:'This is a test of pickup alerts. No order was created.',
+      icon:'/logo.png',badge:'/logo.png',
+      tag:'localeats-customer-test-'+testId,
+      data:{type:'customer_push_test'},
+    });
+  }
   if (payload.data?.type !== 'pickup_ready') return;
   const eventId = String(payload.data.event_id || 'ready').slice(0,80);
   return self.registration.showNotification('Your kota is ready for collection', {

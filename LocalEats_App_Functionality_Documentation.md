@@ -176,3 +176,11 @@ The existing Super Admin approval workflow, Merchant effective availability, and
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## L3-N2 — Customer staging push integration after merged notification PR #108 (2026-11-18)
+The previously merged in-app pickup Ready reminder, one 12-minute test reminder, snooze and 4 km nearby new-shop alert (Customer PR #108) remain intact. A fresh isolated draft integrates the L3-N1 FCM foreground/background TEST receiver with L3-N2 verified staging-origin and staging-worker safeguards on the current main tree; it does not replace the released notifications.
+
+The staging test accepts only a verified `localeats-staging` Firebase project and Customer staging Vercel origin, paired with an approved LocalEats staging API origin, exact staged VAPID public key, explicitly disabled pickup ordering and an authenticated staging test account. Generic PR Previews and production crossovers fail closed. The custom messaging worker is reconfigured only inside an emitted staging build; the tracked Production worker remains unchanged.
+
+The paired test sender is kept in separate draft Merchant/API PR #168 and is disabled by default. The Supabase staging project `rgpbdajhlrwfmhopzgzk` is separate from Production and must have a verified customer push subscription table and distributed quota RPC before any cloud test. No payment/order activation, Production Firebase changes, Production database migration, background messaging send or automatic merge occurs in this draft.

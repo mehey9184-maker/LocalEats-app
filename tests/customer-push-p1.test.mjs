@@ -143,7 +143,9 @@ test("Home push consent is available without turning on real pickup ordering",()
  const consent=app.slice(app.indexOf("const subscribeToPushNotifications = useCallback("),app.indexOf("// Listen for FCM foreground"));
  assert.match(consent,/Notification\.permission === "default"\s*\? await Notification\.requestPermission\(\) : Notification\.permission/);
  assert.match(consent,/if \(permission !== "granted"\)/);
- assert.match(consent,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
+ assert.match(app,/\["localeatssa\.co\.za", "www\.localeatssa\.co\.za"\]/);
+ assert.match(consent,/canRegisterCustomerPushOnThisOrigin\(\)/);
+ assert.match(app,/VITE_CUSTOMER_PUSH_STAGING_ORIGIN/);
  assert.match(consent,/uid !== auth\.currentUser\?\.uid/);
  assert.match(consent,/return !!saved;/);
  assert.doesNotMatch(consent,/pickupOrderingEnabled\(\)/);
