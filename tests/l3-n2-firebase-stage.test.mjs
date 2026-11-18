@@ -22,6 +22,7 @@ test("ordinary production builds are unchanged and do not inject a worker",()=>{
 });
 test("staging rejects Firebase Production fallback, missing VAPID, incorrect API, or enabled ordering",()=>{
  const ok=staging();assert.equal(isolatedStagingFirebaseConfig(ok).projectId,ok.VITE_FIREBASE_PROJECT_ID);
+ assert.equal(isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"}).projectId,"localeats-staging");
  for(const k of ["VITE_FIREBASE_API_KEY","VITE_FIREBASE_AUTH_DOMAIN","VITE_FIREBASE_PROJECT_ID",
                    "VITE_FIREBASE_STORAGE_BUCKET","VITE_FIREBASE_APP_ID",
                    "VITE_FIREBASE_MESSAGING_SENDER_ID","VITE_FIREBASE_VAPID_KEY"]){

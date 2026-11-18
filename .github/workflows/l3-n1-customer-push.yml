@@ -8,6 +8,7 @@ on:
       - 'tests/l3-n2-firebase-stage.test.mjs'
       - 'tests/l3-n2-customer-device-check.test.mjs'
       - 'tests/l3-n2-stage-origins.test.mjs'
+      - 'tests/l3-n3-paired-staging-api.test.mjs'
       - 'src/services/customerPushStaging.ts'
       - 'src/screens/SettingsScreen.tsx'
       - 'src/pickup/client.ts'
@@ -32,13 +33,14 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: node --experimental-strip-types --test tests/customer-push-p1.test.mjs tests/customer-l3-n1-push.test.mjs tests/l3-n2-firebase-stage.test.mjs tests/l3-n2-customer-device-check.test.mjs tests/l3-n2-stage-origins.test.mjs
+      - run: node --experimental-strip-types --test tests/customer-push-p1.test.mjs tests/customer-l3-n1-push.test.mjs tests/l3-n2-firebase-stage.test.mjs tests/l3-n2-customer-device-check.test.mjs tests/l3-n2-stage-origins.test.mjs tests/l3-n3-paired-staging-api.test.mjs
       - run: npm run lint
       - run: npm run build
       - name: Synthetic isolated staging build (public fake config; no Firebase cloud)
         env:
           LOCALEATS_STAGING_ONLY: "true"
           VERCEL_ENV: "preview"
+          VERCEL_GIT_COMMIT_REF: "review/l3-n3-customer-api-pairing"
           VERCEL_URL: "localeats-customer-staging-r52d-ci2c83ab.vercel.app"
           VITE_FIREBASE_CONFIG_SOURCE: "environment"
           VITE_FIREBASE_API_KEY: "synthetic-public-firebase-key"
@@ -64,6 +66,9 @@ jobs:
             assert.match(worker,/customer_push_test/);
             const fs=await import("node:fs");
             const paths=fs.readdirSync("dist/assets").filter(x=>x.endsWith(".js"));
+            const pairedApi="https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app";
+            assert.ok(paths.some(path=>fs.readFileSync("dist/assets/"+path,"utf8").includes(pairedApi)),
+              "Expected the exact isolated staging API branch alias to be compiled into the Customer");
             assert.ok(paths.some(path=>fs.readFileSync("dist/assets/"+path,"utf8")
               .includes("https://localeats-customer-staging-r52d-ci2c83ab.vercel.app")),
               "Expected exact Vercel Preview origin to be compiled into the Client");

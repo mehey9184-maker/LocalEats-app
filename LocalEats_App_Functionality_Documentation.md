@@ -184,3 +184,11 @@ The previously merged in-app pickup Ready reminder, one 12-minute test reminder,
 The staging test accepts only a verified `localeats-staging` Firebase project and Customer staging Vercel origin, paired with an approved LocalEats staging API origin, exact staged VAPID public key, explicitly disabled pickup ordering and an authenticated staging test account. Generic PR Previews and production crossovers fail closed. The custom messaging worker is reconfigured only inside an emitted staging build; the tracked Production worker remains unchanged.
 
 The paired test sender is kept in separate draft Merchant/API PR #168 and is disabled by default. The Supabase staging project `rgpbdajhlrwfmhopzgzk` is separate from Production and must have a verified customer push subscription table and distributed quota RPC before any cloud test. No payment/order activation, Production Firebase changes, Production database migration, background messaging send or automatic merge occurs in this draft.
+
+
+## L3-N3 — test-only Customer/API Preview pairing (2026-11-18)
+Customer notification staging may call only the explicitly reviewed Git branch alias `https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app`, which was assigned by Vercel to a READY deployment from the API staging project and draft API PR #169. This adds one exact API host to the existing strict allowlist in the browser staging validator and emitted Firebase worker build; it does not allow arbitrary `.vercel.app` origins or Production API URLs.
+
+A branch-scoped `VITE_LOCALEATS_API_URL` on the isolated Customer staging Vercel project is required to opt the separate Customer L3-N3 Preview into the branch alias. Other branches and Production keep their prior environment variables. The Customer's own exact staging origin is derived from its immutable `VERCEL_URL`. The API must separately allow that exact Customer Preview origin in a **branch-scoped** `CUSTOMER_APP_ORIGIN`, and any enabled test sender requires an even stricter exact `CUSTOMER_PUSH_TEST_STAGING_ORIGIN`.
+
+No test flags are turned on and no Firebase message is sent by this code change. A Vercel deployment/build pass is not browser permission or physical device proof. Actual staging authentication, authorized test UID, native OS notification display and reconnected delivery remain open acceptance gates.
