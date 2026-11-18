@@ -42,7 +42,7 @@ export function isolatedStagingFirebaseConfig(env=process.env) {
   try {
     const u=new URL(api||"");
     if(u.protocol!=="https:" || u.pathname!=="/" || u.search || u.hash || u.username || u.password ||
-       !["localeats-api-staging-r52d.vercel.app","localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app"].includes(u.hostname))
+       !["localeats-api-staging-r52d.vercel.app","localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app","localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"].includes(u.hostname))
       throw Error("invalid API URL");
   }catch{throw Error("L3-N2 requires an explicit, isolated HTTPS staging API origin");}
   return {
