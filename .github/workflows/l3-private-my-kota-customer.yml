@@ -27,3 +27,35 @@ jobs:
         run: npm run lint
       - name: Ordinary Customer build
         run: npm run build
+      - name: Synthetic direct Vite Preview build with pinned private My-Kota API
+        env:
+          LOCALEATS_STAGING_ONLY: "true"
+          VERCEL_ENV: "preview"
+          VERCEL_GIT_COMMIT_REF: "review/l3-my-kota-private-test-customer"
+          VERCEL_URL: "localeats-customer-staging-r52d-private-ci.vercel.app"
+          VITE_FIREBASE_CONFIG_SOURCE: "environment"
+          VITE_FIREBASE_API_KEY: "synthetic-public-firebase-key"
+          VITE_FIREBASE_AUTH_DOMAIN: "localeats-staging.firebaseapp.com"
+          VITE_FIREBASE_PROJECT_ID: "localeats-staging"
+          VITE_FIREBASE_STORAGE_BUCKET: "localeats-staging.firebasestorage.app"
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "987654321"
+          VITE_FIREBASE_APP_ID: "1:987654321:web:synthetic"
+          VITE_FIREBASE_VAPID_KEY: "synthetic-vapid-public"
+          VITE_PICKUP_ORDERING_ENABLED: "false"
+          VITE_LOCALEATS_API_URL: "https://localeats-api-staging-r52d.vercel.app"
+        run: |
+          npx vite build
+          node --input-type=module -e '
+            import {readFileSync,readdirSync} from "node:fs";
+            import assert from "node:assert/strict";
+            const worker=readFileSync("dist/firebase-messaging-sw.js","utf8");
+            assert.match(worker,/"projectId":"localeats-staging"/);
+            assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
+            const files=readdirSync("dist/assets").filter(x=>x.endsWith(".js"));
+            const compiled=files.map(path=>readFileSync("dist/assets/"+path,"utf8")).join("");
+            assert.ok(compiled.includes("https://localeats-api-staging-r52d-git-54267e-mehey9184-makers-projects.vercel.app"),
+              "Private My-Kota branch must use only the exact approved staging API alias");
+            assert.ok(compiled.includes("https://localeats-customer-staging-r52d-private-ci.vercel.app"),
+              "Private Preview build must compile its own origin");
+          '
+
