@@ -255,6 +255,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -1442,11 +1443,15 @@ export default function App() {
   const canRegisterCustomerPushOnThisOrigin = ():boolean => {
     if (typeof window === "undefined") return false;
     if (["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return true;
-    const stagingOrigin=import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN;
-    return import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
-      import.meta.env.VITE_PICKUP_ORDERING_ENABLED === "false" &&
-      import.meta.env.VITE_FIREBASE_PROJECT_ID !== "localeats-5e26e" &&
-      !!stagingOrigin && stagingOrigin===window.location.origin;
+    return isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    });
   };
 
   // Browser alert consent is independent of the real-order activation gate.

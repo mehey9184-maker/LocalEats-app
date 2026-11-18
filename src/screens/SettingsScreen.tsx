@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { UserProfile } from "../types";
 import {auth, sendIsolatedCustomerPushTest} from "../lib/firebase";
+import {isVerifiedCustomerPushStagingContext} from "../services/customerPushStaging";
 
 interface SettingsScreenProps {
   userProfile: UserProfile;
@@ -162,13 +163,16 @@ export function SettingsScreen({
   onSubscribeToPush,
 }: SettingsScreenProps) {
   const isolatedCustomerPushPreview =
-    typeof window!=="undefined" &&
-    import.meta.env.VITE_FIREBASE_CONFIG_SOURCE==="environment" &&
-    import.meta.env.VITE_PICKUP_ORDERING_ENABLED==="false" &&
-    import.meta.env.VITE_FIREBASE_PROJECT_ID!=="localeats-5e26e" &&
-    !!import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN &&
-    import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN===window.location.origin &&
-    !["localeatssa.co.za","www.localeatssa.co.za"].includes(window.location.hostname);
+    typeof window!=="undefined" && isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    });
+
   const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
   const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
 

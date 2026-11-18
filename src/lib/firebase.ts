@@ -36,6 +36,7 @@ import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "fir
 import { Shop, MenuItem } from "../types";
 import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
+import {isVerifiedCustomerPushStagingContext} from "../services/customerPushStaging";
 
 // Environment-mode staging never falls back to bundled Production Firebase
 // identifiers. Production and existing bundle-mode builds retain their defaults.
@@ -1040,11 +1041,15 @@ export async function registerAndSyncPushToken(userId?: string): Promise<string 
  */
 export async function sendIsolatedCustomerPushTest(userId:string):Promise<boolean> {
   if (typeof window==="undefined" || !userId || auth.currentUser?.uid!==userId) return false;
-  if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE!=="environment" ||
-      import.meta.env.VITE_PICKUP_ORDERING_ENABLED!=="false" ||
-      import.meta.env.VITE_FIREBASE_PROJECT_ID==="localeats-5e26e" ||
-      !import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN ||
-      import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN!==window.location.origin) return false;
+  if (!isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    })) return false;
   let installation:string|null=null;
   try { installation=localStorage.getItem(pickupPushInstallationKey(userId)); } catch {return false;}
   if (!installation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installation)) return false;

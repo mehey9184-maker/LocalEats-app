@@ -5,17 +5,17 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {isolatedStagingFirebaseConfig,injectIsolatedStagingWorker} from "../scripts/l3-n2-staging-fcm.mjs";
 const staging=()=>({
- LOCALEATS_STAGING_ONLY:"true",VITE_FIREBASE_CONFIG_SOURCE:"environment",
+ LOCALEATS_STAGING_ONLY:"true",VERCEL_ENV:"preview",VITE_FIREBASE_CONFIG_SOURCE:"environment",
  VITE_FIREBASE_API_KEY:"test-public-key",
- VITE_FIREBASE_AUTH_DOMAIN:"localeats-fixture-staging.firebaseapp.com",
- VITE_FIREBASE_PROJECT_ID:"localeats-fixture-staging",
- VITE_FIREBASE_STORAGE_BUCKET:"localeats-fixture-staging.appspot.com",
+ VITE_FIREBASE_AUTH_DOMAIN:"localeats-staging.firebaseapp.com",
+ VITE_FIREBASE_PROJECT_ID:"localeats-staging",
+ VITE_FIREBASE_STORAGE_BUCKET:"localeats-staging.appspot.com",
  VITE_FIREBASE_APP_ID:"1:987654321:web:fixture",
  VITE_FIREBASE_MESSAGING_SENDER_ID:"987654321",
  VITE_FIREBASE_VAPID_KEY:"test-staging-vapid-public-key",
  VITE_PICKUP_ORDERING_ENABLED:"false",
- VITE_LOCALEATS_API_URL:"https://staging-api.example.invalid",
- VITE_CUSTOMER_PUSH_STAGING_ORIGIN:"https://customer-staging.example.invalid"
+ VITE_LOCALEATS_API_URL:"https://localeats-api-staging-r52d.vercel.app",
+ VITE_CUSTOMER_PUSH_STAGING_ORIGIN:"https://localeats-customer-staging-r52d.vercel.app"
 });
 test("ordinary production builds are unchanged and do not inject a worker",()=>{
  assert.equal(isolatedStagingFirebaseConfig({}),null);
@@ -31,7 +31,12 @@ test("staging rejects Firebase Production fallback, missing VAPID, incorrect API
  assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_FIREBASE_CONFIG_SOURCE:"bundle"}));
  assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_PICKUP_ORDERING_ENABLED:"true"}));
  assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://localeats-api.vercel.app"}));
- assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://staging-api.example.invalid/path"}));
+ assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VERCEL_ENV:"production"}));
+ assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_FIREBASE_PROJECT_ID:"different-project",VITE_FIREBASE_AUTH_DOMAIN:"different-project.firebaseapp.com"}));
+ assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://production-other-domain.vercel.app"}));
+ assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_CUSTOMER_PUSH_STAGING_ORIGIN:"https://other-project.vercel.app"}));
+
+ assert.throws(()=>isolatedStagingFirebaseConfig({...ok,VITE_LOCALEATS_API_URL:"https://localeats-api-staging-r52d.vercel.app/path"}));
 });
 test("only compiled custom worker is repointed, never the source",()=>{
  const dir=mkdtempSync(join(tmpdir(),"local-fcm-stage-"));
@@ -41,7 +46,7 @@ test("only compiled custom worker is repointed, never the source",()=>{
   writeFileSync(worker,original);
   assert.equal(injectIsolatedStagingWorker(staging(),worker),true);
   const compiled=readFileSync(worker,"utf8");
-  assert.match(compiled,/"projectId":"localeats-fixture-staging"/);
+  assert.match(compiled,/"projectId":"localeats-staging"/);
   assert.doesNotMatch(compiled,/"projectId":"localeats-5e26e"/);
   assert.match(compiled,/notificationclick/);
  }finally{rmSync(dir,{recursive:true,force:true});}
