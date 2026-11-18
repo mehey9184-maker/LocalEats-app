@@ -10,13 +10,23 @@ self.addEventListener("install",()=>{void self.skipWaiting();});
 self.addEventListener("activate",event=>event.waitUntil(self.clients.claim()));
 void isSupported().then(supported=>{
  if(!supported)return;
- const app=initializeApp({
+ const stage=import.meta.env.VITE_FIREBASE_CONFIG_SOURCE==="environment";
+ const pushFirebaseConfig=stage ? {
+  apiKey:import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain:import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  messagingSenderId:import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId:import.meta.env.VITE_FIREBASE_APP_ID || "",
+ } : {
   apiKey:import.meta.env.VITE_FIREBASE_API_KEY || config.apiKey,
   authDomain:import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || config.authDomain,
   projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID || config.projectId,
   messagingSenderId:import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || config.messagingSenderId,
   appId:import.meta.env.VITE_FIREBASE_APP_ID || config.appId,
- });
+ };
+ if(stage && Object.values(pushFirebaseConfig).some(v=>!v))
+  throw Error("Staging PWA notification worker requires complete Firebase configuration.");
+ const app=initializeApp(pushFirebaseConfig);
  onBackgroundMessage(getMessaging(app),payload=>{
   if(payload.data?.type!=="pickup_ready" || !payload.data.event_id)return;
   return self.registration.showNotification("LocalEats pickup update",{

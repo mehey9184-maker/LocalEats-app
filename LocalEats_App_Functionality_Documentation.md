@@ -174,3 +174,28 @@ The existing Super Admin approval workflow, Merchant effective availability, and
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## L3-N1 — Customer Firebase diagnostic receiver (2026-11-18, DRAFT ONLY)
+- Customer foreground Firebase listener distinguishes data-only `customer_push_test` from pickup-ready: a fixed test toast says a test reached the open app; it does not use untrusted message copy or mutate any order.
+- The existing dedicated FCM background worker displays a fixed, non-PII `LocalEats notification test` for valid test UUIDs, returns its `showNotification` promise, and preserves independent real `pickup_ready` behavior. Clicking a test never marks Ready or Collected. Orders / reconnect polling remain authoritative.
+- No customer-facing test button was restored; the owner-approved public Settings simplification is preserved.
+- Shared API diagnostic is in a separate Merchant/API draft branch: verified owned staging installation, exact test UID allowlist and distributed rate limit proposed in a **staging-only unapplied SQL draft**. This Customer code alone does NOT send a cloud test or prove device delivery.
+- **Blocker before physical-device test:** the customer worker currently contains the existing production Firebase app identifiers; staging Firebase app/worker parity and staging API/database isolation must be independently verified before any staging FCM send. Normal customer token registration is Production-hostname guarded. No Production deploy, merge, Firebase rules, real orders or payment writes.
+
+
+## L3-N2 — Isolated staging Firebase build and device test gate (2026-11-18, review only)
+- Independent read-only Vercel/Supabase audit: `localeats-customer-staging-r52d` and `localeats-api-staging-r52d` have matching, non-Production Firebase project identifiers. Their Supabase project is `LocalEats-Profile-Staging`, currently INACTIVE, and the Customer staging environment lacks a dedicated `VITE_FIREBASE_VAPID_KEY`; no cloud notification test can be considered ready.
+- In environment-mode builds `src/lib/firebase.ts` and root PWA worker `src/sw.ts` use the supplied Firebase values exclusively; missing values are errors, not fallback to the original Production bundle. All ordinary existing bundle-mode builds remain unchanged.
+- The Customer `npm run build` preflight (`scripts/l3-n2-staging-fcm.mjs`) checks that `LOCALEATS_STAGING_ONLY=true` builds use a non-Production Firebase project, matching Firebase auth domain, Web Push public VAPID key, disabled pickup ordering, exact HTTPS staging Customer origin and an explicit non-Production HTTPS API. It patches **only the emitted** `dist/firebase-messaging-sw.js` with staging's PUBLIC Firebase identifiers; tracked Production worker source remains untouched.
+- A Customer in ordinary Preview cannot register a device; only production Customer hostnames OR an exact, opt-in `VITE_CUSTOMER_PUSH_STAGING_ORIGIN` matched to the live page in Firebase environment mode can register. For staging, the deployed build must also have `LOCALEATS_STAGING_ONLY=true`; a generic Preview is not equivalent to isolation.
+- Synthetic tests validate fail-closed missing VAPID, forbidden Production Firebase/API, unmatched staging origins, source preservation and test-message receipt. No staging configuration values, FCM tokens, service-role credentials or Firebase private keys are copied into source.
+- **Do not turn on anything yet.** The staging Supabase project must be resumed and independently checked; supply its own Web Push key and exact origin in protected Vercel Preview settings, deploy reviewed Customer/API staging commits to separately isolated projects, verify supported browser permissions, then run authenticated owned-device test at 3 states: foreground, minimized/background, reconnect/closed tab. HTTP 202 only proves Firebase provider acceptance.
+- All real order/collection/payment activation and Production changes remain gated. Existing L3 mobile login owner acceptance remains separate.
+
+
+### L3-N2 staging-only owner test control
+- An additive `Staging device check` appears in Customer Settings **only** when the current HTTPS origin equals `VITE_CUSTOMER_PUSH_STAGING_ORIGIN`, environment-mode Firebase is selected, the project is not known Production and real ordering stays disabled. Public Production and generic Preview Settings remain unchanged.
+- The `Send staging notification test` button requires an explicit click, granted browser permission, matching current Firebase account and persisted installation UUID; the server independently checks same-account active subscription, staging allowlist, distributed quota and stage-only Firebase project. It displays only provider acceptance/failure, never claims Windows banner delivery.
+- CI includes static registration/permission safety tests and a **synthetic staging build with fictitious PUBLIC Firebase settings** to verify both compiled push-worker and PWA-worker projects. This test does not call Firebase, Supabase or Vercel and does not create accounts/orders.
+- This button cannot be exercised on the inactive staging database yet; no cloud test was sent, and staging deployment must remain separate from any Production merge.

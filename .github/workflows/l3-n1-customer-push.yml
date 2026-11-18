@@ -1,0 +1,60 @@
+name: L3-N1 Customer notification receipt (no cloud sends)
+on:
+  pull_request:
+    paths:
+      - 'public/firebase-messaging-sw.js'
+      - 'src/App.tsx'
+      - 'tests/customer-l3-n1-push.test.mjs'
+      - 'tests/l3-n2-firebase-stage.test.mjs'
+      - 'tests/l3-n2-customer-device-check.test.mjs'
+      - 'src/screens/SettingsScreen.tsx'
+      - 'src/pickup/client.ts'
+      - 'scripts/l3-n2-staging-fcm.mjs'
+      - 'src/lib/firebase.ts'
+      - 'src/sw.ts'
+      - 'package.json'
+      - '.github/workflows/l3-n1-customer-push.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/customer-push-p1.test.mjs tests/customer-l3-n1-push.test.mjs tests/l3-n2-firebase-stage.test.mjs tests/l3-n2-customer-device-check.test.mjs
+      - run: npm run lint
+      - run: npm run build
+      - name: Synthetic isolated staging build (public fake config; no Firebase cloud)
+        env:
+          LOCALEATS_STAGING_ONLY: "true"
+          VITE_FIREBASE_CONFIG_SOURCE: "environment"
+          VITE_FIREBASE_API_KEY: "synthetic-public-firebase-key"
+          VITE_FIREBASE_AUTH_DOMAIN: "localeats-staging-fixture.firebaseapp.com"
+          VITE_FIREBASE_PROJECT_ID: "localeats-staging-fixture"
+          VITE_FIREBASE_STORAGE_BUCKET: "localeats-staging-fixture.appspot.com"
+          VITE_FIREBASE_MESSAGING_SENDER_ID: "987654321"
+          VITE_FIREBASE_APP_ID: "1:987654321:web:synthetic"
+          VITE_FIREBASE_VAPID_KEY: "synthetic-vapid-public"
+          VITE_PICKUP_ORDERING_ENABLED: "false"
+          VITE_LOCALEATS_API_URL: "https://api-fixture.example.invalid"
+          VITE_CUSTOMER_PUSH_STAGING_ORIGIN: "https://customer-fixture.example.invalid"
+        run: |
+          npm run build
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import assert from "node:assert/strict";
+            const worker=readFileSync("dist/firebase-messaging-sw.js","utf8");
+            const pwa=readFileSync("dist/sw.js","utf8");
+            assert.match(worker,/"projectId":"localeats-staging-fixture"/);
+            assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
+            assert.match(pwa,/localeats-staging-fixture/);
+            assert.match(worker,/customer_push_test/);
+          '
