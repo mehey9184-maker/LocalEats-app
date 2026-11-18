@@ -174,3 +174,11 @@ The existing Super Admin approval workflow, Merchant effective availability, and
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## L3-N1 — Customer Firebase diagnostic receiver (2026-11-18, DRAFT ONLY)
+- Customer foreground Firebase listener distinguishes data-only `customer_push_test` from pickup-ready: a fixed test toast says a test reached the open app; it does not use untrusted message copy or mutate any order.
+- The existing dedicated FCM background worker displays a fixed, non-PII `LocalEats notification test` for valid test UUIDs, returns its `showNotification` promise, and preserves independent real `pickup_ready` behavior. Clicking a test never marks Ready or Collected. Orders / reconnect polling remain authoritative.
+- No customer-facing test button was restored; the owner-approved public Settings simplification is preserved.
+- Shared API diagnostic is in a separate Merchant/API draft branch: verified owned staging installation, exact test UID allowlist and distributed rate limit proposed in a **staging-only unapplied SQL draft**. This Customer code alone does NOT send a cloud test or prove device delivery.
+- **Blocker before physical-device test:** the customer worker currently contains the existing production Firebase app identifiers; staging Firebase app/worker parity and staging API/database isolation must be independently verified before any staging FCM send. Normal customer token registration is Production-hostname guarded. No Production deploy, merge, Firebase rules, real orders or payment writes.
