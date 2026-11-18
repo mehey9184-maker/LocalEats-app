@@ -1,0 +1,29 @@
+name: L3 private My-Kota Customer staging safeguards
+on:
+  pull_request:
+    paths:
+      - 'src/services/privateMyKota*'
+      - 'src/App.tsx'
+      - 'src/services/customerPickup.ts'
+      - 'vite.config.ts'
+      - 'tests/l3-private-my-kota.test.mjs'
+      - '.github/workflows/l3-private-my-kota-customer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-shop-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Synthetic account/session/cache and no-order boundaries
+        run: node --experimental-strip-types --test tests/l3-private-my-kota.test.mjs tests/customer-nearby-cache-main.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Ordinary Customer build
+        run: npm run build
