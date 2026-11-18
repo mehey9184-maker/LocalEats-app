@@ -82,7 +82,7 @@ export function PopiaLegalDrawer({ onConsentChange }: PopiaLegalDrawerProps) {
           id="popia-legal-bar"
           role="region"
           aria-label="Privacy notice"
-          className="fixed bottom-0 left-0 right-0 z-[999] bg-slate-950/95 backdrop-blur-md text-slate-100 py-3.5 px-6 text-xs flex flex-wrap items-center justify-between gap-3 border-t border-orange-500/20 tracking-wide select-none shadow-xl"
+          className="fixed bottom-0 left-0 right-0 z-[999] max-h-[60dvh] overflow-y-auto overscroll-contain bg-slate-950/95 backdrop-blur-md text-slate-100 py-3.5 px-6 text-xs flex flex-wrap items-center justify-between gap-3 border-t border-orange-500/20 tracking-wide select-none shadow-xl"
         >
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <span className="inline-flex items-center justify-center bg-orange-500/20 text-orange-400 p-1.5 rounded-full shrink-0 animate-pulse">
