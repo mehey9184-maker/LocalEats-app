@@ -13,6 +13,7 @@ const stages=[{status:'pending',label:'Pending',icon:Clock},{status:'preparing',
  {status:'ready_for_pickup',label:'Ready',icon:PackageCheck},{status:'collected',label:'Collected',icon:Check}];
 const descriptions:Record<string,string>={pending:'Waiting for the shop to accept your pickup.',
  preparing:'The shop has accepted your order and is preparing your food.',ready_for_pickup:'Your order is ready. Collect it at the shop.'};
+const actionFeedback='focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 motion-safe:transition-transform motion-safe:duration-150 motion-safe:enabled:active:scale-[0.97]';
 
 export function PickupTrackingScreen(props:Props){
  const {signedIn,orders,error,refreshing,shops,changesEnabled,onBack,onRetry,onHistory,onSignIn,onBrowse}=props;
@@ -29,9 +30,9 @@ export function PickupTrackingScreen(props:Props){
  };
  return <div className="min-h-screen bg-slate-50 dark:bg-slate-900 pb-32">
   <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3">
-   <button type="button" onClick={onBack} aria-label="Back" className="min-h-11 min-w-11 flex items-center justify-center rounded-xl"><ArrowLeft className="w-5 h-5"/></button>
+   <button type="button" onClick={onBack} aria-label="Back" className={`min-h-11 min-w-11 flex items-center justify-center rounded-xl ${actionFeedback}`}><ArrowLeft className="w-5 h-5" aria-hidden="true"/></button>
    <h1 className="flex-1 text-lg font-black text-slate-900 dark:text-white">Track pickup</h1>
-   <button type="button" onClick={onRetry} disabled={!signedIn||refreshing} aria-label="Refresh pickup status" className="min-h-11 min-w-11 flex items-center justify-center rounded-xl disabled:opacity-50"><RefreshCw className={`w-5 h-5 ${refreshing?'motion-safe:animate-spin':''}`}/></button>
+   <button type="button" onClick={onRetry} disabled={!signedIn||refreshing} aria-label={refreshing?'Refreshing pickup status':'Refresh pickup status'} className={`min-h-11 min-w-11 flex items-center justify-center rounded-xl disabled:opacity-50 ${actionFeedback}`}><RefreshCw aria-hidden="true" className={`w-5 h-5 ${refreshing?'motion-safe:animate-spin':''}`}/></button>
   </header>
   <main className="max-w-2xl mx-auto p-4 space-y-4">
    {notice&&<p role="status" className="rounded-2xl bg-emerald-50 p-4 text-sm text-emerald-900">{notice}</p>}
@@ -45,19 +46,24 @@ export function PickupTrackingScreen(props:Props){
     const pending=props.hasPendingCancellation(order),canCancel=order.status==='pending'||pending;
     return <article key={order.id} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 shadow-sm space-y-4">
      <div className="flex justify-between gap-3"><div><h2 className="font-black text-slate-900 dark:text-white">{shop?.name||`Store #${order.shop_id}`}</h2><p className="text-xs text-slate-500 mt-1">Order #{order.id.slice(0,8)}</p></div><strong className="whitespace-nowrap">{typeof order.total_price==='number'&&Number.isFinite(order.total_price)?`R ${order.total_price.toFixed(2)}`:'Total unavailable'}</strong></div>
-     <div className="rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-950/30 p-4"><h3 className="font-black text-orange-900 dark:text-orange-200">{order.status==='ready_for_pickup'?'Ready for pickup':stages[index]?.label||'Status unavailable'}</h3><p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{descriptions[order.status]||'Refresh to verify the current pickup status.'}</p></div>
+     <div role="status" aria-atomic="true" className="rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-950/30 p-4">
+      <div key={order.status} className="pickup-status-update">
+       <h3 className="font-black text-orange-900 dark:text-orange-200">{order.status==='ready_for_pickup'?'Ready for pickup':stages[index]?.label||'Status unavailable'}</h3>
+       <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{descriptions[order.status]||'Refresh to verify the current pickup status.'}</p>
+      </div>
+     </div>
      {index>=0&&<ol aria-label="Pickup progress" className="grid grid-cols-4 gap-1">{stages.map((stage,n)=>{const Icon=stage.icon;return <li key={stage.status} aria-current={n===index?'step':undefined} className={`text-center text-[11px] font-bold ${n<=index?'text-orange-700 dark:text-orange-300':'text-slate-500'}`}><span className={`w-9 h-9 mx-auto mb-2 rounded-full flex items-center justify-center ${n<=index?'bg-orange-100 dark:bg-orange-950':'bg-slate-100 dark:bg-slate-700'}`}><Icon className="w-4 h-4"/></span>{stage.label}</li>;})}</ol>}
      <p className="text-sm font-semibold">{order.payment_status==='paid'?'Paid at shop':order.payment_status==='unpaid'?'Unpaid · Pay at shop':'Payment status unavailable'}</p>
      <p className="text-xs text-slate-500">Wait for Ready before collecting. The shop confirms payment and food handover separately.</p>
      {Array.isArray(order.items)&&<p className="text-sm rounded-2xl bg-slate-50 dark:bg-slate-900 p-3">{order.items.map(item=>`${item.quantity} × ${item.name}`).join(', ')}</p>}
-     {canCancel&&(editing!==order.id?<button type="button" onClick={()=>{setEditing(order.id);setReason('');setActionError('');}} disabled={!changesEnabled||error||refreshing||!!busy} className="min-h-11 px-4 rounded-xl border border-rose-200 text-rose-700 font-semibold disabled:opacity-50">{pending?'Retry cancellation':'Cancel pickup'}</button>
+     {canCancel&&(editing!==order.id?<button type="button" onClick={()=>{setEditing(order.id);setReason('');setActionError('');}} disabled={!changesEnabled||error||refreshing||!!busy} className={`min-h-11 px-4 rounded-xl border border-rose-200 text-rose-700 font-semibold disabled:opacity-50 ${actionFeedback}`}>{pending?'Retry cancellation':'Cancel pickup'}</button>
       :<form onSubmit={event=>{event.preventDefault();void cancel(order);}} className="space-y-3 border-t pt-4">
        {pending?<p className="text-sm">Retry uses your original cancellation request.</p>:<label className="block text-sm font-semibold">Cancellation reason<textarea value={reason} onChange={event=>setReason(event.target.value)} maxLength={500} required className="mt-2 w-full min-h-24 border border-slate-300 rounded-xl p-3 bg-transparent"/></label>}
-       <div className="flex flex-wrap gap-2"><button type="submit" disabled={!!busy||error||refreshing||!changesEnabled||(!pending&&!reason.trim())} className="min-h-11 px-4 bg-rose-700 text-white rounded-xl disabled:opacity-50">{busy===order.id?'Confirming cancellation…':pending?'Retry cancellation':'Confirm cancellation'}</button><button type="button" onClick={()=>setEditing(null)} disabled={!!busy} className="min-h-11 px-4 border rounded-xl">Keep order</button></div>
+       <div className="flex flex-wrap gap-2"><button type="submit" disabled={!!busy||error||refreshing||!changesEnabled||(!pending&&!reason.trim())} className={`min-h-11 px-4 bg-rose-700 text-white rounded-xl disabled:opacity-50 ${actionFeedback}`}>{busy===order.id?'Confirming cancellation…':pending?'Retry cancellation':'Confirm cancellation'}</button><button type="button" onClick={()=>setEditing(null)} disabled={!!busy} className={`min-h-11 px-4 border rounded-xl ${actionFeedback}`}>Keep order</button></div>
       </form>)}
     </article>;
    })}
-   {signedIn&&<button type="button" onClick={onHistory} className="min-h-11 px-4 rounded-xl border border-slate-300 text-sm font-bold">View order history</button>}
+   {signedIn&&<button type="button" onClick={onHistory} className={`min-h-11 px-4 rounded-xl border border-slate-300 text-sm font-bold ${actionFeedback}`}>View order history</button>}
   </main>
  </div>;
 }

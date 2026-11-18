@@ -126,6 +126,23 @@ html:has(#popia-legal-bar) {
   scroll-padding-bottom: calc(var(--localeats-popia-notice-height, 11rem) + 1rem);
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .pickup-status-update {
+    animation: pickup-status-enter 180ms ease-out both;
+  }
+}
+
+@keyframes pickup-status-enter {
+  from {
+    opacity: 0.65;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Mobile-first responsive tweaks for small viewport devices (<380px) */
 @media (max-width: 380px) {
   /* Keep the browser's normal 16px root size even on very small phones.
