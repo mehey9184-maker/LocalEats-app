@@ -1,12 +1,15 @@
-import {useRef,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {ArrowLeft,RefreshCw,ShoppingBag,Check,Clock,ChefHat,PackageCheck} from 'lucide-react';
 import type {PickupOrder} from '../pickup/client';
 import type {Shop} from '../types';
+import {requireRealLocation} from '../services/pickupMapping';
 
 interface Props {
  signedIn:boolean; orders:PickupOrder[]|null; error:boolean; refreshing:boolean; shops:Shop[];
  changesEnabled:boolean; hasPendingCancellation:(order:PickupOrder)=>boolean;
  onCancel:(order:PickupOrder,reason:string)=>Promise<unknown>;
+ onReadyReminder?:(orderId:string,action:'snooze'|'acknowledge')=>void;
+ focusedOrderId?:string;
  onBack:()=>void; onRetry:()=>void; onHistory:()=>void; onSignIn:()=>void; onBrowse:()=>void;
 }
 const stages=[{status:'pending',label:'Pending',icon:Clock},{status:'preparing',label:'Preparing',icon:ChefHat},
@@ -20,7 +23,12 @@ export function PickupTrackingScreen(props:Props){
  const [editing,setEditing]=useState<string|null>(null),[reason,setReason]=useState('');
  const [busy,setBusy]=useState<string|null>(null),[notice,setNotice]=useState(''),[actionError,setActionError]=useState('');
  const locked=useRef(false);
+ const focusedOrder=useRef<HTMLElement|null>(null);
  const active=orders?.filter(order=>order.delivery_type==='collection'&&!['collected','cancelled'].includes(order.status))??[];
+ const focusAvailable=active.some(order=>order.id===props.focusedOrderId);
+ useEffect(()=>{
+  if(focusAvailable) focusedOrder.current?.focus();
+ },[props.focusedOrderId,focusAvailable]);
  const cancel=async(order:PickupOrder)=>{
   if(locked.current||error||refreshing||!changesEnabled)return;
   locked.current=true;setBusy(order.id);setActionError('');setNotice('');
@@ -44,7 +52,15 @@ export function PickupTrackingScreen(props:Props){
    :active.map(order=>{
     const shop=shops.find(s=>s.id===order.shop_id),index=stages.findIndex(s=>s.status===order.status);
     const pending=props.hasPendingCancellation(order),canCancel=order.status==='pending'||pending;
-    return <article key={order.id} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 shadow-sm space-y-4">
+    let directions: string | undefined;
+    if (shop && typeof shop.latitude==='number' && typeof shop.longitude==='number') {
+     try {
+      const {lat,lng}=requireRealLocation({lat:shop.latitude,lng:shop.longitude});
+      const params=new URLSearchParams({api:'1',destination:`${lat},${lng}`});
+      directions=`https://www.google.com/maps/dir/?${params}`;
+     } catch { /* A shop without valid published coordinates has no directions action. */ }
+    }
+    return <article key={order.id} ref={order.id===props.focusedOrderId?focusedOrder:undefined} tabIndex={-1} className="scroll-mt-20 rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 shadow-sm space-y-4">
      <div className="flex justify-between gap-3"><div><h2 className="font-black text-slate-900 dark:text-white">{shop?.name||`Store #${order.shop_id}`}</h2><p className="text-xs text-slate-500 mt-1">Order #{order.id.slice(0,8)}</p></div><strong className="whitespace-nowrap">{typeof order.total_price==='number'&&Number.isFinite(order.total_price)?`R ${order.total_price.toFixed(2)}`:'Total unavailable'}</strong></div>
      <div role="status" aria-atomic="true" className="rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-950/30 p-4">
       <div key={order.status} className="pickup-status-update">
@@ -55,6 +71,18 @@ export function PickupTrackingScreen(props:Props){
      {index>=0&&<ol aria-label="Pickup progress" className="grid grid-cols-4 gap-1">{stages.map((stage,n)=>{const Icon=stage.icon;return <li key={stage.status} aria-current={n===index?'step':undefined} className={`text-center text-[11px] font-bold ${n<=index?'text-orange-700 dark:text-orange-300':'text-slate-500'}`}><span className={`w-9 h-9 mx-auto mb-2 rounded-full flex items-center justify-center ${n<=index?'bg-orange-100 dark:bg-orange-950':'bg-slate-100 dark:bg-slate-700'}`}><Icon className="w-4 h-4"/></span>{stage.label}</li>;})}</ol>}
      <p className="text-sm font-semibold">{order.payment_status==='paid'?'Paid at shop':order.payment_status==='unpaid'?'Unpaid · Pay at shop':'Payment status unavailable'}</p>
      <p className="text-xs text-slate-500">Wait for Ready before collecting. The shop confirms payment and food handover separately.</p>
+     {order.status==='ready_for_pickup' && (directions || props.onReadyReminder) && (
+      <div className="flex flex-wrap items-center gap-2">
+       {directions && <a href={directions} target="_blank" rel="noopener noreferrer"
+        className={`inline-flex min-h-11 items-center px-3 rounded-xl border text-sm font-semibold ${actionFeedback}`}>Get directions</a>}
+       {props.onReadyReminder && <>
+        <button type="button" disabled={error||refreshing} onClick={()=>props.onReadyReminder?.(order.id,'acknowledge')}
+         className={`min-h-11 px-3 rounded-xl border text-sm font-semibold disabled:opacity-50 ${actionFeedback}`}>Got it</button>
+        <button type="button" disabled={error||refreshing} onClick={()=>props.onReadyReminder?.(order.id,'snooze')}
+         className={`min-h-11 px-3 rounded-xl border text-sm font-semibold disabled:opacity-50 ${actionFeedback}`}>Remind me in 10 min</button>
+       </>}
+      </div>
+     )}
      {Array.isArray(order.items)&&<p className="text-sm rounded-2xl bg-slate-50 dark:bg-slate-900 p-3">{order.items.map(item=>`${item.quantity} × ${item.name}`).join(', ')}</p>}
      {canCancel&&(editing!==order.id?<button type="button" onClick={()=>{setEditing(order.id);setReason('');setActionError('');}} disabled={!changesEnabled||error||refreshing||!!busy} className={`min-h-11 px-4 rounded-xl border border-rose-200 text-rose-700 font-semibold disabled:opacity-50 ${actionFeedback}`}>{pending?'Retry cancellation':'Cancel pickup'}</button>
       :<form onSubmit={event=>{event.preventDefault();void cancel(order);}} className="space-y-3 border-t pt-4">
