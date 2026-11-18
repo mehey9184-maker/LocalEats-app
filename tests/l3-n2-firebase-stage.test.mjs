@@ -14,7 +14,8 @@ const staging=()=>({
  VITE_FIREBASE_MESSAGING_SENDER_ID:"987654321",
  VITE_FIREBASE_VAPID_KEY:"test-staging-vapid-public-key",
  VITE_PICKUP_ORDERING_ENABLED:"false",
- VITE_LOCALEATS_API_URL:"https://staging-api.example.invalid"
+ VITE_LOCALEATS_API_URL:"https://staging-api.example.invalid",
+ VITE_CUSTOMER_PUSH_STAGING_ORIGIN:"https://customer-staging.example.invalid"
 });
 test("ordinary production builds are unchanged and do not inject a worker",()=>{
  assert.equal(isolatedStagingFirebaseConfig({}),null);
