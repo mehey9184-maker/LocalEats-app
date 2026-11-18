@@ -1031,3 +1031,26 @@ export async function registerAndSyncPushToken(userId?: string): Promise<string 
   if (!token) return null;
   return await syncPushTokenToSupabase(userId, token) ? token : null;
 }
+
+
+/**
+ * Manually triggered staging-device diagnostic. The server performs the final
+ * Firebase UID / installation / quota checks. "true" means FCM accepted,
+ * NOT that the operating system displayed a notification.
+ */
+export async function sendIsolatedCustomerPushTest(userId:string):Promise<boolean> {
+  if (typeof window==="undefined" || !userId || auth.currentUser?.uid!==userId) return false;
+  if (import.meta.env.VITE_FIREBASE_CONFIG_SOURCE!=="environment" ||
+      import.meta.env.VITE_PICKUP_ORDERING_ENABLED!=="false" ||
+      import.meta.env.VITE_FIREBASE_PROJECT_ID==="localeats-5e26e" ||
+      !import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN ||
+      import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN!==window.location.origin) return false;
+  let installation:string|null=null;
+  try { installation=localStorage.getItem(pickupPushInstallationKey(userId)); } catch {return false;}
+  if (!installation || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(installation)) return false;
+  try {
+    const {customerPickupApi}=await import("../services/customerPickup");
+    const result=await customerPickupApi.customerDeviceTest(installation);
+    return result?.success===true;
+  } catch {return false;}
+}
