@@ -1,5 +1,6 @@
 import {readFileSync,writeFileSync} from "node:fs";
 import {resolve} from "node:path";
+import {fileURLToPath} from "node:url";
 
 /**
  * Runs in the Vercel build process; no secrets are read from a live service.
@@ -23,6 +24,13 @@ export function isolatedStagingFirebaseConfig(env=process.env) {
     throw Error("L3-N2 staging requires its own Firebase Web Push VAPID public key");
   if(env.VITE_PICKUP_ORDERING_ENABLED!=="false")
     throw Error("L3-N2 staging must keep Customer ordering disabled");
+  const explicitOrigin=env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN;
+  try {
+    const o=new URL(explicitOrigin||"");
+    if(o.protocol!=="https:" || o.origin!==explicitOrigin ||
+       o.hostname==="localeatssa.co.za" || o.hostname==="www.localeatssa.co.za")
+      throw Error("bad staging origin");
+  }catch{throw Error("L3-N2 requires exact HTTPS Customer staging origin");}
   const api=env.VITE_LOCALEATS_API_URL;
   try {
     const u=new URL(api||"");
@@ -50,7 +58,7 @@ export function injectIsolatedStagingWorker(env=process.env,file="dist/firebase-
   writeFileSync(path,next);
   return true;
 }
-if(process.argv[1] && resolve(process.argv[1])===resolve(new URL(import.meta.url).pathname)) {
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   if(process.argv.includes("--check")) isolatedStagingFirebaseConfig();
   else if(process.argv.includes("--inject")) injectIsolatedStagingWorker();
   else throw Error("Use --check or --inject");
