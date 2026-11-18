@@ -37,7 +37,17 @@ import { Shop, MenuItem } from "../types";
 import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
 
-export const firebaseConfig = {
+// Environment-mode staging never falls back to bundled Production Firebase
+// identifiers. Production and existing bundle-mode builds retain their defaults.
+const environmentFirebaseConfig = import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment";
+export const firebaseConfig = environmentFirebaseConfig ? {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+} : {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigJson.apiKey || "",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigJson.authDomain || "localeats-5e26e.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigJson.projectId || "localeats-5e26e",
@@ -45,8 +55,12 @@ export const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigJson.messagingSenderId || "281496568360",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigJson.appId || "",
 };
-
-export const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)";
+if (environmentFirebaseConfig && Object.values(firebaseConfig).some(v=>!v)) {
+  throw Error("Staging Firebase configuration is incomplete.");
+}
+export const firestoreDatabaseId = environmentFirebaseConfig
+  ? (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "(default)")
+  : (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigJson.firestoreDatabaseId || "(default)");
 
 let appInstance: FirebaseApp | null = null;
 let firestoreInstance: Firestore | null = null;
