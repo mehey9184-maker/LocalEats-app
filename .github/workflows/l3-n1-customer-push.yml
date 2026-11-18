@@ -1,0 +1,26 @@
+name: L3-N1 Customer notification receipt (no cloud sends)
+on:
+  pull_request:
+    paths:
+      - 'public/firebase-messaging-sw.js'
+      - 'src/App.tsx'
+      - 'tests/customer-l3-n1-push.test.mjs'
+      - '.github/workflows/l3-n1-customer-push.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/customer-push-p1.test.mjs tests/customer-l3-n1-push.test.mjs
+      - run: npm run lint
+      - run: npm run build
