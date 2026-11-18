@@ -1436,6 +1436,19 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
+  // Production notification registration is unchanged. A staging device is
+  // allowed ONLY at an explicitly configured isolated Customer Preview origin;
+  // generic PR Previews still cannot register against a shared pickup API.
+  const canRegisterCustomerPushOnThisOrigin = ():boolean => {
+    if (typeof window === "undefined") return false;
+    if (["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return true;
+    const stagingOrigin=import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN;
+    return import.meta.env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
+      import.meta.env.VITE_PICKUP_ORDERING_ENABLED === "false" &&
+      import.meta.env.VITE_FIREBASE_PROJECT_ID !== "localeats-5e26e" &&
+      !!stagingOrigin && stagingOrigin===window.location.origin;
+  };
+
   // Browser alert consent is independent of the real-order activation gate.
   // Request permission only after a click. Preview never registers its device
   // token with the Production pickup API; Orders is always the status fallback.
@@ -1455,8 +1468,8 @@ export default function App() {
             : "Notifications not enabled. You can turn them on later.");
           return false;
         }
-        if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) {
-          toast.info("Browser permission allowed for Preview. Live pickup alerts use the Production site.");
+        if (!canRegisterCustomerPushOnThisOrigin()) {
+          toast.info("Browser permission allowed, but this Preview is not connected to an isolated notification test service.");
           return false;
         }
         const uid = customUserId || session?.user?.id;
@@ -1660,7 +1673,7 @@ export default function App() {
   useEffect(() => {
     const uid = session?.user?.id;
     if (!uid || typeof window === "undefined" || typeof Notification === "undefined") return;
-    if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return;
+    if (!canRegisterCustomerPushOnThisOrigin()) return;
     let stopped = false;
     let inFlight = false;
     let lastAttempt = 0;
