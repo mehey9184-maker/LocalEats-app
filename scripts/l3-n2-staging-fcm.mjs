@@ -27,7 +27,11 @@ export function isolatedStagingFirebaseConfig(env=process.env) {
     throw Error("L3-N2 staging requires its own Firebase Web Push VAPID public key");
   if(env.VITE_PICKUP_ORDERING_ENABLED!=="false")
     throw Error("L3-N2 staging must keep Customer ordering disabled");
-  const explicitOrigin=env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN;
+  // Vercel sets VERCEL_URL for the actual immutable Preview deployment.
+  // Prefer that URL over a stale manually configured origin, and reject any
+  // hostname not belonging to our dedicated Customer staging Vercel project.
+  const explicitOrigin=env.VERCEL_URL
+    ? "https://"+env.VERCEL_URL : env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN;
   try {
     const o=new URL(explicitOrigin||"");
     if(o.protocol!=="https:" || o.origin!==explicitOrigin ||
