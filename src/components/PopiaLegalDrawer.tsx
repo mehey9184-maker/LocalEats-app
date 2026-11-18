@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   ShieldAlert, 
   X, 
@@ -19,6 +19,7 @@ interface PopiaLegalDrawerProps {
 
 export function PopiaLegalDrawer({ onConsentChange }: PopiaLegalDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const noticeRef = useRef<HTMLDivElement>(null);
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
   const [activeSection, setActiveSection] = useState<"privacy" | "culture" | "rider" | "merchant" | "safeguards">("privacy");
 
@@ -34,6 +35,30 @@ export function PopiaLegalDrawer({ onConsentChange }: PopiaLegalDrawerProps) {
       console.warn("Storage access not available:", e);
     }
   }, [onConsentChange]);
+
+  // The legal notice wraps to different heights on 320px phones, landscape
+  // and enlarged-text screens. Expose its real height to the welcome page so
+  // login/guest actions can scroll clear of it without needing consent first.
+  useEffect(() => {
+    if (hasAcknowledged) return;
+    const notice = noticeRef.current;
+    if (!notice) return;
+    const update = () => {
+      const height = Math.ceil(notice.getBoundingClientRect().height);
+      if (height > 0) {
+        document.documentElement.style.setProperty("--localeats-popia-notice-height", `${height}px`);
+      }
+    };
+    update();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    observer?.observe(notice);
+    window.addEventListener("resize", update, { passive: true });
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+      document.documentElement.style.removeProperty("--localeats-popia-notice-height");
+    };
+  }, [hasAcknowledged]);
 
   const handleAcknowledge = () => {
     try {
@@ -52,8 +77,11 @@ export function PopiaLegalDrawer({ onConsentChange }: PopiaLegalDrawerProps) {
     <>
       {/* Persistent Bottom Legal Compliance Bar - Glass-morphic Deep Teal */}
       {!hasAcknowledged && (
-        <div 
+        <div
+          ref={noticeRef}
           id="popia-legal-bar"
+          role="region"
+          aria-label="Privacy notice"
           className="fixed bottom-0 left-0 right-0 z-[999] bg-slate-950/95 backdrop-blur-md text-slate-100 py-3.5 px-6 text-xs flex flex-wrap items-center justify-between gap-3 border-t border-orange-500/20 tracking-wide select-none shadow-xl"
         >
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
