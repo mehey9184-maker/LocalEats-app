@@ -4,6 +4,8 @@ The Customer consent banner and its preferences describe the current pickup expe
 
 Pickup tracking gives keyboard focus and press feedback on its primary controls. A changed, server-verified pickup status appears in the same card with a short motion cue and a screen-reader announcement. Reduced motion shows the new status directly, and refreshing still keeps the last verified result visible.
 
+The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
+
 ## Overview
 LocalEats is a comprehensive food discovery and ordering application for local legendary Kota joints, featuring user authentication, profile setup, smart dispatch, and a seamless checkout experience with real-time live map tracking.
 
