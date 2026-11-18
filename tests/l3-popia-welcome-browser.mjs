@@ -55,6 +55,21 @@ try {
     assert.equal(before.consent,null,"First visit must not auto-accept POPIA");
     assert.equal(before.horizontalOverflow,false,"No horizontal scrollbars at narrow viewport");
     assert.equal(before.measured,String(before.barHeight)+"px","Measured POPIA height must reflect the actual bar");
+    const geometry=await page.evaluate(()=>{
+      const rect=selector=>{
+        const el=document.querySelector(selector),r=el?.getBoundingClientRect();
+        return r ? {top:r.top,bottom:r.bottom,height:r.height,scrollHeight:el.scrollHeight,overflowY:getComputedStyle(el).overflowY,paddingBottom:getComputedStyle(el).paddingBottom} : null;
+      };
+      return {
+        viewportHeight:innerHeight,
+        docScrollHeight:document.documentElement.scrollHeight,
+        bodyScrollHeight:document.body.scrollHeight,
+        main:rect(".customer-welcome-shell"), actions:rect(".customer-welcome-actions"),
+        started:rect("button.bg-brand-orange"),notice:rect("#popia-legal-bar"),
+      };
+    });
+    console.log("L3_LAYOUT_GEOMETRY",JSON.stringify({...variant,...geometry}));
+    await page.screenshot({path:path.join(out,"before-"+variant.width+"-"+variant.height+"-font"+variant.fontScale+".png"),fullPage:true});
     for(const name of ["Get Started","Explore as Guest","Log In"]) {
       const button=page.getByRole("button",{name,exact:true});
       await button.click({trial:true,timeout:15000}); // actual pointer hit test, scrolling allowed
