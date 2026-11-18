@@ -98,7 +98,7 @@ test("active app keeps same-location cards during refresh but fails closed on ne
   const service=readFileSync(new URL("../src/services/customerPickup.ts",import.meta.url),"utf8");
   const module=readFileSync(new URL("../src/services/nearbyCatalogCache.ts",import.meta.url),"utf8");
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
-  assert.match(app,/if\(!sameLocation\)\{displayedCatalogKeyRef\.current=null;setShops\(\[\]\)/);
+  assert.match(app,/if\(!sameLocation\)\{\s*displayedCatalogKeyRef\.current=null;\s*setShops\(\[\]\)/);
   assert.match(app,/displayedCatalogKeyRef\.current=null;\s*setShops\(\[\]\);\s*setFetchError/);
   assert.match(app,/await readPickupCatalog\(userLocation\)/);
   assert.match(service,/createNearbyCatalogReader\([\s\S]*?\}, mapPickupShop\)/);

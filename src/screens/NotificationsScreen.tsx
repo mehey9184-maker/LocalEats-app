@@ -16,6 +16,9 @@ interface NotificationsScreenProps {
   onBack: () => void;
   onRead: (id: string) => void;
   onDelete: (id: string) => void;
+  onTrackPickup?: (orderId: string) => void;
+  nearbyShopAlerts?: boolean;
+  onNearbyShopAlertsChange?: (enabled: boolean) => void;
 }
 
 export function NotificationsScreen({
@@ -23,6 +26,9 @@ export function NotificationsScreen({
   onBack,
   onRead,
   onDelete,
+  onTrackPickup,
+  nearbyShopAlerts,
+  onNearbyShopAlertsChange,
 }: NotificationsScreenProps) {
   const getIcon = (type?: string) => {
     switch (type) {
@@ -70,6 +76,16 @@ export function NotificationsScreen({
 
       {/* Notifications List */}
       <div className="max-w-2xl mx-auto p-4 space-y-3">
+        {onNearbyShopAlertsChange && (
+          <label className="flex min-h-11 items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+            <span>
+              <span className="block text-sm font-semibold">New shops within 4 km</span>
+              <span className="block text-xs text-slate-600 dark:text-slate-300">Show new nearby listings while LocalEats is open.</span>
+            </span>
+            <input type="checkbox" checked={nearbyShopAlerts ?? false} className="h-5 w-5 shrink-0 accent-orange-600"
+              onChange={event => onNearbyShopAlertsChange(event.target.checked)} />
+          </label>
+        )}
         {notifications.length === 0 ? (
           <div className="text-center py-16 px-4">
             <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4 text-slate-400">
@@ -79,7 +95,7 @@ export function NotificationsScreen({
               No notifications yet
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-              You will receive live delivery updates, order confirmations, and special offers here.
+              Your pickup alerts will appear here.
             </p>
           </div>
         ) : (
@@ -111,6 +127,16 @@ export function NotificationsScreen({
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed break-words">
                   {n.message}
                 </p>
+                {n.orderId && onTrackPickup && (
+                  <button type="button" className="mt-1 min-h-11 text-sm font-semibold text-orange-700 dark:text-orange-300 underline"
+                    onClick={event => {
+                      event.stopPropagation();
+                      onRead(n.id);
+                      onTrackPickup(n.orderId!);
+                    }}>
+                    Track pickup
+                  </button>
+                )}
               </div>
               <button
                 onClick={(e) => {

@@ -1,6 +1,8 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
 import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
+import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
 import {readPickupWithDeadline} from './services/pickupRead';
@@ -1096,6 +1098,20 @@ export default function App() {
   const [stalenessThresholdMs, setStalenessThresholdMs] = useState<number>(30000); // 30 seconds default staleness threshold
 
   const catalogGeneration=useRef(0);
+  const nearbyAlertBaseline=useRef<CatalogBaseline|null>(null);
+  const nearbyAlertToast=useRef<string|number|null>(null);
+  const [nearbyShopAlerts,setNearbyShopAlerts]=useState(() => safeLocalStorageGet<boolean>("localeats_nearby_shop_alerts",false)===true);
+  const nearbyShopAlertsEnabled=useRef(nearbyShopAlerts);
+  const toggleNearbyShopAlerts=(enabled:boolean)=>{
+    nearbyAlertBaseline.current=null;
+    nearbyShopAlertsEnabled.current=enabled;
+    setNearbyShopAlerts(enabled);
+    safeLocalStorageSet("localeats_nearby_shop_alerts",JSON.stringify(enabled));
+    if(!enabled && nearbyAlertToast.current!==null){
+      toast.dismiss(nearbyAlertToast.current);
+      nearbyAlertToast.current=null;
+    }
+  };
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     const generation=++catalogGeneration.current;
     const key=nearbyCatalogKey(userLocation);
@@ -1103,7 +1119,16 @@ export default function App() {
 
     // Keep the previous verified cards visible during same-location refreshes,
     // avoiding a blank/flash every minute. Location changes always fail closed.
-    if(!sameLocation){displayedCatalogKeyRef.current=null;setShops([]);setLoadingShops(true);}
+    if(!sameLocation){
+      displayedCatalogKeyRef.current=null;
+      setShops([]);
+      setLoadingShops(true);
+      if(nearbyAlertBaseline.current?.locationKey!==key){
+        nearbyAlertBaseline.current=null;
+        if(nearbyAlertToast.current!==null)toast.dismiss(nearbyAlertToast.current);
+        nearbyAlertToast.current=null;
+      }
+    }
     setIsSyncing(true);
     setFetchError(null);
     try {
@@ -1113,6 +1138,22 @@ export default function App() {
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
+      if(key && !result.incomplete && nearbyShopAlertsEnabled.current){
+        const {baseline,newShop}=compareNearbyCatalog(nearbyAlertBaseline.current,key,result.shops);
+        nearbyAlertBaseline.current=baseline;
+        if(newShop && document.visibilityState==="visible"){
+          if(nearbyAlertToast.current!==null)toast.dismiss(nearbyAlertToast.current);
+          nearbyAlertToast.current=toast.info("New nearby shop",{
+            description: `${newShop.name} was added to nearby listings.`,
+            action: {label:"View shop",onClick:()=>{
+              if(displayedCatalogKeyRef.current!==key || generation!==catalogGeneration.current)return;
+              setSelectedStoreId(newShop.id);
+              setPreviousScreen("home");
+              setCurrentScreen("store-info");
+            }},
+          });
+        }
+      }
       setFetchError(result.incomplete ? "Some pickup menus couldn’t load. Showing the shops we could verify." : null);
       // A successful empty catalog is not a network failure.
     } catch(error) {
@@ -2295,8 +2336,8 @@ export default function App() {
         const inbox = await customerPickupApi.notifications();
         readyInboxErrorShown = false;
         if (active) setNotifications((inbox.notifications ?? []).map((event: any) => ({
-          id: event.id, title: "Pickup ready",
-          message: "Your order is ready for collection. Pay at the shop before handover.",
+          id: event.id, title: "Your pickup is ready",
+          message: "Open your order for pickup details.",
           type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
         })) as unknown as AppNotification[]);
       } catch {
@@ -2337,6 +2378,13 @@ export default function App() {
   }, [currentScreen]);
 
   const currentPickupHistory = pickupHistory?.userId === historyUserId ? pickupHistory : null;
+  const [pickupTrackingTarget, setPickupTrackingTarget] = useState<{uid: string; orderId: string} | null>(null);
+  const openPickupTracking = useCallback((orderId: string) => {
+    if (!historyUserId) return;
+    setPickupTrackingTarget({uid: historyUserId, orderId});
+    setCurrentScreen("order-tracking");
+  }, [historyUserId]);
+  const updatePickupReminder = usePickupReadyReminder(historyUserId, currentPickupHistory, notifications, openPickupTracking);
 
   const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
     setLoadingShops(true);
@@ -3205,6 +3253,9 @@ export default function App() {
               {currentScreen === "notifications" && (
                 <NotificationsScreen
                   notifications={notifications}
+                  onTrackPickup={openPickupTracking}
+                  nearbyShopAlerts={nearbyShopAlerts}
+                  onNearbyShopAlertsChange={toggleNearbyShopAlerts}
                   onBack={() => setCurrentScreen(previousScreen || "home")}
                   onRead={(id) =>
                     setNotifications((prev) =>
@@ -3228,6 +3279,8 @@ export default function App() {
                       shops={visibleShops}
                       changesEnabled={pickupOrderingEnabled()}
                       hasPendingCancellation={hasPendingPickupCancellation}
+                      onReadyReminder={updatePickupReminder}
+                      focusedOrderId={pickupTrackingTarget?.uid === historyUserId ? pickupTrackingTarget?.orderId : undefined}
                       onCancel={cancelCustomerPickup}
                       onRetry={() => refreshPickupHistory.current()}
                       onHistory={() => setCurrentScreen("order-history")}
