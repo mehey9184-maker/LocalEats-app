@@ -258,6 +258,7 @@ import {
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
 import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
+import {PRIVATE_MY_KOTA_SHOP_ID,isPrivateMyKotaPreview,checkPrivateMyKotaAccess,readPrivateMyKotaFixture} from "./services/privateMyKotaPreview";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -622,7 +623,7 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>(() => {
     const loadedCart = safeLocalStorageGet("cart", []) as CartItem[];
     if (Array.isArray(loadedCart)) {
-      return loadedCart.filter((item: CartItem) => item && item.shopId && item.shopId !== "null" && item.shopId !== "undefined");
+      return loadedCart.filter((item: CartItem) => item && item.shopId && item.shopId !== "null" && item.shopId !== "undefined" && item.shopId !== PRIVATE_MY_KOTA_SHOP_ID);
     }
     return [];
   });
@@ -885,9 +886,68 @@ export default function App() {
   } | null>(null);
   const displayedCatalogKeyRef=useRef<string|null>(null);
   const noVisibleShops=useMemo<Shop[]>(()=>[],[]);
-  // A moved device never displays the previous location's shops.
-  const visibleShops=userLocation && nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
+  // A virtual My-Kota is a signed-in, memory-only Preview fixture. Never
+  // persist it in the normal location-based public catalog cache.
+  const [privateMyKotaEligible,setPrivateMyKotaEligible]=useState(false);
+  const [privateMyKotaShop,setPrivateMyKotaShop]=useState<{uid:string;shop:Shop}|null>(null);
+  const privateMyKotaRequest=useRef(0);
+  const privateApiOrigin=import.meta.env.VITE_LOCALEATS_API_URL || "";
+  const privatePreviewEnabled=isPrivateMyKotaPreview(window.location.origin,{
+    projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+    orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+    apiOrigin:privateApiOrigin
+  });
+  useEffect(()=>{
+    // Logout and account switching invalidate pending private reads as well as
+    // any transient private fixture/cart. No data from one UID reaches another.
+    const uid=session?.user?.id;
+    const requestId=++privateMyKotaRequest.current;
+    const abort=new AbortController();
+    setPrivateMyKotaShop(null);
+    setPrivateMyKotaEligible(false);
+    setCart(items=>items.some(i=>i.shopId===PRIVATE_MY_KOTA_SHOP_ID)
+      ? items.filter(i=>i.shopId!==PRIVATE_MY_KOTA_SHOP_ID) : items);
+    if(!privatePreviewEnabled || !uid || auth.currentUser?.uid!==uid)return ()=>abort.abort();
+    checkPrivateMyKotaAccess(privateApiOrigin,()=>auth.currentUser!.getIdToken(),abort.signal)
+      .then(allowed=>{
+        if(requestId===privateMyKotaRequest.current &&
+          auth.currentUser?.uid===uid && !abort.signal.aborted)setPrivateMyKotaEligible(allowed);
+      }).catch(()=>{/* Preview test feature is disabled or unavailable: fail closed. */});
+    return ()=>{abort.abort();privateMyKotaRequest.current++;};
+  },[session?.user?.id,privatePreviewEnabled,privateApiOrigin]);
+
+  const openPrivateMyKota=async()=>{
+    const uid=session?.user?.id;
+    if(!privateMyKotaEligible||!uid||auth.currentUser?.uid!==uid)return;
+    const requestId=++privateMyKotaRequest.current;
+    const abort=new AbortController();
+    try{
+      const shop=await readPrivateMyKotaFixture(privateApiOrigin,
+        ()=>auth.currentUser!.getIdToken(),abort.signal);
+      if(requestId!==privateMyKotaRequest.current||auth.currentUser?.uid!==uid)return;
+      setPrivateMyKotaShop({uid,shop});
+      setSelectedStoreId(shop.id);
+      setCurrentScreen("store-info");
+      toast.info("SIMULATED LOCATION — private My-Kota test only. No real order or payment.",{duration:6500});
+    }catch{
+      if(requestId===privateMyKotaRequest.current)
+        toast.error("The private My-Kota test is unavailable. No order was created.");
+    }
+  };
+  const hidePrivateMyKota=()=>{
+    privateMyKotaRequest.current++;
+    setPrivateMyKotaShop(null);
+    setCart(items=>items.filter(i=>i.shopId!==PRIVATE_MY_KOTA_SHOP_ID));
+    if(selectedStoreId===PRIVATE_MY_KOTA_SHOP_ID)setCurrentScreen("home");
+  };
+  const noLocationShopList=userLocation&&nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
+  const privateShopForAccount=privateMyKotaShop?.uid===session?.user?.id &&
+    auth.currentUser?.uid===session?.user?.id ? privateMyKotaShop.shop : null;
+  const visibleShops=privateShopForAccount
+    ? [...noLocationShopList.filter(shop=>shop.id!==PRIVATE_MY_KOTA_SHOP_ID),privateShopForAccount]
+    : noLocationShopList;
   const selectedStore = visibleShops.find(shop => shop.id === selectedStoreId);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -959,7 +1019,8 @@ export default function App() {
   }, [userProfile]);
 
   useEffect(() => {
-    safeLocalStorageSet("cart", JSON.stringify(cart));
+    // A private simulated cart must never survive reload or account changes.
+    safeLocalStorageSet("cart", JSON.stringify(cart.filter(item=>item.shopId!==PRIVATE_MY_KOTA_SHOP_ID)));
   }, [cart]);
 
   useEffect(() => {
@@ -3125,6 +3186,20 @@ export default function App() {
             )}
           </AnimatePresence>
 
+          {privateMyKotaEligible && session?.user?.id===auth.currentUser?.uid &&
+            (currentScreen==="home"||currentScreen==="discover"||currentScreen==="store-info") && (
+              <section role="status" aria-label="Private My-Kota staging test"
+                className="max-w-2xl mx-auto my-3 mx-3 rounded-xl border border-orange-300 bg-orange-50 text-slate-900 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
+                <div>
+                  <p className="font-bold text-sm">PRIVATE MY-KOTA TEST · SAMPLE ONLY</p>
+                  <p className="text-xs">Simulated within 4 km. Not your GPS location. No real orders or payment.</p>
+                </div>
+                <button type="button" className="rounded-lg bg-orange-600 text-white py-2 px-3 text-sm font-semibold"
+                  onClick={privateShopForAccount?hidePrivateMyKota:openPrivateMyKota}>
+                  {privateShopForAccount?"Exit private test":"Open sample My-Kota"}
+                </button>
+              </section>
+            )}
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
@@ -3735,7 +3810,7 @@ export default function App() {
           {/* Interactive Floating Cart Button */}
           <FloatingCartButton
             cart={cart}
-            shops={shops}
+            shops={visibleShops}
             currentScreen={currentScreen}
             onOpenCart={() => setIsCartDrawerOpen(true)}
             triggerHaptic={triggerHaptic}
@@ -3747,11 +3822,15 @@ export default function App() {
             isOpen={isCartDrawerOpen}
             onClose={() => setIsCartDrawerOpen(false)}
             cart={cart}
-            shops={shops}
+            shops={visibleShops}
             onUpdateQuantity={updateCartQuantity}
             onRemoveItem={removeItemFromCart}
             onClearCart={clearCart}
             onProceedToCheckout={() => {
+              if(cart.some(i=>i.shopId===PRIVATE_MY_KOTA_SHOP_ID)){
+                showAlert("Private sample only","My-Kota test items cannot be ordered or paid for. Exit the private test to use real shops.");
+                return;
+              }
               if (!session) {
                 showAlert(
                   "Login Required",
