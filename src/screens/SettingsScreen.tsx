@@ -16,6 +16,8 @@ import {
   Info,
 } from "lucide-react";
 import { UserProfile } from "../types";
+import {auth, sendIsolatedCustomerPushTest} from "../lib/firebase";
+import {isVerifiedCustomerPushStagingContext} from "../services/customerPushStaging";
 
 interface SettingsScreenProps {
   userProfile: UserProfile;
@@ -109,6 +111,40 @@ function CustomerNotificationSettings({onEnable}: {onEnable: () => Promise<boole
   );
 }
 
+
+/** This control is hidden from Production and ordinary PR Previews. */
+function IsolatedCustomerPushCheck({accountId}:{accountId:string}) {
+  const [busy,setBusy]=React.useState(false);
+  const [result,setResult]=React.useState("");
+  const send=async()=>{
+    if(busy)return;
+    setBusy(true);setResult("");
+    try {
+      if(typeof Notification==="undefined" || Notification.permission!=="granted"){
+        setResult("Allow notifications for this staging site, then reconnect your device first.");
+        return;
+      }
+      if(!accountId || auth.currentUser?.uid!==accountId){
+        setResult("Sign in again with your approved staging test account.");
+        return;
+      }
+      const accepted=await sendIsolatedCustomerPushTest(accountId);
+      setResult(accepted
+        ? "Firebase accepted the test. Check the device banner or Notification Center; acceptance alone does not prove display."
+        : "The test was not accepted. Reconnect staging alerts and verify the test service is enabled.");
+    } finally {setBusy(false);}
+  };
+  return <section aria-label="Isolated staging device check" className="rounded-3xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800 p-4 space-y-3">
+    <p className="text-sm font-bold">Staging device check</p>
+    <p className="text-xs text-slate-600 dark:text-slate-300">For approved test accounts only. This sends no order or payment.</p>
+    <button type="button" onClick={()=>{void send();}} disabled={busy}
+      className="min-h-11 rounded-xl bg-orange-600 text-white px-4 py-2 text-xs font-bold disabled:opacity-50">
+      {busy ? "Checking…" : "Send staging notification test"}
+    </button>
+    {result&&<p role="status" aria-live="polite" className="text-xs text-slate-700 dark:text-slate-200">{result}</p>}
+  </section>;
+}
+
 export function SettingsScreen({
   userProfile,
   onBack,
@@ -126,6 +162,17 @@ export function SettingsScreen({
   isOnline = true,
   onSubscribeToPush,
 }: SettingsScreenProps) {
+  const isolatedCustomerPushPreview =
+    typeof window!=="undefined" && isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    });
+
   const isAdmin = userProfile?.role === "admin" || userProfile?.is_admin === true;
   const isMerchant = userProfile?.role === "merchant" || userProfile?.role === "shop_owner" || userProfile?.is_vendor === true;
 
@@ -247,6 +294,7 @@ export function SettingsScreen({
 
         {/* Customer-facing notification preference; no test controls. */}
         {onSubscribeToPush && <CustomerNotificationSettings onEnable={onSubscribeToPush} />}
+        {isolatedCustomerPushPreview && <IsolatedCustomerPushCheck accountId={String(userProfile?.id||"")} />}
 
         {/* Shortcuts / Navigation */}
         <div>

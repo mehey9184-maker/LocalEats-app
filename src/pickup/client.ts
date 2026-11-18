@@ -57,6 +57,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
   notifications:()=>request("/api/v1/notifications"),
   subscribe:(id:string,fcm_token:string)=>request("/api/v1/push-subscriptions/"+id,"PUT",{fcm_token,permission_granted:true}),
   revoke:(id:string)=>request("/api/v1/push-subscriptions/"+id,"DELETE"),
+  customerDeviceTest:(id:string)=>request("/api/v1/customer-push-subscriptions/"+encodeURIComponent(id)+"/test","POST",{}),
  };
 }
 export const pickupStatus=(order:PickupOrder,events:{kind:string}[]=[])=>{

@@ -257,6 +257,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -1477,6 +1478,22 @@ export default function App() {
     }
   }, [searchQuery, visibleShops]);
 
+  // Production registration is unchanged. Only an isolated, verified Customer
+  // staging origin may register and run test-only diagnostics outside Production.
+  const canRegisterCustomerPushOnThisOrigin = ():boolean => {
+    if (typeof window === "undefined") return false;
+    if (["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return true;
+    return isVerifiedCustomerPushStagingContext({
+      origin:window.location.origin,
+      configuredOrigin:import.meta.env.VITE_CUSTOMER_PUSH_STAGING_ORIGIN,
+      apiUrl:import.meta.env.VITE_LOCALEATS_API_URL,
+      configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+      firebaseProjectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+      vapidKey:import.meta.env.VITE_FIREBASE_VAPID_KEY,
+    });
+  };
+
   // Browser alert consent is independent of the real-order activation gate.
   // Request permission only after a click. Preview never registers its device
   // token with the Production pickup API; Orders is always the status fallback.
@@ -1496,8 +1513,8 @@ export default function App() {
             : "Notifications not enabled. You can turn them on later.");
           return false;
         }
-        if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) {
-          toast.info("Browser permission allowed for Preview. Live pickup alerts use the Production site.");
+        if (!canRegisterCustomerPushOnThisOrigin()) {
+          toast.info("Browser permission allowed, but this Preview is not connected to an isolated notification test service.");
           return false;
         }
         const uid = customUserId || session?.user?.id;
@@ -1521,6 +1538,14 @@ export default function App() {
   useEffect(() => {
     let unsubscribe: (() => void) | void;
     onForegroundMessage((payload) => {
+      if (payload?.data?.type === "customer_push_test") {
+        // A test is not an order event and cannot acknowledge collection.
+        toast.success("LocalEats notification test", {
+          description: "Test reached this open app. No order was created.",
+          duration: 6000,
+        });
+        return;
+      }
       const title = payload.notification?.title || payload.data?.title || "LocalEats Notification";
       const body = payload.notification?.body || payload.data?.body || payload.data?.message || "You have an update regarding your order.";
       toast.success(title, {
@@ -1692,7 +1717,7 @@ export default function App() {
   useEffect(() => {
     const uid = session?.user?.id;
     if (!uid || typeof window === "undefined" || typeof Notification === "undefined") return;
-    if (!["localeatssa.co.za", "www.localeatssa.co.za"].includes(window.location.hostname)) return;
+    if (!canRegisterCustomerPushOnThisOrigin()) return;
     let stopped = false;
     let inFlight = false;
     let lastAttempt = 0;
