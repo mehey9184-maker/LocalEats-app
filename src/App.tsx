@@ -255,6 +255,7 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
