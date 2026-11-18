@@ -1,0 +1,51 @@
+name: L3 Customer first-visit login hit testing
+on:
+  push:
+    branches:
+      - recovery/166-customer-pickup
+  pull_request:
+    branches:
+      - main
+      - feature/customer-outside-pickup-area-preview-20261117
+    paths:
+      - 'src/components/PopiaLegalDrawer.tsx'
+      - 'src/screens/SplashScreen.tsx'
+      - 'src/index.css'
+      - 'tests/l3-popia-welcome-fixture.html'
+      - 'tests/l3-popia-welcome-browser.mjs'
+      - '.github/workflows/l3-customer-login-mobile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  first-visit-login:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked Customer dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install isolated headless Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Verify first-visit welcome Log In and privacy notice hit targets
+        run: node tests/l3-popia-welcome-browser.mjs
+        env:
+          L3_BROWSER_ARTIFACT_DIR: /tmp/localeats-l3-screens
+      - name: Check TypeScript
+        run: npm run lint
+      - name: Build Customer Preview source
+        run: npm run build
+      - name: Preserve local fixture screenshots (no accounts or secrets)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-customer-first-visit-${{ github.run_id }}
+          path: /tmp/localeats-l3-screens/*.png
+          if-no-files-found: ignore
+          retention-days: 14
