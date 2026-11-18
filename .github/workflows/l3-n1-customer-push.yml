@@ -64,12 +64,11 @@ jobs:
             assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
             assert.match(pwa,/localeats-staging/);
             assert.match(worker,/customer_push_test/);
+            const fs=await import("node:fs");
+            const paths=fs.readdirSync("dist/assets").filter(x=>x.endsWith(".js"));
             const pairedApi="https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app";
             assert.ok(paths.some(path=>fs.readFileSync("dist/assets/"+path,"utf8").includes(pairedApi)),
               "Expected the exact isolated staging API branch alias to be compiled into the Customer");
-
-            const fs=await import("node:fs");
-            const paths=fs.readdirSync("dist/assets").filter(x=>x.endsWith(".js"));
             assert.ok(paths.some(path=>fs.readFileSync("dist/assets/"+path,"utf8")
               .includes("https://localeats-customer-staging-r52d-ci2c83ab.vercel.app")),
               "Expected exact Vercel Preview origin to be compiled into the Client");
