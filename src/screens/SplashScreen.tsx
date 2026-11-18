@@ -66,7 +66,7 @@ export function SplashScreen({
   }
 
   return (
-    <main className="relative min-h-screen w-full flex flex-col overflow-hidden font-sans antialiased text-brand-dark bg-white dark:bg-slate-950 dark:text-white">
+    <main className="customer-welcome-shell relative min-h-[100dvh] w-full flex flex-col overflow-x-clip font-sans antialiased text-brand-dark bg-white dark:bg-slate-950 dark:text-white">
       {/* Background Image Section */}
       <section className="absolute inset-0 z-0">
         <img
