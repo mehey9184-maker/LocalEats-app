@@ -113,15 +113,17 @@ body {
   padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
 }
 
-/* Leave room to scroll welcome actions clear of the first-visit notice. */
-body:has(#popia-legal-bar) .customer-welcome-actions {
-  margin-bottom: 9rem;
+/* The first-visit privacy notice is fixed above the home indicator.
+ * Reserve its actual measured height below the welcome actions; when a short
+ * viewport or large text needs more room, the page itself can scroll.
+ * Keep the consent notice visible. Signing in does not imply accepting it.
+ */
+body:has(#popia-legal-bar) .customer-welcome-shell {
+  padding-bottom: calc(var(--localeats-popia-notice-height, 11rem) + env(safe-area-inset-bottom, 0px) + 1rem);
 }
 
-@media (min-width: 640px) {
-  body:has(#popia-legal-bar) .customer-welcome-actions {
-    margin-bottom: 4rem;
-  }
+html:has(#popia-legal-bar) {
+  scroll-padding-bottom: calc(var(--localeats-popia-notice-height, 11rem) + 1rem);
 }
 
 /* Mobile-first responsive tweaks for small viewport devices (<380px) */
