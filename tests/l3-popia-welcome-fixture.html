@@ -11,7 +11,9 @@
     import '../src/index.css';
     function Harness() {
       const [loginCount,setLoginCount]=useState(0);
-      return React.createElement(React.Fragment,null,
+      // Match App.tsx: one #root > div wrapper owns the app's global safe-area
+      // styles. Without it, those styles incorrectly make POPIA full-height.
+      return React.createElement('div',{className:'relative w-full max-w-[100vw] overflow-x-hidden'},
         React.createElement(SplashScreen,{
           session:null,userProfile:null,
           onNext:()=>{},
