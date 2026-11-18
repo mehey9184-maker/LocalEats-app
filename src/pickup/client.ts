@@ -1,16 +1,20 @@
 export type PickupOrder = {id:string;shop_id:string;user_id:string;status:string;delivery_type:string;delivery_status:string;
  payment_status:string;payment_method:string;revision:number;customer_name:string;phone:string;total_price:number;
  items:{menu_item_id:string;name:string;quantity:number;unit_price:number;line_total:number}[];created_at:string};
+export type PickupOrderEvent = {id:string;kind:string;revision:number;occurred_at:string;details?:{
+ reason?:string;amount?:unknown;currency?:unknown;method?:unknown;
+}};
+export type PickupOrderDetail = {order?:PickupOrder;events?:PickupOrderEvent[]};
 export type Location = {lat:number;lng:number};
 export class PickupApiError extends Error {
  status:number; code:string;
  constructor(status:number,code:string,message:string) {super(message);this.status=status;this.code=code;}
 }
 export type PickupQuote={can_submit?:boolean;lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;delivery_fee_minor?:number;discount_minor?:number;tip_minor?:number;subtotal_minor:number;pricing_fingerprint:string};
-type ApiResponse={success?:boolean;code?:string;error?:string;order?:PickupOrder;replayed?:boolean;orders?:PickupOrder[];
+type ApiResponse=PickupOrderDetail & {success?:boolean;code?:string;error?:string;replayed?:boolean;orders?:PickupOrder[];
  shops?:{id:string;name:string;location:string;distance_km:number}[];
  menu_items?:{id:string;name:string;price:number;is_available:boolean}[];quote?:PickupQuote;
- notifications?:{id:string;order_id:string}[];events?:{id:string;kind:string;occurred_at:string;details?:{reason?:string}}[]};
+ notifications?:{id:string;order_id:string}[]};
 export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):string {
  const value=baseUrl.trim();
  if (!value && !requireExplicitHttps) return ""; // Local Vite proxy / explicit development fixtures only.
@@ -52,7 +56,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
     return {order:result.order,replayed:result.replayed};
   },
   orders:(merchant=false,signal?:AbortSignal)=>request(merchant ? "/api/v1/merchant/orders" : "/api/v1/orders","GET",undefined,false,signal),
-  order:(id:string)=>request("/api/v1/orders/"+encodeURIComponent(id)),
+  order:(id:string,signal?:AbortSignal)=>request("/api/v1/orders/"+encodeURIComponent(id),"GET",undefined,false,signal),
   command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal),
   notifications:()=>request("/api/v1/notifications"),
   subscribe:(id:string,fcm_token:string)=>request("/api/v1/push-subscriptions/"+id,"PUT",{fcm_token,permission_granted:true}),

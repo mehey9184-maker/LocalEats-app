@@ -3689,10 +3689,12 @@ export default function App() {
               )}
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
+                  key={historyUserId}
                   signedIn={!!historyUserId}
                   orders={currentPickupHistory?.orders ?? null}
                   error={currentPickupHistory?.error ?? false}
                   refreshing={currentPickupHistory?.refreshing ?? true}
+                  readOrder={customerPickupApi.order}
                   onRetry={() => refreshPickupHistory.current()}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   onSignIn={() => setCurrentScreen("login")}

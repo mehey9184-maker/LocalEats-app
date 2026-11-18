@@ -25,8 +25,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Validate client pickup, checkout and pricing regressions
-        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs
+      - name: Validate client pickup, checkout, pricing and receipt regressions
+        run: node --experimental-strip-types --test tests/original-pickup.test.mjs tests/pickup-activation.test.mjs tests/pickup-pricing.test.mjs tests/checkout-render.test.mjs tests/pickup-receipt.test.mjs
       - name: Confirm experimental P7 simulation is absent from release
         run: |
           node --input-type=module <<'JS'

@@ -21,6 +21,8 @@ The storefront renders the verified nearby catalog menu already loaded for its s
 
 Pickup history uses the authenticated orders feed and preserves only the current account’s last verified pickup statuses during a failed refresh.
 
+Collected pickup cards load a receipt on demand from the authenticated order detail. The receipt checks the order, account, and collection revision, and only shows payment facts from the matching confirmation event. Older pickups without proof stay in history without a claimed payment.
+
 Active pickup tracking uses that same feed in a deferred pickup-only screen. It never mounts legacy delivery tracking or its offline cancellation effects. Pending cancellation uses an authenticated, revision-checked command retained per account and order for uncertain-response retry; success requires server confirmation. Stale or refreshing status disables changes. The mini tracker and notification prompt use pickup language.
 Pickup feed reads and cancellation responses have 15-second deadlines; late replies cannot overwrite newer reads or discard uncertain cancellation recovery. Account cleanup aborts an outstanding feed read.
 
