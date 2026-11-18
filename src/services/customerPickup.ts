@@ -1,4 +1,5 @@
 import {pickupQuoteAmounts} from "./pickupSummary";
+import {blockPrivateMyKotaOrder,PRIVATE_MY_KOTA_SHOP_ID} from "./privateMyKotaPreview";
 import {auth} from "../lib/firebase";
 import {createPickupApi} from "../pickup/client";
 import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
@@ -30,6 +31,7 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null,op
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string,signal?:AbortSignal) {
+  for(const item of cart)blockPrivateMyKotaOrder(item.shopId);
   const intent=pickupCartIntent(cart,requireRealLocation(location),name,phone,method);
   const result=await customerPickupApi.quote(intent,signal);
   if(!result.quote || !Number.isSafeInteger(result.quote.total_minor) || result.quote.total_minor<0)
@@ -50,6 +52,7 @@ export function hasPendingPickupCancellation(order:PickupOrder):boolean {
  try{return !!sessionStorage.getItem(pickupCancellationKey(uid,order.id));}catch{return false;}
 }
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
+ if(review?.intent?.shop_id===PRIVATE_MY_KOTA_SHOP_ID)blockPrivateMyKotaOrder(PRIVATE_MY_KOTA_SHOP_ID);
  if(!pickupOrderingEnabled())blockPickupSubmission();
  if(review && review.quote.can_submit !== true)throw new Error("Pickup ordering is not available for this quote.");
  const uid=auth.currentUser?.uid;
