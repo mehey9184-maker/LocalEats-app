@@ -18,7 +18,7 @@ const url="http://127.0.0.1:"+server.httpServer.address().port+"/tests/l3-popia-
 let browser;
 const results=[];
 try {
-  browser=await chromium.launch({headless:true});
+  browser=await chromium.launch({headless:true,...(process.env.L3_BROWSER_CHANNEL?{channel:process.env.L3_BROWSER_CHANNEL}:{})});
   for(const variant of [
     {width:390,height:844,fontScale:1},
     {width:320,height:650,fontScale:1},
