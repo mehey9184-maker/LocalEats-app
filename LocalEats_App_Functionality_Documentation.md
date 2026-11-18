@@ -2,6 +2,8 @@
 
 The Customer consent banner and its preferences describe the current pickup experience. The recovered welcome-screen spacing made Log In clickable at 390px. At 320px, the first-visit notice still intercepts Log In. The consent behavior is unchanged.
 
+Pickup tracking gives keyboard focus and press feedback on its primary controls. A changed, server-verified pickup status appears in the same card with a short motion cue and a screen-reader announcement. Reduced motion shows the new status directly, and refreshing still keeps the last verified result visible.
+
 ## Overview
 LocalEats is a comprehensive food discovery and ordering application for local legendary Kota joints, featuring user authentication, profile setup, smart dispatch, and a seamless checkout experience with real-time live map tracking.
 
