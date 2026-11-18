@@ -19,26 +19,8 @@ export default defineConfig(({mode}) => {
         injectManifest: {
           maximumFileSizeToCacheInBytes: 6000000,
         },
-        manifest: {
-          short_name: "LocalEats",
-          name: "LocalEats | Local's Best Kota & Braai",
-          icons: [
-            {
-              src: "/logo.png?v=2",
-              type: "image/png",
-              sizes: "192x192"
-            },
-            {
-              src: "/logo.png?v=2",
-              type: "image/png",
-              sizes: "512x512"
-            }
-          ],
-          start_url: ".",
-          display: "standalone",
-          theme_color: "#FF6B00",
-          background_color: "#ffffff"
-        },
+        // index.html links the same public manifest in development and release builds.
+        manifest: false,
         devOptions: {
           enabled: false,
           type: 'module'

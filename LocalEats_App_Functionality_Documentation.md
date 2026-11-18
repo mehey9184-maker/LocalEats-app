@@ -1,5 +1,7 @@
 # LocalEats App Functionality Documentation
 
+**Install LocalEats.** App Settings opens the native browser install dialog when available. Supported browsers also get installation steps for their own menu or Share sheet. The app hides the action when launched standalone. The launcher and browser tab show the burger symbol in front of the LocalEats logo watermark. Android uses a separate maskable asset and Apple uses a 180 px touch icon.
+
 The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
 
 ## Overview

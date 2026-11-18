@@ -30,6 +30,8 @@ Catalog cards and restaurant metadata display only valid provided rating/count/d
 
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 
+Customer App Settings offers browser-owned app installation and manual steps on supported devices. The action stays hidden in the installed app. Keep the Customer manifest in `public/manifest.json`.
+
 
 > **CRITICAL RULE FOR THE AI AGENT**: 
 > 1. You MUST ALWAYS consult this document BEFORE making any fixes, modifications, or starting new phases.
