@@ -1,0 +1,28 @@
+name: L3-N3 staging Firebase login diagnostics (no real sign-ins)
+on:
+  pull_request:
+    paths:
+      - 'src/services/stagingFirebaseAuthErrors.ts'
+      - 'src/lib/supabase.ts'
+      - 'src/screens/auth/LoginScreen.tsx'
+      - 'tests/l3-n3-staging-login.test.mjs'
+      - '.github/workflows/l3-n3-staging-login.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-stage-auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Synthetic Firebase login failure classification (no accounts/passwords)
+        run: node --experimental-strip-types --test tests/l3-n3-staging-login.test.mjs tests/customer-startup-auth-routing.test.mjs
+      - name: TypeScript check
+        run: npm run lint
+      - name: Customer production-safe build
+        run: npm run build
