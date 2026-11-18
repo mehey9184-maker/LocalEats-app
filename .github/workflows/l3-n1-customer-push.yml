@@ -58,6 +58,6 @@ jobs:
             const pwa=readFileSync("dist/sw.js","utf8");
             assert.match(worker,/"projectId":"localeats-staging"/);
             assert.doesNotMatch(worker,/"projectId":"localeats-5e26e"/);
-            assert.match(pwa,/localeats-staging-fixture/);
+            assert.match(pwa,/localeats-staging/);
             assert.match(worker,/customer_push_test/);
           '
