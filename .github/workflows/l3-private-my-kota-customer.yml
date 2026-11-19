@@ -7,6 +7,7 @@ on:
       - 'src/services/customerPickup.ts'
       - 'vite.config.ts'
       - 'tests/l3-private-my-kota.test.mjs'
+      - 'tests/l3-private-my-kota-browser-startup.mjs'
       - '.github/workflows/l3-private-my-kota-customer.yml'
   workflow_dispatch:
 permissions:
@@ -58,4 +59,7 @@ jobs:
             assert.ok(compiled.includes("https://localeats-customer-staging-r52d-private-ci.vercel.app"),
               "Private Preview build must compile its own origin");
           '
-
+      - name: Install isolated Chrome (no production browser)
+        run: npx playwright install --with-deps chromium
+      - name: Test real React startup in local isolated Chrome
+        run: node tests/l3-private-my-kota-browser-startup.mjs
