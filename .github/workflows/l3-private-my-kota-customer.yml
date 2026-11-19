@@ -14,7 +14,7 @@ permissions:
   contents: read
 jobs:
   private-shop-security:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,7 +59,5 @@ jobs:
             assert.ok(compiled.includes("https://localeats-customer-staging-r52d-private-ci.vercel.app"),
               "Private Preview build must compile its own origin");
           '
-      - name: Install isolated Chrome (no production browser)
-        run: npx playwright install --with-deps chromium
       - name: Test real React startup in local isolated Chrome
         run: node tests/l3-private-my-kota-browser-startup.mjs
