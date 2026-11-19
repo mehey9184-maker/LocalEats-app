@@ -1,5 +1,7 @@
 # LocalEats App Functionality Documentation
 
+Order History provides Load older orders after the latest 50. The authenticated API uses the last displayed timestamp and ID as a cursor, and returns at most 50 rows plus a continuation flag. Older cards retain the same receipt controls. Errors offer Retry older orders, and account changes discard in-flight results.
+
 The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
 
 ## Overview

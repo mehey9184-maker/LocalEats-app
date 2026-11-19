@@ -5,6 +5,8 @@ export type PickupOrderEvent = {id:string;kind:string;revision:number;occurred_a
  reason?:string;amount?:unknown;currency?:unknown;method?:unknown;
 }};
 export type PickupOrderDetail = {order?:PickupOrder;events?:PickupOrderEvent[]};
+export type PickupHistoryBefore = Pick<PickupOrder, "id" | "created_at">;
+export type PickupHistoryPage = {orders:PickupOrder[];has_more:boolean};
 export type Location = {lat:number;lng:number};
 export class PickupApiError extends Error {
  status:number; code:string;
@@ -56,6 +58,14 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
     return {order:result.order,replayed:result.replayed};
   },
   orders:(merchant=false,signal?:AbortSignal)=>request(merchant ? "/api/v1/merchant/orders" : "/api/v1/orders","GET",undefined,false,signal),
+  history:async(before:PickupHistoryBefore,signal?:AbortSignal):Promise<PickupHistoryPage>=>{
+    const query=new URLSearchParams({before_id:before.id,before_created_at:before.created_at});
+    const result=await request("/api/v1/orders/history?"+query,"GET",undefined,false,signal);
+    const page=result as ApiResponse & {has_more?:unknown};
+    if(!Array.isArray(page.orders) || typeof page.has_more!=="boolean" || page.orders.length>50)
+      throw new PickupApiError(503,"INVALID_HISTORY_PAGE","Older orders could not be verified.");
+    return {orders:page.orders,has_more:page.has_more};
+  },
   order:(id:string,signal?:AbortSignal)=>request("/api/v1/orders/"+encodeURIComponent(id),"GET",undefined,false,signal),
   command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal),
   notifications:()=>request("/api/v1/notifications"),
