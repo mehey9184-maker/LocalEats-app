@@ -257,9 +257,10 @@ import {
   mergeShopsCatalogs,
 } from "./utils";
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
+import {onAuthStateChanged} from "firebase/auth";
 import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
 import {PRIVATE_MY_KOTA_SHOP_ID,isPrivateMyKotaPreview,checkPrivateMyKotaAccess,readPrivateMyKotaFixture} from "./services/privateMyKotaPreview";
-import {accountPrivateShop} from "./services/privateMyKotaPolicy";
+import {accountPrivateShop,hasApprovedPrivateMyKotaSession} from "./services/privateMyKotaPolicy";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -889,9 +890,10 @@ export default function App() {
   const noVisibleShops=useMemo<Shop[]>(()=>[],[]);
   // A virtual My-Kota is a signed-in, memory-only Preview fixture. Never
   // persist it in the normal location-based public catalog cache.
-  const [privateMyKotaEligible,setPrivateMyKotaEligible]=useState(false);
+  const [privateMyKotaApprovedUid,setPrivateMyKotaApprovedUid]=useState<string|null>(null);
   const [privateMyKotaShop,setPrivateMyKotaShop]=useState<{uid:string;shop:Shop}|null>(null);
   const privateMyKotaRequest=useRef(0);
+  const privateMyKotaStatusRequest=useRef(0);
   const privateApiOrigin=import.meta.env.VITE_LOCALEATS_API_URL || "";
   const privatePreviewEnabled=isPrivateMyKotaPreview(window.location.origin,{
     projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -899,27 +901,48 @@ export default function App() {
     orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
     apiOrigin:privateApiOrigin
   });
+  // The approved UID is granted by the API, never inferred from profile/session
+  // state. A separate compatibility session can update asynchronously and
+  // must not suppress an already verified Firebase authorization result.
+  const privateMyKotaEligible=hasApprovedPrivateMyKotaSession(
+    privateMyKotaApprovedUid,auth.currentUser?.uid
+  );
   useEffect(()=>{
-    // Logout and account switching invalidate pending private reads as well as
-    // any transient private fixture/cart. No data from one UID reaches another.
-    const uid=session?.user?.id;
-    const requestId=++privateMyKotaRequest.current;
-    const abort=new AbortController();
-    setPrivateMyKotaShop(null);
-    setPrivateMyKotaEligible(false);
-    setCart(items=>items.some(i=>i.shopId===PRIVATE_MY_KOTA_SHOP_ID)
-      ? items.filter(i=>i.shopId!==PRIVATE_MY_KOTA_SHOP_ID) : items);
-    if(!privatePreviewEnabled || !uid || auth.currentUser?.uid!==uid)return ()=>abort.abort();
-    checkPrivateMyKotaAccess(privateApiOrigin,()=>auth.currentUser!.getIdToken(),abort.signal)
-      .then(allowed=>{
-        if(requestId===privateMyKotaRequest.current &&
-          auth.currentUser?.uid===uid && !abort.signal.aborted)setPrivateMyKotaEligible(allowed);
-      }).catch(()=>{/* Preview test feature is disabled or unavailable: fail closed. */});
-    return ()=>{abort.abort();privateMyKotaRequest.current++;};
-  },[session?.user?.id,privatePreviewEnabled,privateApiOrigin]);
+    let mounted=true;
+    let activeStatus:AbortController|null=null;
+    // Firebase Auth itself is the authority for this Preview-only test. Its
+    // observer fires after persisted auth is restored and on account changes.
+    const unsubscribe=onAuthStateChanged(auth,user=>{
+      activeStatus?.abort();
+      const statusRequestId=++privateMyKotaStatusRequest.current;
+      ++privateMyKotaRequest.current;
+      setPrivateMyKotaShop(null);
+      setPrivateMyKotaApprovedUid(null);
+      setCart(items=>items.some(i=>i.shopId===PRIVATE_MY_KOTA_SHOP_ID)
+        ? items.filter(i=>i.shopId!==PRIVATE_MY_KOTA_SHOP_ID):items);
+      if(!privatePreviewEnabled || !user || user.isAnonymous)return;
+      const request=new AbortController();
+      activeStatus=request;
+      checkPrivateMyKotaAccess(privateApiOrigin,()=>user.getIdToken(),request.signal)
+        .then(allowed=>{
+          if(allowed && mounted && !request.signal.aborted &&
+              statusRequestId===privateMyKotaStatusRequest.current &&
+              auth.currentUser?.uid===user.uid){
+            setPrivateMyKotaApprovedUid(user.uid);
+          }
+        }).catch(()=>{/* Fail closed. Never show the fixture without API approval. */});
+    });
+    return ()=>{
+      mounted=false;
+      activeStatus?.abort();
+      unsubscribe();
+      ++privateMyKotaStatusRequest.current;
+      ++privateMyKotaRequest.current;
+    };
+  },[privatePreviewEnabled,privateApiOrigin]);
 
   const openPrivateMyKota=async()=>{
-    const uid=session?.user?.id;
+    const uid=privateMyKotaApprovedUid;
     if(!privateMyKotaEligible||!uid||auth.currentUser?.uid!==uid)return;
     const requestId=++privateMyKotaRequest.current;
     const abort=new AbortController();
@@ -945,7 +968,7 @@ export default function App() {
   const noLocationShopList=userLocation&&nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
   // Missing Firebase and session UIDs must NOT match each other.
-  const privateShopForAccount=accountPrivateShop(privateMyKotaShop,session?.user?.id,auth.currentUser?.uid);
+  const privateShopForAccount=accountPrivateShop(privateMyKotaShop,privateMyKotaApprovedUid??undefined,auth.currentUser?.uid);
   const visibleShops=privateShopForAccount
     ? [...noLocationShopList.filter(shop=>shop.id!==PRIVATE_MY_KOTA_SHOP_ID),privateShopForAccount]
     : noLocationShopList;
@@ -3187,7 +3210,7 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {privateMyKotaEligible && session?.user?.id===auth.currentUser?.uid &&
+          {privateMyKotaEligible &&
             (currentScreen==="home"||currentScreen==="discover"||currentScreen==="store-info") && (
               <section role="status" aria-label="Private My-Kota staging test"
                 className="max-w-2xl mx-auto my-3 mx-3 rounded-xl border border-orange-300 bg-orange-50 text-slate-900 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
