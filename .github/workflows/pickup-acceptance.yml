@@ -1,0 +1,26 @@
+name: Customer pickup acceptance recovery
+on:
+  pull_request:
+    paths:
+      - 'src/services/pickupAcceptance.ts'
+      - 'src/screens/PickupTrackingScreen.tsx'
+      - 'src/pickup/client.ts'
+      - 'tests/pickup-acceptance*'
+      - '.github/workflows/pickup-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: node --experimental-strip-types --test tests/*.test.mjs
+      - run: npm run lint
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/pickup-acceptance-browser.mjs
