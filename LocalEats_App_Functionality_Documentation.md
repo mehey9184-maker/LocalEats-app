@@ -1,5 +1,7 @@
 # LocalEats App Functionality Documentation
 
+The private My-Kota staging banner renders inside Home's measured-header content area. Its original position above Home let the fixed header cover the authorized button after the transition settled. The browser regression exercises the actual Customer entry and Firebase SDK with local authentication/API responses at 320, 390 and 1280 px, including denied users, restored sessions and delayed account-switch responses.
+
 The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
 
 ## Overview

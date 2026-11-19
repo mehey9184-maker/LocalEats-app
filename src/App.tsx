@@ -2931,6 +2931,20 @@ export default function App() {
     }
   }, [userProfile, session, favorites]);
 
+  const privateTestBanner = privateMyKotaEligible ? (
+    <section role="status" aria-label="Private My-Kota staging test"
+      className="w-full max-w-2xl mx-auto mb-4 rounded-xl border border-orange-300 bg-orange-50 text-slate-900 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
+      <div>
+        <p className="font-bold text-sm">PRIVATE MY-KOTA TEST · SAMPLE ONLY</p>
+        <p className="text-xs">Simulated within 4 km. Not your GPS location. No real orders or payment.</p>
+      </div>
+      <button type="button" className="min-h-[44px] rounded-lg bg-orange-600 text-white py-2 px-3 text-sm font-semibold"
+        onClick={privateShopForAccount?hidePrivateMyKota:openPrivateMyKota}>
+        {privateShopForAccount?"Exit private test":"Open sample My-Kota"}
+      </button>
+    </section>
+  ) : null;
+
   if (isRestoringSession) {
     // Keep one Home-shaped loading view in place until the persisted account
     // is resolved. Do not flash Splash, Login, or unverified customer data.
@@ -3210,20 +3224,7 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {privateMyKotaEligible &&
-            (currentScreen==="home"||currentScreen==="discover"||currentScreen==="store-info") && (
-              <section role="status" aria-label="Private My-Kota staging test"
-                className="max-w-2xl mx-auto my-3 mx-3 rounded-xl border border-orange-300 bg-orange-50 text-slate-900 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
-                <div>
-                  <p className="font-bold text-sm">PRIVATE MY-KOTA TEST · SAMPLE ONLY</p>
-                  <p className="text-xs">Simulated within 4 km. Not your GPS location. No real orders or payment.</p>
-                </div>
-                <button type="button" className="rounded-lg bg-orange-600 text-white py-2 px-3 text-sm font-semibold"
-                  onClick={privateShopForAccount?hidePrivateMyKota:openPrivateMyKota}>
-                  {privateShopForAccount?"Exit private test":"Open sample My-Kota"}
-                </button>
-              </section>
-            )}
+          {(currentScreen==="discover"||currentScreen==="store-info") && privateTestBanner}
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
@@ -3317,6 +3318,7 @@ export default function App() {
               )}
               {currentScreen === "home" && (
                 <HomeScreen
+                  privateTestBanner={privateTestBanner}
                   userProfile={userProfile}
                   session={session}
                   shops={visibleShops}
@@ -4014,6 +4016,7 @@ const HorizontalShopCard = ({
 };
 
 function HomeScreen({
+  privateTestBanner,
   userProfile,
   session,
   shops,
@@ -4053,6 +4056,7 @@ function HomeScreen({
   isSyncing = false,
   onOpenCart,
 }: {
+  privateTestBanner?: React.ReactNode;
   userProfile: UserProfile;
   session: Session | null;
   shops: Shop[];
@@ -5111,6 +5115,7 @@ function HomeScreen({
       </header>
 
       <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full" style={{ paddingTop: headerHeight ? `calc(${headerHeight}px + 1rem)` : "120px" }}>
+        {privateTestBanner}
         {/* Compact Persistent Delivery Status Widget (Removed to prevent duplication with global persistent tracker) */}
 
         <div className="mb-6 px-1 pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">

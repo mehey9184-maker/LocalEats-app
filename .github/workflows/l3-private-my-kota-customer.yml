@@ -9,6 +9,7 @@ on:
       - 'vite.config.ts'
       - 'tests/l3-private-my-kota.test.mjs'
       - 'tests/l3-private-my-kota-browser-startup.mjs'
+      - 'tests/l3-private-my-kota-browser-access.mjs'
       - '.github/workflows/l3-private-my-kota-customer.yml'
   workflow_dispatch:
 permissions:
@@ -62,3 +63,5 @@ jobs:
           '
       - name: Test real React startup in local isolated Chrome
         run: node tests/l3-private-my-kota-browser-startup.mjs
+      - name: Verify private banner authorization and real pointer access
+        run: node tests/l3-private-my-kota-browser-access.mjs

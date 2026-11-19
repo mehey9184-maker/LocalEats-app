@@ -38,7 +38,8 @@ test("existing map interaction canvas, markers, clustering and map validation re
 });
 
 test("unchanged app layout, saved-shop menus, profile address, and checkout stay gated",()=>{
-  assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
+  assert.match(app,/const noLocationShopList=userLocation&&nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
+  assert.match(app,/const visibleShops=privateShopForAccount[\s\S]*?: noLocationShopList;/);
   assert.match(app,/<ShopCard\b/);
   assert.match(app,/<MenuItemCard\b/);
   assert.match(app,/<DiscoverMapCanvas userLocation=\{userLocation\}/);
