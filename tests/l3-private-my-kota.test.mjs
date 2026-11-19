@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {isPrivateMyKotaPreview,blockPrivateMyKotaOrder,PRIVATE_MY_KOTA_SHOP_ID} from "../src/services/privateMyKotaPolicy.ts";
+import {isPrivateMyKotaPreview,blockPrivateMyKotaOrder,PRIVATE_MY_KOTA_SHOP_ID,accountPrivateShop} from "../src/services/privateMyKotaPolicy.ts";
 
 const origin="https://localeats-customer-staging-r52d-private123.vercel.app";
 const env={projectId:"localeats-staging",configSource:"environment",orderingEnabled:"false",
@@ -41,4 +41,16 @@ test("no fake GPS, private cache, or persistent private cart; keep original Shop
  assert.match(pickup,/blockPrivateMyKotaOrder\(PRIVATE_MY_KOTA_SHOP_ID\)/);
  assert.match(fixture,/private-test\/my-kota\/shop\?mode=simulated/);
  assert.doesNotMatch(fixture,/localStorage|sessionStorage|indexedDB|setUserLocation/);
+});
+
+test("missing session and Firebase UIDs never match or dereference an empty test shop",()=>{
+ const fixture={uid:"customer-a",shop:{id:PRIVATE_MY_KOTA_SHOP_ID,name:"PRIVATE TEST"}};
+ assert.equal(accountPrivateShop(null,undefined,undefined),null);
+ assert.equal(accountPrivateShop(null,"customer-a","customer-a"),null);
+ assert.equal(accountPrivateShop(fixture,undefined,undefined),null);
+ assert.equal(accountPrivateShop(fixture,"customer-a",undefined),null);
+ assert.equal(accountPrivateShop(fixture,undefined,"customer-a"),null);
+ assert.equal(accountPrivateShop(fixture,"customer-a","customer-b"),null);
+ assert.equal(accountPrivateShop(fixture,"customer-b","customer-b"),null);
+ assert.deepEqual(accountPrivateShop(fixture,"customer-a","customer-a"),fixture.shop);
 });
