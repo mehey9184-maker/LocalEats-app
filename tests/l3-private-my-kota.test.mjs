@@ -29,7 +29,7 @@ test("no fake GPS, private cache, or persistent private cart; keep original Shop
  const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
  const pickup=readFileSync(new URL("../src/services/customerPickup.ts",import.meta.url),"utf8");
  const fixture=readFileSync(new URL("../src/services/privateMyKotaPreview.ts",import.meta.url),"utf8");
- assert.match(app,/auth\.currentUser\?\.uid===session\?\.user\?\.id/);
+ assert.match(app,/accountPrivateShop\(privateMyKotaShop,session\?\.user\?\.id,auth\.currentUser\?\.uid\)/);
  assert.match(app,/setPrivateMyKotaShop\(null\)/);
  assert.match(app,/setCart\(items=>items\.filter\(i=>i\.shopId!==PRIVATE_MY_KOTA_SHOP_ID\)\)/);
  assert.match(app,/cart\.filter\(item=>item\.shopId!==PRIVATE_MY_KOTA_SHOP_ID\)/);
