@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { WifiOff, CloudOff, RefreshCw, XCircle } from 'lucide-react';
 import { FirestoreService } from '../lib/firebase';
+import {isPrivateMyKotaPreview} from '../services/privateMyKotaPolicy';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function SystemStatusIndicator() {
+  // The private staging Customer app reads the pickup API, not the legacy
+  // Firestore shop catalog. Report the actual dependency without implying a
+  // production database outage when Firestore's stale collection is empty.
+  const stagingPickupApi = isPrivateMyKotaPreview(window.location.origin,{
+    projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    configSource:import.meta.env.VITE_FIREBASE_CONFIG_SOURCE,
+    orderingEnabled:import.meta.env.VITE_PICKUP_ORDERING_ENABLED,
+    apiOrigin:import.meta.env.VITE_LOCALEATS_API_URL||''
+  });
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [supabaseStatus, setSupabaseStatus] = useState<'ok' | 'error' | 'checking'>('checking');
   const [showIndicator, setShowIndicator] = useState(false);
@@ -32,8 +42,25 @@ export default function SystemStatusIndicator() {
       
       try {
         if (isMounted) setSupabaseStatus('checking');
-        const ok = await FirestoreService.healthCheck();
-        if (isMounted) setSupabaseStatus(ok ? 'ok' : 'error');
+        let ok: boolean;
+        if(stagingPickupApi){
+          // Read-only health response. Does not require account credentials
+          // and cannot trigger order writes or location spoofing.
+          const controller=new AbortController();
+          const timeout=setTimeout(()=>controller.abort(),4500);
+          try{
+            const response=await fetch(
+              (import.meta.env.VITE_LOCALEATS_API_URL||'')+'/health',
+              {method:'GET',cache:'no-store',signal:controller.signal}
+            );
+            const health=response.ok ? await response.json() : null;
+            ok=response.ok && health?.status==='ok' && health?.service==='localeats-api';
+          }catch{ok=false;}
+          finally{clearTimeout(timeout);}
+        }else{
+          ok=await FirestoreService.healthCheck();
+        }
+        if(isMounted)setSupabaseStatus(ok?'ok':'error');
       } catch (err) {
         if (isMounted) setSupabaseStatus('error');
       }
@@ -101,9 +128,13 @@ export default function SystemStatusIndicator() {
               </div>
               <div className="flex flex-col">
                 <span className="text-xs font-semibold text-slate-200">
-                  {supabaseStatus === 'error' ? 'Database Unreachable' : supabaseStatus === 'checking' ? 'Checking Database...' : 'Database Connected'}
+                  {stagingPickupApi
+                    ? (supabaseStatus==='error' ? 'Pickup API Unreachable' : supabaseStatus==='checking' ? 'Checking Pickup API...' : 'Pickup API Connected')
+                    : (supabaseStatus==='error' ? 'Database Unreachable' : supabaseStatus==='checking' ? 'Checking Database...' : 'Database Connected')}
                 </span>
-                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">Using offline cache</span>}
+                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">
+                    {stagingPickupApi ? 'Staging catalog cannot be checked right now' : 'Using offline cache'}
+                  </span>}
               </div>
             </div>
           </div>
