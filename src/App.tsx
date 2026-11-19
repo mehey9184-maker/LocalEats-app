@@ -259,6 +259,7 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
 import {isVerifiedCustomerPushStagingContext} from "./services/customerPushStaging";
 import {PRIVATE_MY_KOTA_SHOP_ID,isPrivateMyKotaPreview,checkPrivateMyKotaAccess,readPrivateMyKotaFixture} from "./services/privateMyKotaPreview";
+import {accountPrivateShop} from "./services/privateMyKotaPolicy";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
@@ -943,8 +944,8 @@ export default function App() {
   };
   const noLocationShopList=userLocation&&nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
-  const privateShopForAccount=privateMyKotaShop?.uid===session?.user?.id &&
-    auth.currentUser?.uid===session?.user?.id ? privateMyKotaShop.shop : null;
+  // Missing Firebase and session UIDs must NOT match each other.
+  const privateShopForAccount=accountPrivateShop(privateMyKotaShop,session?.user?.id,auth.currentUser?.uid);
   const visibleShops=privateShopForAccount
     ? [...noLocationShopList.filter(shop=>shop.id!==PRIVATE_MY_KOTA_SHOP_ID),privateShopForAccount]
     : noLocationShopList;
