@@ -5,6 +5,7 @@ on:
       - 'src/services/privateMyKota*'
       - 'src/App.tsx'
       - 'src/services/customerPickup.ts'
+      - 'src/components/SystemStatusIndicator.tsx'
       - 'vite.config.ts'
       - 'tests/l3-private-my-kota.test.mjs'
       - 'tests/l3-private-my-kota-browser-startup.mjs'
