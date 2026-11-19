@@ -3,6 +3,7 @@ import {ArrowLeft,RefreshCw,ShoppingBag,Check,Clock,ChefHat,PackageCheck} from '
 import type {PickupOrder} from '../pickup/client';
 import type {Shop} from '../types';
 import {requireRealLocation} from '../services/pickupMapping';
+import {acceptanceMessage} from '../services/pickupAcceptance';
 
 interface Props {
  signedIn:boolean; orders:PickupOrder[]|null; error:boolean; refreshing:boolean; shops:Shop[];
@@ -23,8 +24,14 @@ export function PickupTrackingScreen(props:Props){
  const [editing,setEditing]=useState<string|null>(null),[reason,setReason]=useState('');
  const [busy,setBusy]=useState<string|null>(null),[notice,setNotice]=useState(''),[actionError,setActionError]=useState('');
  const locked=useRef(false);
+ const [now,setNow]=useState(Date.now);
+ useEffect(()=>{
+  if(!signedIn||!orders?.some(o=>o.status==='pending'&&o.acceptance_deadline_at))return;
+  setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),15000);
+  return ()=>clearInterval(timer);
+ },[signedIn,orders]);
  const focusedOrder=useRef<HTMLElement|null>(null);
- const active=orders?.filter(order=>order.delivery_type==='collection'&&!['collected','cancelled'].includes(order.status))??[];
+ const active=orders?.filter(order=>order.delivery_type==='collection'&&(!['collected','cancelled'].includes(order.status)||acceptanceMessage(order,now)?.state==='expired'))??[];
  const focusAvailable=active.some(order=>order.id===props.focusedOrderId);
  useEffect(()=>{
   if(focusAvailable) focusedOrder.current?.focus();
@@ -51,6 +58,7 @@ export function PickupTrackingScreen(props:Props){
    :!error&&active.length===0?<section className="py-16 text-center"><ShoppingBag className="w-12 h-12 mx-auto text-orange-500"/><h2 className="mt-4 font-bold">No active pickups</h2><button type="button" onClick={onBrowse} className="mt-4 min-h-11 px-6 rounded-xl bg-orange-600 text-white font-bold">Browse nearby kitchens</button></section>
    :active.map(order=>{
     const shop=shops.find(s=>s.id===order.shop_id),index=stages.findIndex(s=>s.status===order.status);
+    const acceptance=acceptanceMessage(order,now);
     const pending=props.hasPendingCancellation(order),canCancel=order.status==='pending'||pending;
     let directions: string | undefined;
     if (shop && typeof shop.latitude==='number' && typeof shop.longitude==='number') {
@@ -62,10 +70,11 @@ export function PickupTrackingScreen(props:Props){
     }
     return <article key={order.id} ref={order.id===props.focusedOrderId?focusedOrder:undefined} tabIndex={-1} className="scroll-mt-20 rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 shadow-sm space-y-4">
      <div className="flex justify-between gap-3"><div><h2 className="font-black text-slate-900 dark:text-white">{shop?.name||`Store #${order.shop_id}`}</h2><p className="text-xs text-slate-500 mt-1">Order #{order.id.slice(0,8)}</p></div><strong className="whitespace-nowrap">{typeof order.total_price==='number'&&Number.isFinite(order.total_price)?`R ${order.total_price.toFixed(2)}`:'Total unavailable'}</strong></div>
-     <div className="rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-950/30 p-4"><h3 className="font-black text-orange-900 dark:text-orange-200">{order.status==='ready_for_pickup'?'Ready for pickup':stages[index]?.label||'Status unavailable'}</h3><p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{descriptions[order.status]||'Refresh to verify the current pickup status.'}</p></div>
+     <div role="status" className="rounded-2xl border border-orange-200 bg-orange-50 dark:bg-orange-950/30 p-4"><h3 className="font-black text-orange-900 dark:text-orange-200">{acceptance?.title||(order.status==='ready_for_pickup'?'Ready for pickup':stages[index]?.label||'Status unavailable')}</h3><p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{acceptance?.text||descriptions[order.status]||'Refresh to verify the current pickup status.'}</p></div>
+     {acceptance?.canFindAnother&&<div className="flex flex-wrap gap-2"><button type="button" onClick={onBrowse} className={`min-h-[44px] px-4 rounded-xl bg-orange-600 text-white font-bold ${actionFeedback}`}>Find another shop</button><button type="button" onClick={onHistory} className={`min-h-[44px] px-4 rounded-xl border ${actionFeedback}`}>View order details</button></div>}
      {index>=0&&<ol aria-label="Pickup progress" className="grid grid-cols-4 gap-1">{stages.map((stage,n)=>{const Icon=stage.icon;return <li key={stage.status} aria-current={n===index?'step':undefined} className={`text-center text-[11px] font-bold ${n<=index?'text-orange-700 dark:text-orange-300':'text-slate-500'}`}><span className={`w-9 h-9 mx-auto mb-2 rounded-full flex items-center justify-center ${n<=index?'bg-orange-100 dark:bg-orange-950':'bg-slate-100 dark:bg-slate-700'}`}><Icon className="w-4 h-4"/></span>{stage.label}</li>;})}</ol>}
-     <p className="text-sm font-semibold">{order.payment_status==='paid'?'Paid at shop':order.payment_status==='unpaid'?'Unpaid · Pay at shop':'Payment status unavailable'}</p>
-     <p className="text-xs text-slate-500">Wait for Ready before collecting. The shop confirms payment and food handover separately.</p>
+     <p className="text-sm font-semibold">{acceptance?.state==='expired'&&order.payment_status==='unpaid'?'Expired · No payment due':order.payment_status==='paid'?'Paid at shop':order.payment_status==='unpaid'?'Unpaid · Pay at shop':'Payment status unavailable'}</p>
+     {order.status!=='cancelled'&&<p className="text-xs text-slate-500">Wait for Ready before collecting. The shop confirms payment and food handover separately.</p>}
      {order.status==='ready_for_pickup' && (directions || props.onReadyReminder) && (
       <div className="flex flex-wrap items-center gap-2">
        {directions && <a href={directions} target="_blank" rel="noopener noreferrer"

@@ -1640,6 +1640,9 @@ export default function App() {
       if (payload.data?.type === "pickup_ready") {
         window.dispatchEvent(new Event("localeats-pickup-ready"));
       }
+      if (payload.data?.type === "pickup_acceptance") {
+        window.dispatchEvent(new Event("localeats-pickup-update"));
+      }
     }).then((unsub) => {
       unsubscribe = unsub;
     }).catch(console.warn);
@@ -1647,6 +1650,10 @@ export default function App() {
     const workerMessage = (event: MessageEvent) => {
       if (event.data?.type === "localeats-pickup-ready") {
         window.dispatchEvent(new Event("localeats-pickup-ready"));
+      }
+      if (event.data?.type === "localeats-pickup-update") {
+        window.dispatchEvent(new Event("localeats-pickup-update"));
+        if (auth.currentUser?.uid) setCurrentScreen("order-tracking");
       }
     };
     navigator.serviceWorker?.addEventListener("message", workerMessage);
@@ -2470,6 +2477,7 @@ export default function App() {
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("online", refreshVisible);
     window.addEventListener("localeats-pickup-ready", refreshVisible);
+    window.addEventListener("localeats-pickup-update", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
     return () => {
       active = false;
@@ -2479,6 +2487,7 @@ export default function App() {
       window.removeEventListener("focus", refreshVisible);
       window.removeEventListener("online", refreshVisible);
       window.removeEventListener("localeats-pickup-ready", refreshVisible);
+      window.removeEventListener("localeats-pickup-update", refreshVisible);
       document.removeEventListener("visibilitychange", refreshVisible);
     };
   }, [historyUserId]);

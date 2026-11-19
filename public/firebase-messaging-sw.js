@@ -14,6 +14,8 @@ self.addEventListener('notificationclick', event => {
       if (event.notification.data?.type === 'pickup_ready') {
         match.postMessage({type:'localeats-pickup-ready'});
       }
+      const updateType=event.notification.data?.type || event.notification.data?.FCM_MSG?.data?.type;
+      if(updateType==='pickup_acceptance')match.postMessage({type:'localeats-pickup-update'});
       return;
     }
     await clients.openWindow(destination);
