@@ -30,6 +30,8 @@ Catalog cards and restaurant metadata display only valid provided rating/count/d
 
 The Merchant Dashboard and backend may live in separate repositories and must be inspected independently. This document alone does not prove those systems are tested or launch-ready.
 
+Private My-Kota staging controls on Home belong inside the measured-header main content slot. Verify pointer hit testing after the screen transition, as DOM visibility alone can pass while the fixed header covers the control.
+
 
 > **CRITICAL RULE FOR THE AI AGENT**: 
 > 1. You MUST ALWAYS consult this document BEFORE making any fixes, modifications, or starting new phases.

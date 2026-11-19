@@ -35,7 +35,15 @@ export default defineConfig(({mode,command}) => {
     env.VERCEL_GIT_COMMIT_REF === "review/l3-n3-customer-api-pairing" &&
     env.VITE_FIREBASE_PROJECT_ID === "localeats-staging" &&
     env.VITE_PICKUP_ORDERING_ENABLED === "false";
-  const stagedApiOrigin = l3n3IsolatedPreview
+  const privateMyKotaPreview = env.LOCALEATS_STAGING_ONLY === "true" &&
+    env.VERCEL_ENV === "preview" &&
+    env.VERCEL_GIT_COMMIT_REF === "review/l3-my-kota-private-test-customer" &&
+    env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
+    env.VITE_FIREBASE_PROJECT_ID === "localeats-staging" &&
+    env.VITE_PICKUP_ORDERING_ENABLED === "false";
+  const stagedApiOrigin = privateMyKotaPreview
+    ? "https://localeats-api-staging-r52d-git-54267e-mehey9184-makers-projects.vercel.app"
+    : l3n3IsolatedPreview
     ? "https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"
     : env.VITE_LOCALEATS_API_URL || "";
   return {
