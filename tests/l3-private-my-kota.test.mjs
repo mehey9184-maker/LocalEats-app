@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {isPrivateMyKotaPreview,blockPrivateMyKotaOrder,PRIVATE_MY_KOTA_SHOP_ID,accountPrivateShop} from "../src/services/privateMyKotaPolicy.ts";
+import {isPrivateMyKotaPreview,blockPrivateMyKotaOrder,PRIVATE_MY_KOTA_SHOP_ID,accountPrivateShop,hasApprovedPrivateMyKotaSession} from "../src/services/privateMyKotaPolicy.ts";
 
 const origin="https://localeats-customer-staging-r52d-private123.vercel.app";
 const env={projectId:"localeats-staging",configSource:"environment",orderingEnabled:"false",
@@ -29,7 +29,11 @@ test("no fake GPS, private cache, or persistent private cart; keep original Shop
  const app=readFileSync(new URL("../src/App.tsx",import.meta.url),"utf8");
  const pickup=readFileSync(new URL("../src/services/customerPickup.ts",import.meta.url),"utf8");
  const fixture=readFileSync(new URL("../src/services/privateMyKotaPreview.ts",import.meta.url),"utf8");
- assert.match(app,/accountPrivateShop\(privateMyKotaShop,session\?\.user\?\.id,auth\.currentUser\?\.uid\)/);
+ assert.match(app,/accountPrivateShop\(privateMyKotaShop,privateMyKotaApprovedUid\?\?undefined,auth\.currentUser\?\.uid\)/);
+ assert.match(app,/onAuthStateChanged\(auth,user=>/);
+ assert.match(app,/statusRequestId===privateMyKotaStatusRequest\.current/);
+ assert.match(app,/hasApprovedPrivateMyKotaSession\(/);
+ assert.doesNotMatch(app,/\[session\?\.user\?\.id,privatePreviewEnabled,privateApiOrigin\]/);
  assert.match(app,/setPrivateMyKotaShop\(null\)/);
  assert.match(app,/setCart\(items=>items\.filter\(i=>i\.shopId!==PRIVATE_MY_KOTA_SHOP_ID\)\)/);
  assert.match(app,/cart\.filter\(item=>item\.shopId!==PRIVATE_MY_KOTA_SHOP_ID\)/);
@@ -53,6 +57,14 @@ test("missing session and Firebase UIDs never match or dereference an empty test
  assert.equal(accountPrivateShop(fixture,"customer-a","customer-b"),null);
  assert.equal(accountPrivateShop(fixture,"customer-b","customer-b"),null);
  assert.deepEqual(accountPrivateShop(fixture,"customer-a","customer-a"),fixture.shop);
+});
+
+test("private approval survives compatible-session changes but never changes Firebase ownership",()=>{
+ assert.equal(hasApprovedPrivateMyKotaSession(null,undefined),false);
+ assert.equal(hasApprovedPrivateMyKotaSession(null,"customer-a"),false);
+ assert.equal(hasApprovedPrivateMyKotaSession("customer-a",undefined),false);
+ assert.equal(hasApprovedPrivateMyKotaSession("customer-a","customer-b"),false);
+ assert.equal(hasApprovedPrivateMyKotaSession("customer-a","customer-a"),true);
 });
 
 test("staging status indicator checks the pickup API, not an unrelated Firebase shops collection",()=>{
