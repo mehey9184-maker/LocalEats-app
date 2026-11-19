@@ -54,3 +54,14 @@ test("missing session and Firebase UIDs never match or dereference an empty test
  assert.equal(accountPrivateShop(fixture,"customer-b","customer-b"),null);
  assert.deepEqual(accountPrivateShop(fixture,"customer-a","customer-a"),fixture.shop);
 });
+
+test("staging status indicator checks the pickup API, not an unrelated Firebase shops collection",()=>{
+ const indicator=readFileSync(new URL("../src/components/SystemStatusIndicator.tsx",import.meta.url),"utf8");
+ assert.match(indicator,/isPrivateMyKotaPreview\(window\.location\.origin/);
+ assert.match(indicator,/if\(stagingPickupApi\)/);
+ assert.match(indicator,/\/health/);
+ assert.match(indicator,/health\?\.service==='localeats-api'/);
+ assert.match(indicator,/Pickup API Connected/);
+ assert.match(indicator,/Pickup API Unreachable/);
+ assert.match(indicator,/FirestoreService\.healthCheck\(\)/);
+});
