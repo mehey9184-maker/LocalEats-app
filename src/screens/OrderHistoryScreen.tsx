@@ -1,6 +1,90 @@
 import { ArrowLeft, ShoppingBag, Clock, Receipt } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Shop } from "../types";
-import { pickupStatus, type PickupOrder } from "../pickup/client";
+import { pickupStatus, type PickupOrder, type PickupOrderDetail, type PickupHistoryBefore, type PickupHistoryPage } from "../pickup/client";
+import { readPickupWithDeadline } from "../services/pickupRead";
+import { pickupReceipt, type PickupReceipt } from "../services/pickupReceipt";
+
+type ReadOrder = (orderId: string, signal: AbortSignal) => Promise<PickupOrderDetail>;
+
+function PickupReceiptBody({ order, readOrder }: { order: PickupOrder; readOrder: ReadOrder }) {
+  const { id, user_id, shop_id, revision } = order;
+  const [attempt, setAttempt] = useState(0);
+  const [result, setResult] = useState<{ receipt: PickupReceipt | null } | { error: true }>();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const detail = await readPickupWithDeadline(signal => readOrder(id, signal), { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setResult({ receipt: pickupReceipt(detail, { id, user_id, shop_id, revision }) });
+        }
+      } catch {
+        if (!controller.signal.aborted) setResult({ error: true });
+      }
+    })();
+    return () => controller.abort();
+  }, [attempt, id, user_id, shop_id, revision, readOrder]);
+
+  if (!result) return <p role="status" className="text-xs">Loading pickup receipt…</p>;
+  if ("error" in result) return (
+    <>
+      <p role="status" className="text-xs">Couldn’t load the pickup receipt.</p>
+      <button type="button" className="min-h-11 text-xs font-semibold text-orange-700 dark:text-orange-300"
+        onClick={() => { setResult(undefined); setAttempt(previous => previous + 1); }}>
+        Retry receipt
+      </button>
+    </>
+  );
+  const { receipt } = result;
+  return (
+    <>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
+        <dt>Order number</dt>
+        <dd className="text-right font-semibold">#{receipt?.orderNumber ?? id.slice(0, 8)}</dd>
+        {receipt?.payment && (
+          <>
+            <dt>Amount paid</dt>
+            <dd className="text-right font-semibold">R {receipt.payment.amount.toFixed(2)}</dd>
+            <dt>Payment method</dt>
+            <dd className="text-right font-semibold">{receipt.payment.method === "cash" ? "Cash" : "Card machine"}</dd>
+          </>
+        )}
+        {receipt?.collectedAt && (
+          <>
+            <dt>Collected at</dt>
+            <dd className="text-right font-semibold">
+              <time dateTime={receipt.collectedAt}>{new Date(receipt.collectedAt).toLocaleString(undefined, {
+                dateStyle: "medium", timeStyle: "short",
+              })}</time>
+            </dd>
+          </>
+        )}
+      </dl>
+      {!receipt?.payment && (
+        <p className="mt-2 text-xs">Confirmed payment details are unavailable for this pickup.</p>
+      )}
+    </>
+  );
+}
+
+function PickupReceiptPanel({ order, readOrder }: { order: PickupOrder; readOrder: ReadOrder }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="rounded-2xl border border-slate-200 px-3 dark:border-slate-700"
+      onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-slate-900 dark:text-white">
+        {open ? "Hide pickup receipt" : "View pickup receipt"}
+      </summary>
+      {open && (
+        <div className="pb-3 text-slate-700 dark:text-slate-200">
+          <PickupReceiptBody order={order} readOrder={readOrder} />
+        </div>
+      )}
+    </details>
+  );
+}
 
 interface OrderHistoryScreenProps {
   signedIn: boolean;
@@ -8,6 +92,9 @@ interface OrderHistoryScreenProps {
   error: boolean;
   refreshing: boolean;
   shops: Shop[];
+  readOrder: ReadOrder;
+  readOlder?: (before: PickupHistoryBefore, signal: AbortSignal) => Promise<PickupHistoryPage>;
+  historyCursor?: PickupHistoryBefore & {user_id:string};
   onBack: () => void;
   onRetry: () => void;
   onSignIn: () => void;
@@ -16,8 +103,53 @@ interface OrderHistoryScreenProps {
 }
 
 export function OrderHistoryScreen({
-  signedIn, orders, error, refreshing, shops, onBack, onRetry, onSignIn, onBrowse, onStoreInfo,
+  signedIn, orders, error, refreshing, shops, readOrder, readOlder, historyCursor, onBack, onRetry, onSignIn, onBrowse, onStoreInfo,
 }: OrderHistoryScreenProps) {
+  const initialBefore = historyCursor ?? ((orders?.length ?? 0) >= 50 ? orders?.at(-1) : undefined);
+  const anchor = signedIn
+    ? JSON.stringify([orders?.[0]?.user_id ?? initialBefore?.user_id, orders?.[0]?.id,
+        initialBefore?.id, initialBefore?.created_at]) : "";
+  const scope = useRef(anchor);
+  scope.current = anchor;
+  const pendingPage = useRef<AbortController | null>(null);
+  const [older, setOlder] = useState<{anchor:string;rows:PickupOrder[];more:boolean;busy:boolean;failed:boolean}>({
+    anchor:"",rows:[],more:true,busy:false,failed:false,
+  });
+  useEffect(() => {
+    pendingPage.current?.abort();
+    pendingPage.current = null;
+    return () => pendingPage.current?.abort();
+  }, [anchor]);
+  const extra = older.anchor === anchor ? older.rows : [];
+  const history = [...(orders ?? []), ...extra];
+  const loadingOlder = older.anchor === anchor && older.busy;
+  const failedOlder = older.anchor === anchor && older.failed;
+  const hasOlder = older.anchor === anchor ? older.more : Boolean(initialBefore);
+  const loadOlder = async () => {
+    const before = extra.at(-1) ?? initialBefore;
+    if (!signedIn || !readOlder || !before || error || refreshing || pendingPage.current) return;
+    const controller = new AbortController();
+    pendingPage.current = controller;
+    setOlder({anchor,rows:extra,more:true,busy:true,failed:false});
+    try {
+      const page = await readPickupWithDeadline(signal => readOlder(before, signal), {signal:controller.signal});
+      if (controller.signal.aborted || scope.current !== anchor) return;
+      const seen = new Set(history.map(order => order.id));
+      if (page.orders.some(order => !order || order.user_id !== before.user_id || order.delivery_type !== "collection" ||
+          typeof order.id !== "string" || seen.has(order.id) || !Number.isFinite(Date.parse(order.created_at)))) {
+        throw new Error("Older orders could not be verified.");
+      }
+      const pageIds = new Set(page.orders.map(order => order.id));
+      if (pageIds.size !== page.orders.length || (page.has_more && page.orders.length === 0))
+        throw new Error("Older orders could not be verified.");
+      setOlder({anchor,rows:[...extra,...page.orders],more:page.has_more,busy:false,failed:false});
+    } catch {
+      if (!controller.signal.aborted && scope.current === anchor)
+        setOlder({anchor,rows:extra,more:true,busy:false,failed:true});
+    } finally {
+      if (pendingPage.current === controller) pendingPage.current = null;
+    }
+  };
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 pb-28">
       {/* Header */}
@@ -88,16 +220,16 @@ export function OrderHistoryScreen({
               </div>
             ))}
           </div>
-        ) : error && !orders?.length ? null : orders?.length === 0 ? (
+        ) : error && !orders?.length ? null : history.length === 0 ? (
           <div className="text-center py-16 px-4">
             <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4 text-slate-400">
               <Receipt className="w-8 h-8 opacity-40" />
             </div>
             <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200 mb-1">
-              No pickup orders yet
+              {initialBefore ? "No pickups in recent orders" : "No pickup orders yet"}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto mb-6">
-              Your pickup orders and their latest status will appear here.
+              {initialBefore ? "Load older orders to check your pickup history." : "Your pickup orders and their latest status will appear here."}
             </p>
             <button type="button" onClick={onBrowse}
               className="min-h-11 rounded-xl bg-orange-600 px-6 text-xs font-bold text-white">
@@ -105,7 +237,7 @@ export function OrderHistoryScreen({
             </button>
           </div>
         ) : (
-          orders?.map((order) => {
+          history.map((order) => {
             const shop = shops.find(s => s.id === order.shop_id);
             const dateStr = order.created_at
               ? new Date(order.created_at).toLocaleDateString(undefined, {
@@ -132,6 +264,7 @@ export function OrderHistoryScreen({
                     </p>
                   </div>
                   <div className="text-right">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Order total</p>
                     <span className="text-sm font-black text-slate-900 dark:text-white">
                       {order.total_price != null && Number.isFinite(Number(order.total_price))
                         ? `R ${Number(order.total_price).toFixed(2)}` : "Total unavailable"}
@@ -151,6 +284,11 @@ export function OrderHistoryScreen({
                   </div>
                 )}
 
+                {order.status === "collected" && order.delivery_type === "collection" && (
+                  <PickupReceiptPanel key={JSON.stringify([order.id, order.user_id, order.shop_id, order.revision])}
+                    order={order} readOrder={readOrder} />
+                )}
+
                 <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-700/60 gap-2">
                   <span className="text-[10px] font-mono text-slate-400">
                     ID: #{String(order.id).slice(0, 8)}
@@ -166,6 +304,16 @@ export function OrderHistoryScreen({
               </div>
             );
           })
+        )}
+        {signedIn && readOlder && initialBefore && hasOlder && (
+          <div className="space-y-2">
+            {failedOlder && <p role="status" className="text-sm text-amber-800 dark:text-amber-200">Couldn’t load older pickup orders. Your current history is still available.</p>}
+            <button type="button" disabled={loadingOlder || refreshing || error}
+              onClick={() => { void loadOlder(); }}
+              className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600">
+              {loadingOlder ? "Loading older orders…" : failedOlder ? "Retry older orders" : "Load older orders"}
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -1,5 +1,7 @@
 # LocalEats App Functionality Documentation
 
+Order History provides Load older orders after the latest 50. The authenticated API uses the last displayed timestamp and ID as a cursor, and returns at most 50 rows plus a continuation flag. Older cards retain the same receipt controls. Errors offer Retry older orders, and account changes discard in-flight results.
+
 The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
 
 ## Overview
@@ -33,6 +35,8 @@ LocalEats is a comprehensive food discovery and ordering application for local l
 
 ## Update History
 *(Assistant Maintenance Protocol: Summarize all successful code changes below this line)*
+
+- **2026-11-18 Pickup receipts.** In Order History, customers can open a receipt for a collected pickup. It shows the order number, confirmed rand amount and cash or card machine method from the server payment event, and the collection event time if available. The order total remains separate. Older pickups without proof show an unavailable message; failed requests can be retried. Receipt reads use the signed-in account, time out, and are cancelled when closed or when the account changes.
 
 - **2026-11-05 Catalog trust.** Shop cards and secondary catalog surfaces no longer supply fabricated ratings, review counts, distances or preparation estimates. Valid provided ratings remain visible; missing review counts are omitted, and restaurant structured data omits unsupported counts/hours. The unsupported Home coupon and checkout timing/refund guarantee are removed. Menu help is labelled automated, sends no customer profile, and does not claim a shop received the message. AI menu context uses the supplied menu instead of invented items, ratings or timing, with pickup/pay-at-shop constraints and factual fallback help.
 

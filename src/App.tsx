@@ -2275,6 +2275,7 @@ export default function App() {
   const historyUserId = session?.user?.id;
   const [pickupHistory, setPickupHistory] = useState<{
     userId: string; orders: PickupOrder[] | null; error: boolean; refreshing: boolean;
+    historyCursor?: Pick<PickupOrder,"id"|"created_at"|"user_id">;
   } | null>(null);
   const refreshPickupHistory = useRef<() => void>(() => {});
 
@@ -2300,6 +2301,7 @@ export default function App() {
       setPickupHistory(previous => ({
         userId: historyUserId,
         orders: previous?.userId === historyUserId ? previous.orders : null,
+        historyCursor: previous?.userId === historyUserId ? previous.historyCursor : undefined,
         error: previous?.userId === historyUserId && previous.error,
         refreshing: true,
       }));
@@ -2311,6 +2313,7 @@ export default function App() {
           setPickupHistory({
             userId: historyUserId,
             orders: ownedOrders.filter(order => order.delivery_type === "collection"),
+            historyCursor: ownedOrders.length >= 50 ? ownedOrders.at(-1) : undefined,
             error: false,
             refreshing: false,
           });
@@ -2323,6 +2326,7 @@ export default function App() {
         if (active) setPickupHistory(previous => ({
           userId: historyUserId,
           orders: previous?.userId === historyUserId ? previous.orders : null,
+          historyCursor: previous?.userId === historyUserId ? previous.historyCursor : undefined,
           error: true,
           refreshing: false,
         }));
@@ -3689,10 +3693,14 @@ export default function App() {
               )}
               {currentScreen === "order-history" && (
                 <OrderHistoryScreen
+                  key={historyUserId}
                   signedIn={!!historyUserId}
                   orders={currentPickupHistory?.orders ?? null}
                   error={currentPickupHistory?.error ?? false}
                   refreshing={currentPickupHistory?.refreshing ?? true}
+                  readOrder={customerPickupApi.order}
+                  readOlder={customerPickupApi.history}
+                  historyCursor={currentPickupHistory?.historyCursor}
                   onRetry={() => refreshPickupHistory.current()}
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   onSignIn={() => setCurrentScreen("login")}
