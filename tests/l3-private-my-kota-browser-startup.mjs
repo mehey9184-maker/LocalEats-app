@@ -20,7 +20,7 @@ try{
     await delay(150);
   }
   assert.ok(started,"The private staging Vite build must be previewable");
-  browser=await chromium.launch({headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
+  browser=await chromium.launch({channel:"chrome",headless:true,args:["--no-sandbox","--disable-dev-shm-usage"]});
   for(const caseName of ["fresh","invalid-cart","invalid-preferences"]){
     const context=await browser.newContext({viewport:{width:390,height:844},serviceWorkers:"block"});
     await context.route("**/*",route=>{
