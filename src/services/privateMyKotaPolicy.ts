@@ -21,6 +21,16 @@ export function blockPrivateMyKotaOrder(shopId:string){
     throw new Error("PRIVATE MY-KOTA TEST ONLY. Sample location/menu cannot create an order or charge payment.");
 }
 
+/** Approval comes only from a successful Firebase-token-authenticated API response.
+ * Never treat two missing identities as an approved session.
+ */
+export function hasApprovedPrivateMyKotaSession(
+  approvedUid:string|null,
+  firebaseUid:string|undefined,
+):boolean{
+  return Boolean(approvedUid && firebaseUid && approvedUid===firebaseUid);
+}
+
 /** Protect a transient private fixture against the logged-out case.
  * Two missing UIDs must never count as an authenticated identity match:
  * undefined === undefined is true in JavaScript.
