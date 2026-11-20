@@ -1,0 +1,34 @@
+# L3-N8U-S — Restore Customer outside-radius browsing on current main
+
+**Date:** 21 Nov 2026, South Africa. **Status:** Draft source integration, **NO Production deploy, merge, Firebase/Supabase changes, live test order, real FCM or radius override**.
+
+## Observed user issue
+The user supplied side-by-side screenshots: the public Customer Home is signed-in-looking (personal greeting) but displays **"Shops unavailable — Pickup shops could not be loaded"**, and the Production Merchant Menu shows My-Kota's single available R25 item while the store is offline. The test Customer is **farther than 4 km** from My-Kota. A network/catalog failure must **not** be presented as proof of the 4 km location rule. On current Production Customer (main SHA `d568033`), the API uses `GET /api/v1/catalog/pickup-shops` and returns only shops within 4 km; a valid empty catalog should show a truthful out-of-nearby-shops state, not a generic network error.
+
+The owner's **exact earlier approved Preview** is [Customer PR #103](https://github.com/mehey9184-maker/LocalEats-app/pull/103), from branch `feature/customer-outside-pickup-area-preview-20261117` and READY deployment `dpl_FvuGpcHFMi4nmo9CwNnHBsyQ7Kp6`: `https://project-x7cvt-git-feature-cust-f75225-mehey9184-makers-projects.vercel.app`. Its isolated API Preview also READY at `https://localeats-api-git-preview-cust-44b534-mehey9184-makers-projects.vercel.app`. Both may require Vercel authentication; don't disable deployment protection merely for testing. PR #103 is **old source relative to current Customer main** and must not be blindly merged.
+
+## Current-main reconciled draft
+This PR **selectively reapplies 22 shop/cart UI hunks from PR #103 onto newest Customer `main`**, **excluding** unrelated scroll/nav changes and preserving current checkout, install, FCM, profile, order history and notifications. Ported:
+- `src/pickup/client.ts`: add public GET-only `approvedShops()` using `/api/v1/catalog/shops`. The production API repository already supplies this endpoint with approved, nonarchived public shop fields. Do not expose owner UID, private contacts or tokens.
+- `src/services/customerPickup.ts`: public approved shop listing to the location-scoped 15-second catalog cache; only verified real device coordinates + public shop coordinates used for client Haversine distances. Invalid public GPS omitted, no default pin or fake status.
+- `src/services/pickupMapping.ts`: preserve `isWithinPickupArea()` inclusive 4 km; new `isOutsidePickupArea()`, `pickupDistanceKm()`. The mapper permits an accurately calculated 4.1 km browse-only shop but still rejects negative/NaN, malformed state/coords/prices.
+- `src/components/ShopCard.tsx`: preserve original cards/image and accessible navigation; outside area image desaturated/washed, but readable shop text unchanged, **Outside 4 km**, **Browse menu only**, no misleading Closed label solely because of distance; item Add disabled.
+- `src/App.tsx`: Home shows eligible shops first and a lighter **More shops outside your pickup area** group, Discover/Explore/StoreInfo show browse-only. The global `addToCart()` and StoreInfo quantity confirmation now reject verified out-of-area entries. Existing order creation and checkout flags left untouched, no changes to server authority.
+- Previous tests expecting the mapper to reject all distance over 4 km updated to assert **mapped-but-nonorderable**, with new assertions covering 3.9/4.0/4.1 km, no fake GPS, UI state and every add-to-cart gate. The 4 km **server** eligibility remains enforced by `pickupPricing`/SQL; this UI browse change **cannot** grant order eligibility.
+
+## Independent Production API diagnosis — exact domain CORS bug confirmed
+Public Customer Vercel project has **two Production aliases**: `https://www.localeatssa.co.za` and `https://localeatssa.co.za`. Production API source allowed only the WWW alias by default. A token-free read-only GitHub Actions probe to live `https://localeats-api.vercel.app` recorded:
+- `OPTIONS /health` + `OPTIONS /api/v1/catalog/shops` from WWW → **204**, exact CORS allow-header; `GET` → **200**.
+- Same OPTIONS + GET from apex → **403**, no CORS allow-header.
+
+This is an actual reproduced **apex-domain bug**. The user's original screenshot did **not** show the browser URL, so whether it was the cause of that specific error is **unproven**. [Separate API draft PR #215](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/pull/215) adds **one exact apex HTTPS origin**, with offline API tests and full regressions passing. It is **NOT deployed or merged**. Until then, the user should browse via the WWW URL. If WWW still shows a loading error, inspect fresh browser GET and OPTIONS status separately, not assume a distance result.
+
+## Safe test sequence and release gates
+1. Browse the owner-approved **original PR #103 Preview** at the customer's actual GPS. A distant My-Kota listing should appear as pale/browse-only, its real menu remains visible, checkout/add is blocked; the app must not claim the shop is Closed merely due to distance. If a deployed Preview login is required, use normal Vercel team auth.
+2. New current-main draft must pass TypeScript, original pickup regressions, original closed-shop tests, new distance test and Vite build. Verify on a **paired API read-only Preview** with exact URL CORS and no pickup writes. No "preview READY" claims without Vercel readback.
+3. After security review and separate owner authorization, release the **narrow API CORS fix** and then carefully release the current-main Customer distant-shop discovery. Even when browsing works, **the API's `/api/v1/orders/quote` / `pickup_create_order` 4 km restriction must remain hard**.
+4. **Remote user:** browse menus and verify UI; cannot place genuine My-Kota order outside 4 km. Use existing credential-free synthetic API tests for remote quote→collection logic without real transactions.
+5. **Real Production pickup test:** a consenting Customer at a genuine location within 4 km of My-Kota (not the remote test customer), during confirmed My-Kota 08:00–22:00 open period, with shop owner ready and server-set approved beta UID/shop IDs and separate pickup admission/go-no-go approval. Verify Customer→Merchant order, notification delivery, pay-at-shop, ready and collected; no fake GPS or broad radius expansion.
+6. Keep Customer/Merchant/API Production pickup flags OFF until explicit acceptance. Do not create online payments, Firebase customer identities, GPS mock paths, real orders or FCM from this draft.
+
+**Last known status:** Customer integration PR remains draft. Record CI results in a follow-up commit. Production domain CORS issue independently reproduced and separate API PR tests green. No Production code or data changed.
