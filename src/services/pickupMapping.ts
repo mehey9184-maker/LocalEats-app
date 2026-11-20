@@ -19,10 +19,28 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
  const menu=items.filter(item=>item.is_available===true).map(item=>{
   if(!item.id || typeof item.name!=="string" || typeof item.price!=="number" || !Number.isFinite(item.price) || item.price<0)
    throw new Error("The service returned an invalid menu price.");
-  return {...item,id:String(item.id),displayPrice:`R ${item.price.toFixed(2)}`,image:item.image_url || "",customizations:[]};
+  // API data is untrusted JSON. Only approved public item display fields
+  // enter the Customer card/cart; never spread provider or private metadata.
+  return {id:String(item.id),name:item.name,price:item.price,
+   displayPrice:`R ${item.price.toFixed(2)}`,
+   image:typeof item.image_url==="string" ? item.image_url : "",
+   description:typeof item.description==="string" ? item.description : "",
+   category:typeof item.category==="string" ? item.category : "",
+   is_available:true,customizations:[]};
  });
- return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
-  address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:shop.is_active,menu};
+ // Never expose credentials, shop owner IDs/emails, direct phone, approval
+ // metadata, internal availability revisions or unexpected nested fields.
+ // Merchant/Customer presentation keeps the original ShopCard contract.
+ return {id:String(shop.id),name:shop.name,
+  logo:typeof shop.logo_url==="string" ? shop.logo_url : "",
+  rating:typeof shop.rating==="number" && Number.isFinite(shop.rating) ? shop.rating : 0,
+  description:typeof shop.description==="string" ? shop.description : "",
+  address:typeof shop.location==="string" ? shop.location : "",
+  category:typeof shop.category==="string" ? shop.category : "",
+  opening_time:typeof shop.opening_time==="string" ? shop.opening_time : undefined,
+  closing_time:typeof shop.closing_time==="string" ? shop.closing_time : undefined,
+  latitude:lat,longitude:lng,distance:shop.distance_km,
+  isOpen:shop.is_active,is_active:shop.is_active,menu};
 }
 export const MAX_PICKUP_ITEM_QUANTITY = 20;
 
