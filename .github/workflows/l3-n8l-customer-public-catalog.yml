@@ -1,0 +1,61 @@
+name: L3-N8L Customer public catalog and stage-only legacy write containment
+on:
+  pull_request:
+    branches:
+      - review/l3-my-kota-private-test-customer
+    paths:
+      - 'src/services/pickupMapping.ts'
+      - 'src/services/customerStagingNoDirectWrites.ts'
+      - 'src/lib/firebase.ts'
+      - 'src/lib/supabase.ts'
+      - 'tests/l3-n8l-*.test.mjs'
+      - 'LocalEats_App_Functionality_Documentation.md'
+      - '.github/workflows/l3-n8l-customer-public-catalog.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  privacy-and-staged-write-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Reject any hosted Firebase or Supabase credentials
+        run: |
+          test -z "${FIREBASE_TOKEN:-}${FIREBASE_PRIVATE_KEY:-}${FIREBASE_CLIENT_EMAIL:-}${GOOGLE_APPLICATION_CREDENTIALS:-}${SUPABASE_SERVICE_ROLE_KEY:-}${DATABASE_URL:-}${VERCEL_TOKEN:-}"
+      - name: Install existing locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Original pickup regression and isolated Customer privacy unit tests
+        run: |
+          npm run test:pickup-integration
+          node --experimental-strip-types --test tests/l3-n8l-*.test.mjs
+      - name: Full Customer TypeScript
+        run: npm run lint
+      - name: Synthetic staging Vite build, no Firebase network or real push
+        env:
+          VERCEL_ENV: preview
+          VERCEL_URL: localeats-customer-staging-r52d-review-synthetic.vercel.app
+          LOCALEATS_STAGING_ONLY: 'true'
+          VITE_FIREBASE_CONFIG_SOURCE: environment
+          VITE_FIREBASE_PROJECT_ID: localeats-staging
+          VITE_FIREBASE_FIRESTORE_DATABASE_ID: (default)
+          VITE_FIREBASE_API_KEY: synthetic-not-real
+          VITE_FIREBASE_AUTH_DOMAIN: localeats-staging.firebaseapp.com
+          VITE_FIREBASE_APP_ID: 1:123456789:web:synthetic
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '123456789'
+          VITE_FIREBASE_STORAGE_BUCKET: localeats-staging.firebasestorage.app
+          VITE_FIREBASE_VAPID_KEY: synthetic-vapid-only-not-valid
+          VITE_LOCALEATS_API_URL: https://localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app
+          VITE_PICKUP_ORDERING_ENABLED: 'false'
+        run: npm run build
+      - name: Verify emitted background Firebase worker is staging only
+        run: |
+          grep -q '"projectId":"localeats-staging"' dist/firebase-messaging-sw.js
+          ! grep -q '"projectId":"localeats-5e26e"' dist/firebase-messaging-sw.js
+          echo L3_N8L_SYNTHETIC_CUSTOMER_CATALOG_ONLY_NO_HOSTED_MUTATIONS
