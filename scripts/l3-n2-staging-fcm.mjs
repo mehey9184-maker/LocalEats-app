@@ -1,4 +1,5 @@
 import {readFileSync,writeFileSync} from "node:fs";
+import {resolvePairedStagingApi} from './paired-staging-api.mjs';
 import {resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 
@@ -39,6 +40,11 @@ export function isolatedStagingFirebaseConfig(env=process.env) {
       throw Error("bad staging origin");
   }catch{throw Error("L3-N2 requires exact HTTPS Customer staging origin");}
   const api=env.VITE_LOCALEATS_API_URL;
+  const pairedApi=resolvePairedStagingApi(env);
+  if(pairedApi)return {
+    apiKey:values.API_KEY,authDomain:values.AUTH_DOMAIN,projectId:values.PROJECT_ID,
+    storageBucket:values.STORAGE_BUCKET,messagingSenderId:values.MESSAGING_SENDER_ID,appId:values.APP_ID
+  };
   try {
     const u=new URL(api||"");
     if(u.protocol!=="https:" || u.pathname!=="/" || u.search || u.hash || u.username || u.password ||
@@ -70,3 +76,4 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
   else if(process.argv.includes("--inject")) injectIsolatedStagingWorker();
   else throw Error("Use --check or --inject");
 }
+

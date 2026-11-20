@@ -139,3 +139,8 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## L3-N8N — 20 November 2026
+
+The owner chose ONE designated shop per merchant for the pilot, not a chooser. Customer paired staging preparation pins API #205 revision 734b858cec4d45dd61e87b765b05e11780200074 and requires exact isolated opt-in, disabled ordering and authenticated Vercel URL-to-commit verification before a separately approved release. See docs/L3_N8N_PAIRED_STAGING.md. This draft branch is deployment-disabled.

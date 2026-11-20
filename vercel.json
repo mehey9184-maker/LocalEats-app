@@ -11,7 +11,8 @@
       "activation/pickup-workflow": false,
       "fix/pickup-zero-fee": false,
       "fix/customer-pickup-quote-eligibility": false,
-      "release/customer-quote-eligibility-after-first-paint-20261107": false
+      "release/customer-quote-eligibility-after-first-paint-20261107": false,
+      "review/l3-n8n-customer-designated-pilot": false
     }
   }
 }
