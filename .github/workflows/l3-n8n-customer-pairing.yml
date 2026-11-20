@@ -1,0 +1,48 @@
+name: L3-N8N paired Customer staging verification
+on:
+  pull_request:
+    branches: [review/l3-n8m-customer-community-read-contract]
+permissions:
+  contents: read
+jobs:
+  customer-pairing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Synthetic paired config and Vite integration
+        run: node --experimental-strip-types --test tests/l3-n8n/*.test.mjs
+      - name: Install existing locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Customer regressions and TypeScript
+        run: |
+          npm run test:pickup-integration
+          node --experimental-strip-types --test tests/l3-n8l-*.test.mjs tests/l3-n8m-customer-community-read-contract.test.mjs
+          npm run lint
+      - name: Synthetic paired Preview build without hosted credentials
+        env:
+          VERCEL_ENV: preview
+          VERCEL_GIT_COMMIT_REF: review/l3-n8n-customer-designated-pilot
+          VERCEL_URL: localeats-customer-staging-r52d-abcdef123.vercel.app
+          LOCALEATS_STAGING_ONLY: 'true'
+          LOCALEATS_PAIRED_PREVIEW: 'true'
+          LOCALEATS_PAIRED_API_COMMIT: a3c1b3498398ab641f4ed8c45d6d9cd79d1e66a7
+          LOCALEATS_PAIRED_API_ORIGIN: https://localeats-api-staging-r52d-abcdef123-mehey9184-makers-projects.vercel.app
+          VITE_FIREBASE_CONFIG_SOURCE: environment
+          VITE_FIREBASE_PROJECT_ID: localeats-staging
+          VITE_FIREBASE_FIRESTORE_DATABASE_ID: (default)
+          VITE_FIREBASE_API_KEY: synthetic-not-real
+          VITE_FIREBASE_AUTH_DOMAIN: localeats-staging.firebaseapp.com
+          VITE_FIREBASE_APP_ID: 1:123456789:web:synthetic
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '123456789'
+          VITE_FIREBASE_STORAGE_BUCKET: localeats-staging.firebasestorage.app
+          VITE_FIREBASE_VAPID_KEY: synthetic-vapid-only-not-valid
+          VITE_LOCALEATS_API_URL: https://localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app
+          VITE_PICKUP_ORDERING_ENABLED: 'false'
+        run: npm run build
+

@@ -1,4 +1,5 @@
 import tailwindcss from '@tailwindcss/vite';
+import {resolvePairedStagingApi,REVIEWED_API_COMMIT} from './scripts/paired-staging-api.mjs';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {execFileSync} from 'node:child_process';
@@ -7,6 +8,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({mode,command}) => {
   const env = loadEnv(mode, '.', '');
+  const pairedApiOrigin = resolvePairedStagingApi(env);
   // The staging worker has its own Firebase project. Vercel may invoke
   // "vite build" directly rather than package.json's npm build script.
   // Validate before bundling, then rewrite the emitted (not tracked) worker.
@@ -41,13 +43,19 @@ export default defineConfig(({mode,command}) => {
     env.VITE_FIREBASE_CONFIG_SOURCE === "environment" &&
     env.VITE_FIREBASE_PROJECT_ID === "localeats-staging" &&
     env.VITE_PICKUP_ORDERING_ENABLED === "false";
-  const stagedApiOrigin = privateMyKotaPreview
+  const stagedApiOrigin = pairedApiOrigin || (privateMyKotaPreview
     ? "https://localeats-api-staging-r52d-git-54267e-mehey9184-makers-projects.vercel.app"
     : l3n3IsolatedPreview
     ? "https://localeats-api-staging-r52d-git-112955-mehey9184-makers-projects.vercel.app"
-    : env.VITE_LOCALEATS_API_URL || "";
+    : env.VITE_LOCALEATS_API_URL || "");
   return {
     plugins: [
+      {
+        name:'localeats-paired-staging-provenance',
+        generateBundle() {
+          if(pairedApiOrigin)this.emitFile({type:'asset',fileName:'paired-staging.json',source:JSON.stringify({apiOrigin:pairedApiOrigin,reviewedApiCommit:REVIEWED_API_COMMIT,customerCommit:env.VERCEL_GIT_COMMIT_SHA || null,readOnly:true})});
+        }
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -113,3 +121,4 @@ export default defineConfig(({mode,command}) => {
     },
   };
 });
+
