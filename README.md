@@ -1,5 +1,8 @@
 # LocalEats - Local's Legendary Kota Joints
 
+> **Current architecture / AI handoff (20 November 2026):** This README's original setup instructions and "Supabase (Auth, Firestore)" label are historical. Current Customer and Merchant login source uses **Firebase Authentication**; the production Firebase project is `localeats-5e26e` with a named Firestore DB; the staged pickup API uses separate Supabase PostgreSQL; Cloudinary currently serves media and Cloudflare R2 is only proposed. For the actual provider boundaries, security release gates, cost/egress controls and portability plan, **read [the dated architecture handoff](docs/LOCALEATS_PROVIDER_BOUNDARIES_PORTABILITY_HANDOFF_20261120.md) and [AGENTS.md](AGENTS.md) before modifying the apps**. Production pickup ordering is OFF.
+
+
 A comprehensive food discovery and ordering app for local legendary Kota joints, featuring user authentication, profile setup, and a seamless checkout experience.
 
 ## 🚀 Deployment Guide

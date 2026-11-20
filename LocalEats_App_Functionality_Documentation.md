@@ -1,5 +1,9 @@
 # LocalEats App Functionality Documentation
 
+## L3-N8R — Provider roles, low egress and portable infrastructure (2026-11-20)
+See [the dated provider-boundaries and migration handoff](docs/LOCALEATS_PROVIDER_BOUNDARIES_PORTABILITY_HANDOFF_20261120.md) for owner intent, verified Production Firebase `localeats-5e26e` and its named Firestore DB, isolated Firebase staging `localeats-staging/(default)`, Firebase Authentication used for **both** Customer and Merchant accounts, Supabase SQL shop/menu/order staging, Cloudinary media and future R2 option. The owner wants each provider replaceable independently and lower Supabase egress through a versioned API, bounded reads, selective caching and image CDN delivery. This is a design direction—not proof of cutover. Do not enable orders, modify deployed Firebase Rules, merge or alter Production based on this documentation. Older platform descriptions in this file may be historical.
+
+
 Order History provides Load older orders after the latest 50. The authenticated API uses the last displayed timestamp and ID as a cursor, and returns at most 50 rows plus a continuation flag. Older cards retain the same receipt controls. Errors offer Retry older orders, and account changes discard in-flight results.
 
 The open Customer app can show one Ready reminder after 12 minutes when a fresh order read still reports Ready and a verified inbox event identifies when it became Ready. Got it dismisses reminders for that order in the current tab. Remind me in 10 min schedules an in-app reminder, and Get directions uses published shop coordinates. The separately opted-in nearby shop alert compares complete approved catalogs at the same location and applies the 4 km limit. The first load and a change of location establish a baseline.
