@@ -31,7 +31,7 @@ jobs:
           VERCEL_URL: localeats-customer-staging-r52d-abcdef123.vercel.app
           LOCALEATS_STAGING_ONLY: 'true'
           LOCALEATS_PAIRED_PREVIEW: 'true'
-          LOCALEATS_PAIRED_API_COMMIT: 734b858cec4d45dd61e87b765b05e11780200074
+          LOCALEATS_PAIRED_API_COMMIT: 05d8586db4e8ed557d21c455ca96d323472fd088
           LOCALEATS_PAIRED_API_ORIGIN: https://localeats-api-staging-r52d-abcdef123-mehey9184-makers-projects.vercel.app
           VITE_FIREBASE_CONFIG_SOURCE: environment
           VITE_FIREBASE_PROJECT_ID: localeats-staging
