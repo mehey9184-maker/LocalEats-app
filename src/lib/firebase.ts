@@ -1,4 +1,5 @@
 import {rejectLegacyOrderWrite} from "./legacyOrderWrite";
+import {ensureCustomerLegacyWriteAllowed} from "../services/customerStagingNoDirectWrites";
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import {
   getFirestore,
@@ -222,6 +223,7 @@ export const FirestoreService = {
   },
 
   async addReview(shopId: string, reviewData: any): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
       await addDoc(collection(db, 'reviews'), {
@@ -264,6 +266,7 @@ export const FirestoreService = {
   },
 
   async followShop(userId: string, shopId: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const { doc, setDoc } = await import('firebase/firestore');
       const followId = `${userId}_${shopId}`;
@@ -279,6 +282,7 @@ export const FirestoreService = {
   },
 
   async unfollowShop(userId: string, shopId: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const { doc, deleteDoc } = await import('firebase/firestore');
       const followId = `${userId}_${shopId}`;
@@ -302,6 +306,7 @@ export const FirestoreService = {
   },
 
   async submitContactMessage(messageData: any): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const { collection, addDoc } = await import('firebase/firestore');
       await addDoc(collection(db, 'contact_messages'), {
@@ -400,6 +405,7 @@ export const FirestoreService = {
 
   // Rider tracking
   async updateRiderLocation(riderId: string, locationData: { latitude: number; longitude: number; heading?: number; speed?: number; order_id?: string }): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     const riderDoc = doc(db, "rider_locations", String(riderId));
     await setDoc(riderDoc, {
       rider_id: riderId,
@@ -421,6 +427,7 @@ export const FirestoreService = {
 
   // Chat messages
   async sendMessage(orderId: string, senderId: string, senderRole: string, messageText: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const msgDoc = doc(db, "messages", msgId);
     await setDoc(msgDoc, {
@@ -436,6 +443,7 @@ export const FirestoreService = {
 
   
   async markMessagesAsRead(orderId: string, currentUserId: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)), where("is_read", "==", false));
       const snap = await getDocs(q);
@@ -486,6 +494,7 @@ export const FirestoreService = {
   },
 
   async saveProfile(userId: string, profileData: any, retries = 1, backoffMs = 500): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     if (!userId) return;
     for (let i = 0; i < retries; i++) {
       try {
@@ -536,6 +545,7 @@ export const FirestoreService = {
 
   // Push token registration
   async savePushToken(userId: string, token: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     const tokenDoc = doc(db, "user_push_tokens", `${userId}_${token.slice(-10)}`);
     await setDoc(tokenDoc, {
       user_id: userId,
@@ -551,6 +561,7 @@ export const FirestoreService = {
   },
 
   async updateShop(shopId: string, updateData: any): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const shopDoc = doc(db, "shops", String(shopId));
       await setDoc(shopDoc, updateData, { merge: true });
@@ -560,6 +571,7 @@ export const FirestoreService = {
   },
 
   async updateMenuItem(itemId: string, updateData: any): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const menuDoc = doc(db, "menu_items", String(itemId));
       await setDoc(menuDoc, updateData, { merge: true });
@@ -569,6 +581,7 @@ export const FirestoreService = {
   },
 
   async addMenuItem(itemData: any): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       if (!itemData.id) {
          itemData.id = "doc_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
@@ -581,6 +594,7 @@ export const FirestoreService = {
   },
 
   async deleteMenuItem(itemId: string): Promise<void> {
+    ensureCustomerLegacyWriteAllowed();
     try {
       const menuDoc = doc(db, "menu_items", String(itemId));
       await setDoc(menuDoc, { is_available: false, active: false, status: 'deleted' }, { merge: true });
