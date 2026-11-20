@@ -1,0 +1,72 @@
+name: L3-N8O current-main pickup launch reconciliation — no hosted writes
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/services/pickupMapping.ts'
+      - 'src/services/customerStagingNoDirectWrites.ts'
+      - 'src/services/customerCommunityReadContract.ts'
+      - 'src/lib/firebase.ts'
+      - 'src/lib/supabase.ts'
+      - 'tests/l3-n8l-*.test.mjs'
+      - 'tests/l3-n8m-*.test.mjs'
+      - 'tests/l3-n8o-*.test.mjs'
+      - 'docs/L3_N8O_MAIN_FIRST_PUBLIC_PICKUP_GATE.md'
+      - 'LocalEats_App_Functionality_Documentation.md'
+      - '.github/workflows/l3-n8o-main-first-launch-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  current-main-pickup-ux-and-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Refuse hosted Firebase, Supabase or Vercel credentials
+        run: |
+          test -z "${FIREBASE_TOKEN:-}${FIREBASE_PRIVATE_KEY:-}${FIREBASE_CLIENT_EMAIL:-}${GOOGLE_APPLICATION_CREDENTIALS:-}${SUPABASE_SERVICE_ROLE_KEY:-}${DATABASE_URL:-}${VERCEL_TOKEN:-}"
+      - name: Existing locked Customer dependencies (without lifecycle scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: New main preservation + staged privacy/GET-only checks
+        run: |
+          node --test tests/l3-n8o-main-preservation.test.mjs
+          node --experimental-strip-types --test tests/l3-n8l-*.test.mjs
+          node --experimental-strip-types --test tests/l3-n8m-*.test.mjs
+      - name: Original Customer pickup, new receipt and paginated history
+        run: |
+          npm run test:pickup-integration
+          node --experimental-strip-types --test tests/pickup-receipt.test.mjs tests/pickup-history-pages.test.mjs
+      - name: Full Customer TypeScript
+        run: npm run lint
+      - name: Synthetic staging build only — NO hosted account, push or order
+        env:
+          VERCEL_ENV: preview
+          VERCEL_URL: localeats-customer-staging-r52d-review-synthetic.vercel.app
+          LOCALEATS_STAGING_ONLY: 'true'
+          VITE_FIREBASE_CONFIG_SOURCE: environment
+          VITE_FIREBASE_PROJECT_ID: localeats-staging
+          VITE_FIREBASE_FIRESTORE_DATABASE_ID: (default)
+          VITE_FIREBASE_API_KEY: synthetic-not-real
+          VITE_FIREBASE_AUTH_DOMAIN: localeats-staging.firebaseapp.com
+          VITE_FIREBASE_APP_ID: 1:123456789:web:synthetic
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '123456789'
+          VITE_FIREBASE_STORAGE_BUCKET: localeats-staging.firebasestorage.app
+          VITE_FIREBASE_VAPID_KEY: synthetic-vapid-not-valid
+          VITE_LOCALEATS_API_URL: https://localeats-api-staging-r52d-mehey9184-makers-projects.vercel.app
+          VITE_PICKUP_ORDERING_ENABLED: 'false'
+        run: |
+          npm run build
+          echo L3_N8O_FAKE_FIREBASE_BUILD_ONLY_NO_HOSTED_WRITES
+      - name: Release proof remains blocked without real stage and server authority
+        run: |
+          test -f src/services/pickupReceipt.ts
+          ! grep -q customerCommunityReadContract src/App.tsx
+          echo L3_N8O_MAIN_PRESERVED_BUT_PUBLIC_ORDERS_NOT_YET_AUTHORIZED

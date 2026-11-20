@@ -1,5 +1,6 @@
 
 import { auth } from "./firebase";
+import {ensureCustomerLegacyWriteAllowed,isCustomerStageLegacyWriteBlocked,CUSTOMER_STAGING_LEGACY_WRITE_DISABLED} from "../services/customerStagingNoDirectWrites";
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -51,13 +52,19 @@ if (typeof window !== 'undefined') {
   });
 }
 
-const createChain = (): any => {
+const createChain = (denyWrites = false): any => {
+  // This historical shim does not persist Supabase data. On staging, never
+  // tell the user a mutation succeeded: return a truthful typed error.
+  let attemptedMutation = false;
+  const result = () => denyWrites && attemptedMutation ?
+    {data:null,error:{message:CUSTOMER_STAGING_LEGACY_WRITE_DISABLED}} :
+    {data:[],error:null};
   const chain: any = {
     select: (..._args: any[]) => chain,
-    insert: (..._args: any[]) => chain,
-    upsert: (..._args: any[]) => chain,
-    update: (..._args: any[]) => chain,
-    delete: (..._args: any[]) => chain,
+    insert: (..._args: any[]) => {attemptedMutation=true;return chain;},
+    upsert: (..._args: any[]) => {attemptedMutation=true;return chain;},
+    update: (..._args: any[]) => {attemptedMutation=true;return chain;},
+    delete: (..._args: any[]) => {attemptedMutation=true;return chain;},
     eq: (..._args: any[]) => chain,
     neq: (..._args: any[]) => chain,
     gt: (..._args: any[]) => chain,
@@ -71,16 +78,20 @@ const createChain = (): any => {
     order: (..._args: any[]) => chain,
     limit: (..._args: any[]) => chain,
     range: (..._args: any[]) => chain,
-    single: async () => ({ data: null, error: null }),
-    maybeSingle: async () => ({ data: null, error: null }),
+    single: async () => attemptedMutation && denyWrites ?
+      {data:null,error:{message:CUSTOMER_STAGING_LEGACY_WRITE_DISABLED}} :
+      {data:null,error:null},
+    maybeSingle: async () => attemptedMutation && denyWrites ?
+      {data:null,error:{message:CUSTOMER_STAGING_LEGACY_WRITE_DISABLED}} :
+      {data:null,error:null},
     then: function(resolve: any, reject?: any) {
-      return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+      return Promise.resolve(result()).then(resolve,reject);
     },
     catch: function(reject: any) {
-      return Promise.resolve({ data: [], error: null }).catch(reject);
+      return Promise.resolve(result()).catch(reject);
     },
     finally: function(callback: any) {
-      return Promise.resolve({ data: [], error: null }).finally(callback);
+      return Promise.resolve(result()).finally(callback);
     }
   };
   return chain;
@@ -91,6 +102,7 @@ export const supabase: any = {
   auth: {
     signUp: async ({ email, password, options }) => {
       try {
+        ensureCustomerLegacyWriteAllowed();
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const fullName = options?.data?.full_name || options?.data?.fullName || '';
         if (fullName) {
@@ -115,6 +127,7 @@ export const supabase: any = {
     },
     signInWithOAuth: async ({ provider }) => {
       try {
+        ensureCustomerLegacyWriteAllowed();
         if (provider === 'google') {
           const result = await signInWithPopup(auth, new GoogleAuthProvider());
           const session = await formatSession(result.user);
@@ -135,6 +148,7 @@ export const supabase: any = {
     },
     resetPasswordForEmail: async (email) => {
       try {
+        ensureCustomerLegacyWriteAllowed();
         await sendPasswordResetEmail(auth, email);
         return { error: null };
       } catch (e) {
@@ -143,6 +157,7 @@ export const supabase: any = {
     },
     updateUser: async ({ password }) => {
       try {
+        ensureCustomerLegacyWriteAllowed();
         if (auth.currentUser && password) {
           await updatePassword(auth.currentUser, password);
         }
@@ -182,7 +197,7 @@ export const supabase: any = {
       } } } };
     }
   },
-  from: (table) => mockDbChain,
+  from: (_table) => isCustomerStageLegacyWriteBlocked(import.meta.env) ? createChain(true) : mockDbChain,
   rpc: async () => ({ data: null, error: { message: "Failed to fetch (offline)" } }),
   channel: () => ({
     on: () => ({ subscribe: () => {} }),
