@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## Canonical provider-boundaries handoff — 2026-11-20
+**READ FIRST for Firebase/Supabase/media/provider moves:** [LocalEats provider boundaries, portability and migration handoff](docs/LOCALEATS_PROVIDER_BOUNDARIES_PORTABILITY_HANDOFF_20261120.md). Both Customer and Merchant source use Firebase Auth; Production Firebase is `localeats-5e26e` with a **named** Firestore DB, while stage is `localeats-staging/(default)`. Supabase PostgreSQL is not "customer accounts only": staging contains shops, menus and order/event tables. Cloudinary media is in active code; Cloudflare R2 is a candidate migration, not installed. The owner requires low egress and provider replaceability without bypassing the LocalEats API. Treat older Supabase/Auth/Firestore generalizations below as historical unless current source and runtime support them. Documentation only: Production and staging pickup writes remain OFF.
+
+
 ## Active pickup-only Codex policy (2026-11-05)
 
 **Current business scope supersedes historical rider/delivery descriptions above:** the near-term LocalEats release is customer pickup only, with pay-at-shop (cash or the shop's physical card machine). Rider/delivery expansion is deferred for at least six months after real customer use and requires a later explicit owner decision. Do not enable online payments, subscriptions, live orders, riders, or delivery while preparing Preview.
