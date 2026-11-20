@@ -1,5 +1,5 @@
 // Pinned companion API draft revision; verify hosted deployment metadata before release.
-export const REVIEWED_API_COMMIT='05d8586db4e8ed557d21c455ca96d323472fd088';
+export const REVIEWED_API_COMMIT='a3c1b3498398ab641f4ed8c45d6d9cd79d1e66a7';
 /** Build configuration is not proof of hosted provenance; verify Vercel metadata before deployment. */
 export function resolvePairedStagingApi(env=process.env){
  const flag=env.LOCALEATS_PAIRED_PREVIEW;

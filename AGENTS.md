@@ -143,4 +143,4 @@ The initial HTML reserves the Home header, card grid and bottom navigation befor
 
 ## L3-N8N — 20 November 2026
 
-The owner chose ONE designated shop per merchant for the pilot, not a chooser. Customer paired staging preparation pins API #205 revision 05d8586db4e8ed557d21c455ca96d323472fd088 and requires exact isolated opt-in, disabled ordering and authenticated Vercel URL-to-commit verification before a separately approved release. See docs/L3_N8N_PAIRED_STAGING.md. This draft branch is deployment-disabled.
+The owner chose ONE designated shop per merchant for the pilot, not a chooser. Customer paired staging preparation pins API #205 revision a3c1b3498398ab641f4ed8c45d6d9cd79d1e66a7 and requires exact isolated opt-in, disabled ordering and authenticated Vercel URL-to-commit verification before a separately approved release. See docs/L3_N8N_PAIRED_STAGING.md. This draft branch is deployment-disabled.
