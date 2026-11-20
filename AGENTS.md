@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-N8U-S (21 Nov 2026): Distant-shop browsing and real-location pickup safety
+Read [L3-N8U-S current-main distant browsing report](docs/L3_N8U_S_CURRENT_MAIN_DISTANT_BROWSE_RECOVERY.md) before changing shop discovery, CORS, GPS, menus or cart. The owner-approved outside-4-km pale/browse-only card Preview is [Customer PR #103](https://github.com/mehey9184-maker/LocalEats-app/pull/103); this new draft replays only its needed source changes onto current main, preserving newer checkout/notifications/navigation. Verified live Production API **allows WWW Customer but rejects apex Customer via CORS (403)**; separate API draft PR #215 fixes this exact origin only and must not be blindly merged. The owner's remote Customer cannot genuinely place a My-Kota order while over 4 km; test remote browsing with real location and only conduct real pickup from an authorized consenting nearby customer at an open shop. Production pickup stays OFF; no fake locations, public flag changes, API bypasses, merges or real FCM.
+
+
 ## Active pickup-only Codex policy (2026-11-05)
 
 **Current business scope supersedes historical rider/delivery descriptions above:** the near-term LocalEats release is customer pickup only, with pay-at-shop (cash or the shop's physical card machine). Rider/delivery expansion is deferred for at least six months after real customer use and requires a later explicit owner decision. Do not enable online payments, subscriptions, live orders, riders, or delivery while preparing Preview.
