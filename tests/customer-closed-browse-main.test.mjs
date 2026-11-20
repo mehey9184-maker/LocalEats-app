@@ -48,7 +48,8 @@ test("original UI is retained, closed cards remain navigable and cart addition r
  assert.match(card,/const isUnavailable = outsidePickupArea \|\| !status\.isOpen/);
  assert.match(card,/if \(!status\.isOpen\) \{\s*showAlert\(/);
  assert.match(app,/onClick=\{onClick\}\s*role="button"\s*tabIndex=\{0\}/);
- assert.match(app,/onConfirm=\{\(quantity, specialInstructions, selectedCustomizations\) => \{\s*if \(!getShopStatus\(shop\)\.isOpen\)/);
+ assert.match(app,/onConfirm=\{\(quantity, specialInstructions, selectedCustomizations\) => \{\s*if \(outsidePickupArea\)/);
+ assert.match(app,/if \(!getShopStatus\(shop\)\.isOpen\)/);
  assert.match(customer,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
  assert.doesNotMatch(app,/onClick=\{shop\.isOpen !== false \? onClick : undefined\}/);
 });
