@@ -1,5 +1,8 @@
 # L3-N8U-S — Restore Customer outside-radius browsing on current main
 
+## L3-N8U-W — Paired Preview screenshot follow-up (2026-11-21)
+A read-only paired Customer/API Preview was created for Customer `ac1f993` and API `b7e0037`, without modifying the existing production aliases or write flags. Owner screenshot visibly confirms eight no-GPS browse-only shop cards, including My-Kota, original navigation and correctly unknown distance. Public API returned all nine menu GETs 200; one test listing (`shop-current-account-test`) lacked coordinates and had an empty menu, causing the false “Some pickup menus couldn't load” banner. A small independent Review branch filters unmappable shop records *before* requesting their menu, so an excluded non-geocoded record is not an invented menu outage. It also changes `8 Online` to `8 shops listed`. This is a separate proposed Preview-only patch: CI, exact CORS, full browser interactions and visual review remain unverified; do not merge, deploy Production, enable pickup or change shop records.
+
 **Date:** 21 Nov 2026, South Africa. **Status:** Draft source integration, **NO Production deploy, merge, Firebase/Supabase changes, live test order, real FCM or radius override**.
 
 ## Observed user issue
