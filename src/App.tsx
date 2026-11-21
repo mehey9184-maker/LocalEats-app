@@ -5100,7 +5100,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online
+                  {sortedShops.length} {sortedShops.length === 1 ? "shop" : "shops"} listed
                 </span>
               )}
             </div>
