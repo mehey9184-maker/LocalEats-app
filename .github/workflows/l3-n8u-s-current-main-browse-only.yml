@@ -11,6 +11,7 @@ on:
       - 'vite.config.ts'
       - 'tests/customer-production-secrets-main.test.mjs'
       - 'tests/customer-hosted-profile-and-location.test.mjs'
+      - 'tests/customer-public-browse-without-gps.test.mjs'
       - 'src/services/customerProfileApi.ts'
       - 'src/lib/profileService.ts'
       - 'tests/customer-production-http-readonly-smoke.mjs'
@@ -41,7 +42,7 @@ jobs:
       - name: Check Customer TypeScript
         run: npm run lint
       - name: Run original, production-secret and distant-shop security regressions
-        run: node --experimental-strip-types --test tests/customer-hosted-profile-and-location.test.mjs tests/customer-production-secrets-main.test.mjs tests/customer-outside-pickup-area-current-main.test.mjs tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/original-pickup.test.mjs
+        run: node --experimental-strip-types --test tests/customer-public-browse-without-gps.test.mjs tests/customer-hosted-profile-and-location.test.mjs tests/customer-production-secrets-main.test.mjs tests/customer-outside-pickup-area-current-main.test.mjs tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/original-pickup.test.mjs
       - name: Build Customer without activating checkout
         env:
           VITE_PICKUP_ORDERING_ENABLED: 'false'
