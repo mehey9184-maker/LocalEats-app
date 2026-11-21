@@ -45,10 +45,10 @@ test("original UI is retained, closed cards remain navigable and cart addition r
  const customer=readFileSync(new URL("../src/services/customerPickup.ts",import.meta.url),"utf8");
  assert.match(app,/function StoreInfoScreen\(/);
  assert.match(app,/<MenuItemCard\b/);
- assert.match(card,/const isUnavailable = outsidePickupArea \|\| !status\.isOpen/);
+ assert.match(card,/const isUnavailable = outsidePickupArea \|\| locationUnknown \|\| !status\.isOpen/);
  assert.match(card,/if \(!status\.isOpen\) \{\s*showAlert\(/);
  assert.match(app,/onClick=\{onClick\}\s*role="button"\s*tabIndex=\{0\}/);
- assert.match(app,/onConfirm=\{\(quantity, specialInstructions, selectedCustomizations\) => \{\s*if \(outsidePickupArea\)/);
+ assert.match(app,/onConfirm=\{\(quantity, specialInstructions, selectedCustomizations\) => \{\s*if \(!isWithinPickupArea\(shop\)\)/);
  assert.match(app,/if \(!getShopStatus\(shop\)\.isOpen\)/);
  assert.match(customer,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
  assert.doesNotMatch(app,/onClick=\{shop\.isOpen !== false \? onClick : undefined\}/);
