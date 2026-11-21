@@ -39,7 +39,14 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
    throw new Error("The service returned an invalid menu price.");
   return {...item,id:String(item.id),displayPrice:`R ${item.price.toFixed(2)}`,image:item.image_url || "",customizations:[]};
  });
- return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
+ // A source rating alone is not substantiated customer-review evidence.
+ // The current public catalog returns identical 4.8 values without review counts.
+ // Keep real ratings only when a positive, safe review count is provided.
+ const reviewCount=Number.isSafeInteger(shop.review_count) && shop.review_count>0 ? shop.review_count : undefined;
+ const rating=reviewCount && typeof shop.rating==="number" && Number.isFinite(shop.rating) &&
+   shop.rating>=1 && shop.rating<=5 ? shop.rating : 0;
+ return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating,
+  ...(reviewCount && rating ? {reviewCount}:{}),description:shop.description || "",
   address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:distanceUnknown ? undefined : shop.distance_km,isOpen:shop.is_active,menu};
 }
 export const MAX_PICKUP_ITEM_QUANTITY = 20;
