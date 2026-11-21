@@ -1445,7 +1445,7 @@ export default function App() {
           console.log("Error getting location (graceful fallback):", error?.message);
         }
         setLoadingShops(false);
-        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location could not be obtained. Tap Reload shops & live data to retry.");
+        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location timed out. Enable device and browser location services, then tap Reload shops & live data.");
         if (silent) return; // Keep the existing non-intrusive automatic location behavior.
         
         let errorMsg = "Could not get your location automatically.";
@@ -1460,7 +1460,7 @@ export default function App() {
           type: "info",
         });
       },
-      { timeout: 15005, enableHighAccuracy: false, maximumAge: 300000 },
+      { timeout: 25000, enableHighAccuracy: false, maximumAge: 300000 },
     );
   }, []);
 
@@ -2481,26 +2481,9 @@ export default function App() {
     }
   }, [pendingReview]);
 
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
-          console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(null);
-        },
-        { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
-      );
-    } else {
-      setUserLocation(null);
-    }
-  }, []);
+  // One real-location acquisition path is handled by requestLocation on
+  // Home/Discover/Explore; a separate 5-second probe previously raced it and
+  // could clear a successful fix. No hardcoded or IP location for pickup.
 
   const addToCart = useCallback(
     (
