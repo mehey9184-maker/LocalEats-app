@@ -28,7 +28,11 @@ export function requireRealLocation(point:{lat:number;lng:number}|null) {
 export function mapPickupShop(shop:any,items:any[]):Shop {
  const lat=shop.lat ?? shop.latitude,lng=shop.lng ?? shop.longitude;
  requireRealLocation({lat,lng});
- if(!shop.id || typeof shop.name!=="string" || typeof shop.is_active!=="boolean" || !Number.isFinite(shop.distance_km) || shop.distance_km < 0)
+ // A missing/unknown distance is valid ONLY for browse-only discovery:
+ // isWithinPickupArea() still rejects it, as does the server quote endpoint.
+ const distanceUnknown=shop.distance_km==null;
+ if(!shop.id || typeof shop.name!=="string" || typeof shop.is_active!=="boolean" ||
+   (!distanceUnknown && (!Number.isFinite(shop.distance_km) || shop.distance_km < 0)))
   throw new Error("The service returned an ineligible pickup shop.");
  const menu=items.filter(item=>item.is_available===true).map(item=>{
   if(!item.id || typeof item.name!=="string" || typeof item.price!=="number" || !Number.isFinite(item.price) || item.price<0)
@@ -36,7 +40,7 @@ export function mapPickupShop(shop:any,items:any[]):Shop {
   return {...item,id:String(item.id),displayPrice:`R ${item.price.toFixed(2)}`,image:item.image_url || "",customizations:[]};
  });
  return {...shop,id:String(shop.id),logo:shop.logo_url || "",rating:shop.rating ?? 0,description:shop.description || "",
-  address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:shop.distance_km,isOpen:shop.is_active,menu};
+  address:shop.location || "",category:shop.category || "",latitude:lat,longitude:lng,distance:distanceUnknown ? undefined : shop.distance_km,isOpen:shop.is_active,menu};
 }
 export const MAX_PICKUP_ITEM_QUANTITY = 20;
 
