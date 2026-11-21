@@ -1448,6 +1448,9 @@ export default function App() {
         } else {
           console.log("Error getting location (graceful fallback):", error?.message);
         }
+        // Any denied/timed-out GPS must revoke previously displayed
+        // distance/ordering claims; fall back only to public browse-only data.
+        setUserLocation(null);
         setLoadingShops(false);
         setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location timed out. Enable device and browser location services, then tap Reload shops & live data.");
         if (silent) return; // Keep the existing non-intrusive automatic location behavior.
