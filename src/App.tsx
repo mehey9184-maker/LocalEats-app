@@ -6342,11 +6342,13 @@ function DiscoverScreen({
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
                 const outsidePickupArea = isOutsidePickupArea(shop);
+                const locationUnknown=shop.distance===undefined;
+                const browseOnly=outsidePickupArea || locationUnknown;
                 return (
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className={`group rounded-[32px] overflow-hidden transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border cursor-pointer flex flex-col h-full transform ${outsidePickupArea
+                  className={`group rounded-[32px] overflow-hidden transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border cursor-pointer flex flex-col h-full transform ${browseOnly
                     ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400"
                     : "bg-white dark:bg-slate-900 shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] border-slate-100/60 dark:border-slate-800/60"}`}
                 >
@@ -6354,10 +6356,10 @@ function DiscoverScreen({
                     <BlurUpImage
                       src={shop.logo || DEFAULT_SHOP_LOGO}
                       alt={shop.name}
-                      className={`w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700 ${outsidePickupArea ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
+                      className={`w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                     />
-                    {outsidePickupArea && <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />}
+                    {browseOnly && <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />}
 
                     {/* Floating Heart Follow Badge */}
                     <button
@@ -6391,8 +6393,8 @@ function DiscoverScreen({
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
-                      <div className={`text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm ${outsidePickupArea ? "bg-slate-700" : "bg-orange-600"}`}>
-                        {outsidePickupArea ? "Browse menu only" : "Pickup at shop"}
+                      <div className={`text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm ${browseOnly ? "bg-slate-700" : "bg-orange-600"}`}>
+                        {browseOnly ? "Browse menu only" : "Pickup at shop"}
                       </div>
                       {typeof shop.distance==="number" && Number.isFinite(shop.distance) && (
                         <div className="bg-slate-950/80 text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
@@ -6418,9 +6420,9 @@ function DiscoverScreen({
                           <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 font-medium">
                             {shop.address}
                           </p>
-                          {outsidePickupArea && (
+                          {browseOnly && (
                             <p className="mt-2 inline-flex rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
-                              Outside 4 km · Ordering unavailable
+                              {locationUnknown ? "Location needed · Browse only" : "Outside 4 km · Ordering unavailable"}
                             </p>
                           )}
                           {!status.isOpen && (
@@ -6448,10 +6450,10 @@ function DiscoverScreen({
                         onSelectShop(shop.id);
                         triggerHaptic(10);
                       }}
-                      className={`w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${outsidePickupArea ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
+                      className={`w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${browseOnly ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                     >
                       <Store className="w-4 h-4" />
-                      {outsidePickupArea ? "Browse Menu Only" : "View Menu & Order"}
+                      {browseOnly ? "Browse Menu Only" : "View Menu & Order"}
                     </button>
                   </div>
                 </div>
@@ -9981,6 +9983,8 @@ function ExploreScreen({
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
                 const outsidePickupArea = isOutsidePickupArea(shop);
+                const locationUnknown=shop.distance===undefined;
+                const browseOnly=outsidePickupArea || locationUnknown;
                 // Verified distance from the location-scoped catalogue, never an invented GPS fallback.
                 const distanceVal = typeof shop.distance === "number" && Number.isFinite(shop.distance)
                   ? shop.distance : null;
@@ -9992,7 +9996,7 @@ function ExploreScreen({
                       setSelectedShopId(shop.id);
                       triggerHaptic(10);
                     }}
-                    className={`group rounded-[32px] overflow-hidden border transition-all duration-300 flex flex-col cursor-pointer ${outsidePickupArea
+                    className={`group rounded-[32px] overflow-hidden border transition-all duration-300 flex flex-col cursor-pointer ${browseOnly
                       ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:border-slate-400"
                       : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600"}`}
                   >
@@ -10000,16 +10004,16 @@ function ExploreScreen({
                       <BlurUpImage
                         src={shop.logo || DEFAULT_SHOP_LOGO}
                         alt={shop.name}
-                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${outsidePickupArea ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                         blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                       />
-                      {outsidePickupArea && (
+                      {browseOnly && (
                         <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />
                       )}
 
                       {/* Distance Float Indicator */}
                       {distanceVal !== null && (
-                        <div className={`absolute top-4 left-4 font-black text-[10px] uppercase tracking-wide px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1 ${outsidePickupArea ? "bg-white text-slate-900 border border-slate-300" : "bg-orange-600 text-white"}`}>
+                        <div className={`absolute top-4 left-4 font-black text-[10px] uppercase tracking-wide px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1 ${browseOnly ? "bg-white text-slate-900 border border-slate-300" : "bg-orange-600 text-white"}`}>
                           <Compass className="w-3 h-3" aria-hidden="true" />
                           <span>{distanceVal.toFixed(1)} km away</span>
                         </div>
@@ -10033,7 +10037,7 @@ function ExploreScreen({
                       <div className="absolute bottom-4 left-4 flex gap-1.5 flex-wrap">
                         {outsidePickupArea ? (
                           <span className="bg-white text-slate-900 border border-slate-300 font-black text-[11px] whitespace-nowrap uppercase tracking-wide px-2 py-1 rounded-md shadow-sm">
-                            Outside 4 km · Browse only
+                            {locationUnknown ? "Location needed · Browse only" : "Outside 4 km · Browse only"}
                           </span>
                         ) : status.isOpen ? (
                           <span className="bg-emerald-500 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
@@ -10083,10 +10087,10 @@ function ExploreScreen({
                             onStoreInfo(shop.id);
                             triggerHaptic(10);
                           }}
-                          className={`flex-grow py-3 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${outsidePickupArea ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
+                          className={`flex-grow py-3 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${browseOnly ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>{outsidePickupArea ? "Browse Menu Only" : "Order Menu"}</span>
+                          <span>{browseOnly ? "Browse Menu Only" : "Order Menu"}</span>
                         </button>
 
                         <button
