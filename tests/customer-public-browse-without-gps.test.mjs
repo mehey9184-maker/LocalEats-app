@@ -57,3 +57,17 @@ test("all browse-only cards honestly distinguish unknown GPS from proven outside
  assert.match(app,/\{locationUnknown \? "Location needed to order" : "Outside your pickup area"\}/);
  assert.match(app,/if \(!isWithinPickupArea\(shop\)\) \{\s*showAlert\(/);
 });
+
+test("unlocated shops are not mistaken for broken menu requests or active merchants",()=>{
+ const service=source("src/services/customerPickup.ts");
+ const app=source("src/App.tsx");
+ assert.match(service,/const locatedShops=listing\.shops\.filter\(raw=>/);
+ assert.match(service,/const lat=raw\.lat \?\? raw\.latitude,lng=raw\.lng \?\? raw\.longitude/);
+ assert.match(service,/typeof lat==="number" && Number\.isFinite\(lat\)/);
+ assert.match(service,/typeof lng==="number" && Number\.isFinite\(lng\)/);
+ assert.match(service,/const menus=await Promise\.all\(locatedShops\.map\(async raw=>/);
+ assert.match(app,/\{sortedShops\.length\} \{sortedShops\.length === 1 \? "shop" : "shops"\} listed/);
+ assert.doesNotMatch(app,/\{sortedShops\.length\} Online/);
+ // A shop with no real GPS remains unmappable, even when its menu endpoint returns 200.
+ assert.throws(()=>mapPickupShop({...raw,lat:null,lng:null,latitude:null,longitude:null,distance_km:undefined},[]),/real location/);
+});
