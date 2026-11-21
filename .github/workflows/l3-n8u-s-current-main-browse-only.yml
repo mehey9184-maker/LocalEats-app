@@ -10,6 +10,7 @@ on:
       - 'src/pickup/client.ts'
       - 'vite.config.ts'
       - 'tests/customer-production-secrets-main.test.mjs'
+      - 'tests/customer-production-http-readonly-smoke.mjs'
       - 'tests/customer-outside-pickup-area-current-main.test.mjs'
       - 'tests/customer-closed-browse-main.test.mjs'
       - 'tests/customer-nearby-cache-main.test.mjs'
@@ -44,5 +45,7 @@ jobs:
           VITE_LOCALPAY_ENABLED: 'false'
           VITE_REWARDS_ENABLED: 'false'
         run: npm run build
+      - name: Read-only live public API, Customer PWA, and Merchant smoke
+        run: node --test tests/customer-production-http-readonly-smoke.mjs
       - name: Assert no Production action
         run: echo L3_N8U_S_DRAFT_ONLY_NO_CUSTOMER_PRODUCTION_DEPLOY_NO_PICKUP_ORDER
