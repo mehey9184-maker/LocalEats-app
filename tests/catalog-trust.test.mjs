@@ -25,3 +25,11 @@ test('valid review counts remain visible with their rating',()=>{
 test('malformed and inconsistent metrics do not render as social proof',()=>{
  for(const data of [{rating:Infinity},{rating:6},{rating:4.5,reviewCount:0},{rating:-1},{rating:NaN}])assert.match(render(data),/No rating available/);
 });
+
+
+test('public catalog cards never claim a verified shop merely from an approval or rating field',()=>{
+ const html=render({rating:4.8,reviewCount:undefined,distance:undefined});
+ assert.match(html,/Shop listing/);
+ assert.doesNotMatch(html,/title="Pickup kitchen"|Verified Township Kitchen|POPIA Safe/);
+ assert.match(html,/Location needed/);
+});
