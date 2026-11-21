@@ -4320,8 +4320,10 @@ function HomeScreen({
   );
 
   const renderedShopList = useMemo(() => {
-    const within=sortedShops.filter(shop=>!isOutsidePickupArea(shop));
+    const within=sortedShops.filter(isWithinPickupArea);
     const outside=sortedShops.filter(isOutsidePickupArea);
+    // An unknown GPS distance is neither "nearby" nor "outside 4 km".
+    const noGps=sortedShops.filter(shop=>!isWithinPickupArea(shop) && !isOutsidePickupArea(shop));
     const cards=(entries:Shop[],offset:number)=>(
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
         {entries.map((shop,index)=>(
@@ -4340,6 +4342,15 @@ function HomeScreen({
     return (
       <div className="space-y-6">
         {cards(within,0)}
+        {noGps.length>0 && (
+          <section aria-label="Browse shops without location" className="space-y-4 rounded-3xl border border-amber-200 bg-amber-50/60 p-3 sm:p-5 dark:border-amber-800 dark:bg-slate-900/40">
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">Browse shops — location needed to order</h3>
+              <p className="text-xs font-medium text-slate-700 dark:text-slate-300">You can view real menus without GPS. Enable your device location to check the 4 km pickup area; no order can be placed until then.</p>
+            </div>
+            {cards(noGps,within.length)}
+          </section>
+        )}
         {outside.length>0 && (
           <section aria-label="More shops outside your pickup area" className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-3 sm:p-5 dark:border-slate-700 dark:bg-slate-900/40">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -8228,6 +8239,7 @@ function StoreInfoScreen({
 
   const storeStatus = getStoreStatus();
   const outsidePickupArea = isOutsidePickupArea(shop);
+  const locationUnknown=shop.distance===undefined;
   const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
@@ -8510,12 +8522,15 @@ function StoreInfoScreen({
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
-      {outsidePickupArea && (
+      {(outsidePickupArea || locationUnknown) && (
         <div role="status" className="mx-4 mt-4 rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 px-4 py-3">
-          <p className="font-bold text-slate-900 dark:text-white">Outside your pickup area</p>
+          <p className="font-bold text-slate-900 dark:text-white">
+            {locationUnknown ? "Location needed to order" : "Outside your pickup area"}
+          </p>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            This shop is {typeof shop.distance === "number" ? shop.distance.toFixed(1)+" km" : "outside 4 km"} from your current location.
-            LocalEats currently supports ordering within 4 km. You can browse the real menu, but ordering is unavailable here.
+            {locationUnknown
+              ? "Your real location was not confirmed. Browse the menu, then allow browser location access to check pickup eligibility. No ordering without a verified location."
+              : `This shop is ${shop.distance?.toFixed(1)} km away. LocalEats supports ordering only within 4 km. You can browse its menu here.`}
           </p>
         </div>
       )}
@@ -9342,8 +9357,13 @@ function StoreInfoScreen({
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
-          if (outsidePickupArea) {
-            showAlert("Outside your pickup area", "You can browse the menu, but this shop is beyond the 4 km ordering area.");
+          if (!isWithinPickupArea(shop)) {
+            showAlert(
+              locationUnknown ? "Location needed" : "Outside your pickup area",
+              locationUnknown
+                ? "Allow your real location to check the 4 km pickup area before ordering."
+                : "You can browse the menu, but this shop is beyond the 4 km ordering area.",
+            );
             setSelectedItemForQuantity(null);
             return;
           }
