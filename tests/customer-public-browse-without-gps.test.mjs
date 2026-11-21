@@ -95,3 +95,11 @@ test("Customer trust UI has no unsupported merchant verification, default ETA or
  assert.match(card,/title="Shop listing"/);
  assert.doesNotMatch(card,/<ShieldCheck/);
 });
+
+test("pickup storefront cannot resurrect old rider-delivery cash trust promotions from local storage",()=>{
+ const app=source("src/App.tsx");
+ assert.match(app,/const isCashTrustActive = false;/);
+ assert.doesNotMatch(app,/localStorage\.getItem\("localeats_cash_trust_" \+ shop\.id\)/);
+ assert.match(app,/Pickup at shop/);
+ assert.match(app,/if \(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
+});
