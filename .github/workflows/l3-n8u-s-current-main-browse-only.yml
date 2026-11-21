@@ -1,0 +1,55 @@
+name: L3-N8U-S current-main distant shop browsing (no writes)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'src/components/ShopCard.tsx'
+      - 'src/services/pickupMapping.ts'
+      - 'src/services/customerPickup.ts'
+      - 'src/pickup/client.ts'
+      - 'vite.config.ts'
+      - 'tests/customer-production-secrets-main.test.mjs'
+      - 'tests/customer-hosted-profile-and-location.test.mjs'
+      - 'tests/customer-public-browse-without-gps.test.mjs'
+      - 'src/services/customerProfileApi.ts'
+      - 'src/lib/profileService.ts'
+      - 'tests/customer-production-http-readonly-smoke.mjs'
+      - 'tests/customer-outside-pickup-area-current-main.test.mjs'
+      - 'tests/customer-closed-browse-main.test.mjs'
+      - 'tests/customer-nearby-cache-main.test.mjs'
+      - 'tests/original-pickup.test.mjs'
+      - '.github/workflows/l3-n8u-s-current-main-browse-only.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browse-only-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+      - name: Verify no hosted provider secrets
+        run: |
+          test -z "${FIREBASE_PRIVATE_KEY:-}${SUPABASE_SERVICE_ROLE_KEY:-}${DATABASE_URL:-}${VERCEL_TOKEN:-}${FIREBASE_TOKEN:-}${GOOGLE_APPLICATION_CREDENTIALS:-}"
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check Customer TypeScript
+        run: npm run lint
+      - name: Run original, production-secret and distant-shop security regressions
+        run: node --experimental-strip-types --test tests/customer-public-browse-without-gps.test.mjs tests/customer-hosted-profile-and-location.test.mjs tests/customer-production-secrets-main.test.mjs tests/customer-outside-pickup-area-current-main.test.mjs tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/original-pickup.test.mjs
+      - name: Build Customer without activating checkout
+        env:
+          VITE_PICKUP_ORDERING_ENABLED: 'false'
+          VITE_LOCALPAY_ENABLED: 'false'
+          VITE_REWARDS_ENABLED: 'false'
+        run: npm run build
+      - name: Read-only live public API, Customer PWA, and Merchant smoke
+        run: node --test tests/customer-production-http-readonly-smoke.mjs
+      - name: Assert no Production action
+        run: echo L3_N8U_S_DRAFT_ONLY_NO_CUSTOMER_PRODUCTION_DEPLOY_NO_PICKUP_ORDER

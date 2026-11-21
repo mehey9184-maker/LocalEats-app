@@ -1,7 +1,7 @@
 import {pickupQuoteAmounts} from "./pickupSummary";
 import {auth} from "../lib/firebase";
 import {createPickupApi} from "../pickup/client";
-import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission} from "./pickupMapping";
+import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission, pickupDistanceKm} from "./pickupMapping";
 import {createNearbyCatalogReader, type NearbyCatalog} from "./nearbyCatalogCache";
 import type {CartItem} from "../types";
 import {createPickupCancellation,pickupCancellationKey} from './pickupCancellation';
@@ -14,7 +14,20 @@ export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_AP
 },fetch,{requireExplicitHttps:import.meta.env.PROD});
 
 const readVerifiedNearbyCatalog=createNearbyCatalogReader({
-  shops: customerPickupApi.shops,
+  // Discovery displays all approved, non-archived public shops. Server quote
+  // and order creation remain strictly 4 km. No invented coordinates or
+  // distance: only validated public shop coordinates and the device's location.
+  shops: async location => {
+    requireRealLocation(location);
+    const listing=await customerPickupApi.approvedShops();
+    if(!Array.isArray(listing.shops))throw new Error("The approved shop catalog is unavailable.");
+    const shops=listing.shops.flatMap(raw=>{
+      if(!raw || typeof raw.id!=="string" || !raw.id || typeof raw.is_active!=="boolean") return [];
+      try {return [{...raw,distance_km:pickupDistanceKm(location,raw)}];}
+      catch {return [];} // Missing/unverified shop GPS: do not guess a distance.
+    }).sort((a,b)=>a.distance_km-b.distance_km);
+    return {shops};
+  },
   menu: async id => {
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), 5000);
@@ -27,6 +40,30 @@ const readVerifiedNearbyCatalog=createNearbyCatalogReader({
 }, mapPickupShop);
 export async function readPickupCatalog(location:{lat:number;lng:number}|null,options:{force?:boolean}={}):Promise<NearbyCatalog> {
   return readVerifiedNearbyCatalog(location,options);
+}
+
+/**
+ * Public, location-independent shop discovery for browsers without GPS.
+ * Never infers pickup eligibility or substitutes fake distances/coordinates.
+ * The API returns only approved nonarchived shops; every menu is read-only.
+ */
+export async function readPublicBrowseCatalog():Promise<NearbyCatalog>{
+ const listing=await customerPickupApi.approvedShops();
+ if(!Array.isArray(listing.shops))throw new Error("The public shop catalog is unavailable.");
+ const menus=await Promise.all(listing.shops.map(async raw=>{
+   if(!raw || typeof raw.id!=="string" || !raw.id || typeof raw.is_active!=="boolean")
+     return null;
+   try{
+     const itemList=await customerPickupApi.menu(raw.id);
+     if(!Array.isArray(itemList.menu_items))return null;
+     return mapPickupShop({...raw,distance_km:undefined},itemList.menu_items);
+   }catch{return null;}
+ }));
+ const shops=menus.filter((shop):shop is NonNullable<typeof shop>=>shop!==null);
+ const incomplete=shops.length!==menus.length;
+ if(incomplete && shops.length===0 && menus.length>0)
+   throw new Error("Shop menus could not be loaded. Please retry.");
+ return {shops,incomplete};
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string,signal?:AbortSignal) {
