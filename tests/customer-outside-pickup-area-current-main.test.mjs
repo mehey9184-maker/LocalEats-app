@@ -18,6 +18,11 @@ test("4 km boundary: 3.9 and exactly 4.0 are eligible; 4.1 is browse only",()=>{
  for(const distance of [-0.1,NaN,Infinity]) assert.throws(()=>mapPickupShop({...approved,distance_km:distance},menu),/ineligible pickup shop/);
  assert.equal(isWithinPickupArea({}),false);
  assert.equal(isOutsidePickupArea({}),false,"unknown location must not be falsely labelled distant");
+ const unknown=mapPickupShop({...approved,distance_km:undefined},menu);
+ assert.equal(unknown.distance,undefined,"Unknown GPS cannot gain an invented numeric distance");
+ assert.equal(isWithinPickupArea(unknown),false);
+ assert.equal(isOutsidePickupArea(unknown),false);
+ assert.equal(unknown.menu[0].price,25,"Unknown location still permits real menu reading");
 });
 
 test("distance comes from real validated coordinates without fallback estimates",()=>{
@@ -52,10 +57,12 @@ test("original ShopCard stays navigable while distant cards are visibly distinct
  const card=read("src/components/ShopCard.tsx");
  const app=read("src/App.tsx");
  assert.match(card,/onStoreInfo\(shop.id\)/);
- assert.match(card,/outsidePickupArea\s*\? "bg-slate-50 dark:bg-slate-900/);
+ assert.match(card,/browseOnly\s*\? "bg-slate-50 dark:bg-slate-900/);
  assert.doesNotMatch(card,/outsidePickupArea\s*\? "opacity-/);
  assert.match(card,/Outside 4 km/);
- assert.match(card,/Outside pickup area · Browse menu only · Ordering unavailable/);
+ assert.match(card,/Outside pickup area/);
+ assert.match(card,/Location needed to order/);
+ assert.match(card,/Browse menu only/);
  assert.match(card,/Browse menu only/);
  assert.match(card,/aria-label=\{outsidePickupArea/);
  assert.match(card,/role="button"/);
@@ -64,7 +71,7 @@ test("original ShopCard stays navigable while distant cards are visibly distinct
  assert.match(card,/bg-white\/50 dark:bg-slate-950\/45/);
  assert.match(card,/grayscale-\[0\.85\] saturate-\[0\.35\]/);
  assert.match(card,/MapPinOff className=/);
- assert.match(card,/const isUnavailable = outsidePickupArea \|\| !status\.isOpen/);
+ assert.match(card,/const isUnavailable = outsidePickupArea \|\| locationUnknown \|\| !status\.isOpen/);
  assert.match(card,/if \(outsidePickupArea\) \{\s*showAlert\("Outside your pickup area"/);
  assert.match(app,/More shops outside your pickup area/);
  assert.match(app,/const within=sortedShops\.filter/);
@@ -74,9 +81,10 @@ test("original ShopCard stays navigable while distant cards are visibly distinct
  assert.match(app,/!isWithinPickupArea\(targetShop\)/);
  assert.match(app,/const outsidePickupArea = isOutsidePickupArea\(shop\)/);
  assert.match(app,/role="status" className="mx-4 mt-4/);
- assert.match(app,/if \(outsidePickupArea\) \{\s*showAlert\("Outside your pickup area"/);
+ assert.match(app,/if \(!isWithinPickupArea\(shop\)\) \{\s*showAlert\(/);
  assert.match(app,/<MenuItemCard\b/);
- assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey/);
+ assert.match(app,/const currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
+ assert.match(app,/const visibleShops=currentCatalogKey===displayedCatalogKeyRef\.current/);
  assert.doesNotMatch(app,/setShops\(DEFAULT_FALLBACK_SHOPS\)/);
 });
 
@@ -86,7 +94,7 @@ test("out-of-area distinction is consistent on Home, Discover and Explore withou
  assert.match(app,/More shops outside your pickup area/);
  assert.match(app,/Browse only/);
  assert.match(app,/rounded-3xl border border-slate-200 bg-slate-50\/80/);
- assert.match(card,/outsidePickupArea[\s\S]*?"bg-slate-50 dark:bg-slate-900\/80/);
+ assert.match(card,/browseOnly[\s\S]*?"bg-slate-50 dark:bg-slate-900\/80/);
  assert.match(card,/text-slate-900/);
  assert.match(card,/Outside 4 km/);
  assert.match(card,/Browse menu only/);
