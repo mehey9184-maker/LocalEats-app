@@ -259,7 +259,7 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
-import { upsertProfileWithRPC } from "./lib/profileService";
+import { upsertProfileWithRPC, customerProfileWritesEnabled } from "./lib/profileService";
 import { hostedProfileRequest } from "./services/customerProfileApi";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
@@ -2704,7 +2704,7 @@ export default function App() {
     localStorage.setItem("userProfile", JSON.stringify(userProfile));
 
     // Sync with Supabase if session exists
-    if (session?.user?.id) {
+    if (session?.user?.id && customerProfileWritesEnabled()) {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
@@ -2738,26 +2738,9 @@ export default function App() {
               error.message?.includes("column");
 
             if (isMissingColumnError) {
-              // Graceful degradation: sync only essential fields known to exist
-              const safePayload = {
-                user_id: session.user.id,
-                fullName: userProfile.fullName,
-                email: userProfile.email,
-                phone: toDBPhone(userProfile.phone),
-                role: userProfile.role || "user",
-                city: userProfile.city || "",
-                address: userProfile.address || "",
-                country: userProfile.country || "South Africa",
-                photo_url: userProfile.photoURL || "",
-                language: userProfile.language || "en",
-                updated_at: new Date().toISOString(),
-              };
-              // Do not retry an unknown legacy /api/profiles route.
-              // The hosted write service is managed by upsertProfileWithRPC,
-              // which truthfully reports when Production profile writes are off.
-              console.info("[Profile] Existing schema is not ready for this update.");
+              // Never post to SPA /api/profiles or pretend the server saved.
               setNotification({
-                message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
+                message: "Profile changes could not be saved by the server.",
                 type: "info",
               });
             } else {
