@@ -8216,12 +8216,10 @@ function StoreInfoScreen({
     fetchUserOrderCount();
   }, [session]);
 
-  const isCashTrustActive =
-    localStorage.getItem("localeats_cash_trust_" + shop.id) === "true" ||
-    (shop as any).cash_trust_enabled === true ||
-    (shop as any).cash_trust_enabled === "true" ||
-    (shop as any).localeats_cash_trust === true ||
-    (shop as any).localeats_cash_trust === "true";
+  // Pickup-only launch: legacy "cash on arrival / doorstep rider" promotions
+  // must not be resurrected by old browser storage or unverified merchant flags.
+  // The genuine payment choice remains cash/card machine at the physical shop.
+  const isCashTrustActive = false;
 
   // Memoized filtered reviews list to avoid unnecessary recalculations
   const filteredReviews = useMemo(() => {
