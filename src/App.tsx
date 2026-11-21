@@ -260,6 +260,7 @@ import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSu
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
 import { upsertProfileWithRPC } from "./lib/profileService";
+import { hostedProfileRequest } from "./services/customerProfileApi";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -1551,40 +1552,20 @@ export default function App() {
       let data: any = null;
       let error: any = null;
 
-      // 1. Direct Firestore profile retrieval for real-time customer identity
+      // The public Customer SPA rewrites /api/* to index.html.
+      // The authenticated API owns profiles, never the SPA host or a browser
+      // Firestore fallback. Read the verified current user's record only.
       try {
-        const firestoreProfile = await FirestoreService.getProfile(userId);
-        if (firestoreProfile) {
-          data = firestoreProfile;
-        }
-      } catch (fsErr) {
-        console.debug("[Profile] Firestore getProfile notice:", fsErr);
-      }
-
-      // 2. Primary attempt by user_id if not loaded from Firestore
-      if (!data) {
-        try {
-          const { getApiAuthHeaders } = await import("./lib/apiAuth");
-          const headers = await getApiAuthHeaders();
-          
-          const response = await fetch(`/api/profiles/${userId}`, {
-            headers: {
-              ...headers
-            }
-          });
-          
-          if (response.ok) {
-            const result = await response.json();
-            if (result.profile) {
-              data = result.profile;
-            }
-          } else {
-            error = new Error(`Failed to fetch profile: ${response.status}`);
-          }
-        } catch (apiErr) {
-          console.warn("[Profile] API fetch error:", apiErr);
-          error = apiErr;
-        }
+        if(auth.currentUser?.uid!==userId)throw new Error("PROFILE_OWNER_MISMATCH");
+        data=await hostedProfileRequest(
+          import.meta.env.VITE_LOCALEATS_API_URL || "",
+          auth.currentUser,
+          "GET",undefined,fetch,import.meta.env.PROD,
+        );
+      } catch (apiErr) {
+        error=apiErr;
+        console.info("[Profile] Hosted profile read notice:",
+          apiErr instanceof Error ? apiErr.message : "PROFILE_API_ERROR");
       }
 
       const isTransientSchemaNotice =
@@ -1624,32 +1605,18 @@ export default function App() {
           const { data: authUserData } = await supabase.auth.getUser();
           const authUser = authUserData?.user;
           if (authUser && authUser.id === userId) {
-            const userMeta = authUser.user_metadata || {};
-            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
-            const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
+            // Auth may provide a display name while the profile endpoint is
+            // unavailable. Never trust editable user_metadata for roles and
+            // never silently create a profile during a read-only page load.
+            const userMeta=authUser.user_metadata || {};
+            const fallbackName=userMeta.full_name || userMeta.fullName ||
+              userMeta.name || authUser.email?.split("@")[0] || "";
+            setUserProfile(prev=>({
+              ...prev,id:userId,
+              email:authUser.email || prev.email || "",
+              fullName:fallbackName || prev.fullName || "",
+              phone:typeof userMeta.phone==="string" ? userMeta.phone : prev.phone,
             }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
           }
         } catch (authFetchErr) {
           console.warn("[Profile Sync from Auth Notice]", authFetchErr);
@@ -2785,27 +2752,10 @@ export default function App() {
                 language: userProfile.language || "en",
                 updated_at: new Date().toISOString(),
               };
-              try {
-                const { getApiAuthHeaders } = await import("./lib/apiAuth");
-                const headers = await getApiAuthHeaders();
-                const response = await fetch('/api/profiles', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...headers
-                  },
-                  body: JSON.stringify(safePayload)
-                });
-                
-                if (!response.ok) {
-                  console.warn("Notice syncing fallback profile to Supabase:", await response.text());
-                } else {
-                  console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
-                }
-              } catch (e) {
-                console.warn("Silent failure in safe profile sync fallback:", e);
-              }
-
+              // Do not retry an unknown legacy /api/profiles route.
+              // The hosted write service is managed by upsertProfileWithRPC,
+              // which truthfully reports when Production profile writes are off.
+              console.info("[Profile] Existing schema is not ready for this update.");
               setNotification({
                 message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
                 type: "info",
