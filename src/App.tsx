@@ -1,6 +1,6 @@
 import type { PickupOrder } from "./pickup/client";
-import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery} from "./services/pickupMapping";
-import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
+import {readPickupCatalog, readPublicBrowseCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
 import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -259,7 +259,8 @@ import {
 import { auth, onForegroundMessage, registerAndSyncPushToken, revokePickupPushSubscription, FirestoreService } from "./lib/firebase";
 import {CustomerPostOrderPushPrompt} from "./components/CustomerPostOrderPushPrompt";
 import { canManageCustomerProfile, profileDestination, shouldRedirectProtectedProfile } from "./lib/profileAccess";
-import { upsertProfileWithRPC } from "./lib/profileService";
+import { upsertProfileWithRPC, customerProfileWritesEnabled } from "./lib/profileService";
+import { hostedProfileRequest } from "./services/customerProfileApi";
 
 import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
@@ -884,8 +885,10 @@ export default function App() {
   } | null>(null);
   const displayedCatalogKeyRef=useRef<string|null>(null);
   const noVisibleShops=useMemo<Shop[]>(()=>[],[]);
-  // A moved device never displays the previous location's shops.
-  const visibleShops=userLocation && nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
+  // Browse-only is a DIFFERENT catalog from the exact verified GPS catalog.
+  // A location change never inherits stale distance/ordering claims.
+  const currentCatalogKey=userLocation ? nearbyCatalogKey(userLocation) : "browse-only:no-gps";
+  const visibleShops=currentCatalogKey===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
   const selectedStore = visibleShops.find(shop => shop.id === selectedStoreId);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -1114,7 +1117,7 @@ export default function App() {
   };
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     const generation=++catalogGeneration.current;
-    const key=nearbyCatalogKey(userLocation);
+    const key=userLocation ? nearbyCatalogKey(userLocation) : "browse-only:no-gps";
     const sameLocation=!!key && key===displayedCatalogKeyRef.current;
 
     // Keep the previous verified cards visible during same-location refreshes,
@@ -1132,13 +1135,15 @@ export default function App() {
     setIsSyncing(true);
     setFetchError(null);
     try {
-      const result=_force
-        ? await readPickupCatalog(userLocation,{force:true})
-        : await readPickupCatalog(userLocation);
+      const result=!userLocation
+        ? await readPublicBrowseCatalog()
+        : _force
+          ? await readPickupCatalog(userLocation,{force:true})
+          : await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
-      if(key && !result.incomplete && nearbyShopAlertsEnabled.current){
+      if(userLocation && key && !result.incomplete && nearbyShopAlertsEnabled.current){
         const {baseline,newShop}=compareNearbyCatalog(nearbyAlertBaseline.current,key,result.shops);
         nearbyAlertBaseline.current=baseline;
         if(newShop && document.visibilityState==="visible"){
@@ -1443,8 +1448,11 @@ export default function App() {
         } else {
           console.log("Error getting location (graceful fallback):", error?.message);
         }
+        // Any denied/timed-out GPS must revoke previously displayed
+        // distance/ordering claims; fall back only to public browse-only data.
+        setUserLocation(null);
         setLoadingShops(false);
-        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location could not be obtained. Tap Reload shops & live data to retry.");
+        setFetchError(error.code === error.PERMISSION_DENIED ? "Location access denied. Allow location and tap Reload shops & live data." : "Location timed out. Enable device and browser location services, then tap Reload shops & live data.");
         if (silent) return; // Keep the existing non-intrusive automatic location behavior.
         
         let errorMsg = "Could not get your location automatically.";
@@ -1459,7 +1467,7 @@ export default function App() {
           type: "info",
         });
       },
-      { timeout: 15005, enableHighAccuracy: false, maximumAge: 300000 },
+      { timeout: 25000, enableHighAccuracy: false, maximumAge: 300000 },
     );
   }, []);
 
@@ -1551,40 +1559,20 @@ export default function App() {
       let data: any = null;
       let error: any = null;
 
-      // 1. Direct Firestore profile retrieval for real-time customer identity
+      // The public Customer SPA rewrites /api/* to index.html.
+      // The authenticated API owns profiles, never the SPA host or a browser
+      // Firestore fallback. Read the verified current user's record only.
       try {
-        const firestoreProfile = await FirestoreService.getProfile(userId);
-        if (firestoreProfile) {
-          data = firestoreProfile;
-        }
-      } catch (fsErr) {
-        console.debug("[Profile] Firestore getProfile notice:", fsErr);
-      }
-
-      // 2. Primary attempt by user_id if not loaded from Firestore
-      if (!data) {
-        try {
-          const { getApiAuthHeaders } = await import("./lib/apiAuth");
-          const headers = await getApiAuthHeaders();
-          
-          const response = await fetch(`/api/profiles/${userId}`, {
-            headers: {
-              ...headers
-            }
-          });
-          
-          if (response.ok) {
-            const result = await response.json();
-            if (result.profile) {
-              data = result.profile;
-            }
-          } else {
-            error = new Error(`Failed to fetch profile: ${response.status}`);
-          }
-        } catch (apiErr) {
-          console.warn("[Profile] API fetch error:", apiErr);
-          error = apiErr;
-        }
+        if(auth.currentUser?.uid!==userId)throw new Error("PROFILE_OWNER_MISMATCH");
+        data=await hostedProfileRequest(
+          import.meta.env.VITE_LOCALEATS_API_URL || "",
+          auth.currentUser,
+          "GET",undefined,fetch,import.meta.env.PROD,
+        );
+      } catch (apiErr) {
+        error=apiErr;
+        console.info("[Profile] Hosted profile read notice:",
+          apiErr instanceof Error ? apiErr.message : "PROFILE_API_ERROR");
       }
 
       const isTransientSchemaNotice =
@@ -1624,32 +1612,18 @@ export default function App() {
           const { data: authUserData } = await supabase.auth.getUser();
           const authUser = authUserData?.user;
           if (authUser && authUser.id === userId) {
-            const userMeta = authUser.user_metadata || {};
-            const fallbackName = userMeta.full_name || userMeta.fullName || userMeta.name || authUser.email?.split("@")[0] || "";
-            const fallbackPhone = userMeta.phone || "";
-            const fallbackRole = userMeta.role || "customer";
-
-            setUserProfile((prev) => ({
-              ...prev,
-              id: userId,
-              email: authUser.email || prev.email || "",
-              fullName: fallbackName || prev.fullName || "",
-              phone: fallbackPhone || prev.phone || "",
-              role: fallbackRole,
+            // Auth may provide a display name while the profile endpoint is
+            // unavailable. Never trust editable user_metadata for roles and
+            // never silently create a profile during a read-only page load.
+            const userMeta=authUser.user_metadata || {};
+            const fallbackName=userMeta.full_name || userMeta.fullName ||
+              userMeta.name || authUser.email?.split("@")[0] || "";
+            setUserProfile(prev=>({
+              ...prev,id:userId,
+              email:authUser.email || prev.email || "",
+              fullName:fallbackName || prev.fullName || "",
+              phone:typeof userMeta.phone==="string" ? userMeta.phone : prev.phone,
             }));
-
-            // Non-blocking upsert to ensure row exists in profiles table via authoritative Supabase API
-            upsertProfileWithRPC({
-              user_id: userId,
-              email: authUser.email,
-              fullName: fallbackName,
-              phone: fallbackPhone,
-              role: fallbackRole,
-              city: "Johannesburg",
-              country: "South Africa",
-            }).catch((e) => {
-              console.debug("[Profile Auto-Upsert Notice]", e?.message || e);
-            });
           }
         } catch (authFetchErr) {
           console.warn("[Profile Sync from Auth Notice]", authFetchErr);
@@ -2390,14 +2364,16 @@ export default function App() {
   }, [historyUserId]);
   const updatePickupReminder = usePickupReadyReminder(historyUserId, currentPickupHistory, notifications, openPickupTracking);
 
-  const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
-    setLoadingShops(true);
-    setFetchError(null);
-    requestLocation();
-  }, () => { void fetchShopsData(0, true); });
+  const reloadPickupShops = () => {
+    // Public discovery must be retryable even when GPS permission is denied.
+    // Explicitly request genuine coordinates, but never block menu browsing.
+    if(!userLocation)requestLocation(false);
+    void fetchShopsData(0,true);
+  };
 
   useEffect(() => {
-    if (!userLocation) return;
+    // Public listing is GET-only. Location is needed for distances and orders,
+    // not to read the genuine approved menus.
     void fetchShopsData();
     const timer = setInterval(() => void fetchShopsData(), 60000);
     return () => { catalogGeneration.current++; clearInterval(timer); };
@@ -2409,13 +2385,8 @@ export default function App() {
     }
   }, [requestLocation, currentScreen]);
 
-  const needsStoreLocation = currentScreen === "store-info" && !userLocation;
-  useEffect(() => {
-    if (!needsStoreLocation) return;
-    setLoadingShops(true);
-    setFetchError(null);
-    requestLocation(true);
-  }, [needsStoreLocation, requestLocation]);
+  // Store menus stay browsable when GPS is denied. Do not force a second
+  // permission request or clear their genuine catalog while reading a menu.
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -2514,26 +2485,9 @@ export default function App() {
     }
   }, [pendingReview]);
 
-  useEffect(() => {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          // Low-overhead info log when sandbox or device doesn't expose precise hardware GPS
-          console.info("Using default coordinates fallback:", error.message);
-          setUserLocation(null);
-        },
-        { timeout: 5000, enableHighAccuracy: false, maximumAge: 300000 },
-      );
-    } else {
-      setUserLocation(null);
-    }
-  }, []);
+  // One real-location acquisition path is handled by requestLocation on
+  // Home/Discover/Explore; a separate 5-second probe previously raced it and
+  // could clear a successful fix. No hardcoded or IP location for pickup.
 
   const addToCart = useCallback(
     (
@@ -2548,6 +2502,13 @@ export default function App() {
         return;
       }
 
+      // Protect every add entry point using the verified location-scoped list.
+      // The authoritative API separately enforces the same 4 km limit.
+      const targetShop=visibleShops.find(s=>s.id===shopId);
+      if (!targetShop || !isWithinPickupArea(targetShop)) {
+        toast.error("Outside your pickup area. Browse the menu, but ordering is available only within 4 km.");
+        return;
+      }
       // Defensive Copy and Deep Freeze of Pricing Core Data
       const secureCustomizations = [...selectedCustomizations].map((c) => 
         Object.freeze({ name: String(c.name), price: Number(c.price) })
@@ -2642,7 +2603,7 @@ export default function App() {
       });
       // Notification removed for cleaner UI
     },
-    [cart, shops, showConfirm, triggerHaptic, setNotification, setCart],
+    [cart, shops, visibleShops, showConfirm, triggerHaptic, setNotification, setCart],
   );
 
   const removeFromCart = useCallback(
@@ -2730,7 +2691,7 @@ export default function App() {
     localStorage.setItem("userProfile", JSON.stringify(userProfile));
 
     // Sync with Supabase if session exists
-    if (session?.user?.id) {
+    if (session?.user?.id && customerProfileWritesEnabled()) {
       const timer = setTimeout(async () => {
         if (!navigator.onLine) return;
         try {
@@ -2764,43 +2725,9 @@ export default function App() {
               error.message?.includes("column");
 
             if (isMissingColumnError) {
-              // Graceful degradation: sync only essential fields known to exist
-              const safePayload = {
-                user_id: session.user.id,
-                fullName: userProfile.fullName,
-                email: userProfile.email,
-                phone: toDBPhone(userProfile.phone),
-                role: userProfile.role || "user",
-                city: userProfile.city || "",
-                address: userProfile.address || "",
-                country: userProfile.country || "South Africa",
-                photo_url: userProfile.photoURL || "",
-                language: userProfile.language || "en",
-                updated_at: new Date().toISOString(),
-              };
-              try {
-                const { getApiAuthHeaders } = await import("./lib/apiAuth");
-                const headers = await getApiAuthHeaders();
-                const response = await fetch('/api/profiles', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...headers
-                  },
-                  body: JSON.stringify(safePayload)
-                });
-                
-                if (!response.ok) {
-                  console.warn("Notice syncing fallback profile to Supabase:", await response.text());
-                } else {
-                  console.log("[Profile Sync] Profile synced using safe essential-only fallback due to missing database columns.");
-                }
-              } catch (e) {
-                console.warn("Silent failure in safe profile sync fallback:", e);
-              }
-
+              // Never post to SPA /api/profiles or pretend the server saved.
               setNotification({
-                message: `We're finishing setting up your profile behind the scenes. Some details might take a moment to appear.`,
+                message: "Profile changes could not be saved by the server.",
                 type: "info",
               });
             } else {
@@ -4294,7 +4221,9 @@ function HomeScreen({
       const statusA = getShopStatus(a);
       const statusB = getShopStatus(b);
 
-      // 1. Prioritize Open shops
+      const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+      if (outsideA!==outsideB) return outsideA ? 1 : -1;
+      // Within each group prioritize operational shops.
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
@@ -4308,28 +4237,9 @@ function HomeScreen({
         return getMinPrepTime(a) - getMinPrepTime(b);
       }
 
-      // Default 'recommended' sort (Distance -> Special -> Rating)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) return distA - distB;
-      }
+      // Use the verified Haversine distances, not invented fallback pins.
+      if (userLocation && typeof a.distance==="number" && typeof b.distance==="number" &&
+          Math.abs(a.distance-b.distance)>0.001) return a.distance-b.distance;
 
       // Prioritize "Local Eats Special"
       if (a.is_special && !b.is_special) return -1;
@@ -4413,19 +4323,51 @@ function HomeScreen({
   );
 
   const renderedShopList = useMemo(() => {
-    return (
+    const within=sortedShops.filter(isWithinPickupArea);
+    const outside=sortedShops.filter(isOutsidePickupArea);
+    // An unknown GPS distance is neither "nearby" nor "outside 4 km".
+    const noGps=sortedShops.filter(shop=>!isWithinPickupArea(shop) && !isOutsidePickupArea(shop));
+    const cards=(entries:Shop[],offset:number)=>(
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 overflow-hidden isolate">
-        {sortedShops.map((shop,index) => (
+        {entries.map((shop,index)=>(
           <ShopCard
             key={shop.id}
             shop={shop}
-            priorityImage={index === 0}
+            priorityImage={offset+index===0}
             isFollowed={favorites.includes(shop.id)}
             onStoreInfo={onStoreInfo}
             triggerHaptic={triggerHaptic}
             dataSaverEnabled={dataSaverEnabled}
           />
         ))}
+      </div>
+    );
+    return (
+      <div className="space-y-6">
+        {cards(within,0)}
+        {noGps.length>0 && (
+          <section aria-label="Browse shops without location" className="space-y-4 rounded-3xl border border-amber-200 bg-amber-50/60 p-3 sm:p-5 dark:border-amber-800 dark:bg-slate-900/40">
+            <div className="space-y-1">
+              <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">Browse shops — location needed to order</h3>
+              <p className="text-xs font-medium text-slate-700 dark:text-slate-300">You can view real menus without GPS. Enable your device location to check the 4 km pickup area; no order can be placed until then.</p>
+            </div>
+            {cards(noGps,within.length)}
+          </section>
+        )}
+        {outside.length>0 && (
+          <section aria-label="More shops outside your pickup area" className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/80 p-3 sm:p-5 dark:border-slate-700 dark:bg-slate-900/40">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-100">More shops outside your pickup area</h3>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Over 4 km away · Browse real menus, but ordering is unavailable here.</p>
+              </div>
+              <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                Browse only
+              </span>
+            </div>
+            {cards(outside,within.length)}
+          </section>
+        )}
       </div>
     );
   }, [sortedShops, favorites, onStoreInfo, triggerHaptic, dataSaverEnabled]);
@@ -5158,7 +5100,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online
+                  {sortedShops.length} {sortedShops.length === 1 ? "shop" : "shops"} listed
                 </span>
               )}
             </div>
@@ -5862,17 +5804,8 @@ function DiscoverScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return matchesSearch && matchesCategory && matchesRating && matchesOpen && matchesDistance;
@@ -5890,6 +5823,9 @@ function DiscoverScreen({
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
     const statusB = getShopStatus(b);
+    // Visibly orderable nearby shops should appear before browse-only shops.
+    const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+    if(outsideA!==outsideB) return outsideA ? 1 : -1;
 
     // If sorting by smart priority:
     if (sortPriority === "smart") {
@@ -5897,48 +5833,18 @@ function DiscoverScreen({
       if (statusA.isOpen && !statusB.isOpen) return -1;
       if (!statusA.isOpen && statusB.isOpen) return 1;
 
-      // 2. Distance Sort (Nearby Priority)
-      if (userLocation) {
-        const aLat =
-          (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-        const aLng =
-          (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-        const bLat =
-          (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-        const bLng =
-          (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
+      // 2. Rank by the location-verified Haversine kilometres.
+      if (userLocation && typeof a.distance==="number" && typeof b.distance==="number" &&
+          Math.abs(a.distance-b.distance)>0.001) return a.distance-b.distance;
 
-        const distA = Math.sqrt(
-          Math.pow(aLat - userLocation.lat, 2) +
-            Math.pow(aLng - userLocation.lng, 2),
-        );
-        const distB = Math.sqrt(
-          Math.pow(bLat - userLocation.lat, 2) +
-            Math.pow(bLng - userLocation.lng, 2),
-        );
-
-        if (Math.abs(distA - distB) > 0.001) {
-          return distA - distB;
-        }
-      }
-      
       // 3. Rating Sort
       return b.rating - a.rating;
     }
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-
-      const distA = calculateDistance(aLat, aLng, userLocation.lat, userLocation.lng);
-      const distB = calculateDistance(bLat, bLng, userLocation.lat, userLocation.lng);
-      return distA - distB;
+      const distA=typeof a.distance==="number" ? a.distance : Infinity;
+      const distB=typeof b.distance==="number" ? b.distance : Infinity;
+      return distA-distB;
     }
 
     if (sortPriority === "rating") {
@@ -6438,19 +6344,25 @@ function DiscoverScreen({
               sortedShops.map((shop) => {
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
+                const outsidePickupArea = isOutsidePickupArea(shop);
+                const locationUnknown=shop.distance===undefined;
+                const browseOnly=outsidePickupArea || locationUnknown;
                 return (
                 <div
                   key={shop.id}
                   onClick={() => onSelectShop(shop.id)}
-                  className="group bg-[#ffffff] dark:bg-slate-900 rounded-[32px] overflow-hidden shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border border-slate-100/60 dark:border-slate-800/60 cursor-pointer flex flex-col h-full transform"
+                  className={`group rounded-[32px] overflow-hidden transition-all duration-350 hover:-translate-y-1.5 active:scale-[0.98] border cursor-pointer flex flex-col h-full transform ${browseOnly
+                    ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400"
+                    : "bg-white dark:bg-slate-900 shadow-[0_12px_36px_rgba(45,47,49,0.06)] dark:shadow-none hover:shadow-[0_16px_48px_rgba(251,146,60,0.1)] border-slate-100/60 dark:border-slate-800/60"}`}
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
                       src={shop.logo || DEFAULT_SHOP_LOGO}
                       alt={shop.name}
-                      className="w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700"
+                      className={`w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                     />
+                    {browseOnly && <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />}
 
                     {/* Floating Heart Follow Badge */}
                     <button
@@ -6484,20 +6396,15 @@ function DiscoverScreen({
 
                     {/* Delivery Method Overlay */}
                     <div className="absolute bottom-4 left-4 flex gap-2">
-                      <div className="bg-orange-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm">
-                        Pickup at shop
+                      <div className={`text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm ${browseOnly ? "bg-slate-700" : "bg-orange-600"}`}>
+                        {browseOnly ? "Browse menu only" : "Pickup at shop"}
                       </div>
-                      {(() => {
-                        const sLat = shop.latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                        const sLng = shop.longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-                        const distanceVal = userLocation ? calculateDistance(sLat, sLng, userLocation.lat, userLocation.lng) : null;
-                        return distanceVal !== null ? (
-                          <div className="bg-slate-950/80 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
-                            <Navigation className="w-2.5 h-2.5" />
-                            {distanceVal.toFixed(1)} km
-                          </div>
-                        ) : null;
-                      })()}
+                      {typeof shop.distance==="number" && Number.isFinite(shop.distance) && (
+                        <div className="bg-slate-950/80 text-white font-black text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-lg shadow-sm backdrop-blur-sm flex items-center gap-1">
+                          <Navigation className="w-2.5 h-2.5" aria-hidden="true" />
+                          {shop.distance.toFixed(1)} km
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -6516,6 +6423,11 @@ function DiscoverScreen({
                           <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 font-medium">
                             {shop.address}
                           </p>
+                          {browseOnly && (
+                            <p className="mt-2 inline-flex rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+                              {locationUnknown ? "Location needed · Browse only" : "Outside 4 km · Ordering unavailable"}
+                            </p>
+                          )}
                           {!status.isOpen && (
                             <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-1">
                               Opens {status.nextOpeningTime || "Soon"}
@@ -6541,10 +6453,10 @@ function DiscoverScreen({
                         onSelectShop(shop.id);
                         triggerHaptic(10);
                       }}
-                      className="w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className={`w-full py-3.5 font-black text-xs uppercase tracking-wider rounded-2xl text-white transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer ${browseOnly ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                     >
                       <Store className="w-4 h-4" />
-                      View Menu & Order
+                      {browseOnly ? "Browse Menu Only" : "View Menu & Order"}
                     </button>
                   </div>
                 </div>
@@ -6569,7 +6481,7 @@ function DiscoverScreen({
                 
                 <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto leading-relaxed mb-6 font-medium">
                   {shops.length === 0
-                    ? "No approved, available pickup shops found within 4 km of your real location."
+                    ? "No approved pickup shops were found for your location. Check your location or retry."
                     : "We couldn't find any stores matching your current filter criteria. Try adjusting your search query or reset your filters."}
                 </p>
 
@@ -8304,12 +8216,10 @@ function StoreInfoScreen({
     fetchUserOrderCount();
   }, [session]);
 
-  const isCashTrustActive =
-    localStorage.getItem("localeats_cash_trust_" + shop.id) === "true" ||
-    (shop as any).cash_trust_enabled === true ||
-    (shop as any).cash_trust_enabled === "true" ||
-    (shop as any).localeats_cash_trust === true ||
-    (shop as any).localeats_cash_trust === "true";
+  // Pickup-only launch: legacy "cash on arrival / doorstep rider" promotions
+  // must not be resurrected by old browser storage or unverified merchant flags.
+  // The genuine payment choice remains cash/card machine at the physical shop.
+  const isCashTrustActive = false;
 
   // Memoized filtered reviews list to avoid unnecessary recalculations
   const filteredReviews = useMemo(() => {
@@ -8331,6 +8241,8 @@ function StoreInfoScreen({
 
 
   const storeStatus = getStoreStatus();
+  const outsidePickupArea = isOutsidePickupArea(shop);
+  const locationUnknown=shop.distance===undefined;
   const shopMenu = shop.menu;
 
   const filteredMenu = useMemo(() => {
@@ -8613,6 +8525,18 @@ function StoreInfoScreen({
   return (
     <div className="bg-white dark:bg-slate-950 text-[#221610] dark:text-white antialiased min-h-screen flex flex-col relative shadow-xl overflow-x-hidden">
       <RestaurantSchema shop={shop} />
+      {(outsidePickupArea || locationUnknown) && (
+        <div role="status" className="mx-4 mt-4 rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-900 dark:border-slate-700 px-4 py-3">
+          <p className="font-bold text-slate-900 dark:text-white">
+            {locationUnknown ? "Location needed to order" : "Outside your pickup area"}
+          </p>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            {locationUnknown
+              ? "Your real location was not confirmed. Browse the menu, then allow browser location access to check pickup eligibility. No ordering without a verified location."
+              : `This shop is ${shop.distance?.toFixed(1)} km away. LocalEats supports ordering only within 4 km. You can browse its menu here.`}
+          </p>
+        </div>
+      )}
 
       {/* Immersive Header with Carousel */}
       <div className="relative h-56 md:h-80 w-full group overflow-hidden shrink-0">
@@ -9436,6 +9360,16 @@ function StoreInfoScreen({
         isOpen={!!selectedItemForQuantity}
         onClose={() => setSelectedItemForQuantity(null)}
         onConfirm={(quantity, specialInstructions, selectedCustomizations) => {
+          if (!isWithinPickupArea(shop)) {
+            showAlert(
+              locationUnknown ? "Location needed" : "Outside your pickup area",
+              locationUnknown
+                ? "Allow your real location to check the 4 km pickup area before ordering."
+                : "You can browse the menu, but this shop is beyond the 4 km ordering area.",
+            );
+            setSelectedItemForQuantity(null);
+            return;
+          }
           if (!getShopStatus(shop).isOpen) {
             showAlert("Closed", "This shop is currently closed. Browse its menu now and order when it reopens.");
             setSelectedItemForQuantity(null);
@@ -9637,17 +9571,8 @@ function ExploreScreen({
       // Filter by max distance if user location is loaded
       let matchesDistance = true;
       if (maxDistance !== null && userLocation) {
-        const sLat =
-          (shop as any).latitude || -25.9964 + (hashString(shop.id) % 10) * 0.005;
-        const sLng =
-          (shop as any).longitude || 28.2268 + (hashString(shop.id) % 10) * 0.005;
-        const dist = calculateDistance(
-          sLat,
-          sLng,
-          userLocation.lat,
-          userLocation.lng,
-        );
-        matchesDistance = dist <= maxDistance;
+        matchesDistance = typeof shop.distance === "number" &&
+          Number.isFinite(shop.distance) && shop.distance <= maxDistance;
       }
 
       return (
@@ -9663,27 +9588,15 @@ function ExploreScreen({
   const sortedShops = [...filteredShops].sort((a, b) => {
     const statusA = getShopStatus(a);
     const statusB = getShopStatus(b);
+    const outsideA=isOutsidePickupArea(a), outsideB=isOutsidePickupArea(b);
+    if(outsideA!==outsideB) return outsideA ? 1 : -1;
     if (statusA.isOpen && !statusB.isOpen) return -1;
     if (!statusA.isOpen && statusB.isOpen) return 1;
 
     if (sortPriority === "distance" && userLocation) {
-      const aLat =
-        (a as any).latitude || -25.9964 + (hashString(a.id) % 10) * 0.005;
-      const aLng =
-        (a as any).longitude || 28.2268 + (hashString(a.id) % 10) * 0.005;
-      const bLat =
-        (b as any).latitude || -25.9964 + (hashString(b.id) % 10) * 0.005;
-      const bLng =
-        (b as any).longitude || 28.2268 + (hashString(b.id) % 10) * 0.005;
-      const distA = Math.sqrt(
-        Math.pow(aLat - userLocation.lat, 2) +
-          Math.pow(aLng - userLocation.lng, 2),
-      );
-      const distB = Math.sqrt(
-        Math.pow(bLat - userLocation.lat, 2) +
-          Math.pow(bLng - userLocation.lng, 2),
-      );
-      return distA - distB;
+      const distA=typeof a.distance==="number" ? a.distance : Infinity;
+      const distB=typeof b.distance==="number" ? b.distance : Infinity;
+      return distA-distB;
     }
 
     if (sortPriority === "name") {
@@ -10070,22 +9983,12 @@ function ExploreScreen({
               sortedShops.map((shop) => {
                 const isFollowing = favorites.includes(shop.id);
                 const status = getShopStatus(shop);
-
-                // Get coordinates and compute accurate distance
-                const sLat =
-                  (shop as any).latitude ||
-                  -25.9964 + (hashString(shop.id) % 10) * 0.005;
-                const sLng =
-                  (shop as any).longitude ||
-                  28.2268 + (hashString(shop.id) % 10) * 0.005;
-                const distanceVal = userLocation
-                  ? calculateDistance(
-                      sLat,
-                      sLng,
-                      userLocation.lat,
-                      userLocation.lng,
-                    )
-                  : null;
+                const outsidePickupArea = isOutsidePickupArea(shop);
+                const locationUnknown=shop.distance===undefined;
+                const browseOnly=outsidePickupArea || locationUnknown;
+                // Verified distance from the location-scoped catalogue, never an invented GPS fallback.
+                const distanceVal = typeof shop.distance === "number" && Number.isFinite(shop.distance)
+                  ? shop.distance : null;
 
                 return (
                   <div
@@ -10094,20 +9997,25 @@ function ExploreScreen({
                       setSelectedShopId(shop.id);
                       triggerHaptic(10);
                     }}
-                    className="group bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[32px] overflow-hidden shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600 transition-all duration-300 flex flex-col cursor-pointer"
+                    className={`group rounded-[32px] overflow-hidden border transition-all duration-300 flex flex-col cursor-pointer ${browseOnly
+                      ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:border-slate-400"
+                      : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm dark:shadow-none hover:border-slate-300/80 dark:hover:border-slate-600"}`}
                   >
                     <div className="h-44 relative overflow-hidden">
                       <BlurUpImage
                         src={shop.logo || DEFAULT_SHOP_LOGO}
                         alt={shop.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                         blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
                       />
+                      {browseOnly && (
+                        <div aria-hidden="true" className="absolute inset-0 bg-white/50 dark:bg-slate-950/45 pointer-events-none" />
+                      )}
 
                       {/* Distance Float Indicator */}
                       {distanceVal !== null && (
-                        <div className="absolute top-4 left-4 bg-orange-600 font-black text-[9px] uppercase tracking-wider text-white px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1">
-                          <Compass className="w-3 h-3 animate-spin duration-[3000ms]" />
+                        <div className={`absolute top-4 left-4 font-black text-[10px] uppercase tracking-wide px-2.5 py-1.5 rounded-xl shadow-md flex items-center gap-1 ${browseOnly ? "bg-white text-slate-900 border border-slate-300" : "bg-orange-600 text-white"}`}>
+                          <Compass className="w-3 h-3" aria-hidden="true" />
                           <span>{distanceVal.toFixed(1)} km away</span>
                         </div>
                       )}
@@ -10128,7 +10036,11 @@ function ExploreScreen({
 
                       {/* Speed/Opening Overlays */}
                       <div className="absolute bottom-4 left-4 flex gap-1.5 flex-wrap">
-                        {status.isOpen ? (
+                        {outsidePickupArea ? (
+                          <span className="bg-white text-slate-900 border border-slate-300 font-black text-[11px] whitespace-nowrap uppercase tracking-wide px-2 py-1 rounded-md shadow-sm">
+                            {locationUnknown ? "Location needed · Browse only" : "Outside 4 km · Browse only"}
+                          </span>
+                        ) : status.isOpen ? (
                           <span className="bg-emerald-500 text-white font-black text-[10px] whitespace-nowrap uppercase tracking-wider px-2 py-1 rounded-md shadow-sm">
                             Open Now
                           </span>
@@ -10176,10 +10088,10 @@ function ExploreScreen({
                             onStoreInfo(shop.id);
                             triggerHaptic(10);
                           }}
-                          className="flex-grow py-3 bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                          className={`flex-grow py-3 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer ${browseOnly ? "bg-slate-600 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600" : "bg-slate-900 hover:bg-slate-850 dark:bg-orange-600 dark:hover:bg-orange-500"}`}
                         >
                           <BookOpen className="w-4 h-4" />
-                          <span>Order Menu</span>
+                          <span>{browseOnly ? "Browse Menu Only" : "Order Menu"}</span>
                         </button>
 
                         <button

@@ -1,4 +1,5 @@
-import { FirestoreService } from './firebase';
+import { auth } from './firebase';
+import { hostedProfileRequest } from '../services/customerProfileApi';
 import { toDBPhone } from '../utils';
 import {
   queueProfileSync,
@@ -49,7 +50,10 @@ export function isPermanentSyncError(error: any): boolean {
     msg.includes("schema cache") ||
     msg.includes("column") && msg.includes("does not exist") ||
     msg.includes("Forbidden") ||
-    msg.includes("ID mismatch")
+    msg.includes("ID mismatch") ||
+    msg.includes("PROFILE_WRITES_DISABLED") ||
+    msg.includes("PROFILE_OWNER_MISMATCH") ||
+    msg.includes("PROFILE_API_INVALID_RESPONSE")
   );
 }
 
@@ -122,75 +126,41 @@ export function scheduleProfileRetry(profileData: ProfileUpsertData, currentAtte
 /**
  * Direct synchronization multi-channel executor
  */
+// Client and server must both enable writes after a separate approved test.
+export const customerProfileWritesEnabled=()=>
+  import.meta.env.VITE_PROFILE_WRITES_ENABLED==="true";
+
 async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ success: boolean; data?: any; error?: any }> {
-  if (!profileData.user_id) {
-    return { success: false, error: new Error("User ID is required") };
+  if(!customerProfileWritesEnabled())
+    return {success:false,error:new Error("PROFILE_WRITES_DISABLED")};
+  const user=auth.currentUser;
+  if(!user || !user.uid || user.uid!==profileData.user_id)
+    return {success:false,error:new Error("PROFILE_OWNER_MISMATCH")};
+  const updated:Record<string,unknown>={};
+  if(typeof profileData.fullName==="string" && profileData.fullName.trim().length>=2)
+    updated.fullName=profileData.fullName.trim();
+  if(profileData.phone!==undefined)
+    updated.phone=profileData.phone ? toDBPhone(profileData.phone) : null;
+  for(const key of ["city","address","country","language"] as const){
+    const value=profileData[key];
+    if(value!==undefined)updated[key]=value;
   }
-
-  const sanitizedPhone = toDBPhone(profileData.phone);
-  let synced = false;
-  let lastError: any = null;
-
-  // Channel 1: Supabase (Authoritative primary persistent database via Express API)
-  try {
-    const { getApiAuthHeaders } = await import('./apiAuth');
-    const headers = await getApiAuthHeaders();
-    
-    const safePayload = {
-      user_id: profileData.user_id,
-      fullName: profileData.fullName,
-      email: profileData.email,
-      phone: sanitizedPhone,
-      role: profileData.role || "user",
-      city: profileData.city || "",
-      address: profileData.address || "",
-      country: profileData.country || "South Africa",
-      photo_url: profileData.photo_url || "",
-      language: profileData.language || "en",
-      favorites: profileData.favorites || [],
-      updated_at: new Date().toISOString(),
-    };
-    
-    const response = await fetch('/api/profiles', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers
-      },
-      body: JSON.stringify(safePayload)
-    });
-    
-    const result = await response.json();
-          
-    if (!response.ok || !result.success) {
-      console.warn("[Profile Sync] Supabase API sync notice:", result.error || "Failed");
-      lastError = new Error(result.error || "Failed");
-    } else {
-      synced = true;
-      lastError = null; // Clear any previous error if Supabase succeeds
-    }
-  } catch (sbErr: any) {
-    console.warn("[Profile Sync] Exception syncing to Supabase API:", sbErr?.message || sbErr);
-    lastError = sbErr;
+  if(profileData.photo_url!==undefined)updated.photo_url=profileData.photo_url || null;
+  if(profileData.favorites!==undefined)updated.favorites=profileData.favorites;
+  if(profileData.latitude!==undefined && profileData.longitude!==undefined){
+    updated.latitude=profileData.latitude;
+    updated.longitude=profileData.longitude;
   }
-
-  // Channel 2: Firestore (Non-blocking secondary mirror for compatibility)
-  FirestoreService.saveProfile(profileData.user_id, {
-    full_name: profileData.fullName || null,
-    email: profileData.email || null,
-    phone: sanitizedPhone,
-    city: profileData.city || null,
-    address: profileData.address || null,
-    country: profileData.country || "South Africa",
-    role: profileData.role || "user",
-    avatar_url: profileData.photo_url || null,
-    language: profileData.language || "en",
-    favorites: profileData.favorites || []
-  }).catch((fsErr: any) => {
-    console.debug("[Profile Sync] Firestore mirror notice:", fsErr?.message || fsErr);
-  });
-
-  return { success: synced, error: synced ? null : lastError };
+  // user_id, role, email, approval and timestamps are not client-writable.
+  if(Object.keys(updated).length===0)
+    return {success:false,error:new Error("PROFILE_NO_ALLOWED_FIELDS")};
+  try{
+    const saved=await hostedProfileRequest(
+      import.meta.env.VITE_LOCALEATS_API_URL || "",
+      user,"POST",updated,fetch,import.meta.env.PROD,
+    );
+    return {success:!!saved,data:saved};
+  }catch(error){return {success:false,error};}
 }
 
 /**
@@ -198,6 +168,9 @@ async function syncProfileDirect(profileData: ProfileUpsertData): Promise<{ succ
  * persistent offline queue fallback, and exponential backoff retries.
  */
 export async function upsertProfileWithRPC(profileData: ProfileUpsertData): Promise<{ data: any; error: any }> {
+  // Never pretend a server write happened while profile writes are disabled.
+  if(!customerProfileWritesEnabled())
+    return {data:null,error:new Error("PROFILE_WRITES_DISABLED")};
   if (!profileData.user_id) {
     return { data: null, error: new Error("User ID is required for profile upsert") };
   }
@@ -284,6 +257,7 @@ export async function findOffendingProfilePhones() {
  * Iterates through all queued offline profile sync items and processes them
  */
 export async function processOfflineProfileQueue() {
+  if(!customerProfileWritesEnabled())return;
   if (typeof window === "undefined" || !navigator.onLine) return;
   const queue: QueuedProfile[] = getProfileSyncQueue();
   if (!queue || queue.length === 0) return;
