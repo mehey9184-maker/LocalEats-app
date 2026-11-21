@@ -39,6 +39,7 @@ test("real device catalog and GPS-less catalog cannot reuse each other's distanc
  assert.match(app,/const noGps=sortedShops\.filter\(shop=>!isWithinPickupArea\(shop\) && !isOutsidePickupArea\(shop\)\)/);
  assert.match(app,/Browse shops — location needed to order/);
  assert.match(app,/No ordering without a verified location\.|No order can be placed until then/);
+ assert.match(app,/setUserLocation\(null\);\s*setLoadingShops\(false\);\s*setFetchError\(error\.code/);
  assert.match(app,/const targetShop=visibleShops\.find\(s=>s\.id===shopId\)/);
  assert.match(app,/!isWithinPickupArea\(targetShop\)/);
  assert.doesNotMatch(app,/setUserLocation\(\{lat:-26\.009012/);
