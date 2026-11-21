@@ -31,6 +31,15 @@ export async function hostedProfileRequest(
   transport:typeof fetch=fetch,
   production=false,
 ):Promise<Record<string,unknown>|null> {
+  // Defense in depth: never send privileged identity/role fields even if a
+  // future caller accidentally tries; API applies its own independent check.
+  if(method==="POST"){
+    const permitted=new Set(["fullName","phone","city","address","country",
+      "photo_url","language","latitude","longitude","favorites"]);
+    if(!updates || Object.keys(updates).length===0 ||
+      Object.keys(updates).some(key=>!permitted.has(key)))
+      throw new CustomerProfileApiError(400,"PROFILE_FIELDS_FORBIDDEN");
+  }
   if(!account || !account.uid)throw new CustomerProfileApiError(401,"UNAUTHORIZED");
   const token=await account.getIdToken();
   if(!token)throw new CustomerProfileApiError(401,"UNAUTHORIZED");
@@ -49,7 +58,6 @@ export async function hostedProfileRequest(
   } catch {
     throw new CustomerProfileApiError(0,"PROFILE_API_UNREACHABLE");
   }
-  if(method==="GET" && response.status===404)return null;
   // HTML fallbacks, blank 200s and redirects can NEVER count as saved profiles.
   if(!response.headers.get("content-type")?.toLowerCase().includes("application/json"))
     throw new CustomerProfileApiError(response.status,"PROFILE_API_INVALID_RESPONSE");
@@ -57,6 +65,8 @@ export async function hostedProfileRequest(
   try {json=await response.json();} catch {
     throw new CustomerProfileApiError(response.status,"PROFILE_API_INVALID_RESPONSE");
   }
+  if(method==="GET" && response.status===404 && json?.code==="PROFILE_NOT_FOUND")
+    return null;
   if(!response.ok || json?.success!==true){
     const code=typeof json?.code==="string" && /^[A-Z0-9_]{1,64}$/.test(json.code)
       ? json.code : "PROFILE_API_ERROR";
