@@ -35,7 +35,9 @@ test("pickup remains review-only and map discovery plus QR and cropper lazy path
   assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return;/);
   assert.match(pickup,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
-  assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
+  // Known GPS and GPS-denied public browsing are isolated catalogue states.
+  assert.match(app,/const currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
+  assert.match(app,/const visibleShops=currentCatalogKey===displayedCatalogKeyRef\.current/);
   assert.match(app,/<ShopCard\b/);
   assert.match(app,/<MenuItemCard\b/);
   assert.match(app,/const DeferredProfileCropper = lazy\(/);
