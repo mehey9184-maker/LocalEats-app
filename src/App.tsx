@@ -1,6 +1,6 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
-import {readPickupCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {readPickupCatalog, readPublicBrowseCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
 import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -885,8 +885,10 @@ export default function App() {
   } | null>(null);
   const displayedCatalogKeyRef=useRef<string|null>(null);
   const noVisibleShops=useMemo<Shop[]>(()=>[],[]);
-  // A moved device never displays the previous location's shops.
-  const visibleShops=userLocation && nearbyCatalogKey(userLocation)===displayedCatalogKeyRef.current
+  // Browse-only is a DIFFERENT catalog from the exact verified GPS catalog.
+  // A location change never inherits stale distance/ordering claims.
+  const currentCatalogKey=userLocation ? nearbyCatalogKey(userLocation) : "browse-only:no-gps";
+  const visibleShops=currentCatalogKey===displayedCatalogKeyRef.current
     ? shops : noVisibleShops;
   const selectedStore = visibleShops.find(shop => shop.id === selectedStoreId);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -1115,7 +1117,7 @@ export default function App() {
   };
   const fetchShopsData = useCallback(async (_retries=0,_force=false) => {
     const generation=++catalogGeneration.current;
-    const key=nearbyCatalogKey(userLocation);
+    const key=userLocation ? nearbyCatalogKey(userLocation) : "browse-only:no-gps";
     const sameLocation=!!key && key===displayedCatalogKeyRef.current;
 
     // Keep the previous verified cards visible during same-location refreshes,
@@ -1133,13 +1135,15 @@ export default function App() {
     setIsSyncing(true);
     setFetchError(null);
     try {
-      const result=_force
-        ? await readPickupCatalog(userLocation,{force:true})
-        : await readPickupCatalog(userLocation);
+      const result=!userLocation
+        ? await readPublicBrowseCatalog()
+        : _force
+          ? await readPickupCatalog(userLocation,{force:true})
+          : await readPickupCatalog(userLocation);
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
-      if(key && !result.incomplete && nearbyShopAlertsEnabled.current){
+      if(userLocation && key && !result.incomplete && nearbyShopAlertsEnabled.current){
         const {baseline,newShop}=compareNearbyCatalog(nearbyAlertBaseline.current,key,result.shops);
         nearbyAlertBaseline.current=baseline;
         if(newShop && document.visibilityState==="visible"){
@@ -2357,14 +2361,16 @@ export default function App() {
   }, [historyUserId]);
   const updatePickupReminder = usePickupReadyReminder(historyUserId, currentPickupHistory, notifications, openPickupTracking);
 
-  const reloadPickupShops = () => retryPickupDiscovery(userLocation, () => {
-    setLoadingShops(true);
-    setFetchError(null);
-    requestLocation();
-  }, () => { void fetchShopsData(0, true); });
+  const reloadPickupShops = () => {
+    // Public discovery must be retryable even when GPS permission is denied.
+    // Explicitly request genuine coordinates, but never block menu browsing.
+    if(!userLocation)requestLocation(false);
+    void fetchShopsData(0,true);
+  };
 
   useEffect(() => {
-    if (!userLocation) return;
+    // Public listing is GET-only. Location is needed for distances and orders,
+    // not to read the genuine approved menus.
     void fetchShopsData();
     const timer = setInterval(() => void fetchShopsData(), 60000);
     return () => { catalogGeneration.current++; clearInterval(timer); };
@@ -2376,13 +2382,8 @@ export default function App() {
     }
   }, [requestLocation, currentScreen]);
 
-  const needsStoreLocation = currentScreen === "store-info" && !userLocation;
-  useEffect(() => {
-    if (!needsStoreLocation) return;
-    setLoadingShops(true);
-    setFetchError(null);
-    requestLocation(true);
-  }, [needsStoreLocation, requestLocation]);
+  // Store menus stay browsable when GPS is denied. Do not force a second
+  // permission request or clear their genuine catalog while reading a menu.
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
