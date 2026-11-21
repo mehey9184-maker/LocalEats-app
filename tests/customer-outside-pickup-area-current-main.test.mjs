@@ -102,14 +102,14 @@ test("out-of-area distinction is consistent on Home, Discover and Explore withou
  assert.doesNotMatch(card,/outsidePickupArea \? "opacity-75/);
  const discover=app.slice(app.indexOf("function DiscoverScreen("),app.indexOf("function AddressPicker("));
  assert.match(discover,/const outsidePickupArea = isOutsidePickupArea\(shop\)/);
- assert.match(discover,/outsidePickupArea \? "Browse Menu Only" : "View Menu & Order"/);
+ assert.match(discover,/browseOnly \? "Browse Menu Only" : "View Menu & Order"/);
  assert.match(discover,/Outside 4 km · Ordering unavailable/);
  assert.match(discover,/grayscale-\[0\.85\] saturate-\[0\.35\]/);
  const discoverList=discover.slice(discover.indexOf("sortedShops.map((shop)"),discover.indexOf("}) \/\/ close map"));
  assert.match(discoverList,/typeof shop\.distance==="number"/);
  assert.doesNotMatch(discoverList,/hashString\(shop\.id\)/);
  const explore=app.slice(app.indexOf("function ExploreScreen("));
- assert.match(explore,/outsidePickupArea \? "Browse Menu Only" : "Order Menu"/);
+ assert.match(explore,/browseOnly \? "Browse Menu Only" : "Order Menu"/);
  assert.match(explore,/Outside 4 km · Browse only/);
  assert.match(explore,/grayscale-\[0\.85\] saturate-\[0\.35\]/);
  const exploreList=explore.slice(explore.indexOf("sortedShops.map((shop)"),explore.indexOf("sortedShops.map((shop)")+4500);
