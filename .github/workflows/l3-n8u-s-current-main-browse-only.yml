@@ -8,6 +8,8 @@ on:
       - 'src/services/pickupMapping.ts'
       - 'src/services/customerPickup.ts'
       - 'src/pickup/client.ts'
+      - 'vite.config.ts'
+      - 'tests/customer-production-secrets-main.test.mjs'
       - 'tests/customer-outside-pickup-area-current-main.test.mjs'
       - 'tests/customer-closed-browse-main.test.mjs'
       - 'tests/customer-nearby-cache-main.test.mjs'
@@ -34,8 +36,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check Customer TypeScript
         run: npm run lint
-      - name: Run original and distant-shop security regressions
-        run: node --experimental-strip-types --test tests/customer-outside-pickup-area-current-main.test.mjs tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/original-pickup.test.mjs
+      - name: Run original, production-secret and distant-shop security regressions
+        run: node --experimental-strip-types --test tests/customer-production-secrets-main.test.mjs tests/customer-outside-pickup-area-current-main.test.mjs tests/customer-closed-browse-main.test.mjs tests/customer-nearby-cache-main.test.mjs tests/original-pickup.test.mjs
       - name: Build Customer without activating checkout
         env:
           VITE_PICKUP_ORDERING_ENABLED: 'false'
