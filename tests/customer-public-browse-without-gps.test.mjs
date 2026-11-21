@@ -101,5 +101,5 @@ test("pickup storefront cannot resurrect old rider-delivery cash trust promotion
  assert.match(app,/const isCashTrustActive = false;/);
  assert.doesNotMatch(app,/localStorage\.getItem\("localeats_cash_trust_" \+ shop\.id\)/);
  assert.match(app,/Pickup at shop/);
- assert.match(source("src/services/customerPickup.ts"),/if \(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
+ assert.match(source("src/services/customerPickup.ts"),/if\s*\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
 });
