@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {retryPickupDiscovery,requireRealLocation,mapPickupShop,pickupCartIntent,blockPickupSubmission} from '../src/services/pickupMapping.ts';
+import {retryPickupDiscovery,requireRealLocation,mapPickupShop,isOutsidePickupArea,isWithinPickupArea,pickupCartIntent,blockPickupSubmission} from '../src/services/pickupMapping.ts';
 const point={lat:-25.98,lng:28.2};
 const item={id:'real-menu',shopId:'real-shop',name:'Item',quantity:2,price:0.01,image:''};
 
@@ -17,9 +17,12 @@ test('different instructions for one menu item retain their quantity labels in o
  assert.deepEqual(intent.items,[{menu_item_id:item.id,quantity:3,notes:'1 ×: No atchar\n2 ×: No special instructions'}]);
  assert.throws(()=>pickupCartIntent([{...item,quantity:11},{...item,quantity:10}],point,'Test','0712345678','cash'),/20/);
 });
-test('discovery never substitutes coordinates or accepts invalid or outside-radius API data',()=>{
+test('discovery never substitutes coordinates and retains distant verified shops as browse-only',()=>{
  for(const p of [null,{lat:NaN,lng:28},{lat:100,lng:28}])assert.throws(()=>requireRealLocation(p));
- assert.throws(()=>mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]));
+ const outside=mapPickupShop({id:'s',name:'Shop',is_active:true,lat:point.lat,lng:point.lng,distance_km:4.1},[]);
+ assert.equal(outside.distance,4.1);
+ assert.equal(isOutsidePickupArea(outside),true);
+ assert.equal(isWithinPickupArea(outside),false);
  const closed=mapPickupShop({id:'s',name:'Shop',is_active:false,lat:point.lat,lng:point.lng,distance_km:1},[]);
  assert.equal(closed.is_active,false);
  assert.equal(closed.isOpen,false);

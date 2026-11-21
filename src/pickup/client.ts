@@ -14,7 +14,7 @@ export class PickupApiError extends Error {
 }
 export type PickupQuote={can_submit?:boolean;lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;delivery_fee_minor?:number;discount_minor?:number;tip_minor?:number;subtotal_minor:number;pricing_fingerprint:string};
 type ApiResponse=PickupOrderDetail & {success?:boolean;code?:string;error?:string;replayed?:boolean;orders?:PickupOrder[];
- shops?:{id:string;name:string;location:string;distance_km:number}[];
+ shops?:{id:string;name:string;location:string;distance_km?:number;lat?:number;lng?:number;latitude?:number;longitude?:number;is_active?:boolean}[];
  menu_items?:{id:string;name:string;price:number;is_available:boolean}[];quote?:PickupQuote;
  notifications?:{id:string;order_id:string}[]};
 export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):string {
@@ -50,6 +50,9 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
  };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
+  // Read-only wider visibility: only approved, non-archived public shop fields.
+  // Checkout quote/create still enforce the server's strict 4 km limit.
+  approvedShops:()=>request("/api/v1/catalog/shops","GET",undefined,true),
   menu:(id:string,signal?:AbortSignal)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true,signal),
   quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
