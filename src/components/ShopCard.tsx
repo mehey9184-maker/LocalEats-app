@@ -4,7 +4,7 @@ import {
   Star,
   Plus,
   Heart,
-  ShieldCheck,
+  Store,
   Sparkles,
   ShoppingBag,
   MapPin,
@@ -204,8 +204,8 @@ export const ShopCard = memo(
           <div className="flex justify-between items-start gap-2">
             <h4 className="text-base font-black text-slate-900 dark:text-white line-clamp-1 break-words group-hover:text-orange-600 transition-colors flex items-center gap-1.5">
               {shop.name}
-              <div className="bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 p-0.5 rounded-full" title="Pickup kitchen">
-                <ShieldCheck className="w-4 h-4" />
+              <div className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 p-0.5 rounded-full" title="Shop listing">
+                <Store className="w-4 h-4" />
               </div>
             </h4>
           </div>
