@@ -50,7 +50,16 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null,op
 export async function readPublicBrowseCatalog():Promise<NearbyCatalog>{
  const listing=await customerPickupApi.approvedShops();
  if(!Array.isArray(listing.shops))throw new Error("The public shop catalog is unavailable.");
- const menus=await Promise.all(listing.shops.map(async raw=>{
+ // A shop with no usable shop GPS cannot be mapped to pickup discovery.
+ // Exclude that record without falsely reporting its menu as an API failure.
+ // Real menu/network failures for valid listings still surface as incomplete.
+ const locatedShops=listing.shops.filter(raw=>{
+   if(!raw || typeof raw.id!=="string" || !raw.id || typeof raw.is_active!=="boolean")return false;
+   const lat=raw.lat ?? raw.latitude,lng=raw.lng ?? raw.longitude;
+   return typeof lat==="number" && Number.isFinite(lat) && Math.abs(lat)<=90 &&
+     typeof lng==="number" && Number.isFinite(lng) && Math.abs(lng)<=180;
+ });
+ const menus=await Promise.all(locatedShops.map(async raw=>{
    if(!raw || typeof raw.id!=="string" || !raw.id || typeof raw.is_active!=="boolean")
      return null;
    try{
