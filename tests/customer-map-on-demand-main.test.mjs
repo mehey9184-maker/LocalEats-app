@@ -38,7 +38,9 @@ test("existing map interaction canvas, markers, clustering and map validation re
 });
 
 test("unchanged app layout, saved-shop menus, profile address, and checkout stay gated",()=>{
-  assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
+  // Known GPS and GPS-denied public browsing are isolated catalogue states.
+  assert.match(app,/const currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
+  assert.match(app,/const visibleShops=currentCatalogKey===displayedCatalogKeyRef\.current/);
   assert.match(app,/<ShopCard\b/);
   assert.match(app,/<MenuItemCard\b/);
   assert.match(app,/<DiscoverMapCanvas userLocation=\{userLocation\}/);
