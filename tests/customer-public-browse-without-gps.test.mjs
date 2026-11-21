@@ -71,3 +71,27 @@ test("unlocated shops are not mistaken for broken menu requests or active mercha
  // A shop with no real GPS remains unmappable, even when its menu endpoint returns 200.
  assert.throws(()=>mapPickupShop({...raw,lat:null,lng:null,latitude:null,longitude:null,distance_km:undefined},[]),/real location/);
 });
+
+
+test("public catalog rating is suppressed until supported by a positive review count",()=>{
+ const rawWithDefaultRating={...raw,rating:4.8};
+ const withoutCount=mapPickupShop({...rawWithDefaultRating,distance_km:undefined},[item]);
+ assert.equal(withoutCount.rating,0);
+ assert.equal(withoutCount.reviewCount,undefined);
+ const withEvidence=mapPickupShop({...rawWithDefaultRating,review_count:7,distance_km:undefined},[item]);
+ assert.equal(withEvidence.rating,4.8);
+ assert.equal(withEvidence.reviewCount,7);
+ for(const count of [0,-1,1.5,null]){
+   assert.equal(mapPickupShop({...rawWithDefaultRating,review_count:count,distance_km:undefined},[item]).rating,0);
+ }
+});
+
+test("Customer trust UI has no unsupported merchant verification, default ETA or legal safety guarantee",()=>{
+ const badge=source("src/components/TrustBadge.tsx");
+ const card=source("src/components/ShopCard.tsx");
+ assert.doesNotMatch(badge,/POPIA Safe|20-35 min|Verified<\\/span>|4\\.8.*Verified/);
+ assert.match(badge,/Pickup at shop/);
+ assert.match(badge,/shopRatingFacts\\(shop\\)/);
+ assert.match(card,/title="Shop listing"/);
+ assert.doesNotMatch(card,/<ShieldCheck/);
+});
