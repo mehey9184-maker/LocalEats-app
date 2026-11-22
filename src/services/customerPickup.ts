@@ -3,6 +3,7 @@ import {auth} from "../lib/firebase";
 import {createPickupApi} from "../pickup/client";
 import {mapPickupShop, pickupCartIntent, requireRealLocation, blockPickupSubmission, pickupDistanceKm} from "./pickupMapping";
 import {createNearbyCatalogReader, type NearbyCatalog} from "./nearbyCatalogCache";
+import {createPublicBrowseCatalogReader} from "./publicBrowseCatalog";
 import type {CartItem} from "../types";
 import {createPickupCancellation,pickupCancellationKey} from './pickupCancellation';
 import type {PickupOrder} from '../pickup/client';
@@ -47,23 +48,21 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null,op
  * Never infers pickup eligibility or substitutes fake distances/coordinates.
  * The API returns only approved nonarchived shops; every menu is read-only.
  */
+const publicBrowseReader=createPublicBrowseCatalogReader({
+ shops:()=>customerPickupApi.approvedShops(),
+ menu:(id,signal)=>customerPickupApi.menu(id,signal),
+},mapPickupShop);
+
+// Preserve the existing no-progress API for source compatibility and tests.
 export async function readPublicBrowseCatalog():Promise<NearbyCatalog>{
- const listing=await customerPickupApi.approvedShops();
- if(!Array.isArray(listing.shops))throw new Error("The public shop catalog is unavailable.");
- const menus=await Promise.all(listing.shops.map(async raw=>{
-   if(!raw || typeof raw.id!=="string" || !raw.id || typeof raw.is_active!=="boolean")
-     return null;
-   try{
-     const itemList=await customerPickupApi.menu(raw.id);
-     if(!Array.isArray(itemList.menu_items))return null;
-     return mapPickupShop({...raw,distance_km:undefined},itemList.menu_items);
-   }catch{return null;}
- }));
- const shops=menus.filter((shop):shop is NonNullable<typeof shop>=>shop!==null);
- const incomplete=shops.length!==menus.length;
- if(incomplete && shops.length===0 && menus.length>0)
-   throw new Error("Shop menus could not be loaded. Please retry.");
- return {shops,incomplete};
+ return publicBrowseReader();
+}
+
+/** Preview Home can show each verified browse-only card before other menus finish. */
+export async function readPublicBrowseCatalogProgressive(
+ onProgress:(partial:NearbyCatalog)=>void,
+):Promise<NearbyCatalog>{
+ return publicBrowseReader({onProgress});
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string,signal?:AbortSignal) {
