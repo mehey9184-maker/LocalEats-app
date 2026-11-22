@@ -34,6 +34,8 @@ jobs:
           VITE_LOCALPAY_ENABLED: 'false'
           VITE_REWARDS_ENABLED: 'false'
         run: node scripts/build-cloudflare-staging.mjs
+      - name: Wrangler dry-run static Worker packaging (no deployment)
+        run: npx --yes wrangler@4 deploy --dry-run --config wrangler.cf-staging.jsonc
       - name: Verify Cloudflare static assets config
         run: |
           node -e "const fs=require('node:fs');const cfg=JSON.parse(fs.readFileSync('wrangler.cf-staging.jsonc'));if(!cfg.assets || cfg.assets.not_found_handling!=='single-page-application' || cfg.main || !fs.existsSync('dist/index.html') || fs.existsSync('dist/server.cjs'))process.exit(1); console.log('CF1 Customer static only; no deployment')"
