@@ -13,6 +13,7 @@ import {readPickupWithDeadline} from './services/pickupRead';
 
 // removed CheckoutScreen import
 import SystemStatusIndicator from "./components/SystemStatusIndicator";
+import {AppNotificationToast} from "./components/AppNotificationToast";
 import { CircuitBreaker } from "./utils/circuitBreaker";
 import { IdempotencyManager } from "./utils/idempotency";
 import { DualSyncEngine, dualSyncEngine } from "./utils/dualSync";
@@ -2905,112 +2906,12 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {/* Global Notification Toast */}
-          <AnimatePresence>
-            {notification && (
-              <motion.div
-                initial={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: notification.persistent ? -100 : 60 }}
-                className={`fixed ${notification.persistent
-                  ? "inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
-                  : "bottom-[calc(6.5rem+env(safe-area-inset-bottom,0px))] left-3 right-3 sm:bottom-4 sm:left-auto sm:right-4 flex justify-end"} z-[100] pointer-events-none`}
-              >
-                <motion.div
-                  {...(!notification.persistent
-                    ? {
-                        drag: true,
-                        dragDirectionLock: true,
-                        dragConstraints: {
-                          top: -200,
-                          bottom: 100,
-                          left: -250,
-                          right: 250,
-                        },
-                        dragElastic: {
-                          top: 0.3,
-                          bottom: 0.1,
-                          left: 0.3,
-                          right: 0.3,
-                        },
-                        onDragEnd: (event, info) => {
-                          const swipeAwayY =
-                            info.offset.y < -50 || info.velocity.y < -150;
-                          const swipeAwayX =
-                            Math.abs(info.offset.x) > 100 ||
-                            Math.abs(info.velocity.x) > 150;
-                          if (swipeAwayY || swipeAwayX) {
-                            setNotification(null);
-                          }
-                        },
-                        whileDrag: { scale: 0.98, opacity: 0.85 },
-                      }
-                    : {})}
-                  className={`${notification.persistent
-                    ? "w-full max-w-xs p-6 rounded-3xl"
-                    : "w-full max-w-sm relative cursor-grab active:cursor-grabbing select-none hover:shadow-xl p-4 rounded-2xl"} bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-xl flex flex-col gap-3 border border-gray-100 dark:border-slate-700 pointer-events-auto transition-shadow duration-200`}
-                >
-                  {!notification.persistent && (
-                    <div className="flex justify-center -mt-3.5 -mb-1 shrink-0">
-                      <div className="w-12 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full opacity-60" />
-                    </div>
-                  )}
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`${notification.type === "ready" ? "bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400"} p-3 rounded-2xl shrink-0`}
-                    >
-                      {notification.type === "ready" ? (
-                        <Utensils className="w-6 h-6" />
-                      ) : (
-                        <Bell className="w-6 h-6" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-bold text-lg leading-tight truncate">
-                        {notification.type === "ready"
-                          ? "Order Ready!"
-                          : "Notification"}
-                      </h3>
-                      <p className="text-gray-600 dark:text-slate-400 text-sm mt-1">
-                        {notification.message}
-                      </p>
-                    </div>
-                    {!notification.persistent && (
-                      <button
-                        onClick={() => setNotification(null)}
-                        type="button"
-                        aria-label="Dismiss notification"
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"
-                      >
-                        <X className="w-5 h-5 text-gray-500 dark:text-slate-400" />
-                      </button>
-                    )}
-                  </div>
-
-                  {notification.actions && (
-                    <div className="flex flex-col gap-2 mt-2">
-                      {notification.actions.map((action, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => {
-                            action.onClick();
-                            setNotification(null);
-                          }}
-                          className={`w-full py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-                            idx === 0
-                              ? "bg-orange-600 text-white shadow-lg shadow-orange-200 dark:shadow-none"
-                              : "bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-200 dark:hover:bg-slate-600"
-                          }`}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {/* Global Notification Toast: transient messages appear at top.
+              Persistent prompts retain their centered presentation. */}
+          <AppNotificationToast
+            notification={notification}
+            onDismiss={() => setNotification(null)}
+          />
 
           {/* Generic Modal (Alert/Confirm/Prompt) */}
           <AnimatePresence>
