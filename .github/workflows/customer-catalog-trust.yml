@@ -5,6 +5,14 @@ on:
     paths:
       - 'src/App.tsx'
       - 'src/components/ShopCard.tsx'
+      - 'src/components/BlurUpImage.tsx'
+      - 'src/components/CartDrawer.tsx'
+      - 'src/services/customerPickup.ts'
+      - 'src/services/nearbyCatalogCache.ts'
+      - 'src/services/publicBrowseCatalog.ts'
+      - 'tests/customer-public-browse-without-gps.test.mjs'
+      - 'tests/customer-nearby-cache-main.test.mjs'
+      - 'tests/l3-p1-catalog-speed-accuracy.test.mjs'
       - 'src/components/ShopChatModal.tsx'
       - 'src/screens/CheckoutScreen.tsx'
       - 'src/services/catalogFacts.ts'
@@ -30,6 +38,6 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: node --experimental-strip-types --test tests/catalog-trust.test.mjs tests/catalog-facts.test.mjs tests/menu-help-response.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs
+      - run: node --experimental-strip-types --test tests/catalog-trust.test.mjs tests/catalog-facts.test.mjs tests/menu-help-response.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs tests/l3-p1-catalog-speed-accuracy.test.mjs tests/customer-public-browse-without-gps.test.mjs tests/customer-nearby-cache-main.test.mjs tests/default-image-fallback.test.mjs
       - run: npm run lint
       - run: npm run build
