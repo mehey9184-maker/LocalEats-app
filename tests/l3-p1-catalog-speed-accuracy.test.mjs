@@ -186,3 +186,17 @@ test("partial public catalog never becomes a fresh memory cache hit",async()=>{
  assert.strictEqual(await reader(),full);
  assert.equal(calls,2);
 });
+
+
+test("same-location Home refresh does not replace a full shop list with a partial one",()=>{
+ const app=readFileSync("src/App.tsx","utf8");
+ const entry=app.indexOf("const showVerifiedProgress=");
+ assert.ok(entry>0);
+ const handler=app.slice(entry,entry+1050);
+ assert.match(handler,/if\(generation!==catalogGeneration\.current\)return/);
+ assert.match(handler,/if\(sameLocation\)return/);
+ assert.match(handler,/setShops\(partial\.shops\)/);
+ const preceding=app.slice(entry-1100,entry);
+ assert.match(preceding,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
+ assert.match(preceding,/if\(!sameLocation\)\{/);
+});
