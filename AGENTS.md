@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3 P1–P4 combined zero-write integration (2026-11-22)
+Branch `integration/l3-p1-p4-zero-write-20261122` preserves P1 verified progressive discovery/image widths, P2 opt-in Data Saver and names-only offline reference, P3 reduced-motion/focus/navigation and P4 truthful inactive shop labels and the canonical `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`. Shared files were manually reconciled; do not overwrite them wholesale from any original draft branch. Run `tests/l3-p1-p4-integration.test.mjs` and `.github/workflows/customer-l3-p1-p4-integration.yml` on one combined SHA before any release claim. This is a standalone **Preview-only no-write** draft: no Production deployment, no user/shop records, no payment, no GPS emulation or real orders. Source details and blocking gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`.
+
+
 ## L3-P4 (2026-11-22): truthful availability and scalable idea register — draft
 Source-only Customer branch `review/l3-p4-customer-trust-ideas-20261122`. `shopCardTrustState` aligns visible and screen-reader Open/Not-taking-orders/Closed/GPS/Outside-4km status; never show an available pickup pill while a shop is inactive or closed, and never invent opening time `Soon`. Pickup eligibility, data reads, server prices and authorization are unchanged. The **canonical** product-family strategy register is `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; future merchant image CDN/cache reuse is **captured but not implemented**. Every feature idea requires evidence and an explicit owner decision. P1–P3 remain separate unmerged draft PRs. No production activation, data writes or merge. See `docs/L3_P4_CUSTOMER_TRUST_20261122.md` and its source tests.
 
