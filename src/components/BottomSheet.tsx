@@ -27,6 +27,8 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   const titleId = useId();
   const subtitleId = useId();
   const reduceMotion = useReducedMotion();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,7 +43,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        closeRef.current();
       } else if (event.key === "Tab") {
         const items = focusables();
         if (!items.length) {event.preventDefault();sheetRef.current?.focus();return;}
@@ -59,7 +61,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
       document.body.style.overflow = previousOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus({preventScroll:true});
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   return (
     <AnimatePresence>
