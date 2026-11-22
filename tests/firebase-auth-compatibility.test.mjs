@@ -40,8 +40,8 @@ async function loadFirebaseCompatibilityMock({mailFails=false,creationFails=fals
  };
  const result=await build({entryPoints:['src/lib/supabase.ts'],platform:'node',format:'esm',bundle:true,write:false,logLevel:'silent',
   plugins:[{name:'mock-firebase-contract',setup(engine){
-   engine.onResolve({filter:new RegExp('^firebase/auth()=>({path:'firebase/auth',namespace:'auth-contract'}));
-   engine.onResolve({filter:new RegExp('^\\.\\/firebase()=>({path:'./firebase',namespace:'auth-contract'}));
+   engine.onResolve({filter:new RegExp('^firebase/auth$')},()=>({path:'firebase/auth',namespace:'auth-contract'}));
+   engine.onResolve({filter:new RegExp('^\\./firebase$')},()=>({path:'./firebase',namespace:'auth-contract'}));
    engine.onLoad({filter:/.*/,namespace:'auth-contract'},args=>({contents:mocks[args.path],loader:'js'}));
   }}]});
  const mod=await import('data:text/javascript;base64,'+
