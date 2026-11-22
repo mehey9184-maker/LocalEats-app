@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-P1 Customer speed and truthful menus — draft (2026-11-22)
+Branch `review/l3-p1-catalog-speed-accuracy-image-size-20261122` makes Customer Home display only verified public/GPS shop+menu pairs progressively without caching incomplete results, with six maximum concurrent public menus and five-second per-menu timeout, and uses 160px images for thumbnails while preserving 600px hero cards. Generational guards prevent stale location requests from overwriting a new location. The old unmounted `useShopsData` hook still contains synthetic demo/rating/coordinate fallbacks; it is **not** an approved production source and must not be reconnected. Preserve order OFF, real GPS requirements and 4 km pickup boundaries. See `docs/L3_P1_CUSTOMER_SPEED_ACCURACY_IMAGES_20261122.md` and new tests. Owner approval required for merge; real Android/data measurements outstanding.
+
+
 ## Default pictures review — 2026-11-22
 Draft branch `review/customer-missing-image-defaults-20261122` displays local initials for missing customer profile photos and honest `BlurUpImage` icons for missing shop/menu pictures, with direct-source recovery for image-proxy errors. Do not substitute unrelated stock food or test-shop photos into real records. Merchant real uploads remain authoritative, no database values are changed, and Production ordering stays OFF. Review `tests/default-image-fallback.test.mjs` and the matching section of `LocalEats_App_Functionality_Documentation.md` before release. This draft is not a Production authorization.
 
