@@ -2,7 +2,7 @@ import { uploadClientAvatar } from "../lib/avatar";
 
 // An avatar is generated locally: no user's name is sent to a third-party image service.
 export const getAvatarUrl = (name?: string) => {
-  const initials = (name || 'User').trim().split(/\\s+/).slice(0, 2)
+  const initials = (name || 'User').trim().split(/\s+/).slice(0, 2)
     .map((part) => Array.from(part)[0] || '').join('').toLocaleUpperCase()
     .replace(/[&<>"']/g, '') || 'U';
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><rect width="256" height="256" rx="128" fill="#f97316"/><text x="128" y="135" text-anchor="middle" dominant-baseline="middle" font-family="Arial,sans-serif" font-weight="700" font-size="92" fill="#fff">${initials}</text></svg>`;
