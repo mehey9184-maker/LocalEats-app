@@ -9,7 +9,8 @@ import {
   updateProfile,
   sendPasswordResetEmail,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  sendEmailVerification
 } from "firebase/auth";
 
 export const DEFAULT_URL = 'https://qnwjkwlhmreenqotufvw.supabase.co';
@@ -96,7 +97,22 @@ export const supabase: any = {
         if (fullName) {
           await updateProfile(userCredential.user, { displayName: fullName }).catch(() => {});
         }
-        return { data: { user: { id: userCredential.user.uid, email: userCredential.user.email } }, error: null };
+        // Firebase email/password registration immediately creates a signed-in
+        // Firebase user. Verification is a separate message, not an account.
+        // If email dispatch fails, the account still exists: report the truth
+        // instead of making a retry create an accidental duplicate account.
+        let verificationEmailSent = false;
+        try {
+          await sendEmailVerification(userCredential.user);
+          verificationEmailSent = true;
+        } catch (_verificationError) {
+          // Avoid leaking Firebase details or an email address in the console.
+          // The success screen must not claim email was delivered.
+        }
+        return { data: {
+          user: { id: userCredential.user.uid, email: userCredential.user.email },
+          verificationEmailSent
+        }, error: null };
       } catch (e) {
         return { data: { user: null }, error: { message: e.message } };
       }
