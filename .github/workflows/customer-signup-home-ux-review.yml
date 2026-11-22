@@ -31,6 +31,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Preserve PR #128 QR, install, pickup and other Customer regressions
+        run: node --experimental-strip-types --test tests/*.test.mjs
       - name: TypeScript check for actual React components
         run: npm run lint
       - name: Production-style source build (ordering disabled)
