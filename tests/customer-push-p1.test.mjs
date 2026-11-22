@@ -6,6 +6,7 @@ const read = p=>readFileSync(new URL("../"+p,import.meta.url),"utf8");
 const sw=read("public/firebase-messaging-sw.js");
 const fb=read("src/lib/firebase.ts");
 const app=read("src/App.tsx");
+const appToast=read("src/components/AppNotificationToast.tsx");
 const cfg=JSON.parse(read("firebase-applet-config.json"));
 const settings=read("src/screens/SettingsScreen.tsx");
 const checkout=read("src/screens/CheckoutScreen.tsx");
@@ -97,11 +98,14 @@ test("no automatic permission dialogs; pickup inbox reconciles when push is lost
  assert.match(app,/toast\.error\("Registration not confirmed\. Follow your pickup in Orders\."/);
 });
 
-test("transient notifications do not cover the Settings header or repeatedly interrupt refresh",()=>{
- assert.match(app,/bottom-\[calc\(6\.5rem\+env\(safe-area-inset-bottom,0px\)\)\]/);
- assert.match(app,/sm:bottom-4 sm:left-auto sm:right-4 flex justify-end/);
- assert.match(app,/notification\.persistent\s*\?\s*"inset-0 flex items-center justify-center bg-black\/60/);
- assert.match(app,/aria-label="Dismiss notification"/);
+test("transient notices stay top-visible without covering Settings header or interrupting refresh",()=>{
+ assert.match(app,/AppNotificationToast/);
+ assert.match(app,/belowHeader=\{currentScreen === "settings"\}/);
+ assert.match(appToast,/top-\[calc\(env\(safe-area-inset-top,0px\)\+0\.75rem\)\]/);
+ assert.match(appToast,/top-\[calc\(env\(safe-area-inset-top,0px\)\+5rem\)\]/);
+ assert.match(appToast,/sm:top-20/);
+ assert.match(appToast,/notification\.persistent[\s\S]*?"fixed inset-0 z-\[110\] flex items-center justify-center/);
+ assert.match(appToast,/aria-label="Dismiss notification"/);
  assert.match(app,/let readyInboxErrorShown = false/);
  assert.match(app,/readyInboxErrorShown = false;\s*if \(active\) setNotifications/);
  assert.match(app,/if \(active && !readyInboxErrorShown\) \{\s*readyInboxErrorShown = true;/);
