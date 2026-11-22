@@ -51,7 +51,7 @@ try {
   await page.getByLabel("Phone number").fill("0712345678");
   await page.screenshot({path:path.join(dir,`02-signup-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:"Continue to password"}).click();
-  await page.getByRole("heading",{name:/Make it yours,keep it secure/i}).waitFor();
+  await page.getByRole("heading",{name:/Make it yours,\\s*keep it secure/i}).waitFor();
   await page.getByText("Step 2 of 2").waitFor();
   assert.equal(await page.getByRole("button",{name:"Create account"}).isDisabled(),true);
   await page.getByLabel("Password",{exact:true}).fill("my-long-pass123");
