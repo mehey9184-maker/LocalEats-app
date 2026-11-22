@@ -1,0 +1,51 @@
+name: Customer signup-to-Home UI review (isolated, no account)
+on:
+  pull_request:
+    branches: [review/l3-n8u-s-current-main-outside-radius-browse, main]
+    paths:
+      - 'src/screens/SplashScreen.tsx'
+      - 'src/screens/auth/SignUpScreen.tsx'
+      - 'src/screens/auth/SetupPasswordScreen.tsx'
+      - 'src/screens/auth/SuccessScreen.tsx'
+      - 'src/components/SignupFlowHeader.tsx'
+      - 'src/components/LocalKotaIllustration.tsx'
+      - 'src/App.tsx'
+      - 'tests/signup-home-ux-*'
+      - '.github/workflows/customer-signup-home-ux-review.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  onboarding-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: TypeScript check for actual React components
+        run: npm run lint
+      - name: Production-style source build (ordering disabled)
+        run: npm run build
+      - name: Install isolated Chromium browser
+        run: npx playwright install chromium
+      - name: Test 320px and 390px Welcome to Home journey without signup
+        env:
+          SIGNUP_UX_ARTIFACT_DIR: /tmp/localeats-signup-home-ux
+        run: node tests/signup-home-ux-browser.mjs
+      - name: Upload actual React screen screenshots (not Production)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signup-home-ui-screens
+          path: /tmp/localeats-signup-home-ux
+          if-no-files-found: ignore
+          retention-days: 7
