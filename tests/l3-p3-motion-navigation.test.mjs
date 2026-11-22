@@ -82,14 +82,15 @@ test("settings navigation and toggles are keyboard accessible, no delivery-first
  assert.match(settings,/aria-checked=\{!!dataSaverEnabled\}/);
  assert.doesNotMatch(settings,/Manage delivery profile/);
 });
-test("P3 does not enable pickup, change API/image caching, or mix draft P1/P2",()=>{
+test("combined P1 P2 P3 retains pickup gate and no API or cart caching",()=>{
  assert.match(app,/pickupOrderingEnabled/);
  assert.match(app,/AppNotificationToast/);
  assert.match(app,/BottomNavigation/);
  assert.match(app,/FloatingCartButton/);
  assert.doesNotMatch(src("src/sw.ts"),/caches\.open\([^\n]*api/i);
- // L3-P1 and L3-P2 are still independent draft work.
- assert.match(app,/readPublicBrowseCatalogProgressive/); // Combined P1 catalog was intentionally included.
- assert.doesNotMatch(app,/saveOfflineShopDirectory/);
+ // The integration intentionally contains both P1 and P2; saving is allowed only
+ // after a complete catalog, never a partial progressive snapshot.
+ assert.match(app,/readPublicBrowseCatalogProgressive/);
+ assert.match(app,/if\(!result\.incomplete\)\{[\s\S]{0,250}saveOfflineShopDirectory\(result\.shops/);
  assert.doesNotMatch(floating,/localStorage|cacheStorage|caches\.open\(/);
 });
