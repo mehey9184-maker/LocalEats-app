@@ -34,7 +34,7 @@ try {
   page.setDefaultTimeout(13000);
   const errors=[];
   page.on("pageerror",err=>errors.push(String(err)));
-  await page.goto(base+"/tests/signup-home-ux-fixture.html",{waitUntil:"domcontentloaded"});
+  await page.goto(base+`/tests/signup-home-ux-fixture.html?mail=${width===390?"sent":"failed"}`,{waitUntil:"domcontentloaded"});
   await page.getByRole("heading",{name:/Find your next legendary kota/i}).waitFor();
   await page.getByRole("button",{name:/Explore local food/}).waitFor();
   await page.screenshot({path:path.join(dir,`01-welcome-${width}.png`),fullPage:true});
@@ -59,9 +59,12 @@ try {
   await page.getByRole("button",{name:"Show password"}).click();
   assert.equal(await page.getByLabel("Password",{exact:true}).getAttribute("type"),"text");
   await page.screenshot({path:path.join(dir,`03-password-${width}.png`),fullPage:true});
-  // Fixture-only success bypass. Do NOT invoke supabase.auth.signUp.
-  await page.evaluate(()=>window.__localeatsSimulateSubmission?.());
-  await page.getByRole("heading",{name:"Check your inbox."}).waitFor();
+  // Press the real UI submit button. Its Firebase signUp adapter is replaced
+  // by a fixture-only mock before any network request can occur.
+  await page.getByRole("button",{name:"Create account"}).click();
+  await page.getByRole("heading",{name:width===390?"Check your inbox.":"Your account is ready."}).waitFor();
+  assert.equal(await page.evaluate(()=>window.__localeatsSyntheticRegistrations?.()),1);
+  if(width===320)await page.getByText(/could not confirm that a verification email was sent/i).waitFor();
   await page.getByText("thando@example.com").waitFor();
   await page.screenshot({path:path.join(dir,`04-verify-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:/Browse menus for now/}).click();
