@@ -118,7 +118,7 @@ export const ShopCard = memo(
         <div className="aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
-              <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
+              <span className="text-slate-600 dark:text-slate-300 font-bold text-xs uppercase tracking-widest px-4 text-center">
                 [ Image Hidden - Data Saver ]
               </span>
             </div>
@@ -383,14 +383,14 @@ export const MenuItemCard = memo(
             )}
           </div>
 
-          <div className="flex items-center justify-between mt-2 pt-1">
-            <p className="font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-1">
+            <p className="shrink-0 whitespace-nowrap font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
               {item.displayPrice || formatRand(item.price || 0)}
             </p>
 
             <button
               type="button"
-              className={`h-9 px-3.5 rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
+              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
                 isUnavailable
                   ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
                   : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 cursor-pointer"
