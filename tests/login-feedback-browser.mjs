@@ -43,6 +43,13 @@ try {
   await page.locator("#trigger-test-notice").click();
   const toast=page.locator('[data-testid="global-notification-toast"]');
   await toast.waitFor();
+  // Motion animates from y=-24. Verify the settled, fully visible toast,
+  // not its transient first animation frame.
+  await page.waitForFunction(()=>{
+   const el=document.querySelector('[data-testid="global-notification-toast"]');
+   const r=el?.getBoundingClientRect();
+   return Boolean(r && r.top>=0 && r.top<110 && r.height<240);
+  },null,{timeout:5000});
   const box=await toast.boundingBox();
   assert.ok(box && box.y>=0 && box.y<110,`Transient toast must be at top of ${width}px viewport: ${JSON.stringify(box)}`);
   assert.ok(box.x>=-1&&box.x+box.width<=width+1,`Toast clipped horizontally: ${JSON.stringify(box)}`);
