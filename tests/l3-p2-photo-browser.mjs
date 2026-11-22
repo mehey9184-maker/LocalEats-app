@@ -16,6 +16,12 @@ let browser;
 try{
  await server.listen();
  const base=`http://127.0.0.1:${server.httpServer.address().port}`;
+ // Vite may need a first transformation/dependency optimization before
+ // Chromium can execute this isolated test module.
+ const warm=await fetch(base+"/tests/l3-p2-photo-fixture.tsx");
+ const warmBody=await warm.text();
+ console.log("L3_P2_VITE_FIXTURE_WARM",JSON.stringify({status:warm.status,contentType:warm.headers.get("content-type"),length:warmBody.length,containsRoot:warmBody.includes("createRoot")}));
+ assert.equal(warm.status,200,"Fixture TSX must compile through Vite.");
  browser=await chromium.launch({headless:true});
  for(const [width,height] of [[320,568],[390,844]]){
   const ctx=await browser.newContext({viewport:{width,height},deviceScaleFactor:2,
@@ -46,8 +52,11 @@ try{
   page.on("pageerror",err=>errors.push(String(err)));
   page.on("console",msg=>{if(msg.type()==="error")errors.push("console: "+msg.text());});
   page.on("response",response=>{if(response.status()>=400)badResponses.push(response.status()+" "+response.url());});
-  page.on("requestfailed",request=>errors.push("requestfailed: "+request.url()+" "+request.failure()?.errorText));
-  page.setDefaultTimeout(12000);
+  const unfinished=new Set();
+  page.on("request",request=>unfinished.add(request.url()));
+  page.on("requestfinished",request=>unfinished.delete(request.url()));
+  page.on("requestfailed",request=>{unfinished.delete(request.url());errors.push("requestfailed: "+request.url()+" "+request.failure()?.errorText);});
+  page.setDefaultTimeout(30000);
   await page.goto(base+"/tests/l3-p2-photo-fixture.html",{waitUntil:"domcontentloaded"});
   try {
    await page.getByRole("button",{name:/Load photo: Demo Kota photo/i}).waitFor();
@@ -57,7 +66,7 @@ try{
     scripts:[...document.scripts].map(el=>el.src||"inline").slice(-5),
     preference:localStorage.getItem("data_saver_enabled"),
    }));
-   console.error("L3_P2_FIXTURE_DIAGNOSTIC",JSON.stringify({url:page.url(),errors,badResponses,report}));
+   console.error("L3_P2_FIXTURE_DIAGNOSTIC",JSON.stringify({url:page.url(),errors,badResponses,unfinished:[...unfinished].slice(0,25),report}));
    throw error;
   }
   await page.getByText("Previously seen shops").waitFor();
