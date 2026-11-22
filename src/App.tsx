@@ -446,6 +446,7 @@ export default function App() {
   }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [signupVerificationEmailSent, setSignupVerificationEmailSent] = useState(false);
   const checkoutReturn = useRef(createCheckoutReturn());
   const checkoutVisited = useRef(false);
   const qrEntry = useRef(qrShopId(window.location.search));
@@ -2089,6 +2090,10 @@ export default function App() {
               "setup-password",
               "success"
             ];
+            // Firebase creates a signed-in session during email/password signup.
+            // Preserve the password/confirmation step until account creation
+            // finishes; otherwise auth hydration skips the real success screen.
+            if (prev === "setup-password" || prev === "success") return prev;
             return preLoginScreens.includes(prev) ? checkoutReturn.current.resolve(auth.currentUser, session?.user?.id) || "home" : prev;
           });
           if (typeof Notification !== "undefined" && Notification.permission === "granted") void registerAndSyncPushToken(session.user.id);
@@ -2174,6 +2179,7 @@ export default function App() {
             "setup-password",
             "success"
           ];
+          if (prev === "setup-password" || prev === "success") return prev;
           if (preLoginScreens.includes(prev)) {
             return checkoutReturn.current.resolve(auth.currentUser, session?.user?.id) || "home";
           }
@@ -3121,7 +3127,10 @@ export default function App() {
               {currentScreen === "setup-password" && (
                 <SetupPasswordScreen
                   signupData={userProfile}
-                  onNext={() => setCurrentScreen("success")}
+                  onNext={(verificationEmailSent) => {
+                    setSignupVerificationEmailSent(verificationEmailSent);
+                    setCurrentScreen("success");
+                  }}
                   onBack={() => setCurrentScreen("signup")}
                   setNotification={setNotification}
                   runWithProcessing={runWithProcessing}
@@ -3130,6 +3139,7 @@ export default function App() {
               {currentScreen === "success" && (
                 <SuccessScreen
                   email={userProfile?.email || undefined}
+                  verificationEmailSent={signupVerificationEmailSent}
                   onCompleteProfile={() => navigateToProfile("complete-profile")}
                   onExplore={() => setCurrentScreen(checkoutReturn.current.destination() || "home")}
                 />
