@@ -44,7 +44,7 @@ export const BlurUpImage = ({
   const hideForData=(dataSaverEnabled ?? settingsDataSaver)&&!!targetSrc&&!revealThisPhoto;
   const [isLoaded, setIsLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [displaySrc, setDisplaySrc] = useState<string>(priority ? proxySource : '');
+  const [displaySrc, setDisplaySrc] = useState<string>(proxySource); // Avoid a duplicate direct-source request before effect sets optimized URL.
 
   useEffect(() => {
     setIsLoaded(false);
