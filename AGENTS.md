@@ -149,3 +149,7 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## Customer QR guest/install continuity — 2026-11-22
+On the focused feature branch, QR shop links retain original menus through refresh and auth. Guest means unauthenticated browsing, not anonymous account creation. Checkout sign-in preserves cart/options and removes auth screens from the checkout Back path. Optional menu installation is click-driven, non-modal, and separate from push permission, with two-item engagement and seven-day dismissal. Preserve all original checkout/server eligibility gates. PR #125 remains a prerequisite; no Production merge/deploy or real ordering is authorized by this change.

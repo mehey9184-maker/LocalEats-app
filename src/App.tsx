@@ -287,6 +287,9 @@ const ExploreMapCanvas = lazy(() => import("./components/OptionalMapCanvases").t
 import { TrustBadge } from "./components/TrustBadge";
 import { AppHelp } from "./components/AppHelp";
 import { StartupExperience } from "./components/StartupExperience";
+import {CustomerInstallOffer} from "./components/CustomerInstallOffer";
+import {createMenuInstallInvite} from "./services/menuInstallInvite";
+import {qrShopId, withoutShopLink, createCheckoutReturn, signedInCustomer, checkoutNavigationStack, completedSignInScreen} from "./services/customerEntry";
 import { BottomNavigation } from "./components/BottomNavigation";
 import { ActiveOrderMiniTracker } from "./components/ActiveOrderMiniTracker";
 
@@ -392,6 +395,8 @@ export default function App() {
         return [nextScreen];
       }
       
+      if (nextScreen === "checkout") return checkoutNavigationStack(prevStack) as Screen[];
+
       const existingIndex = prevStack.indexOf(nextScreen);
       if (existingIndex !== -1) {
         return prevStack.slice(0, existingIndex + 1);
@@ -441,6 +446,31 @@ export default function App() {
   }, []);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const checkoutReturn = useRef(createCheckoutReturn());
+  const checkoutVisited = useRef(false);
+  const qrEntry = useRef(qrShopId(window.location.search));
+  const qrOpened = useRef(false);
+  const [menuInvite] = useState(() => {
+    let storage: Storage | null = null;
+    try { storage = window.localStorage; } catch { /* Guest browsing needs no storage permission. */ }
+    return createMenuInstallInvite(storage);
+  });
+  const [, refreshMenuInvite] = useState(0);
+  const requestCheckout = () => {
+    setIsCartDrawerOpen(false);
+    if (!signedInCustomer(auth.currentUser, session?.user?.id)) {
+      checkoutReturn.current.request();
+      setCurrentScreen("login");
+      return;
+    }
+    setCurrentScreen("checkout");
+  };
+  useEffect(() => {
+    if (currentScreen === "checkout") checkoutVisited.current = true;
+    else if (checkoutVisited.current && !["login", "login-success", "signup", "setup-password", "success"].includes(currentScreen)) {
+      checkoutReturn.current.complete(); checkoutVisited.current = false;
+    }
+  }, [currentScreen]);
   // A guest tapping Profile must go straight to Login. Registered users are
   // shown editors only after Firebase identity and active session agree.
   const navigateToProfile = useCallback((requested: "profile" | "complete-profile") => {
@@ -2059,7 +2089,7 @@ export default function App() {
               "setup-password",
               "success"
             ];
-            return preLoginScreens.includes(prev) ? "home" : prev;
+            return preLoginScreens.includes(prev) ? checkoutReturn.current.resolve(auth.currentUser, session?.user?.id) || "home" : prev;
           });
           if (typeof Notification !== "undefined" && Notification.permission === "granted") void registerAndSyncPushToken(session.user.id);
         } else {
@@ -2145,7 +2175,7 @@ export default function App() {
             "success"
           ];
           if (preLoginScreens.includes(prev)) {
-            return "home";
+            return checkoutReturn.current.resolve(auth.currentUser, session?.user?.id) || "home";
           }
           return prev;
         });
@@ -2389,15 +2419,22 @@ export default function App() {
   // permission request or clear their genuine catalog while reading a menu.
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const shopId = urlParams.get("shopId");
+    const shopId = qrEntry.current;
     if (shopId) {
+      // Guest is a browsing state, not a silently-created Firebase identity.
       setSelectedStoreId(shopId);
       setCurrentScreen("store-info");
-      // Remove shopId from URL to prevent re-triggering on refresh if user navigates away
-      window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, []); // Run on mount
+  }, []);
+  useEffect(() => {
+    if (!qrEntry.current) return;
+    if (currentScreen === "store-info") { qrOpened.current = true; return; }
+    if (qrOpened.current && !["login", "login-success", "signup", "setup-password", "success", "complete-profile"].includes(currentScreen)) {
+      window.history.replaceState(window.history.state, document.title,
+        withoutShopLink(window.location.pathname + window.location.search + window.location.hash));
+      qrEntry.current = null;
+    }
+  }, [currentScreen]);
 
   const initialFavoritesHydratedRef = useRef(false);
   const prevFavoritesJsonRef = useRef<string>(JSON.stringify(favorites));
@@ -3062,10 +3099,10 @@ export default function App() {
               {currentScreen === "login" && (
                 <LoginScreen
                   onLogin={() => {
-                    setCurrentScreen("login-success");
+                    setCurrentScreen(prev => completedSignInScreen(prev, checkoutReturn.current.destination()) as Screen);
                   }}
                   onSignUp={() => setCurrentScreen("signup")}
-                  onGuestBrowse={() => setCurrentScreen("home")}
+                  onGuestBrowse={() => { checkoutReturn.current.complete(); setCurrentScreen(selectedStoreId ? "store-info" : "home"); }}
                   setNotification={setNotification}
                   biometricsEnabled={biometricsEnabled}
                   onToggleBiometrics={(val) => {
@@ -3092,7 +3129,7 @@ export default function App() {
               {currentScreen === "success" && (
                 <SuccessScreen
                   onCompleteProfile={() => navigateToProfile("complete-profile")}
-                  onExplore={() => setCurrentScreen("home")}
+                  onExplore={() => setCurrentScreen(checkoutReturn.current.destination() || "home")}
                 />
               )}
               {currentScreen === "complete-profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
@@ -3110,7 +3147,7 @@ export default function App() {
               {currentScreen === "login-success" && (
                 <LoginSuccessScreen
                   onHome={() => {
-                    setCurrentScreen("home");
+                    setCurrentScreen(checkoutReturn.current.destination() || "home");
                   }}
                   onViewProfile={() => navigateToProfile("profile")}
                   onBack={() => setCurrentScreen("login")}
@@ -3136,9 +3173,7 @@ export default function App() {
                   onProfile={() => {
                     navigateToProfile("profile");
                   }}
-                  onCheckout={() => {
-                    setCurrentScreen("checkout");
-                  }}
+                  onCheckout={requestCheckout}
                   onDiscover={() => {
                     setCurrentScreen("discover");
                   }}
@@ -3385,6 +3420,8 @@ export default function App() {
                     setCurrentScreen(previousScreen || "home");
                   }}
                   key={selectedStore.id}
+                  installOffer={<CustomerInstallOffer showInvite={menuInvite.visible()} onDismiss={() => {menuInvite.dismiss(); refreshMenuInvite(v => v + 1);}}/>}
+                  onMenuItemViewed={itemId => {menuInvite.viewItem(selectedStore.id, itemId); refreshMenuInvite(v => v + 1);}}
                   shop={selectedStore}
                   isFavorite={favorites.includes(selectedStoreId || "")}
                   isOnline={isOnline}
@@ -3661,19 +3698,7 @@ export default function App() {
             onUpdateQuantity={updateCartQuantity}
             onRemoveItem={removeItemFromCart}
             onClearCart={clearCart}
-            onProceedToCheckout={() => {
-              if (!session) {
-                showAlert(
-                  "Login Required",
-                  "Please sign in or create an account to place your order.",
-                );
-                setPreviousScreen(currentScreen);
-                setCurrentScreen("login");
-                return;
-              }
-              setPreviousScreen(currentScreen);
-              setCurrentScreen("checkout");
-            }}
+            onProceedToCheckout={requestCheckout}
             triggerHaptic={triggerHaptic}
           />
 
@@ -8099,6 +8124,8 @@ const ImageCarousel = ({ images }: { images: string[] }) => {
 
 function StoreInfoScreen({
   onBack,
+  installOffer,
+  onMenuItemViewed,
   shop,
   isFavorite,
   onToggleFavorite,
@@ -8113,6 +8140,8 @@ function StoreInfoScreen({
   onScanFlyer,
 }: {
   onBack: () => void;
+  installOffer?: import("react").ReactNode;
+  onMenuItemViewed?: (id: string) => void;
   shop: Shop;
   isFavorite: boolean;
   onToggleFavorite: () => void;
@@ -8729,6 +8758,8 @@ function StoreInfoScreen({
         <div className="flex-grow">
           {activeTab === "menu" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {!session && <p className="text-sm text-slate-600 dark:text-slate-300">Browsing as guest · Sign in at checkout. Your cart stays here.</p>}
+              {installOffer}
               {/* Trust-Builder Badge */}
               {isCashTrustActive && userOrderCount === 0 && (
                 <div
@@ -8940,9 +8971,10 @@ function StoreInfoScreen({
                                   key={item.id}
                                   item={item}
                                   shop={shop}
-                                  onSelect={(item) =>
-                                    setSelectedItemForQuantity(item)
-                                  }
+                                  onSelect={(item) => {
+                                    onMenuItemViewed?.(String(item.id));
+                                    setSelectedItemForQuantity(item);
+                                  }}
                                   showAlert={showAlert}
                                 />
                               ))}

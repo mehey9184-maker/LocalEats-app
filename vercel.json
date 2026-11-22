@@ -10,6 +10,7 @@
       "integration/customer-original-ui-pickup": true,
       "activation/pickup-workflow": false,
       "fix/pickup-zero-fee": false,
+      "feature/customer-qr-guest-install-20261122": false,
       "fix/customer-pickup-quote-eligibility": false,
       "release/customer-quote-eligibility-after-first-paint-20261107": false
     }

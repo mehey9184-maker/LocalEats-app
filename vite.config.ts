@@ -19,16 +19,18 @@ export default defineConfig(() => {
           maximumFileSizeToCacheInBytes: 6000000,
         },
         manifest: {
+          id: "/",
+          scope: "/",
           short_name: "LocalEats",
           name: "LocalEats | Local's Best Kota & Braai",
           icons: [
             {
-              src: "/logo.png?v=2",
+              src: "/pwa-icon-192.png",
               type: "image/png",
               sizes: "192x192"
             },
             {
-              src: "/logo.png?v=2",
+              src: "/pwa-icon-512.png",
               type: "image/png",
               sizes: "512x512"
             }

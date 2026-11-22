@@ -17,7 +17,7 @@ test("checkout and order tracking use real named exports through lazy route impo
 });
 
 test("existing page-level errors and loading UX remain in place",()=>{
-  const checkoutEntry=app.indexOf('currentScreen === "checkout"');
+  const checkoutEntry=app.indexOf('{currentScreen === "checkout" && (');
   const trackingEntry=app.indexOf('{currentScreen === "order-tracking" && (');
   assert.ok(checkoutEntry>0&&trackingEntry>0);
   const checkoutMarkup=app.slice(checkoutEntry,checkoutEntry+1600);

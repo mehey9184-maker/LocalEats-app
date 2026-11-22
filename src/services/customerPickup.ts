@@ -9,7 +9,7 @@ import type {PickupOrder} from '../pickup/client';
 
 export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_API_URL || "", async()=>{
   const user=auth.currentUser;
-  if(!user) throw new Error("Please sign in with your existing account.");
+  if(!user || user.isAnonymous) throw new Error("Please sign in with your existing account.");
   return user.getIdToken();
 },fetch,{requireExplicitHttps:import.meta.env.PROD});
 
