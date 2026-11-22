@@ -12,6 +12,8 @@ interface BlurUpImageProps {
   aspectRatio?: string;
   /** Opt in only for the first visible Home shop image. */
   priority?: boolean;
+  /** Request pixels appropriate to this slot (e.g. 160px for an 80px thumbnail at 2x). */
+  imageWidth?: 160 | 320 | 600;
 }
 
 export const BlurUpImage = ({
@@ -21,10 +23,11 @@ export const BlurUpImage = ({
   fallbackSrc,
   fallbackKind = 'food',
   priority = false,
+  imageWidth = 600,
 }: BlurUpImageProps) => {
   const targetSrc = (src?.trim() || fallbackSrc?.trim() || '');
   const proxySource = targetSrc.startsWith('http') && !targetSrc.includes('weserv.nl')
-    ? `https://images.weserv.nl/?url=${encodeURIComponent(targetSrc)}&output=webp&q=75&w=600`
+    ? `https://images.weserv.nl/?url=${encodeURIComponent(targetSrc)}&output=webp&q=75&w=${imageWidth}`
     : targetSrc;
   const [isLoaded, setIsLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
