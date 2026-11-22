@@ -106,7 +106,11 @@ export const ShopCard = memo(
           ? `${shop.name}. ${distanceStr} away. Outside the 4 kilometer pickup area. Browse menu only.`
           : locationUnknown
             ? `${shop.name}. Location needed to order. Browse menu only.`
-            : `${shop.name}. ${distanceStr} away. View menu.`}
+            : away
+              ? `${shop.name}. Temporarily away. Browse menu only.`
+              : !status.isOpen
+                ? `${shop.name}. Closed. Browse menu only.`
+                : `${shop.name}. ${distanceStr} away. View menu.`}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key === "Enter" || event.key === " ") {
