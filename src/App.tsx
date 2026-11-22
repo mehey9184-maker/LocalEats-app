@@ -1177,7 +1177,7 @@ export default function App() {
     };
     try {
       const result=!userLocation
-        ? await readPublicBrowseCatalogProgressive(showVerifiedProgress)
+        ? await readPublicBrowseCatalogProgressive(showVerifiedProgress,{force:_force})
         : _force
           ? await readPickupCatalog(userLocation,{force:true,onProgress:showVerifiedProgress})
           : await readPickupCatalog(userLocation,{onProgress:showVerifiedProgress});
