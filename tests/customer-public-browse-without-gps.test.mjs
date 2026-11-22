@@ -36,7 +36,7 @@ test("real device catalog and GPS-less catalog cannot reuse each other's distanc
  const app=source("src/App.tsx");
  assert.match(app,/currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
  assert.match(app,/currentCatalogKey===displayedCatalogKeyRef\.current/);
- assert.match(app,/const result=!userLocation\s*\? await readPublicBrowseCatalogProgressive\(showVerifiedProgress\)/);
+ assert.match(app,/const result=!userLocation\s*\? await readPublicBrowseCatalogProgressive\(showVerifiedProgress,\{force:_force\}\)/);
  assert.match(app,/if\(userLocation && key && !result\.incomplete/);
  assert.match(app,/const noGps=sortedShops\.filter\(shop=>!isWithinPickupArea\(shop\) && !isOutsidePickupArea\(shop\)\)/);
  assert.match(app,/Browse shops — location needed to order/);
