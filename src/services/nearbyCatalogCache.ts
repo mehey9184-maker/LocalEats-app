@@ -32,7 +32,7 @@ export function createNearbyCatalogReader(
   const verified=new Map<string,{time:number;catalog:NearbyCatalog}>();
   const pending=new Map<string,Promise<NearbyCatalog>>();
 
-  return async (location:Point|null, options:{force?:boolean}={}):Promise<NearbyCatalog> => {
+  return async (location:Point|null, options:{force?:boolean;onProgress?:(partial:NearbyCatalog)=>void}={}):Promise<NearbyCatalog> => {
     const key=nearbyCatalogKey(location);
     if(!key || !location)throw new Error("Allow your real location to find available pickup shops within 4 km.");
     const point=location;
@@ -49,13 +49,22 @@ export function createNearbyCatalogReader(
     const task=(async()=>{
       const catalog=await source.shops(point);
       if(!Array.isArray(catalog.shops))throw new Error("The shop service returned an invalid catalog.");
-      const menus = await Promise.all(catalog.shops.map(async shop => {
+      // Reveal only fully validated shop/menu pairs, never a shop without its
+      // real menu. Progress is transient and is never added to the verified cache.
+      const ready:(Shop|null)[]=Array(catalog.shops.length).fill(null);
+      const menus = await Promise.all(catalog.shops.map(async (shop,index) => {
         if (!shop || typeof shop.id !== "string" || !shop.id) {
           throw new Error("The shop service returned an invalid shop.");
         }
         const menu = await source.menu(shop.id).catch(() => null);
         if (!Array.isArray(menu?.menu_items)) return null;
-        return mapShop(shop, menu.menu_items);
+        const mapped=mapShop(shop, menu.menu_items);
+        ready[index]=mapped;
+        if(options.onProgress){
+          const visible=ready.filter((item):item is Shop=>item!==null);
+          if(visible.length)options.onProgress({shops:visible,incomplete:true});
+        }
+        return mapped;
       }));
       const shops = menus.filter((shop): shop is Shop => shop !== null);
       const incomplete = shops.length !== menus.length;
