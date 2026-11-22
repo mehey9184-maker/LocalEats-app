@@ -11,6 +11,8 @@ on:
       - 'src/components/LocalKotaIllustration.tsx'
       - 'src/App.tsx'
       - 'tests/signup-home-ux-*'
+      - 'tests/firebase-auth-compatibility.test.mjs'
+      - 'src/lib/supabase.ts'
       - '.github/workflows/customer-signup-home-ux-review.yml'
   workflow_dispatch:
 permissions:
