@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {createPublicBrowseCatalogReader,PUBLIC_BROWSE_PARALLEL_MENUS} from "../src/services/publicBrowseCatalog.ts";
 import {mapPickupShop,isWithinPickupArea} from "../src/services/pickupMapping.ts";
+import {createNearbyCatalogReader} from "../src/services/nearbyCatalogCache.ts";
 
 const shop=(id)=>({id,name:"Kitchen "+id,is_active:true,lat:-26.01,lng:28.19,location:"Ivory Park"});
 const item={id:"kota-25",name:"Kota",price:25,is_available:true};
@@ -97,4 +98,36 @@ test("the old synthetic shop loader is not imported by the active Customer app",
  const legacy=readFileSync("src/hooks/useShopsData.ts","utf8");
  assert.doesNotMatch(app,/from [\"'].*hooks\/useShopsData/);
  assert.match(legacy,/DEFAULT_FALLBACK_SHOPS/);
+});
+
+
+test("GPS-verified shops appear progressively without storing incomplete catalogs",async()=>{
+ const point={lat:-26.01,lng:28.19};
+ let releaseSlow=()=>{};
+ const slow=new Promise(resolve=>{releaseSlow=resolve;});
+ let firstShown=()=>{};
+ const first=new Promise(resolve=>{firstShown=resolve;});
+ let menuReads=0;
+ const firstShop={...shop("near"),distance_km:1.0};
+ const laterShop={...shop("later"),distance_km:4.5};
+ const reader=createNearbyCatalogReader({
+  shops:async()=>({shops:[firstShop,laterShop]}),
+  menu:async id=>{
+   menuReads++;
+   if(id==="later")await slow;
+   return {menu_items:[item]};
+  },
+ },mapPickupShop);
+ const task=reader(point,{onProgress:firstShown});
+ const partial=await first;
+ assert.equal(partial.incomplete,true);
+ assert.deepEqual(partial.shops.map(s=>s.id),["near"]);
+ assert.equal(isWithinPickupArea(partial.shops[0]),true);
+ releaseSlow();
+ const result=await task;
+ assert.deepEqual(result.shops.map(s=>s.id),["near","later"]);
+ assert.equal(isWithinPickupArea(result.shops[1]),false);
+ assert.equal(result.incomplete,false);
+ assert.strictEqual(await reader(point),result,"Only the final complete set is cached");
+ assert.equal(menuReads,2);
 });
