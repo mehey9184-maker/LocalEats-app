@@ -38,11 +38,19 @@ try{
    blocked.push(url.origin);
    return route.abort();
   });
-  const page=await ctx.newPage(),errors=[];
+  const page=await ctx.newPage(),errors=[],badResponses=[];
   page.on("pageerror",err=>errors.push(String(err)));
+  page.on("console",msg=>{if(msg.type()==="error")errors.push("console: "+msg.text());});
+  page.on("response",response=>{if(response.status()>=400)badResponses.push(response.status()+" "+response.url());});
   page.setDefaultTimeout(12000);
   await page.goto(base+"/tests/l3-p2-photo-fixture.html",{waitUntil:"domcontentloaded"});
-  await page.getByRole("button",{name:/Load photo: Demo Kota photo/i}).waitFor();
+  try {
+   await page.getByRole("button",{name:/Load photo: Demo Kota photo/i}).waitFor();
+  } catch(error) {
+   const body=(await page.content()).slice(0,4800);
+   console.error("L3_P2_FIXTURE_DIAGNOSTIC",JSON.stringify({url:page.url(),errors,badResponses,body}));
+   throw error;
+  }
   await page.getByText("Previously seen shops").waitFor();
   assert.equal(await page.locator("img").count(),0,"Saved Data Saver must not mount the remote photo.");
   assert.equal(proxyRequests+directRequests,0,"No photo transfer allowed before opt-in.");
