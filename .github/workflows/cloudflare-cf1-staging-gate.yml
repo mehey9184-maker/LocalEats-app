@@ -1,0 +1,39 @@
+name: CF1 Customer Cloudflare staging safety (no deploy)
+on:
+  push:
+    branches:
+      - cloudflare/cf1-customer-staging-20261122
+  pull_request:
+    paths:
+      - 'wrangler.cf-staging.jsonc'
+      - 'scripts/build-cloudflare-staging.mjs'
+      - 'tests/cloudflare-staging-gate.test.mjs'
+      - 'docs/CLOUDFLARE_CF1_CUSTOMER_STAGING.md'
+      - '.github/workflows/cloudflare-cf1-staging-gate.yml'
+permissions:
+  contents: read
+jobs:
+  staging-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify build flags and server bundle guard
+        run: node --test tests/cloudflare-staging-gate.test.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Vite-only build with synthetic staging endpoint (not deployed)
+        env:
+          VITE_LOCALEATS_API_URL: https://localeats-api-cf1-staging.example.workers.dev
+          VITE_PICKUP_ORDERING_ENABLED: 'false'
+          VITE_PROFILE_WRITES_ENABLED: 'false'
+          VITE_LOCALPAY_ENABLED: 'false'
+          VITE_REWARDS_ENABLED: 'false'
+        run: node scripts/build-cloudflare-staging.mjs
+      - name: Verify Cloudflare static assets config
+        run: |
+          node -e "const fs=require('node:fs');const cfg=JSON.parse(fs.readFileSync('wrangler.cf-staging.jsonc'));if(!cfg.assets || cfg.assets.not_found_handling!=='single-page-application' || cfg.main || !fs.existsSync('dist/index.html') || fs.existsSync('dist/server.cjs'))process.exit(1); console.log('CF1 Customer static only; no deployment')"
