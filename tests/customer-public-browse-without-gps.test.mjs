@@ -49,7 +49,8 @@ test("all browse-only cards honestly distinguish unknown GPS from proven outside
  const card=source("src/components/ShopCard.tsx"), app=source("src/App.tsx");
  assert.match(card,/const locationUnknown = shop\.distance === undefined/);
  assert.match(card,/const browseOnly = outsidePickupArea \|\| locationUnknown/);
- assert.match(card,/locationUnknown \? "Location needed" : status\.isOpen/);
+ assert.match(source("src/services/shopCardTrustState.ts"),/input\.locationUnknown\?"Location needed"/);
+ assert.match(card,/trustState\.badge/);
  assert.match(card,/locationUnknown \|\| !status\.isOpen/);
  assert.match(card,/if \(locationUnknown\) \{\s*showAlert\("Location needed"/);
  assert.match(card,/Location needed to order/);
