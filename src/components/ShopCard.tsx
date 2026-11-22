@@ -16,6 +16,7 @@ import { Shop, MenuItem } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
 import {shopRatingLabel,pickupDistanceLabel} from '../services/catalogFacts';
 import {isOutsidePickupArea} from '../services/pickupMapping';
+import {shopCardTrustState} from '../services/shopCardTrustState';
 import {
   getShopStatus,
   isShopAway,
@@ -44,6 +45,12 @@ export const ShopCard = memo(
     const outsidePickupArea = isOutsidePickupArea(shop);
     const locationUnknown = shop.distance === undefined;
     const browseOnly = outsidePickupArea || locationUnknown;
+    const notAcceptingOrders = status.message === "Away / Not Accepting Orders";
+    const trustState=shopCardTrustState({
+      outsidePickupArea,locationUnknown,notAcceptingOrders,
+      isOpen:status.isOpen,
+      nextOpeningTime:status.nextOpeningTime,
+    });
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
@@ -69,7 +76,7 @@ export const ShopCard = memo(
     const heroImage = getShopHeroImage(shop);
     const priceTier = getPriceTier(shop);
     const distanceStr = pickupDistanceLabel(shop.distance);
-    const etaStr = "Pickup at shop";
+    const etaStr = trustState.actionHint;
 
     return (
       <motion.div
@@ -99,7 +106,11 @@ export const ShopCard = memo(
           ? `${shop.name}. ${distanceStr} away. Outside the 4 kilometer pickup area. Browse menu only.`
           : locationUnknown
             ? `${shop.name}. Location needed to order. Browse menu only.`
-            : `${shop.name}. ${distanceStr} away. View menu.`}
+            : notAcceptingOrders
+              ? `${shop.name}. Not taking orders. Browse menu only.`
+              : !status.isOpen
+                ? `${shop.name}. Closed. Browse menu only.`
+                : `${shop.name}. ${distanceStr} away. View menu.`}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key === "Enter" || event.key === " ") {
@@ -162,13 +173,13 @@ export const ShopCard = memo(
               className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide px-2.5 py-1.5 rounded-full shadow-md backdrop-blur-md border ${
                 browseOnly
                   ? "bg-white text-slate-900 border-slate-400 dark:bg-slate-100 dark:text-slate-900"
-                  : status.isOpen
+                  : status.isOpen && !notAcceptingOrders
                     ? "bg-emerald-500/90 text-white border-emerald-400/80"
                     : "bg-slate-900/85 text-slate-200 border-slate-700"
               }`}
             >
-              {browseOnly && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
-              {outsidePickupArea ? "Outside 4 km" : locationUnknown ? "Location needed" : status.isOpen ? "Open Now" : "Closed"}
+              {(browseOnly||notAcceptingOrders) && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+              {trustState.badge}
             </span>
 
             {/* Heart indicator for Followed */}
@@ -185,7 +196,7 @@ export const ShopCard = memo(
               {browseOnly
                 ? <BookOpen className="w-3 h-3 text-white" aria-hidden="true" />
                 : <ShoppingBag className="w-3 h-3 text-orange-400" aria-hidden="true" />}
-              <span>{browseOnly ? "Browse menu only" : etaStr}</span>
+              <span>{etaStr}</span>
             </div>
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <MapPin className="w-3 h-3 text-amber-400" />
@@ -228,14 +239,14 @@ export const ShopCard = memo(
                 </span>
               </div>
             )}
-            {isShopAway(shop) && (
-              <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md animate-pulse border border-rose-200 dark:border-rose-900/40">
-                ⚠️ Temporarily Away
+            {notAcceptingOrders && (
+              <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/40">
+                ⚠️ Not taking orders
               </span>
             )}
-            {!status.isOpen && !browseOnly && (
-              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                Opens {status.nextOpeningTime || "Soon"}
+            {trustState.hoursHint && (
+              <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                {trustState.hoursHint}
               </span>
             )}
           </div>
