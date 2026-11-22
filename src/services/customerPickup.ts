@@ -39,7 +39,7 @@ const readVerifiedNearbyCatalog=createNearbyCatalogReader({
     }
   },
 }, mapPickupShop);
-export async function readPickupCatalog(location:{lat:number;lng:number}|null,options:{force?:boolean}={}):Promise<NearbyCatalog> {
+export async function readPickupCatalog(location:{lat:number;lng:number}|null,options:{force?:boolean;onProgress?:(partial:NearbyCatalog)=>void}={}):Promise<NearbyCatalog> {
   return readVerifiedNearbyCatalog(location,options);
 }
 
