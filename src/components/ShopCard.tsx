@@ -62,14 +62,8 @@ export const ShopCard = memo(
       if (s.menu && s.menu.length > 0 && s.menu[0].image) {
         return s.menu[0].image;
       }
-      const cat = (s.category || "").toLowerCase();
-      if (cat.includes("kota") || cat.includes("spatlo")) {
-        return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=600";
-      }
-      if (cat.includes("braai") || cat.includes("shisa") || cat.includes("meat")) {
-        return "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&q=80&w=600";
-      }
-      return "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600";
+      // Never imply a merchant uploaded a stock photo. Prefer the shop's actual logo.
+      return s.logo_url || s.logo || "";
     };
 
     const heroImage = getShopHeroImage(shop);
@@ -132,6 +126,7 @@ export const ShopCard = memo(
             <BlurUpImage
               src={heroImage}
               alt={shop.name}
+              fallbackKind="shop"
               priority={priorityImage}
               className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${
                 browseOnly ? "grayscale-[0.85] saturate-[0.35] contrast-[0.9]" : !status.isOpen ? "grayscale-[0.35]" : ""
