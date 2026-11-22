@@ -7,6 +7,7 @@ import { formatSAPhone, validateSAPhone } from "../../utils";
 export interface SignUpScreenProps {
  onNext: (data: { fullName: string; email: string; phone: string }) => void;
  onLogin: () => void;
+ onBack?: () => void;
  setNotification: (notification: any) => void;
 }
 
@@ -16,7 +17,7 @@ const fieldClass=(bad:boolean)=>`mt-2 flex h-14 w-full items-center gap-3 rounde
  bad ? "border-red-500 bg-red-50/30" : "border-slate-200 bg-slate-50 focus-within:border-orange-600 dark:border-slate-700 dark:bg-slate-900"
 }`;
 
-export function SignUpScreen({ onNext, onLogin, setNotification }: SignUpScreenProps) {
+export function SignUpScreen({ onNext, onLogin, onBack, setNotification }: SignUpScreenProps) {
  const [fullName,setFullName]=useState("");
  const [email,setEmail]=useState("");
  const [phone,setPhone]=useState(formatSAPhone(""));
@@ -52,7 +53,7 @@ export function SignUpScreen({ onNext, onLogin, setNotification }: SignUpScreenP
  return (
   <div className="min-h-[100dvh] bg-white font-sans text-[#111d34] dark:bg-slate-950 dark:text-slate-100">
    <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-7">
-    <SignupFlowHeader step={1} onBack={onLogin} />
+    <SignupFlowHeader step={1} onBack={onBack ?? onLogin} />
     <div className="mt-8">
      <h1 className="font-display text-[30px] font-black leading-tight tracking-tight">Let's get you set up.</h1>
      <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
