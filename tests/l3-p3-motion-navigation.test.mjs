@@ -34,6 +34,7 @@ test("floating cart respects reduced motion, exits with AnimatePresence and labe
  assert.match(floating,/isVisible && <motion\.div/);
  assert.match(floating,/Est\. R \{subtotal\.toFixed\(2\)\}/);
  assert.match(floating,/estimated subtotal R/);
+ assert.match(floating,/safe-area-inset-bottom/);
  assert.doesNotMatch(floating,/checkout succeeded|order confirmed/i);
 });
 test("pickup bottom sheet is keyboard-operable and restores focus",()=>{
