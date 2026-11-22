@@ -63,6 +63,9 @@ try{
   assert.equal(await page.getByText("Browse menu only").count()>=1,true);
   const dims=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,viewport:innerWidth}));
   assert.ok(dims.scroll<=dims.viewport+1,`Horizontal overflow at ${width}: ${JSON.stringify(dims)}`);
+  // Full-page captures should show the sticky header at document top rather
+  // than frozen midway down the screenshot after image-loading scroll.
+  await page.evaluate(()=>window.scrollTo(0,0));
   await page.screenshot({path:path.join(dir,`02-complete-${width}.png`),fullPage:true});
   await page.getByLabel("Data Saver preview").check();
   await page.getByText("[ Image Hidden - Data Saver ]").first().waitFor();
