@@ -35,4 +35,4 @@ function Fixture(){
   {showReference&&<OfflineShopDirectory/>}
  </main>;
 }
-createRoot(document.getElementById("root")!).render(<Fixture/>);
+// Emulate an existing explicit customer preference before any photo renders.\nlocalStorage.setItem("data_saver_enabled","true");\ncreateRoot(document.getElementById("root")!).render(<Fixture/>);
