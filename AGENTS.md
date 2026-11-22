@@ -1,7 +1,7 @@
 # LocalEats Agent Instructions & Architecture Document
 
 ## L3-P4 (2026-11-22): truthful availability and scalable idea register — draft
-Source-only Customer branch `review/l3-p4-customer-trust-ideas-20261122`. `shopCardTrustState` aligns visible and screen-reader Open/Away/Closed/GPS/Outside-4km status; never show an available pickup pill while a shop is away or closed, and never invent opening time `Soon`. Pickup eligibility, data reads, server prices and authorization are unchanged. The **canonical** product-family strategy register is `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; future merchant image CDN/cache reuse is **captured but not implemented**. Every feature idea requires evidence and an explicit owner decision. P1–P3 remain separate unmerged draft PRs. No production activation, data writes or merge. See `docs/L3_P4_CUSTOMER_TRUST_20261122.md` and its source tests.
+Source-only Customer branch `review/l3-p4-customer-trust-ideas-20261122`. `shopCardTrustState` aligns visible and screen-reader Open/Not-taking-orders/Closed/GPS/Outside-4km status; never show an available pickup pill while a shop is inactive or closed, and never invent opening time `Soon`. Pickup eligibility, data reads, server prices and authorization are unchanged. The **canonical** product-family strategy register is `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; future merchant image CDN/cache reuse is **captured but not implemented**. Every feature idea requires evidence and an explicit owner decision. P1–P3 remain separate unmerged draft PRs. No production activation, data writes or merge. See `docs/L3_P4_CUSTOMER_TRUST_20261122.md` and its source tests.
 
 
 ## Default pictures review — 2026-11-22
