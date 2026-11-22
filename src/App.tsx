@@ -31,7 +31,7 @@ import {
   lazy,
   Suspense,
 } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Toaster, toast } from "sonner";
 import { MapLegend } from "./components/MapLegend";
 import QRCode from "qrcode";
@@ -373,6 +373,7 @@ const getShopCategoryIcon = (category: string) => {
 // Storage utilities and cache cleaners outsourced to ./utils
 
 export default function App() {
+  const reduceScreenMotion=useReducedMotion();
   // Screen selection is deferred until Firebase finishes restoring its
   // persisted session. Never infer sign-in from legacy cached token keys.
   const [currentScreenStack, setCurrentScreenStack] = useState<Screen[]>(["splash"]);
@@ -3077,10 +3078,10 @@ export default function App() {
           <AnimatePresence mode="wait">
             <motion.div
               key={currentScreen}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+              initial={reduceScreenMotion ? false : {opacity:0,y:10,scale:0.995}}
+              animate={{opacity:1,y:0,scale:1}}
+              exit={reduceScreenMotion ? {opacity:1} : {opacity:0,y:-8,scale:0.995}}
+              transition={{duration:reduceScreenMotion?0:0.24,ease:[0.22,1,0.36,1]}}
               className="h-full w-full"
             >
               {currentScreen === "splash" && (
@@ -3942,6 +3943,7 @@ function HomeScreen({
   onOpenCart?: () => void;
 }) {
   const { t, language } = useTranslation();
+  const reduceHomeMotion=useReducedMotion();
   const isUpdateAvailable = false;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -4464,8 +4466,8 @@ function HomeScreen({
             } focus-within:border-orange-500/50 focus-within:ring-2 focus-within:ring-orange-500/50 focus-within:shadow-[0_0_8px_rgba(249,115,22,0.4)] dark:focus-within:border-orange-500/50 dark:focus-within:ring-orange-400/50`}>
               <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none transition-all duration-300 ${
                 searchQuery.trim().length > 0 
-                  ? 'text-orange-500 scale-110 animate-spin' 
-                  : 'text-slate-400 group-focus-within:text-orange-500 group-focus-within:scale-110 group-focus-within:animate-pulse'
+                  ? 'text-orange-500 scale-110'
+                  : 'text-slate-400 group-focus-within:text-orange-500 group-focus-within:scale-110'
               }`} />
               <input
                 id="header-search-input"
@@ -4972,7 +4974,11 @@ function HomeScreen({
       <main className="flex-grow flex flex-col p-4 max-w-screen-xl mx-auto w-full" style={{ paddingTop: headerHeight ? `calc(${headerHeight}px + 1rem)` : "120px" }}>
         {/* Compact Persistent Delivery Status Widget (Removed to prevent duplication with global persistent tracker) */}
 
-        <div className="mb-6 px-1 pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <motion.div
+          initial={reduceHomeMotion ? false : {opacity:0,y:12}}
+          animate={{opacity:1,y:0}}
+          transition={{duration:reduceHomeMotion?0:0.44,ease:[0.22,1,0.36,1]}}
+          className="mb-6 px-1 pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2 flex-wrap">
               <span>{session ? `${greeting}, ${userProfile.fullName ? userProfile.fullName.split(" ")[0] : "there"}` : "Explore local kitchens."}</span>
@@ -4987,7 +4993,7 @@ function HomeScreen({
               Pickup · Pay at the shop
             </span>
           </div>
-        </div>
+        </motion.div>
 
         {!userLocation && (
           <div role="status" className="mb-5 flex flex-wrap items-start gap-3 rounded-2xl border border-orange-200 bg-[#fff5eb] p-3.5 text-amber-950 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200">
