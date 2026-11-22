@@ -20,7 +20,7 @@ try {
  await server.listen();
  const base=`http://127.0.0.1:${server.httpServer.address().port}`;
  browser=await chromium.launch({headless:true});
- for(const [width,height] of [[390,844],[320,568]]){
+ for(const [width,height] of [[390,844],[320,568],[1440,900]]){
   const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,
     serviceWorkers:"block",permissions:[],reducedMotion:"reduce"});
   const outbound=[];
@@ -37,6 +37,10 @@ try {
   await page.goto(base+`/tests/signup-home-ux-fixture.html?mail=${width===390?"sent":"failed"}`,{waitUntil:"domcontentloaded"});
   await page.getByRole("heading",{name:/Find your next legendary kota/i}).waitFor();
   await page.getByRole("button",{name:/Explore local food/}).waitFor();
+  await page.locator('[data-testid="welcome-food-photo"]').waitFor();
+  // The CI simulation deliberately blocks external food-photo requests. The
+  // Welcome screen must render a fallback rather than a broken image icon.
+  await page.getByRole("img",{name:/Local food image temporarily unavailable/}).waitFor();
   await page.screenshot({path:path.join(dir,`01-welcome-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:"Create an account"}).click();
   await page.getByRole("heading",{name:"Let's get you set up."}).waitFor();
@@ -75,6 +79,8 @@ try {
   assert.equal(await page.getByRole("button",{name:"Map",exact:true}).count(),1);
   assert.equal(await page.getByRole("button",{name:"Orders",exact:true}).count(),1);
   assert.equal(await page.getByRole("button",{name:"Profile",exact:true}).count(),1);
+  assert.equal(await page.getByRole("button",{name:"Home",exact:true}).getAttribute("aria-current"),"page");
+  assert.equal(await page.getByRole("navigation",{name:"Main navigation"}).count(),1);
   await page.screenshot({path:path.join(dir,`05-home-${width}.png`),fullPage:true});
   const size=await page.evaluate(()=>({doc:document.documentElement.scrollWidth,viewport:window.innerWidth}));
   assert.ok(size.doc<=size.viewport+1,`Horizontal overflow ${width}px: ${JSON.stringify(size)}`);
