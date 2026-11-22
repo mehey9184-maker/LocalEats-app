@@ -13,6 +13,7 @@ on:
       - 'tests/customer-public-browse-without-gps.test.mjs'
       - 'tests/customer-nearby-cache-main.test.mjs'
       - 'tests/l3-p1-catalog-speed-accuracy.test.mjs'
+      - 'tests/l3-p1-home-*'
       - 'src/components/ShopChatModal.tsx'
       - 'src/screens/CheckoutScreen.tsx'
       - 'src/services/catalogFacts.ts'
