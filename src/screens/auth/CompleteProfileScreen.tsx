@@ -194,6 +194,7 @@ export function CompleteProfileScreen({
                       getAvatarUrl(userProfile.fullName)
                     }
                     alt="Profile Picture"
+                    onError={(event) => { event.currentTarget.src = getAvatarUrl(fullName); }}
                     className="w-full h-full object-cover absolute inset-0"
                     referrerPolicy="no-referrer"
                   />

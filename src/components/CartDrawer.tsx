@@ -105,11 +105,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-9 h-9 rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0 border border-slate-200/80 dark:border-slate-700">
-                    <img
-                      src={activeShop.logo || DEFAULT_MENU_IMAGE}
-                      alt={activeShop.name}
-                      className="w-full h-full object-cover"
-                    />
+                    <BlurUpImage src={activeShop.logo} alt={activeShop.name} fallbackKind="shop" className="w-full h-full" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-black text-slate-900 dark:text-white truncate">
@@ -156,11 +152,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     >
                       {/* Item Thumbnail */}
                       <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-700 shrink-0 relative">
-                        <img
-                          src={item.image || DEFAULT_MENU_IMAGE}
-                          alt={item.name}
-                          className="w-full h-full object-cover"
-                        />
+                        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} fallbackKind="food" className="w-full h-full" />
                       </div>
 
                       {/* Item Details */}

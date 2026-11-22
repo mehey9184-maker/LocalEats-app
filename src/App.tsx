@@ -3696,7 +3696,7 @@ const HorizontalShopCard = ({
     >
       <div className="aspect-video w-full rounded-2xl overflow-hidden relative bg-slate-100 dark:bg-slate-800">
         <BlurUpImage
-          src={shop.logo || DEFAULT_SHOP_LOGO}
+          src={shop.logo} fallbackKind="shop"
           alt={shop.name}
           className="w-full h-full aspect-video object-cover"
           blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -4996,7 +4996,7 @@ function HomeScreen({
                     <div className="flex items-center gap-2 z-10 min-w-0">
                       <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800 flex-shrink-0 relative">
                         <BlurUpImage
-                          src={menuItem.image || DEFAULT_SHOP_LOGO}
+                          src={menuItem.image} fallbackKind="food"
                           alt={menuItem.name}
                           className="w-full h-full object-cover"
                         />
@@ -5866,6 +5866,7 @@ function DiscoverScreen({
                 className="w-full h-full object-cover"
                 alt="User profile photo avatar"
                 src={userProfile?.photoURL || getAvatarUrl(userProfile?.fullName)}
+                onError={(event) => { event.currentTarget.src = getAvatarUrl(userProfile?.fullName); }}
                 referrerPolicy="no-referrer"
               />
             </div>
@@ -6318,7 +6319,7 @@ function DiscoverScreen({
                 >
                   <div className="aspect-video w-full relative overflow-hidden bg-slate-100 dark:bg-slate-800">
                     <BlurUpImage
-                      src={shop.logo || DEFAULT_SHOP_LOGO}
+                      src={shop.logo} fallbackKind="shop"
                       alt={shop.name}
                       className={`w-full h-full aspect-video object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                       blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -6547,7 +6548,7 @@ function DiscoverScreen({
               >
                 <div className="w-32 h-32 rounded-full overflow-hidden mb-4 border-4 border-white dark:border-slate-700 shadow-lg">
                   <BlurUpImage
-                    src={shop.logo || DEFAULT_SHOP_LOGO}
+                    src={shop.logo} fallbackKind="shop"
                     alt={shop.name}
                     className="w-full h-full"
                     blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -7070,6 +7071,7 @@ function ProfileScreen({
                   key={previewUrl || userProfile.photoURL || "placeholder"}
                   src={previewUrl || userProfile.photoURL || getAvatarUrl(userProfile.fullName)}
                   alt="Profile Avatar"
+                  onError={(event) => { event.currentTarget.src = getAvatarUrl(userProfile.fullName); }}
                   className="w-full h-full object-cover absolute inset-0"
                   referrerPolicy="no-referrer"
                   initial={{ opacity: 0, scale: 0.75, filter: "blur(4px)" }}
@@ -8512,7 +8514,7 @@ function StoreInfoScreen({
         ) : (
           <div className="w-full h-full relative">
             <BlurUpImage
-              src={shop.logo}
+              src={shop.logo} fallbackKind="shop"
               alt={shop.name}
               className="w-full h-full object-cover"
               blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -9973,7 +9975,7 @@ function ExploreScreen({
                   >
                     <div className="h-44 relative overflow-hidden">
                       <BlurUpImage
-                        src={shop.logo || DEFAULT_SHOP_LOGO}
+                        src={shop.logo} fallbackKind="shop"
                         alt={shop.name}
                         className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ${browseOnly ? "grayscale-[0.85] saturate-[0.35]" : ""}`}
                         blurHash={`https://picsum.photos/seed/${shop.id}/10/10?blur=10`}
@@ -10429,7 +10431,7 @@ function ExploreScreen({
               <div className="flex gap-4">
                 <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-md">
                   <BlurUpImage
-                    src={activeShop.logo || DEFAULT_SHOP_LOGO}
+                    src={activeShop.logo} fallbackKind="shop"
                     alt={activeShop.name}
                     className="w-full h-full"
                     blurHash={`https://picsum.photos/seed/${activeShop.id}/10/10?blur=10`}

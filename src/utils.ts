@@ -7,7 +7,8 @@ import { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE } from './App-constants';
 import { Shop } from './types';
 export { DEFAULT_FALLBACK_SHOPS, MY_KOTA_TEST_STORE };
 
-export const DEFAULT_MENU_IMAGE = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=800";
+// Missing menu photos remain empty; the renderer displays an honest food placeholder.
+export const DEFAULT_MENU_IMAGE = "";
 export const DEFAULT_SHOP_LOGO = "/logo.png";
 export const APP_VERSION = "2.4.1 (1024)";
 export const DEFAULT_COORDS = { lat: -26.009012, lng: 28.192455 };
