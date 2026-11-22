@@ -1,5 +1,9 @@
 # LocalEats App Functionality Documentation
 
+## L3-P4 — Accurate shop status, no invented opening time; company idea register (2026-11-22, draft)
+Customer `ShopCard` uses `shopCardTrustState` to show a consistent badge, browse-only/pickup hint, and opening time from existing facts. A real heartbeat Away status cannot coexist with a green Open Now badge; Closed and unknown-GPS shops remain browsable without a pickup claim, and unknown hours say `Opening time unavailable` instead of `Soon`. Existing 4 km pickup requirements, API-authoritative order writes, rating validation and original layout remain. Long-term company ideas and their unapproved status are centrally tracked in `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`, including future versioned image CDN caching that has NOT been implemented. Preview-only; see `docs/L3_P4_CUSTOMER_TRUST_20261122.md`.
+
+
 ## Default pictures — 2026-11-22 (draft, UI-only)
 Customer profiles without a photo use an on-device SVG initial avatar from `getAvatarUrl`; no name is sent to `ui-avatars.com`. Uploaded profile photos stay first priority and failed loads fall back to initials. `BlurUpImage` now renders clearly identified shop/photo and food/no-photo defaults for missing or failed image URLs; proxy failures retry the real uploaded source first. ShopCard uses actual merchant covers, actual menu photos, then the actual logo, never category-based fake food. The cart and Home use the same component. Real catalog mapping keeps missing `image_url` and shop image lists empty rather than copying fake images from sample shops. Historic synthetic sample fixtures remain separate and are not proof of public catalog data. Static regression tests live in `tests/default-image-fallback.test.mjs`. This draft makes no Firebase, API, database, price, order, radius or Production flag changes. Shop/menu/card layout stays intact.
 
