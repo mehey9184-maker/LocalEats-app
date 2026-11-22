@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-P3 Customer animation, accessibility and navigation — draft (2026-11-22)
+Review branch `review/l3-p3-motion-feedback-navigation-20261122` is based on stable Customer main, not P1 #134 or P2 #135. It preserves the five bottom tabs, original ShopCard and customer flow. Reduced-motion disables unnecessary scaling/sliding for ShopCard, menu, cart items, floating cart and in-app notifications; tapping the active tab does not reroute or vibrate; cart prices are **estimated until authoritative checkout quote**; BottomSheet focuses/traps/returns keyboard focus; Settings profile actions and switches are keyboard-accessible. This is source-only Preview with browser acceptance in `tests/l3-p3-navigation-browser.mjs` and CI `customer-l3-p3-motion-navigation.yml`. Production pickup stays OFF. No real payment/orders, photo download strategy, CDN, server edits, database changes, or merges without separate owner approval. Full contract: `docs/L3_P3_MOTION_FEEDBACK_NAVIGATION_20261122.md`.
+
+
 ## Default pictures review — 2026-11-22
 Draft branch `review/customer-missing-image-defaults-20261122` displays local initials for missing customer profile photos and honest `BlurUpImage` icons for missing shop/menu pictures, with direct-source recovery for image-proxy errors. Do not substitute unrelated stock food or test-shop photos into real records. Merchant real uploads remain authoritative, no database values are changed, and Production ordering stays OFF. Review `tests/default-image-fallback.test.mjs` and the matching section of `LocalEats_App_Functionality_Documentation.md` before release. This draft is not a Production authorization.
 
