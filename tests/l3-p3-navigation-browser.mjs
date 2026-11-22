@@ -66,6 +66,10 @@ try{
   // The floating cart is not a checkout quote; label is explicitly estimated.
   const cart=page.getByRole("button",{name:/View shopping cart: 1 item, estimated subtotal R 25\.00/i});
   await cart.waitFor();
+  const cartBox=await cart.boundingBox();
+  const navBox=await page.locator("#persistent-bottom-navigation").boundingBox();
+  assert.ok(cartBox && navBox && cartBox.y+cartBox.height<=navBox.y-4,
+   `Floating cart must leave a tappable gap above bottom navigation: ${JSON.stringify({cartBox,navBox})}`);
   assert.match(await cart.innerText(),/Est. R 25\.00/);
   await page.screenshot({path:path.join(dir,`01-navigation-${width}.png`),fullPage:false});
   await cart.click();
