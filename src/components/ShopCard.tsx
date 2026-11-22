@@ -56,7 +56,7 @@ export const ShopCard = memo(
 
     // Appetizing food cover photo based on category or menu items
     const getShopHeroImage = (s: Shop) => {
-      if (s.images && s.images.length > 0 && !s.images[0].includes("unsplash.com/photo-1546069901-ba9599a7e63c")) {
+      if (s.images && typeof s.images[0] === "string" && s.images[0].trim() && !s.images[0].includes("unsplash.com/photo-1546069901-ba9599a7e63c")) {
         return s.images[0];
       }
       if (s.menu && s.menu.length > 0 && s.menu[0].image) {
