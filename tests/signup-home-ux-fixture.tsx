@@ -12,10 +12,18 @@ import {LocalEatsLogo} from "../src/components/LocalEatsLogo";
 import {ShopCard} from "../src/components/ShopCard";
 import {BottomNavigation} from "../src/components/BottomNavigation";
 import {mapPickupShop} from "../src/services/pickupMapping";
+import {supabase} from "../src/lib/supabase";
 import type {Screen} from "../src/types";
 import "../src/index.css";
 
 type Stage="welcome"|"signup"|"password"|"verify"|"home"|"login";
+// Isolated fixture only: the *real* password form submits to this mock instead
+// of creating Firebase users or sending emails to actual people.
+let syntheticRegistrations=0;
+supabase.auth.signUp=async ({email}:{email:string})=>{
+ syntheticRegistrations++;
+ return {data:{user:{id:"synthetic-firebase-customer",email},verificationEmailSent:new URLSearchParams(window.location.search).get("mail")!=="failed"},error:null};
+};
 type Details={fullName:string;email:string;phone:string};
 const fixtureShop=mapPickupShop({
  id:"shop-my-kota-ivory-park",name:"My-Kota",category:"Street Food",
@@ -25,7 +33,7 @@ const fixtureShop=mapPickupShop({
 
 declare global {
  interface Window {
-  __localeatsSimulateSubmission?:()=>void;
+  __localeatsSyntheticRegistrations?:()=>number;
   __localeatsSimulatedDetails?:Details;
  }
 }
@@ -33,10 +41,11 @@ function AppFixture(){
  const [stage,setStage]=useState<Stage>("welcome");
  const [details,setDetails]=useState<Details>({fullName:"",email:"",phone:""});
  const [message,setMessage]=useState("");
+ const [verificationSent,setVerificationSent]=useState(false);
  useEffect(()=>{
-  window.__localeatsSimulateSubmission=()=>{if(stage==="password")setStage("verify");};
+  window.__localeatsSyntheticRegistrations=()=>syntheticRegistrations;
   window.__localeatsSimulatedDetails=details;
-  return ()=>{delete window.__localeatsSimulateSubmission;delete window.__localeatsSimulatedDetails;};
+  return ()=>{delete window.__localeatsSyntheticRegistrations;delete window.__localeatsSimulatedDetails;};
  },[stage,details]);
  const notification=(event:{message?:string})=>setMessage(event?.message||"");
  return <>
@@ -45,9 +54,9 @@ function AppFixture(){
   {stage==="signup"&&<SignUpScreen onNext={value=>{setDetails(value);setStage("password");}}
     onLogin={()=>setStage("login")} onBack={()=>setStage("welcome")} setNotification={notification}/>}
   {stage==="password"&&<SetupPasswordScreen
-    signupData={details} onNext={()=>setStage("verify")} onBack={()=>setStage("signup")}
+    signupData={details} onNext={emailSent=>{setVerificationSent(emailSent);setStage("verify");}} onBack={()=>setStage("signup")}
     setNotification={notification} runWithProcessing={async()=>{throw Error("No auth operations allowed in fixture");}}/>}
-  {stage==="verify"&&<SuccessScreen email={details.email} onExplore={()=>setStage("home")} onCompleteProfile={()=>setStage("home")}/>}
+  {stage==="verify"&&<SuccessScreen email={details.email} verificationEmailSent={verificationSent} onExplore={()=>setStage("home")} onCompleteProfile={()=>setStage("home")}/>}
   {stage==="login"&&<main className="p-6"><p>Login is outside this signup simulation.</p>
     <button type="button" onClick={()=>setStage("welcome")}>Back to welcome</button></main>}
   {stage==="home"&&<main className="min-h-[100dvh] bg-white pb-32 text-slate-900">
