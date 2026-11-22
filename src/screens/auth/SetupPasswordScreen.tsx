@@ -6,7 +6,7 @@ import { upsertProfileWithRPC } from "../../lib/profileService";
 import { NotificationState, SignUpData } from "../../types";
 
 export interface SetupPasswordScreenProps {
-  onNext: () => void;
+  onNext: (verificationEmailSent: boolean) => void;
   onBack: () => void;
   signupData: SignUpData;
   setNotification: (n: NotificationState) => void;
@@ -92,7 +92,9 @@ export function SetupPasswordScreen({
         }
       }
       
-      onNext();
+      // Firebase account already exists at this point (whether or not
+      // the optional email could be sent). Never ask the user to sign up again.
+      onNext(data.verificationEmailSent === true);
     } catch (e: any) {
       setNotification({
         message: e.message || "An error occurred during signup",
