@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {createNearbyCatalogReader,nearbyCatalogKey,NEARBY_CATALOG_TTL_MS} from "../src/services/nearbyCatalogCache.ts";
+import {createNearbyCatalogReader,nearbyCatalogKey,NEARBY_CATALOG_TTL_MS,NEARBY_CATALOG_PARALLEL_MENUS} from "../src/services/nearbyCatalogCache.ts";
 
 const point={lat:-25.98,lng:28.2};
 const shop={id:"shop-1",name:"My Kota",is_active:true,distance_km:2,lat:-25.98,lng:28.2};
@@ -132,4 +132,73 @@ test("a failed menu never hides verified neighbors or creates a partial cache hi
   assert.deepEqual(complete.shops.map(s => s.id), [shop.id, other.id]);
   assert.equal(complete.incomplete, false);
   assert.equal(reads, 2);
+});
+
+
+test("real-GPS menu requests are bounded to six and keep distance order",async()=>{
+ const entries=Array.from({length:21},(_,i)=>({...shop,id:"store-"+i,distance_km:i/10}));
+ let active=0,peak=0,requests=0;
+ const reader=createNearbyCatalogReader({
+  shops:async()=>({shops:entries}),
+  menu:async()=>{active++;requests++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,2));active--;return {menu_items:[item]};},
+ },(s,menu)=>({...s,menu}));
+ const catalog=await reader(point);
+ assert.equal(NEARBY_CATALOG_PARALLEL_MENUS,6);
+ assert.equal(requests,21);
+ assert.ok(peak>1&&peak<=6);
+ assert.deepEqual(catalog.shops.map(s=>s.id),entries.map(s=>s.id));
+ assert.equal(catalog.incomplete,false);
+});
+
+test("a shop with a menu transport that ignores abort cannot hold GPS Home indefinitely",async()=>{
+ let requests=0;
+ const reader=createNearbyCatalogReader({
+  shops:async()=>({shops:[shop,{...shop,id:"hung"}]}),
+  menu:async id=>{requests++;if(id==="hung")return new Promise(()=>{});return {menu_items:[item]};},
+ },(s,menu)=>({...s,menu}),()=>0,{menuTimeoutMs:20});
+ const partial=await reader(point);
+ assert.deepEqual(partial.shops.map(s=>s.id),[shop.id]);
+ assert.equal(partial.incomplete,true);
+ assert.equal(requests,2);
+ // An incomplete catalog is not cached: a new visit retries the failed menu.
+ await reader(point);
+ assert.equal(requests,4);
+});
+
+test("coalesced same-location refreshes send early verified cards to the latest listener",async()=>{
+ let release=()=>{};
+ const pendingMenu=new Promise(resolve=>{release=resolve;});
+ let catalogReads=0,firstSeen=0,secondSeen=0;
+ const reader=createNearbyCatalogReader({
+  shops:async()=>{catalogReads++;return {shops:[shop]};},
+  menu:async()=>pendingMenu,
+ },(s,menu)=>({...s,menu}));
+ const first=reader(point,{onProgress:()=>firstSeen++});
+ const second=reader(point,{onProgress:()=>secondSeen++});
+ release({menu_items:[item]});
+ const [a,b]=await Promise.all([first,second]);
+ assert.strictEqual(a,b);
+ assert.equal(catalogReads,1);
+ assert.equal(firstSeen,1);
+ assert.equal(secondSeen,1);
+});
+
+test("malformed shops and invalid prices are excluded without hiding another verified neighbor",async()=>{
+ let invalid=true,calls=0;
+ const raw={...shop,id:"bad"};
+ const reader=createNearbyCatalogReader({
+  shops:async()=>{calls++;return {shops:[shop,raw]};},
+  menu:async id=>({menu_items:id==="bad"&&invalid?[{id:"x",name:"Invalid",price:-5,is_available:true}]:[item]}),
+ },(s,menu)=>{
+  if(menu.some(x=>x.price<0))throw Error("Bad menu price");
+  return {...s,menu};
+ });
+ const first=await reader(point);
+ assert.equal(first.incomplete,true);
+ assert.deepEqual(first.shops.map(s=>s.id),["shop-1"]);
+ invalid=false;
+ const second=await reader(point);
+ assert.equal(second.incomplete,false);
+ assert.equal(second.shops.length,2);
+ assert.equal(calls,2);
 });
