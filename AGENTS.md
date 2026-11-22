@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-P4 (2026-11-22): truthful availability and scalable idea register — draft
+Source-only Customer branch `review/l3-p4-customer-trust-ideas-20261122`. `shopCardTrustState` aligns visible and screen-reader Open/Away/Closed/GPS/Outside-4km status; never show an available pickup pill while a shop is away or closed, and never invent opening time `Soon`. Pickup eligibility, data reads, server prices and authorization are unchanged. The **canonical** product-family strategy register is `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; future merchant image CDN/cache reuse is **captured but not implemented**. Every feature idea requires evidence and an explicit owner decision. P1–P3 remain separate unmerged draft PRs. No production activation, data writes or merge. See `docs/L3_P4_CUSTOMER_TRUST_20261122.md` and its source tests.
+
+
 ## Default pictures review — 2026-11-22
 Draft branch `review/customer-missing-image-defaults-20261122` displays local initials for missing customer profile photos and honest `BlurUpImage` icons for missing shop/menu pictures, with direct-source recovery for image-proxy errors. Do not substitute unrelated stock food or test-shop photos into real records. Merchant real uploads remain authoritative, no database values are changed, and Production ordering stays OFF. Review `tests/default-image-fallback.test.mjs` and the matching section of `LocalEats_App_Functionality_Documentation.md` before release. This draft is not a Production authorization.
 
