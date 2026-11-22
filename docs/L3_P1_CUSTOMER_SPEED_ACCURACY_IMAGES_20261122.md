@@ -19,7 +19,7 @@
 - **Verified GPS cards also progressive:** the existing `createNearbyCatalogReader` now limits menus to six concurrent requests, times out even if an underlying transport ignores abort after six seconds, and can emit fully validated shop/menu pairs while other menus are pending. Overlapping refresh listeners share partial updates. Only a **complete** result enters its 15-second exact-location cache. Existing failed-menu and retry semantics are unchanged.
 - **Stale-location and visual stability protection:** `src/App.tsx` applies progressive updates only for its current catalog request generation and does **not** replace a previously visible full shop list with a partial list during same-location revalidation. A new GPS/refresh request invalidates older updates. Without real GPS, displayed cards remain browse-only; all server pickup quote, 4 km and order write gates remain intact.
 - **Right-sized image downloads:** `BlurUpImage` accepts a `160|320|600` pixel remote image width. Existing large cards retain 600px. Menu, checkout and cart thumbnail slots request 160px for small slots; uploaded image URLs and branded missing-photo behavior stay unchanged. This reduces the *requested dimensions* for those slots, but actual transferred bytes must be measured before citing savings.
-- **No UI redesign:** same original ShopCard, home layout, menu, cart and checkout actions, animations, colors and notification behavior.
+- **No UI redesign:** same original ShopCard, home layout, menu, cart and checkout actions and animations. A screenshot-confirmed 320px menu price-wrap issue is corrected with wrapping flex actions and no-wrap prices/labels; the existing Data Saver message has clearer text contrast. No business rules change.
 
 ## Verification
 
