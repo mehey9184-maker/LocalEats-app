@@ -84,7 +84,6 @@ Result and next decision:
 |---|---|---|---|
 | 2026-11-22 | Establish an editable scalable-company idea register instead of turning every idea into an immediate feature. Record photo reuse/CDN as a **future** architecture option, without coding it. | Requested by founder, documented as planning only | No service enabled, spending authorized or production changes |
 | 2026-11-22 | Continue focused P4 customer trust / Merchant usability review, preserve original UI and keep PRs as drafts pending testing/owner release gate. | Founder requested P4 continuation | No merge, database operation, real order or live payment |
-
 | 2026-11-22 | Capture optional Oracle-hosted small free/open-weight LLM or zero-LLM FAQ helper as LE-09 research only; continue CF2-D and pickup release first. | Founder proposed concept, not resource/production approval | No Oracle VM, model hosting, customer data access, live AI or charges authorized |
 
 **Updating this register:** Add a short row for each new idea, then a decision record when researched. Update its stage only with evidence and explicit owner approval. Keep the register under Git review so changes can be traced and reverted. Never turn captured ideas into background tasks or automated releases without a specific request.
