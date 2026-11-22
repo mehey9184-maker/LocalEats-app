@@ -1,5 +1,9 @@
 # LocalEats App Functionality Documentation
 
+## L3 P1–P4 combined Customer branch (2026-11-22, source-only)
+One isolated Customer integration branch `integration/l3-p1-p4-zero-write-20261122` combines P1 fast progressive genuine catalog + width-sized actual images, P2 browser Save-Data/explicit photo reveal + noninteractive names-only offline directory, P3 low-motion and accessible navigation/cart/notifications and P4 inactive shop availability text plus the canonical scalable-company idea register. Integration-specific tests compare formerly conflicting code **inside the same React build**. Shop prices and pickup eligibility remain server authoritative; no 4km bypass, rider/LocalPay/online payment, database write, real order, Production merge or hosted deployment was authorized. Current evidence/remaining manual gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`. Future CDN image caching is research only.
+
+
 ## L3-P4 — Accurate shop status, no invented opening time; company idea register (2026-11-22, draft)
 Customer `ShopCard` uses `shopCardTrustState` to show a consistent badge, browse-only/pickup hint, and opening time from existing facts. The legacy `isShopAway` heartbeat check always returns false; no actual heartbeat-derived Away state exists. `ShopCard` uses the API's inactive-shop state to show `Not taking orders` instead of a misleading `Open Now`. Closed and unknown-GPS shops remain browsable without a pickup claim, and unknown hours say `Opening time unavailable` instead of `Soon`. Existing 4 km pickup requirements, API-authoritative order writes, rating validation and original layout remain. Long-term company ideas and their unapproved status are centrally tracked in `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`, including future versioned image CDN caching that has NOT been implemented. Preview-only; see `docs/L3_P4_CUSTOMER_TRUST_20261122.md`.
 
