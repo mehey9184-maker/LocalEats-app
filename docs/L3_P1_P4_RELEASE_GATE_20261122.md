@@ -1,7 +1,7 @@
 # LocalEats L3 — P1–P4 Combined Release Gate
 
 **Evidence checked:** 2026-11-22 (Africa/Johannesburg)  
-**Decision:** **HOLD — no combined release or real pickup activation.**  
+**Decision:** **HOLD for Production**. A combined **zero-write source integration branch is now prepared**; its acceptance is documented in [L3_P1_P4_INTEGRATION_20261122.md](L3_P1_P4_INTEGRATION_20261122.md). No real pickup activation.  
 **Owner:** Founder; explicit approval needed for merging, deployment or live-order testing.  
 **Release target:** Browse-only Customer first, with all pickup/availability write flags OFF. Merchant UX follows an independently verified release. Real My-Kota pilot is a different, subsequent gate.
 
@@ -31,13 +31,13 @@ P1–P4 are sibling PRs branched from the same Customer main. Merging each in se
 - **P2 ∩ P4:** root docs only.
 
 Before any Customer Production merge:
-1. Prepare **one disposable combined integration branch** with the proposed P1→P2→P3→P4 code **and an explicit conflict-resolution review**. Preserve each phase's original UI, tests and docs; do not overwrite an entire shared file with another phase's version.
+1. **Prepared:** disposable combined integration branch `integration/l3-p1-p4-zero-write-20261122` with P1→P2→P3→P4 code and a documented conflict-resolution review. The branch now needs independent CI and human review. Preserve each phase's original UI, tests and docs; do not overwrite an entire shared file with another phase's version.
 2. Run every phase's tests together plus the original Customer baseline, pickup-security and signup/QR/notification regressions, TypeScript, build, production-secret and service-worker cache checks. Verify the new canonical idea register remains present.
 3. Render one **isolated combined actual-React browser fixture** at 320px, 390px and desktop, ideally on a verified read-only branch-specific Vercel Preview. Test home/guest menu, real-item images, Data Saver, photo opt-in, offline/reconnect, 4km browse-only, cart, keyboard focus, notifications and low-motion navigation. Synthetic network timing cannot be reported as real mobile transfer savings.
 4. Run actual Android on genuine GPS (3.9km, 4.0km, 4.1km if safely available), browser permissions, slow mobile data, login continuation, closed/away/unknown-status truth, and image-reuse bytes; do not spoof real pickup coordinates.
 5. Only after complete evidence and owner sign-off, merge scoped changes **one controlled step at a time**, verify the exact Vercel deployment SHA and alias, execute read-only live smoke, and retain a rollback reference. Do not change pricing, flags or order permissions as part of this release.
 
-Until then P1–P4 cannot be declared **jointly tested**. No integration branch was built in this gate.
+Until combined branch CI and real-device/hosted checks finish, P1–P4 cannot be declared fully **jointly release-tested**. A combined branch now exists, but its initial source assembly is not a Production acceptance claim.
 
 ## 3. Hosted Preview and API release dependencies — BLOCKED
 
@@ -81,7 +81,7 @@ These do not prove unsafe real writes are possible. **They do require a concrete
 |---|---|---|
 | Individual Customer P1–P4 CI | PASS, isolated | Continue |
 | Merchant P4 focused tests and build | Focused tests PASS, build through existing gate PASS; root lint has documented debt | Continue only with scoped review |
-| Combined P1–P4 integration and conflict reconciliation | **NOT PERFORMED** | **HOLD** |
+| Combined P1–P4 integration and conflict reconciliation | **BRANCH PREPARED**; combined CI/visual acceptance pending | **HOLD** |
 | Branch-matched full hosted Previews | **NOT FOUND** | **HOLD** |
 | API apex+WWW live CORS after source merge | **NOT VERIFIED on current API deployment** | **HOLD** |
 | Old Preview write-enabled isolation | **NOT VERIFIED** | **HOLD for write tests** |
@@ -91,4 +91,4 @@ These do not prove unsafe real writes are possible. **They do require a concrete
 
 **Overall:** P1–P4 are *individually code-ready*, **not jointly release-ready**. Merge, Production deployment, schema, flags and actual customer orders were intentionally not performed.
 
-**Next authorized technical step:** create a separate **zero-write combined integration Preview** with all four PRs' code and tests plus manual conflict review, then seek owner release approval. For the business concept catalog, the source of truth is [LocalEats Scalable Idea & Decision Register](LOCALEATS_SCALABLE_IDEA_REGISTER.md); architecture proposals such as versioned CDN image caches must remain unimplemented until expressly approved.
+**Next authorized technical step:** validate the combined zero-write integration PR's exact CI SHA and screenshot evidence, then prepare only a **read-only hosted Preview** for genuine-device acceptance with owner review. For the business concept catalog, the source of truth is [LocalEats Scalable Idea & Decision Register](LOCALEATS_SCALABLE_IDEA_REGISTER.md); architecture proposals such as versioned CDN image caches must remain unimplemented until expressly approved.
