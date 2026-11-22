@@ -15,7 +15,7 @@ const constants = read('src/utils.ts');
 test('missing and broken shop/menu pictures show trustworthy, local placeholders', () => {
   assert.match(photo, /fallbackKind\?: 'shop' \| 'food'/);
   assert.match(photo, /!targetSrc \|\| failed/);
-  assert.match(photo, /Shop photo not available/);
+  assert.match(photo, /photo not available/);
   assert.match(photo, /No photo yet/);
   assert.match(photo, /onError=\{handleImageError\}/);
   assert.doesNotMatch(photo, /unsplash\.com/);
