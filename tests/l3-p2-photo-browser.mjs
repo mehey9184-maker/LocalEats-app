@@ -20,7 +20,7 @@ try{
  // Chromium can execute this isolated test module.
  const warm=await fetch(base+"/tests/l3-p2-photo-fixture.tsx");
  const warmBody=await warm.text();
- console.log("L3_P2_VITE_FIXTURE_WARM",JSON.stringify({status:warm.status,contentType:warm.headers.get("content-type"),length:warmBody.length,containsRoot:warmBody.includes("createRoot")}));
+ console.log("L3_P2_VITE_FIXTURE_WARM",JSON.stringify({status:warm.status,contentType:warm.headers.get("content-type"),length:warmBody.length,containsRoot:warmBody.includes("createRoot"),hasFixtureText:warmBody.includes("LocalEats Data Saver review"),imports:warmBody.match(/(?:from |import )[^\n]{0,180}/g)?.slice(0,12),prefix:warmBody.slice(0,2000)}));
  assert.equal(warm.status,200,"Fixture TSX must compile through Vite.");
  browser=await chromium.launch({headless:true});
  for(const [width,height] of [[320,568],[390,844]]){
@@ -56,7 +56,7 @@ try{
   page.on("request",request=>unfinished.add(request.url()));
   page.on("requestfinished",request=>unfinished.delete(request.url()));
   page.on("requestfailed",request=>{unfinished.delete(request.url());errors.push("requestfailed: "+request.url()+" "+request.failure()?.errorText);});
-  page.setDefaultTimeout(30000);
+  page.setDefaultTimeout(7000);
   await page.goto(base+"/tests/l3-p2-photo-fixture.html",{waitUntil:"domcontentloaded"});
   try {
    await page.getByRole("button",{name:/Load photo: Demo Kota photo/i}).waitFor();
