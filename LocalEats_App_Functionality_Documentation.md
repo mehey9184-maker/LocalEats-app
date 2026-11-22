@@ -1,5 +1,12 @@
 # LocalEats App Functionality Documentation
 
+## Founder–AI operating agreement / Cloudflare CF1 continuity — 2026-11-22
+
+Founder confirmed **SAFE** AI-worker day-to-day autonomy for isolated development, source testing, documentation and draft PRs; final approval stays with founder for **all** merges, staging deployments, public domain/DNS changes, new costs, Production data/auth or pickup activation. AI should perform routine technical work, report concise milestones with test evidence and avoid asking founder to debug tasks tools can do. Durable cross-chat source of truth: [canonical founder charter](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/blob/cloudflare/cf1-merchant-api-staging-20261122/docs/LOCALEATS_FOUNDER_CHARTER.md) and [project handoff](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/blob/cloudflare/cf1-merchant-api-staging-20261122/docs/LOCALEATS_PROJECT_MEMORY.md), linked from root `AGENTS.md`. Canonical product ideas remain in this repo's `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`.
+
+Cloudflare Customer CF1 remains **staging-source only**: draft #140 stacked on combined P1–P4 draft #139, existing original Customer interface preserved. No live Cloudflare Customer/API pair or actual real-device acceptance yet; no Production merge. Worker bootstrap does **not** return real menu/shop information. Account's dashboard-created `localeats-app` is an unrelated placeholder and must not be deployed as a replacement. See [migration issue #223](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/issues/223).
+
+
 ## L3 P1–P4 combined Customer branch (2026-11-22, source-only)
 One isolated Customer integration branch `integration/l3-p1-p4-zero-write-20261122` combines P1 fast progressive genuine catalog + width-sized actual images, P2 browser Save-Data/explicit photo reveal + noninteractive names-only offline directory, P3 low-motion and accessible navigation/cart/notifications and P4 inactive shop availability text plus the canonical scalable-company idea register. Integration-specific tests compare formerly conflicting code **inside the same React build**. Shop prices and pickup eligibility remain server authoritative; no 4km bypass, rider/LocalPay/online payment, database write, real order, Production merge or hosted deployment was authorized. Current evidence/remaining manual gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`. Future CDN image caching is research only.
 
