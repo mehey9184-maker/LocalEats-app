@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { ArrowRight, Lock, Eye, EyeOff, Check, Loader2 } from "lucide-react";
+import {motion, useReducedMotion} from "motion/react";
+import { ArrowRight, Lock, Eye, EyeOff, Check, Circle, Loader2 } from "lucide-react";
 import { SignupFlowHeader } from "../../components/SignupFlowHeader";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { upsertProfileWithRPC } from "../../lib/profileService";
@@ -27,6 +28,7 @@ export function SetupPasswordScreen({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const reduceMotion=useReducedMotion();
 
   const handleSignUp = async () => {
     if (!password || !confirmPassword) {
@@ -114,10 +116,10 @@ export function SetupPasswordScreen({
    <div className="min-h-[100dvh] bg-white font-sans text-[#111d34] dark:bg-slate-950 dark:text-slate-100">
     <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-7">
      <SignupFlowHeader step={2} onBack={onBack} />
-     <div className="mt-9">
+     <motion.div initial={reduceMotion?false:{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.4}} className="mt-9">
       <h1 className="font-display text-[30px] font-black leading-[1.08] tracking-tight">Make it yours,<br/>keep it secure.</h1>
       <p className="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">Choose a password for your LocalEats account.</p>
-     </div>
+     </motion.div>
      <form className="mt-7 space-y-5" onSubmit={e=>{e.preventDefault();void handleSignUp();}}>
       <div>
        <label htmlFor="signup-password" className="text-xs font-extrabold text-slate-800 dark:text-white">Password</label>
@@ -149,16 +151,17 @@ export function SetupPasswordScreen({
       <div id="password-guidance" className="rounded-2xl border border-emerald-100 bg-[#f7fcf8] p-4 dark:border-slate-700 dark:bg-slate-900">
        <h2 className="text-xs font-extrabold text-slate-800 dark:text-white">Make a strong password</h2>
        <ul className="mt-3 space-y-2 text-xs text-slate-600 dark:text-slate-300">
-        <li className="flex items-center gap-2"><Check className={`h-4 w-4 shrink-0 ${longEnough?"text-emerald-600":"text-slate-400"}`} aria-hidden="true" />At least 8 characters</li>
-        <li className="flex items-center gap-2"><Check className={`h-4 w-4 shrink-0 ${mixed?"text-emerald-600":"text-slate-400"}`} aria-hidden="true" />Try mixing letters and numbers</li>
-        <li className="flex items-center gap-2"><Check className={`h-4 w-4 shrink-0 ${matching?"text-emerald-600":"text-slate-400"}`} aria-hidden="true" />Both passwords match</li>
+        <li className="flex items-center gap-2">{longEnough ? <Check className="h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2.4} aria-hidden="true"/> : <Circle className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.8} aria-hidden="true"/>}At least 8 characters</li>
+        <li className="flex items-center gap-2">{mixed ? <Check className="h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2.4} aria-hidden="true"/> : <Circle className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.8} aria-hidden="true"/>}Try mixing letters and numbers</li>
+        <li className="flex items-center gap-2">{matching ? <Check className="h-4 w-4 shrink-0 text-emerald-600" strokeWidth={2.4} aria-hidden="true"/> : <Circle className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.8} aria-hidden="true"/>}Both passwords match</li>
        </ul>
       </div>
       <div className="pt-4">
-       <button type="submit" disabled={loading||!password||!confirmPassword}
+       <motion.button type="submit" disabled={loading||!password||!confirmPassword}
+        whileTap={reduceMotion?undefined:{scale:0.985}} transition={{type:"spring",stiffness:380,damping:25}}
         className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#c2410c] px-5 text-sm font-extrabold text-white shadow-lg shadow-orange-700/15 hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
         {loading?<><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true"/>Creating account…</>:<>Create account<ArrowRight className="h-4 w-4" aria-hidden="true"/></>}
-       </button>
+       </motion.button>
       </div>
      </form>
      <p className="mt-auto pt-5 text-center text-xs leading-relaxed text-slate-500 dark:text-slate-400">

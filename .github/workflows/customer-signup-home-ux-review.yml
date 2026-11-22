@@ -4,6 +4,10 @@ on:
     branches: [feature/customer-qr-guest-install-20261122, review/l3-n8u-s-current-main-outside-radius-browse, main]
     paths:
       - 'src/screens/SplashScreen.tsx'
+      - 'src/components/LocalKotaHeroPhoto.tsx'
+      - 'src/components/BottomNavigation.tsx'
+      - 'tests/welcome-kota-motion.test.mjs'
+      - 'docs/LOCALEATS_KOTA_HERO_ANIMATION_2026-11-22.md'
       - 'src/screens/auth/SignUpScreen.tsx'
       - 'src/screens/auth/SetupPasswordScreen.tsx'
       - 'src/screens/auth/SuccessScreen.tsx'
@@ -43,7 +47,7 @@ jobs:
         run: node --test tests/customer-production-http-readonly-smoke.mjs
       - name: Install isolated Chromium browser
         run: npx playwright install chromium
-      - name: Test 320px and 390px Welcome to Home journey without signup
+      - name: Test 320px, 390px and desktop Welcome to Home without live signup
         env:
           SIGNUP_UX_ARTIFACT_DIR: /tmp/localeats-signup-home-ux
         run: node tests/signup-home-ux-browser.mjs

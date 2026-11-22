@@ -1,5 +1,6 @@
 import React, { useRef, useState } from "react";
-import { ArrowRight, Check, Info, Mail, Smartphone, User } from "lucide-react";
+import {motion, useReducedMotion} from "motion/react";
+import { ArrowRight, Check, Info, Mail, Smartphone, UserRound } from "lucide-react";
 import { SignupFlowHeader } from "../../components/SignupFlowHeader";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { formatSAPhone, validateSAPhone } from "../../utils";
@@ -23,6 +24,7 @@ export function SignUpScreen({ onNext, onLogin, onBack, setNotification }: SignU
  const [phone,setPhone]=useState(formatSAPhone(""));
  const [errors,setErrors]=useState<SignupErrors>({});
  const [googleBusy,setGoogleBusy]=useState(false);
+ const reduceMotion=useReducedMotion();
  const nameRef=useRef<HTMLInputElement>(null);
  const emailRef=useRef<HTMLInputElement>(null);
  const phoneRef=useRef<HTMLInputElement>(null);
@@ -54,17 +56,18 @@ export function SignUpScreen({ onNext, onLogin, onBack, setNotification }: SignU
   <div className="min-h-[100dvh] bg-white font-sans text-[#111d34] dark:bg-slate-950 dark:text-slate-100">
    <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-7">
     <SignupFlowHeader step={1} onBack={onBack ?? onLogin} />
-    <div className="mt-8">
+    <motion.div initial={reduceMotion?false:{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.4}}
+     className="mt-8">
      <h1 className="font-display text-[30px] font-black leading-tight tracking-tight">Let's get you set up.</h1>
      <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
       A few details so your pickup orders have the right contact information.
      </p>
-    </div>
+    </motion.div>
     <form className="mt-5 space-y-4" noValidate onSubmit={e=>{e.preventDefault();handleContinue();}}>
      <div>
       <label htmlFor="signup-full-name" className="text-xs font-extrabold text-slate-800 dark:text-slate-100">Full name</label>
       <div className={fieldClass(Boolean(errors.fullName))}>
-       <User className="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+       <UserRound className="h-5 w-5 shrink-0 text-slate-500" strokeWidth={2} aria-hidden="true" />
        <input id="signup-full-name" ref={nameRef} value={fullName} onChange={e=>{setFullName(e.target.value);setErrors(v=>({...v,fullName:undefined}));}}
         onBlur={()=>{if(fullName && fullName.trim().length<2)setErrors(v=>({...v,fullName:"Enter your full name"}));}}
         placeholder="Your full name" autoComplete="name" type="text"
@@ -108,9 +111,10 @@ export function SignUpScreen({ onNext, onLogin, onBack, setNotification }: SignU
       Use an email you can access. You may need it to confirm your account.
      </p>
      <div className="pt-4">
-      <button type="submit" className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#c2410c] px-5 text-sm font-extrabold text-white shadow-lg shadow-orange-700/15 transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
-       Continue to password <ArrowRight className="h-4 w-4" aria-hidden="true" />
-      </button>
+      <motion.button type="submit" whileTap={reduceMotion?undefined:{scale:0.985}} transition={{type:"spring",stiffness:380,damping:25}}
+       className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#c2410c] px-5 text-sm font-extrabold text-white shadow-lg shadow-orange-700/15 transition-colors hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
+       Continue to password <ArrowRight className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+      </motion.button>
      </div>
     </form>
     <div className="mt-auto pt-4 text-center">

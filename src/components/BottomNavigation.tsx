@@ -1,6 +1,6 @@
 import React from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Home, Compass, MapPin, ShoppingBag, User } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import { Home, Compass, MapPin, ShoppingBag, UserRound } from "lucide-react";
 import { Screen } from "../types";
 
 interface BottomNavigationProps {
@@ -18,6 +18,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   triggerHaptic,
   isOnline = true,
 }) => {
+  const reduceMotion=useReducedMotion();
   // Screens where the persistent bottom navigation should be visible
   const customerNavScreens: Screen[] = [
     "home",
@@ -50,12 +51,15 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
     <div className="fixed bottom-0 left-0 right-0 z-50 px-3 sm:px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 bg-gradient-to-t from-slate-100/80 via-slate-100/40 to-transparent dark:from-slate-950/80 dark:via-slate-950/40 pointer-events-none flex flex-col items-center justify-end transition-all">
       <nav
         id="persistent-bottom-navigation"
+        aria-label="Main navigation"
         className="w-full max-w-md md:max-w-lg mx-auto flex justify-around items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-[24px] sm:rounded-[28px] border border-slate-200/70 dark:border-slate-800/80 px-2 py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-auto"
       >
         {/* Home */}
         <button
           id="nav-tab-home"
           type="button"
+          aria-label="Home"
+          aria-current={currentScreen === "home" ? "page" : undefined}
           onClick={() => handleNavClick("home")}
           className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
             currentScreen === "home"
@@ -70,7 +74,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                 : ""
             }`}
           >
-            <Home className="w-5 h-5 transition-transform" />
+            <motion.span className="flex items-center justify-center" aria-hidden="true"
+              animate={reduceMotion ? undefined : (currentScreen === "home" ? {scale:1.12,y:-1} : {scale:1,y:0})}
+              transition={{type:"spring",stiffness:370,damping:24}}>
+              <Home className="h-5 w-5" strokeWidth={currentScreen === "home" ? 2.5 : 2} fill={currentScreen === "home" ? "currentColor" : "none"}/>
+            </motion.span>
           </div>
           <span className="text-[10px] sm:text-[11px] font-medium tracking-tight mt-0.5">
             Home
@@ -81,6 +89,8 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
         <button
           id="nav-tab-discover"
           type="button"
+          aria-label="Discover"
+          aria-current={currentScreen === "discover" ? "page" : undefined}
           onClick={() => handleNavClick("discover")}
           className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
             currentScreen === "discover"
@@ -95,7 +105,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                 : ""
             }`}
           >
-            <Compass className="w-5 h-5 transition-transform" />
+            <motion.span className="flex items-center justify-center" aria-hidden="true"
+              animate={reduceMotion ? undefined : (currentScreen === "discover" ? {scale:1.12,y:-1} : {scale:1,y:0})}
+              transition={{type:"spring",stiffness:370,damping:24}}>
+              <Compass className="h-5 w-5" strokeWidth={currentScreen === "discover" ? 2.5 : 2} />
+            </motion.span>
           </div>
           <span className="text-[10px] sm:text-[11px] font-medium tracking-tight mt-0.5">
             Discover
@@ -106,6 +120,8 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
         <button
           id="nav-tab-explore"
           type="button"
+          aria-label="Map"
+          aria-current={currentScreen === "explore" ? "page" : undefined}
           onClick={() => handleNavClick("explore")}
           className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
             currentScreen === "explore"
@@ -120,7 +136,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                 : ""
             }`}
           >
-            <MapPin className="w-5 h-5 transition-transform" />
+            <motion.span className="flex items-center justify-center" aria-hidden="true"
+              animate={reduceMotion ? undefined : (currentScreen === "explore" ? {scale:1.12,y:-1} : {scale:1,y:0})}
+              transition={{type:"spring",stiffness:370,damping:24}}>
+              <MapPin className="h-5 w-5" strokeWidth={currentScreen === "explore" ? 2.5 : 2} />
+            </motion.span>
           </div>
           <span className="text-[10px] sm:text-[11px] font-medium tracking-tight mt-0.5">
             Map
@@ -131,6 +151,8 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
         <button
           id="nav-tab-orders"
           type="button"
+          aria-label="Orders"
+          aria-current={isOrdersActive ? "page" : undefined}
           onClick={() => {
             if (activeOrdersCount > 0) {
               handleNavClick("order-tracking");
@@ -151,7 +173,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                 : ""
             }`}
           >
-            <ShoppingBag className="w-5 h-5 transition-transform" />
+            <motion.span className="flex items-center justify-center" aria-hidden="true"
+              animate={reduceMotion ? undefined : (isOrdersActive ? {scale:1.12,y:-1} : {scale:1,y:0})}
+              transition={{type:"spring",stiffness:370,damping:24}}>
+              <ShoppingBag className="h-5 w-5" strokeWidth={isOrdersActive ? 2.5 : 2} />
+            </motion.span>
             <AnimatePresence>
               {activeOrdersCount > 0 && (
                 <motion.span
@@ -159,10 +185,10 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                   initial={{ scale: 0, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0, opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 500, damping: 18 }}
+                  transition={reduceMotion ? {duration:0} : { type: "spring", stiffness: 500, damping: 18 }}
                   className="absolute -top-1 -right-1 flex h-4 w-4"
                 >
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
+                  <span className={`${reduceMotion ? "" : "animate-ping"} absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75` }></span>
                   <span className="relative inline-flex rounded-full h-4 w-4 bg-orange-500 text-[9px] font-bold text-white items-center justify-center shadow-sm">
                     {activeOrdersCount}
                   </span>
@@ -179,6 +205,8 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
         <button
           id="nav-tab-profile"
           type="button"
+          aria-label="Profile"
+          aria-current={currentScreen === "profile" ? "page" : undefined}
           onClick={() => handleNavClick("profile")}
           className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
             currentScreen === "profile"
@@ -193,7 +221,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                 : ""
             }`}
           >
-            <User className="w-5 h-5 transition-transform" />
+            <motion.span className="flex items-center justify-center" aria-hidden="true"
+              animate={reduceMotion ? undefined : (currentScreen === "profile" ? {scale:1.12,y:-1} : {scale:1,y:0})}
+              transition={{type:"spring",stiffness:370,damping:24}}>
+              <UserRound className="h-5 w-5" strokeWidth={currentScreen === "profile" ? 2.5 : 2} />
+            </motion.span>
             {!isOnline && (
               <span
                 className="absolute 0 top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-900"

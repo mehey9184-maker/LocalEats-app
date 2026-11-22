@@ -12,6 +12,10 @@ import {tmpdir} from "node:os";
  * A fixture-local transition stands in for server-side signup success.
  */
 const root=fileURLToPath(new URL("..",import.meta.url));
+async function checkNoHorizontalClip(page,width,step){
+ const metrics=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,viewport:window.innerWidth}));
+ assert.ok(metrics.scroll<=metrics.viewport+1,`${step} overflow at ${width}px: ${JSON.stringify(metrics)}`);
+}
 const dir=process.env.SIGNUP_UX_ARTIFACT_DIR||path.join(tmpdir(),"localeats-signup-ux");
 await mkdir(dir,{recursive:true});
 const server=await createServer({root,configFile:path.join(root,"vite.config.ts"),server:{host:"127.0.0.1",port:0}});
@@ -20,7 +24,7 @@ try {
  await server.listen();
  const base=`http://127.0.0.1:${server.httpServer.address().port}`;
  browser=await chromium.launch({headless:true});
- for(const [width,height] of [[390,844],[320,568]]){
+ for(const [width,height] of [[390,844],[320,568],[1440,900]]){
   const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,
     serviceWorkers:"block",permissions:[],reducedMotion:"reduce"});
   const outbound=[];
@@ -37,6 +41,15 @@ try {
   await page.goto(base+`/tests/signup-home-ux-fixture.html?mail=${width===390?"sent":"failed"}`,{waitUntil:"domcontentloaded"});
   await page.getByRole("heading",{name:/Find your next legendary kota/i}).waitFor();
   await page.getByRole("button",{name:/Explore local food/}).waitFor();
+  await page.locator('[data-testid="welcome-food-photo"]').waitFor();
+  // The CI simulation deliberately blocks external food-photo requests. The
+  // Welcome screen must render a fallback rather than a broken image icon.
+  await page.getByRole("img",{name:/Local food image temporarily unavailable/}).waitFor();
+  await checkNoHorizontalClip(page,width,"Welcome");
+  if(width===1440){
+   const c=await page.getByRole("button",{name:"Create an account"}).boundingBox();
+   assert.ok(c && c.y+c.height<=height+2,"Desktop signup CTA must remain visible without scrolling");
+  }
   await page.screenshot({path:path.join(dir,`01-welcome-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:"Create an account"}).click();
   await page.getByRole("heading",{name:"Let's get you set up."}).waitFor();
@@ -49,6 +62,7 @@ try {
   await page.getByText("Enter a valid email address").waitFor();
   await page.getByLabel("Email address").fill("thando@example.com");
   await page.getByLabel("Phone number").fill("0712345678");
+  await checkNoHorizontalClip(page,width,"Signup details");
   await page.screenshot({path:path.join(dir,`02-signup-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:"Continue to password"}).click();
   await page.getByRole("heading",{name:/Make it yours,\s*keep it secure/i}).waitFor();
@@ -58,6 +72,7 @@ try {
   await page.getByLabel("Confirm password").fill("my-long-pass123");
   await page.getByRole("button",{name:"Show password"}).click();
   assert.equal(await page.getByLabel("Password",{exact:true}).getAttribute("type"),"text");
+  await checkNoHorizontalClip(page,width,"Password");
   await page.screenshot({path:path.join(dir,`03-password-${width}.png`),fullPage:true});
   // Press the real UI submit button. Its Firebase signUp adapter is replaced
   // by a fixture-only mock before any network request can occur.
@@ -66,6 +81,7 @@ try {
   assert.equal(await page.evaluate(()=>window.__localeatsSyntheticRegistrations?.()),1);
   if(width===320)await page.getByText(/could not confirm that a verification email was sent/i).waitFor();
   await page.getByText("thando@example.com").waitFor();
+  await checkNoHorizontalClip(page,width,"Verification");
   await page.screenshot({path:path.join(dir,`04-verify-${width}.png`),fullPage:true});
   await page.getByRole("button",{name:/Browse menus for now/}).click();
   await page.getByRole("heading",{name:"Explore local kitchens."}).waitFor();
@@ -75,9 +91,10 @@ try {
   assert.equal(await page.getByRole("button",{name:"Map",exact:true}).count(),1);
   assert.equal(await page.getByRole("button",{name:"Orders",exact:true}).count(),1);
   assert.equal(await page.getByRole("button",{name:"Profile",exact:true}).count(),1);
+  assert.equal(await page.getByRole("button",{name:"Home",exact:true}).getAttribute("aria-current"),"page");
+  assert.equal(await page.getByRole("navigation",{name:"Main navigation"}).count(),1);
   await page.screenshot({path:path.join(dir,`05-home-${width}.png`),fullPage:true});
-  const size=await page.evaluate(()=>({doc:document.documentElement.scrollWidth,viewport:window.innerWidth}));
-  assert.ok(size.doc<=size.viewport+1,`Horizontal overflow ${width}px: ${JSON.stringify(size)}`);
+  await checkNoHorizontalClip(page,width,"Home");
   assert.deepEqual(errors,[],`Browser runtime error: ${width}px`);
   assert.equal(outbound.some(u=>/supabase.*auth|firebase.*identity|api\/v1\/orders|\/signup/i.test(u)),false,
     "No authentication, orders, or account requests were made");
