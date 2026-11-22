@@ -42,13 +42,18 @@ try{
   page.on("pageerror",err=>errors.push(String(err)));
   page.on("console",msg=>{if(msg.type()==="error")errors.push("console: "+msg.text());});
   page.on("response",response=>{if(response.status()>=400)badResponses.push(response.status()+" "+response.url());});
+  page.on("requestfailed",request=>errors.push("requestfailed: "+request.url()+" "+request.failure()?.errorText));
   page.setDefaultTimeout(12000);
   await page.goto(base+"/tests/l3-p2-photo-fixture.html",{waitUntil:"domcontentloaded"});
   try {
    await page.getByRole("button",{name:/Load photo: Demo Kota photo/i}).waitFor();
   } catch(error) {
-   const body=(await page.content()).slice(0,4800);
-   console.error("L3_P2_FIXTURE_DIAGNOSTIC",JSON.stringify({url:page.url(),errors,badResponses,body}));
+   const report=await page.evaluate(()=>({root:document.getElementById("root")?.innerHTML?.slice(0,3800),
+    bodyText:document.body?.innerText?.slice(0,900),
+    scripts:[...document.scripts].map(el=>el.src||"inline").slice(-5),
+    preference:localStorage.getItem("data_saver_enabled"),
+   }));
+   console.error("L3_P2_FIXTURE_DIAGNOSTIC",JSON.stringify({url:page.url(),errors,badResponses,report}));
    throw error;
   }
   await page.getByText("Previously seen shops").waitFor();
