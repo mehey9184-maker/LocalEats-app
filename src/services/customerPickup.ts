@@ -61,8 +61,9 @@ export async function readPublicBrowseCatalog():Promise<NearbyCatalog>{
 /** Preview Home can show each verified browse-only card before other menus finish. */
 export async function readPublicBrowseCatalogProgressive(
  onProgress:(partial:NearbyCatalog)=>void,
+ options:{force?:boolean}={},
 ):Promise<NearbyCatalog>{
- return publicBrowseReader({onProgress});
+ return publicBrowseReader({...options,onProgress});
 }
 
 export async function quotePickupCart(cart:CartItem[],location:{lat:number;lng:number}|null,name:string,phone:string,method:string,signal?:AbortSignal) {
