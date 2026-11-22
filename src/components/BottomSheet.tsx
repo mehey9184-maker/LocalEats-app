@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import React, { useEffect, useId, useRef } from "react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 
 interface BottomSheetProps {
@@ -24,22 +24,44 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   triggerHaptic,
 }) => {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const subtitleId = useId();
+  const reduceMotion = useReducedMotion();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
+    if (!isOpen) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const selector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusables = () => Array.from(sheetRef.current?.querySelectorAll<HTMLElement>(selector) ?? [])
+      .filter(element => element.getClientRects().length > 0);
+    // A dialog should not leave keyboard focus behind the overlay.
+    focusables()[0]?.focus({preventScroll:true});
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+      } else if (event.key === "Tab") {
+        const items = focusables();
+        if (!items.length) {event.preventDefault();sheetRef.current?.focus();return;}
+        const first = items[0],last = items[items.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !sheetRef.current?.contains(document.activeElement))) {
+          event.preventDefault();last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !sheetRef.current?.contains(document.activeElement))) {
+          event.preventDefault();first.focus();
+        }
       }
     };
-    if (isOpen) {
-      window.addEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "hidden";
-    }
+    window.addEventListener("keydown",handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
+      window.removeEventListener("keydown",handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus({preventScroll:true});
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   return (
     <AnimatePresence>
@@ -50,7 +72,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: reduceMotion ? 0 : 0.2 }}
             onClick={() => {
               if (triggerHaptic) triggerHaptic(4);
               onClose();
@@ -61,20 +83,28 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
           {/* Sheet Container */}
           <motion.div
             ref={sheetRef}
-            initial={{ y: "100%", opacity: 0.9 }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={title ? undefined : "LocalEats options"}
+            aria-labelledby={title ? titleId : undefined}
+            aria-describedby={subtitle ? subtitleId : undefined}
+            tabIndex={-1}
+            initial={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0.9 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: "100%", opacity: 0 }}
-            transition={{ type: "spring", stiffness: 350, damping: 32 }}
+            exit={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0 }}
+            transition={reduceMotion ? {duration:0} : { type: "spring", stiffness: 350, damping: 32 }}
             className={`relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-slate-800 ${maxHeight} flex flex-col z-10 overflow-hidden`}
           >
             {/* Top Drag Handle */}
             {showHandle && (
-              <div
-                className="w-full pt-3 pb-1 flex justify-center cursor-grab active:cursor-grabbing shrink-0"
+              <button
+                type="button"
+                aria-label="Close sheet"
+                className="w-full pt-3 pb-1 flex justify-center cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-[-2px]"
                 onClick={onClose}
               >
-                <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full" />
-              </div>
+                <span aria-hidden="true" className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full" />
+              </button>
             )}
 
             {/* Header */}
@@ -82,18 +112,19 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
               <div className="px-5 sm:px-6 pt-2 pb-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 shrink-0">
                 <div>
                   {title && (
-                    <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-tight">
+                    <h3 id={titleId} className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-tight">
                       {title}
                     </h3>
                   )}
                   {subtitle && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    <p id={subtitleId} className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       {subtitle}
                     </p>
                   )}
                 </div>
                 <button
                   type="button"
+                  aria-label="Close sheet"
                   onClick={() => {
                     if (triggerHaptic) triggerHaptic(4);
                     onClose();

@@ -898,12 +898,12 @@ export default function App() {
     }
   }, [session?.user?.id, postOrderPushPrompt]);
 
-  // Auto-dismiss transient (non-persistent) custom notification toasts after 4 seconds
+  // Ordinary feedback is brief; pickup-ready and errors stay long enough
+  // to read. Persistent action prompts never auto-dismiss.
   useEffect(() => {
     if (notification && !notification.persistent) {
-      const timer = setTimeout(() => {
-        setNotification(null);
-      }, 4000);
+      const durationMs = notification.type === "error" || notification.type === "ready" ? 7000 : 4000;
+      const timer = setTimeout(() => setNotification(null), durationMs);
       return () => clearTimeout(timer);
     }
   }, [notification]);

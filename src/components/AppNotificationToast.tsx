@@ -1,5 +1,5 @@
 import React from "react";
-import {AnimatePresence,motion} from "motion/react";
+import {AnimatePresence,motion,useReducedMotion} from "motion/react";
 import {AlertCircle,Bell,CheckCircle2,Utensils,X} from "lucide-react";
 import type {NotificationState} from "../types";
 
@@ -11,14 +11,16 @@ export function AppNotificationToast({notification,onDismiss,belowHeader=false}:
  onDismiss:()=>void;
  belowHeader?:boolean;
 }){
- return <AnimatePresence>
+ const reduceMotion=useReducedMotion();
+ return <AnimatePresence mode="wait">
   {notification && (
    <motion.div
+    key={notification.type+"|"+notification.message+"|"+!!notification.persistent}
     data-testid="global-notification-container"
-    initial={{opacity:0,y:notification.persistent?-100:-24}}
+    initial={reduceMotion ? {opacity:1,y:0} : {opacity:0,y:notification.persistent?-100:-24}}
     animate={{opacity:1,y:0}}
-    exit={{opacity:0,y:notification.persistent?-100:-24}}
-    transition={{duration:0.22,ease:[0.22,1,0.36,1]}}
+    exit={reduceMotion ? {opacity:1,y:0} : {opacity:0,y:notification.persistent?-100:-24}}
+    transition={reduceMotion ? {duration:0} : {duration:0.22,ease:[0.22,1,0.36,1]}}
     className={notification.persistent
      ? "fixed inset-0 z-[110] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm pointer-events-none"
      : `pointer-events-none fixed inset-x-3 z-[110] flex justify-center sm:inset-x-auto sm:right-4 sm:w-[min(24rem,calc(100vw-2rem))] ${
@@ -29,10 +31,12 @@ export function AppNotificationToast({notification,onDismiss,belowHeader=false}:
     }
    >
     <motion.div
-     role={notification.type==="error"?"alert":"status"}
+     role={notification.persistent ? "alertdialog" : notification.type==="error"?"alert":"status"}
+     aria-modal={notification.persistent ? "true" : undefined}
+     aria-label={notification.persistent ? "LocalEats confirmation" : undefined}
      aria-atomic="true"
      data-testid="global-notification-toast"
-     {...(!notification.persistent ? {
+     {...(!notification.persistent && !reduceMotion ? {
       drag:true,
       dragDirectionLock:true,
       dragConstraints:{top:-100,bottom:32,left:-30,right:30},
@@ -73,7 +77,7 @@ export function AppNotificationToast({notification,onDismiss,belowHeader=false}:
       {!notification.persistent && (
        <button type="button" onClick={onDismiss}
         aria-label="Dismiss notification"
-        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white">
+        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white">
         <X className="h-5 w-5" aria-hidden="true"/>
        </button>
       )}
