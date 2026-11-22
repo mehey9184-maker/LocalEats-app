@@ -26,6 +26,10 @@ try{
    const request=route.request(),url=new URL(request.url());
    if(!["GET","HEAD"].includes(request.method()))nonGets.push(request.url());
    if(url.hostname==="127.0.0.1")return route.continue();
+   // App CSS imports Google Fonts. Serve an empty, deterministic stylesheet
+   // rather than aborting a render-blocking @import in Chromium.
+   if(url.hostname==="fonts.googleapis.com")
+     return route.fulfill({status:200,contentType:"text/css",body:""});
    if(url.hostname==="images.weserv.nl"){
     proxyRequests++;
     assert.equal(url.searchParams.get("w"),"600");
