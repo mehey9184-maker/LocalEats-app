@@ -54,9 +54,11 @@ test("five original Home tab names and routes retained with accessible active st
  for(const id of ["home","discover","explore","orders","profile"]){
   assert.match(nav,new RegExp('id="nav-tab-'+id+'"'));
  }
- for(const name of ["Home","Discover","Map","Orders","Profile"]){
+ for(const name of ["Home","Discover","Map","Profile"]){
   assert.match(nav,new RegExp('aria-label="'+name+'"'));
  }
+ assert.match(nav,/aria-label=\{activeOrdersCount>0 \? `Orders,/);
+ assert.match(nav,/active pickup/);
  assert.match(nav,/aria-label="Main navigation"/);
  assert.match(nav,/aria-current=/);
  assert.match(nav,/activeOrdersCount/);
