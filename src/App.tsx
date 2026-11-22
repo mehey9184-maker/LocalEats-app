@@ -1167,19 +1167,20 @@ export default function App() {
     }
     setIsSyncing(true);
     setFetchError(null);
+    const showVerifiedProgress=(partial:{shops:Shop[];incomplete:boolean})=>{
+      // Only reveal verified shop/menu pairs from the current GPS/browse key.
+      // Old requests cannot repaint Home after location or refresh changes.
+      if(generation!==catalogGeneration.current)return;
+      displayedCatalogKeyRef.current=key;
+      setShops(partial.shops);
+      setLoadingShops(false);
+    };
     try {
       const result=!userLocation
-        ? await readPublicBrowseCatalogProgressive(partial=>{
-            // Only reveal real, validated public shop/menu pairs. A fresh GPS
-            // request increments catalogGeneration and invalidates older data.
-            if(generation!==catalogGeneration.current)return;
-            displayedCatalogKeyRef.current=key;
-            setShops(partial.shops);
-            setLoadingShops(false);
-          })
+        ? await readPublicBrowseCatalogProgressive(showVerifiedProgress)
         : _force
-          ? await readPickupCatalog(userLocation,{force:true})
-          : await readPickupCatalog(userLocation);
+          ? await readPickupCatalog(userLocation,{force:true,onProgress:showVerifiedProgress})
+          : await readPickupCatalog(userLocation,{onProgress:showVerifiedProgress});
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
