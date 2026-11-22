@@ -1,5 +1,13 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## ACTIVE Founder–AI delegation and cross-chat memory — approved 2026-11-22
+
+**Read first:** [canonical Founder–AI charter](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/blob/cloudflare/cf1-merchant-api-staging-20261122/docs/LOCALEATS_FOUNDER_CHARTER.md) and [canonical Project Memory](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/blob/cloudflare/cf1-merchant-api-staging-20261122/docs/LOCALEATS_PROJECT_MEMORY.md). These are maintained in Merchant/API repository's CF1 draft branch and linked by [Cloudflare migration issue #223](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/issues/223).
+
+**Founder = CEO/product/financial/release authority. AI worker = proactive technical executor and strategic adviser.** AI independently completes safe analysis, coding, testing, documentation and draft PRs, challenges weak scale/cost/security decisions, sends short milestone CEO reports and minimizes founder busywork. **Never merge to main, deploy cloud staging or Production, change DNS/real records/auth/payment/FCM, enable real orders, or incur spending without distinct founder approval.** Older broad go-live messages do not override this agreement.
+
+**Continuity:** GitHub Markdown/PR/CI evidence is the source of truth when chats reach their limit; update the canonical handoff after relevant milestones and the local functionality docs. Re-verify PRs/commits, not just the last summary. The **canonical scalable ideas** register is local `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; capture new ideas there, do not auto-implement. This branch is [Cloudflare CF1 Customer draft #140](https://github.com/mehey9184-maker/LocalEats-app/pull/140), stacked on [zero-write P1–P4 draft #139](https://github.com/mehey9184-maker/LocalEats-app/pull/139). It is NOT a live release.
+
 ## L3 P1–P4 combined zero-write integration (2026-11-22)
 Branch `integration/l3-p1-p4-zero-write-20261122` preserves P1 verified progressive discovery/image widths, P2 opt-in Data Saver and names-only offline reference, P3 reduced-motion/focus/navigation and P4 truthful inactive shop labels and the canonical `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`. Shared files were manually reconciled; do not overwrite them wholesale from any original draft branch. Run `tests/l3-p1-p4-integration.test.mjs` and `.github/workflows/customer-l3-p1-p4-integration.yml` on one combined SHA before any release claim. This is a standalone **Preview-only no-write** draft: no Production deployment, no user/shop records, no payment, no GPS emulation or real orders. Source details and blocking gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`.
 
