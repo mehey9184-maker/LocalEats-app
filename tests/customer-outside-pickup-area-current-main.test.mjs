@@ -59,7 +59,8 @@ test("original ShopCard stays navigable while distant cards are visibly distinct
  assert.match(card,/onStoreInfo\(shop.id\)/);
  assert.match(card,/browseOnly\s*\? "bg-slate-50 dark:bg-slate-900/);
  assert.doesNotMatch(card,/outsidePickupArea\s*\? "opacity-/);
- assert.match(card,/Outside 4 km/);
+ assert.match(read("src/services/shopCardTrustState.ts"),/Outside 4 km/);
+ assert.match(card,/trustState\.badge/);
  assert.match(card,/Outside pickup area/);
  assert.match(card,/Location needed to order/);
  assert.match(card,/Browse menu only/);
@@ -96,7 +97,8 @@ test("out-of-area distinction is consistent on Home, Discover and Explore withou
  assert.match(app,/rounded-3xl border border-slate-200 bg-slate-50\/80/);
  assert.match(card,/browseOnly[\s\S]*?"bg-slate-50 dark:bg-slate-900\/80/);
  assert.match(card,/text-slate-900/);
- assert.match(card,/Outside 4 km/);
+ assert.match(read("src/services/shopCardTrustState.ts"),/Outside 4 km/);
+ assert.match(card,/trustState\.badge/);
  assert.match(card,/Browse menu only/);
  assert.match(card,/focus-visible:ring-2/);
  assert.doesNotMatch(card,/outsidePickupArea \? "opacity-75/);
