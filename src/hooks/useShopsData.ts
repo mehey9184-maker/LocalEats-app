@@ -170,7 +170,7 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
                       longitude: s.longitude || 28.2268,
                       updated_at: s.updated_at,
                       is_active: s.is_active !== false,
-                      images: (s as any).images || [DEFAULT_FALLBACK_SHOPS[0].logo],
+                      images: (s as any).images || [],
                       menu: (menuData || [])
                         .filter((m) => String(m.shop_id) === String(s.id))
                         .map((m) => ({
@@ -178,7 +178,7 @@ export function useShopsData(options: UseShopsDataOptions = {}) {
                           name: m.name,
                           price: Number(m.price),
                           displayPrice: `R${Number(m.price).toFixed(2)}`,
-                          image: m.image_url || DEFAULT_FALLBACK_SHOPS[0].menu[0]?.image,
+                          image: m.image_url || '',
                           description: m.description || '',
                           category: m.category || 'Main Course',
                           is_available: m.is_available !== false,
