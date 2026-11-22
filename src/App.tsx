@@ -2911,6 +2911,7 @@ export default function App() {
           <AppNotificationToast
             notification={notification}
             onDismiss={() => setNotification(null)}
+            belowHeader={currentScreen === "settings"}
           />
 
           {/* Generic Modal (Alert/Confirm/Prompt) */}
