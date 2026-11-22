@@ -72,8 +72,12 @@ function L3P1HomeFixture(){
    </p>
    <section aria-label="Verified shop cards" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
      {shops.map((shop,index)=><div key={shop.id} data-testid={"shop-"+shop.id} className="min-w-0 space-y-3">
-       <ShopCard shop={shop} isFollowed={false} onStoreInfo={()=>setNotice("Browse menu only — no GPS verified")}
-        triggerHaptic={()=>{}} dataSaverEnabled={dataSaver} priorityImage={index===0}/>
+       {/* The real Home places each ShopCard in its own grid slot. Do not let
+           this synthetic stacked menu preview stretch ShopCard h-full. */}
+       <div className="shrink-0">
+        <ShopCard shop={shop} isFollowed={false} onStoreInfo={()=>setNotice("Browse menu only — no GPS verified")}
+          triggerHaptic={()=>{}} dataSaverEnabled={dataSaver} priorityImage={index===0}/>
+       </div>
        <MenuItemCard shop={shop} item={shop.menu[0]} showAlert={(title,message)=>setNotice(title+": "+message)}/>
      </div>)}
    </section>
