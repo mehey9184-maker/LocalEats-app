@@ -17,11 +17,11 @@ import {
   UserPlus,
   LogIn,
   Loader2,
-  Apple,
   WifiOff,
   X,
 } from "lucide-react";
 import { LocalEatsLogo } from "../../components/LocalEatsLogo";
+import {AppleBrandIcon} from "../../components/AppleBrandIcon";
 import { supabase, APP_URL } from "../../lib/supabase";
 import { UserProfile, NotificationState } from "../../types";
 import { FirestoreService } from "../../lib/firebase";
@@ -861,38 +861,21 @@ export function LoginScreen({
                   </span>
                 </button>
 
+                {/* Firebase OAuth adapter supports Google only. Display the genuine
+                    Apple brand icon, but never let an unsupported button create
+                    a misleading authentication attempt. */}
                 <button
                   id="apple-oauth-btn"
                   type="button"
-                  onClick={async () => {
-                    try {
-                      const { error } = await supabase.auth.signInWithOAuth({
-                        provider: "apple",
-                        options: {
-                          redirectTo: APP_URL,
-                        },
-                      });
-                      if (error) throw error;
-                    } catch (error: any) {
-                      const rawMsg = error?.message || "";
-                      const isOffline =
-                        typeof navigator !== "undefined" && !navigator.onLine;
-                      setAuthError({
-                        type: isOffline ? "offline" : "server_unreachable",
-                        title: "Apple Sign-In Notice",
-                        message: isOffline
-                          ? "You are currently offline. Please reconnect to use Apple Sign-In."
-                          : "Couldn't connect to Apple authentication services.",
-                        suggestion:
-                          "You can sign in with your email and password, or explore as a guest.",
-                      });
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-3 h-14 border border-slate-200 dark:border-slate-800 rounded-2xl bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 hover:shadow-md transition-all active:scale-95 cursor-pointer text-slate-900 dark:text-white font-bold"
+                  disabled
+                  title="Apple sign-in is not available yet"
+                  aria-describedby="apple-oauth-status"
+                  className="flex h-14 w-full cursor-not-allowed items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-600 opacity-75 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
                 >
-                  <Apple className="w-5 h-5 text-slate-950 dark:text-white fill-current shrink-0" />
-                  <span className="text-sm font-bold">
-                    Continue with Apple
+                  <AppleBrandIcon className="h-5 w-5 shrink-0 text-slate-800 dark:text-white" />
+                  <span className="text-sm font-bold">Continue with Apple</span>
+                  <span id="apple-oauth-status" className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-extrabold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    Coming soon
                   </span>
                 </button>
               </div>
@@ -926,10 +909,8 @@ export function LoginScreen({
               </div>
             )}
 
-            {/* Progress Indicator */}
-            <div className="fixed bottom-0 left-0 right-0 h-1 bg-primary/10">
-              <div className="h-full bg-primary w-1/3"></div>
-            </div>
+            {/* No fixed footer progress bar: login is not a multi-step process.
+                Leave the device safe area and navigation unobstructed. */}
           </div>
         </div>
       </div>
