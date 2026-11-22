@@ -3128,6 +3128,7 @@ export default function App() {
               )}
               {currentScreen === "success" && (
                 <SuccessScreen
+                  email={userProfile?.email || undefined}
                   onCompleteProfile={() => navigateToProfile("complete-profile")}
                   onExplore={() => setCurrentScreen(checkoutReturn.current.destination() || "home")}
                 />
@@ -4963,11 +4964,11 @@ function HomeScreen({
         <div className="mb-6 px-1 pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2 flex-wrap">
-              <span>{greeting}, {userProfile.fullName ? userProfile.fullName.split(" ")[0] : "there"}</span>
-              <span className="select-none">👋</span>
+              <span>{session ? `${greeting}, ${userProfile.fullName ? userProfile.fullName.split(" ")[0] : "there"}` : "Explore local kitchens."}</span>
+              {session && <span className="select-none" aria-hidden="true">👋</span>}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 font-medium">
-              Find nearby kitchens and collect your meal at the shop.
+              Discover local menus near you. Pickup and pay at the shop.
             </p>
           </div>
           <div className="flex items-center shrink-0">
@@ -4976,6 +4977,22 @@ function HomeScreen({
             </span>
           </div>
         </div>
+
+        {!userLocation && (
+          <div role="status" className="mb-5 flex flex-wrap items-start gap-3 rounded-2xl border border-orange-200 bg-[#fff5eb] p-3.5 text-amber-950 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-200">
+            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#c2410c] dark:text-orange-400" aria-hidden="true"/>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-extrabold">Location needed to order</p>
+              <p className="mt-1 text-xs leading-relaxed text-amber-900/80 dark:text-orange-200">
+                Browse freely. Check your real device location to see pickup eligibility.
+              </p>
+            </div>
+            <button type="button" onClick={onRequestLocation}
+              className="min-h-11 shrink-0 rounded-xl border border-orange-300 px-3 text-xs font-extrabold text-[#9a3412] hover:bg-orange-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:border-orange-700 dark:text-orange-200">
+              Check location
+            </button>
+          </div>
+        )}
 
         {/* Real-time Order Notification Permission Request Flow */}
         {notificationPermissionStatus !== "granted" && notificationPermissionStatus !== "unsupported" && !notificationBannerDismissed && (
@@ -5125,7 +5142,7 @@ function HomeScreen({
                 </div>
               ) : (
                 <span className="text-[9px] font-bold text-orange-600 bg-orange-50 dark:bg-orange-950/30 px-2.5 py-1 rounded-full border border-orange-100 dark:border-orange-500/20">
-                  {sortedShops.length} Online
+                  {sortedShops.length} {sortedShops.length === 1 ? "shop" : "shops"} listed
                 </span>
               )}
             </div>
