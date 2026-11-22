@@ -39,6 +39,8 @@ jobs:
         run: npm run lint
       - name: Production-style source build (ordering disabled)
         run: npm run build
+      - name: Read-only live PWA, API CORS, and catalog health (GET/OPTIONS only)
+        run: node --test tests/customer-production-http-readonly-smoke.mjs
       - name: Install isolated Chromium browser
         run: npx playwright install chromium
       - name: Test 320px and 390px Welcome to Home journey without signup
