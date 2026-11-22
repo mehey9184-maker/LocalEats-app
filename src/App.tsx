@@ -1,6 +1,6 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
-import {readPickupCatalog, readPublicBrowseCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {readPickupCatalog, readPublicBrowseCatalogProgressive, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
 import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -1169,7 +1169,14 @@ export default function App() {
     setFetchError(null);
     try {
       const result=!userLocation
-        ? await readPublicBrowseCatalog()
+        ? await readPublicBrowseCatalogProgressive(partial=>{
+            // Only reveal real, validated public shop/menu pairs. A fresh GPS
+            // request increments catalogGeneration and invalidates older data.
+            if(generation!==catalogGeneration.current)return;
+            displayedCatalogKeyRef.current=key;
+            setShops(partial.shops);
+            setLoadingShops(false);
+          })
         : _force
           ? await readPickupCatalog(userLocation,{force:true})
           : await readPickupCatalog(userLocation);
