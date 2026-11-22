@@ -346,6 +346,7 @@ export const MenuItemCard = memo(
         <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-xs relative bg-slate-100 dark:bg-slate-800">
           <BlurUpImage
             src={item.image || DEFAULT_MENU_IMAGE}
+            imageWidth={160}
             alt={item.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
