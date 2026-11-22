@@ -38,7 +38,7 @@ try {
   assert.match(await apple.innerText(),/Continue with Apple/);
   assert.match(await apple.innerText(),/Coming soon/);
   assert.equal(await apple.locator("svg path").count(),1,"Apple branding uses genuine SVG, not Lucide fruit");
-  await page.getByRole("button",{name:/Login/i,exact:true}).waitFor();
+  await page.locator("#login-submit-btn").waitFor();
   await page.screenshot({path:path.join(shots,`01-login-${width}.png`),fullPage:true});
   await page.locator("#trigger-test-notice").click();
   const toast=page.locator('[data-testid="global-notification-toast"]');
