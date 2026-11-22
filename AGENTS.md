@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-P2 Customer Data Saver and offline safety (2026-11-22; draft)
+PR branch `review/l3-p2-data-saver-safe-offline-20261122` is independent of unmerged L3-P1 PR #134. The Customer Settings Data Saver now obeys explicit saved ON/OFF over supported browser Save-Data, prevents network image mounting in shared `BlurUpImage` until an individual photo is tapped, and keeps truthful shop/photo placeholders. Background public catalog polling skips hidden/offline windows but preserves visible live refreshes. Only **public shop names and categories** from complete verified API catalogs are saved for a max-24-hour noninteractive offline reference; never persist or restore prices, menus, GPS, open/closed status, photos, auth, accounts or orders from this snapshot. Never pass offline directory into `ShopCard` or quote/create. Existing PWA API fail-closed semantics, original UI, 4km GPS and pickup ordering OFF are protected. See `docs/L3_P2_DATA_SAVER_SAFE_OFFLINE_20261122.md`, tests and new CI. Preview-only; owner release approval remains mandatory.
+
+
 ## Default pictures review — 2026-11-22
 Draft branch `review/customer-missing-image-defaults-20261122` displays local initials for missing customer profile photos and honest `BlurUpImage` icons for missing shop/menu pictures, with direct-source recovery for image-proxy errors. Do not substitute unrelated stock food or test-shop photos into real records. Merchant real uploads remain authoritative, no database values are changed, and Production ordering stays OFF. Review `tests/default-image-fallback.test.mjs` and the matching section of `LocalEats_App_Functionality_Documentation.md` before release. This draft is not a Production authorization.
 
