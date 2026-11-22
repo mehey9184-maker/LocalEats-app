@@ -5004,6 +5004,7 @@ function HomeScreen({
                       <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800 flex-shrink-0 relative">
                         <BlurUpImage
                           src={menuItem.image} fallbackKind="food"
+                          imageWidth={160}
                           alt={menuItem.name}
                           className="w-full h-full object-cover"
                         />
