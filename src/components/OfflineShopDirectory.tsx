@@ -7,9 +7,11 @@ import {readOfflineShopDirectory} from "../services/offlineShopDirectory";
  * no live menus, prices, photos, distance, availability or ordering.
  */
 export function OfflineShopDirectory(){
- const directory=useMemo(()=>readOfflineShopDirectory(
-   typeof window==="undefined"?undefined:window.localStorage,
- ),[]);
+ const directory=useMemo(()=>{
+   try{return readOfflineShopDirectory(
+     typeof window==="undefined"?undefined:window.localStorage,
+   );}catch{return null;}
+ },[]);
  if(!directory)return null;
  return <section aria-label="Last seen shops, offline reference only"
    className="mt-6 w-full max-w-md rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-left dark:border-amber-800 dark:bg-amber-950/30">
