@@ -1,7 +1,7 @@
 name: Customer signup-to-Home UI review (isolated, no account)
 on:
   pull_request:
-    branches: [review/l3-n8u-s-current-main-outside-radius-browse, main]
+    branches: [feature/customer-qr-guest-install-20261122, review/l3-n8u-s-current-main-outside-radius-browse, main]
     paths:
       - 'src/screens/SplashScreen.tsx'
       - 'src/screens/auth/SignUpScreen.tsx'
