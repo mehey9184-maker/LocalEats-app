@@ -6,10 +6,11 @@ export interface SuccessScreenProps {
  onCompleteProfile: () => void;
  onExplore: () => void;
  email?: string;
+ verificationEmailSent?: boolean;
 }
 
 /** Account submission completed; does not imply email verification or order eligibility. */
-export function SuccessScreen({onCompleteProfile,onExplore,email}:SuccessScreenProps){
+export function SuccessScreen({onCompleteProfile,onExplore,email,verificationEmailSent=false}:SuccessScreenProps){
  return (
   <div className="min-h-[100dvh] bg-white font-sans text-[#111d34] dark:bg-slate-950 dark:text-white">
    <main className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col items-center px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-center sm:px-7">
@@ -22,9 +23,11 @@ export function SuccessScreen({onCompleteProfile,onExplore,email}:SuccessScreenP
       <Mail className="h-20 w-20 text-[#c2410c] dark:text-orange-400" strokeWidth={1.5}/>
       <CheckCircle2 className="absolute right-5 top-6 h-10 w-10 rounded-full bg-white p-1 text-emerald-600 dark:bg-slate-950" fill="white" />
      </div>
-     <h1 className="mt-8 font-display text-[31px] font-black leading-tight tracking-tight">Check your inbox.</h1>
+     <h1 className="mt-8 font-display text-[31px] font-black leading-tight tracking-tight">{verificationEmailSent ? "Check your inbox." : "Your account is ready."}</h1>
      <p className="mt-3 max-w-xs text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-      Your account has been submitted. If email confirmation is required, open the verification link before signing in.
+      {verificationEmailSent
+        ? "We asked Firebase to send a verification link. Check your inbox or spam folder. The link confirms your email, not an order."
+        : "Your account was created. We could not confirm that a verification email was sent. You can browse and sign in; do not try registering again."}
      </p>
      {email&&<p className="mt-2 max-w-full break-all text-sm font-extrabold text-slate-800 dark:text-white">{email}</p>}
     </div>
