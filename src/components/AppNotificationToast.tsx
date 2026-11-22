@@ -6,9 +6,10 @@ import type {NotificationState} from "../types";
 /** Global in-app feedback: transient messages appear TOP (safe-area aware).
  * Persistent prompts remain centered. No change to browser/OS push notifications.
  */
-export function AppNotificationToast({notification,onDismiss}:{
+export function AppNotificationToast({notification,onDismiss,belowHeader=false}:{
  notification:NotificationState;
  onDismiss:()=>void;
+ belowHeader?:boolean;
 }){
  return <AnimatePresence>
   {notification && (
@@ -20,7 +21,11 @@ export function AppNotificationToast({notification,onDismiss}:{
     transition={{duration:0.22,ease:[0.22,1,0.36,1]}}
     className={notification.persistent
      ? "fixed inset-0 z-[110] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm pointer-events-none"
-     : "pointer-events-none fixed inset-x-3 top-[calc(env(safe-area-inset-top,0px)+0.75rem)] z-[110] flex justify-center sm:inset-x-auto sm:right-4 sm:top-4 sm:w-[min(24rem,calc(100vw-2rem))]"
+     : `pointer-events-none fixed inset-x-3 z-[110] flex justify-center sm:inset-x-auto sm:right-4 sm:w-[min(24rem,calc(100vw-2rem))] ${
+       belowHeader
+        ? "top-[calc(env(safe-area-inset-top,0px)+5rem)] sm:top-20"
+        : "top-[calc(env(safe-area-inset-top,0px)+0.75rem)] sm:top-4"
+      }`
     }
    >
     <motion.div
