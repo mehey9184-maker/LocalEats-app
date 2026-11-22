@@ -1,6 +1,6 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
-import {readPickupCatalog, readPublicBrowseCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {readPickupCatalog, readPublicBrowseCatalogProgressive, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
 import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
 import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -1167,12 +1167,23 @@ export default function App() {
     }
     setIsSyncing(true);
     setFetchError(null);
+    const showVerifiedProgress=(partial:{shops:Shop[];incomplete:boolean})=>{
+      // Only reveal verified shop/menu pairs from the active GPS/browse key.
+      // Old requests cannot repaint Home after location or refresh changes.
+      if(generation!==catalogGeneration.current)return;
+      // Same-location revalidation must keep previously visible complete cards.
+      // Replacing them with a partial list makes shops vanish and reappear.
+      if(sameLocation)return;
+      displayedCatalogKeyRef.current=key;
+      setShops(partial.shops);
+      setLoadingShops(false);
+    };
     try {
       const result=!userLocation
-        ? await readPublicBrowseCatalog()
+        ? await readPublicBrowseCatalogProgressive(showVerifiedProgress,{force:_force})
         : _force
-          ? await readPickupCatalog(userLocation,{force:true})
-          : await readPickupCatalog(userLocation);
+          ? await readPickupCatalog(userLocation,{force:true,onProgress:showVerifiedProgress})
+          : await readPickupCatalog(userLocation,{onProgress:showVerifiedProgress});
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
@@ -4997,6 +5008,7 @@ function HomeScreen({
                       <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800 flex-shrink-0 relative">
                         <BlurUpImage
                           src={menuItem.image} fallbackKind="food"
+                          imageWidth={160}
                           alt={menuItem.name}
                           className="w-full h-full object-cover"
                         />

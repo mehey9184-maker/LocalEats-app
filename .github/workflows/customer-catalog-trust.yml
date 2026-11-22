@@ -5,6 +5,15 @@ on:
     paths:
       - 'src/App.tsx'
       - 'src/components/ShopCard.tsx'
+      - 'src/components/BlurUpImage.tsx'
+      - 'src/components/CartDrawer.tsx'
+      - 'src/services/customerPickup.ts'
+      - 'src/services/nearbyCatalogCache.ts'
+      - 'src/services/publicBrowseCatalog.ts'
+      - 'tests/customer-public-browse-without-gps.test.mjs'
+      - 'tests/customer-nearby-cache-main.test.mjs'
+      - 'tests/l3-p1-catalog-speed-accuracy.test.mjs'
+      - 'tests/l3-p1-home-*'
       - 'src/components/ShopChatModal.tsx'
       - 'src/screens/CheckoutScreen.tsx'
       - 'src/services/catalogFacts.ts'
@@ -20,6 +29,9 @@ permissions:
 jobs:
   catalog-trust:
     runs-on: ubuntu-24.04
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -30,6 +42,20 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: node --experimental-strip-types --test tests/catalog-trust.test.mjs tests/catalog-facts.test.mjs tests/menu-help-response.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs
+      - run: node --experimental-strip-types --test tests/catalog-trust.test.mjs tests/catalog-facts.test.mjs tests/menu-help-response.test.mjs tests/checkout-render.test.mjs tests/original-pickup.test.mjs tests/l3-p1-catalog-speed-accuracy.test.mjs tests/customer-public-browse-without-gps.test.mjs tests/customer-nearby-cache-main.test.mjs tests/default-image-fallback.test.mjs
       - run: npm run lint
       - run: npm run build
+      - name: Install Chromium for isolated L3-P1 Home evidence
+        run: npx playwright install chromium
+      - name: Check actual ShopCards at 320px, 390px and desktop (synthetic menus, no writes)
+        env:
+          L3_P1_ARTIFACT_DIR: /tmp/localeats-l3-p1-home
+        run: node tests/l3-p1-home-browser.mjs
+      - name: Upload isolated L3-P1 screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-p1-catalog-browser-evidence
+          path: /tmp/localeats-l3-p1-home
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,202 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {createPublicBrowseCatalogReader,PUBLIC_BROWSE_PARALLEL_MENUS,PUBLIC_BROWSE_TTL_MS} from "../src/services/publicBrowseCatalog.ts";
+import {mapPickupShop,isWithinPickupArea} from "../src/services/pickupMapping.ts";
+import {createNearbyCatalogReader} from "../src/services/nearbyCatalogCache.ts";
+
+const shop=(id)=>({id,name:"Kitchen "+id,is_active:true,lat:-26.01,lng:28.19,location:"Ivory Park"});
+const item={id:"kota-25",name:"Kota",price:25,is_available:true};
+const source=(ids,menu)=>({shops:async()=>({shops:ids.map(shop)}),menu});
+
+test("GPS-free Home can show a validated public menu before slower shops finish",async()=>{
+ let releaseSlow=()=>{};
+ const slow=new Promise(resolve=>{releaseSlow=resolve;});
+ let firstShown=()=>{};
+ const first=new Promise(resolve=>{firstShown=resolve;});
+ const reader=createPublicBrowseCatalogReader(source(["quick","slow"],async(id)=>{
+  if(id==="slow")await slow;
+  return {menu_items:[item]};
+ }),mapPickupShop);
+ const running=reader({onProgress:firstShown});
+ const partial=await first;
+ assert.equal(partial.shops.length,1);
+ assert.equal(partial.shops[0].id,"quick");
+ assert.equal(partial.incomplete,true);
+ assert.equal(partial.shops[0].distance,undefined);
+ assert.equal(isWithinPickupArea(partial.shops[0]),false);
+ releaseSlow();
+ const result=await running;
+ assert.deepEqual(result.shops.map(s=>s.id),["quick","slow"]);
+ assert.equal(result.incomplete,false);
+ assert.deepEqual(result.shops[0].menu.map(m=>m.price),[25]);
+});
+
+test("network fan-out stays bounded without losing source shop order",async()=>{
+ assert.equal(PUBLIC_BROWSE_PARALLEL_MENUS,6);
+ let active=0,highWater=0,reads=0;
+ const ids=Array.from({length:21},(_,i)=>"s"+i);
+ const reader=createPublicBrowseCatalogReader(source(ids,async()=>{
+  active++;highWater=Math.max(highWater,active);reads++;
+  await new Promise(resolve=>setTimeout(resolve,2));
+  active--;
+  return {menu_items:[item]};
+ }),mapPickupShop);
+ const result=await reader();
+ assert.equal(result.shops.length,21);
+ assert.equal(reads,21);
+ assert.ok(highWater<=PUBLIC_BROWSE_PARALLEL_MENUS);
+ assert.ok(highWater>=2);
+ assert.deepEqual(result.shops.map(s=>s.id),ids);
+ assert.equal(result.incomplete,false);
+});
+
+test("a timed-out menu is omitted, never replaced by a fabricated item or cached",async()=>{
+ let aborted=false;
+ const reader=createPublicBrowseCatalogReader(source(["valid","stalled"],async(id,signal)=>{
+  if(id==="stalled"){
+   signal.addEventListener("abort",()=>{aborted=true;},{once:true});
+   return new Promise(()=>{});
+  }
+  return {menu_items:[item]};
+ }),mapPickupShop,{parallelMenus:2,menuTimeoutMs:20});
+ const result=await reader();
+ assert.equal(result.incomplete,true);
+ assert.deepEqual(result.shops.map(s=>s.id),["valid"]);
+ assert.equal(result.shops[0].menu[0].name,"Kota");
+ assert.equal(aborted,true);
+});
+
+test("unknown or invalid menus never become valid cards, and an empty public catalog stays empty",async()=>{
+ const empty=createPublicBrowseCatalogReader(source([],async()=>({menu_items:[]})),mapPickupShop);
+ assert.deepEqual(await empty(),{shops:[],incomplete:false});
+ const rejected=createPublicBrowseCatalogReader(source(["wrong"],async()=>({menu_items:[{id:"bad",name:"Bad",price:-25,is_available:true}]})),mapPickupShop);
+ await assert.rejects(()=>rejected(),/could not be loaded/);
+ const invalid=createPublicBrowseCatalogReader({shops:async()=>({shops:null}),menu:async()=>({menu_items:[item]})},mapPickupShop);
+ await assert.rejects(()=>invalid(),/unavailable/);
+});
+
+test("image requests are sized for their display slots without changing original cards",()=>{
+ const photo=readFileSync("src/components/BlurUpImage.tsx","utf8");
+ const card=readFileSync("src/components/ShopCard.tsx","utf8");
+ const cart=readFileSync("src/components/CartDrawer.tsx","utf8");
+ const checkout=readFileSync("src/screens/CheckoutScreen.tsx","utf8");
+ const app=readFileSync("src/App.tsx","utf8");
+ assert.match(photo,/imageWidth\?: 160 \| 320 \| 600/);
+ assert.match(photo,/imageWidth = 600/);
+ assert.match(photo,/w=\$\{imageWidth\}/);
+ assert.match(card,/imageWidth=\{160\}/);
+ assert.match(cart,/imageWidth=\{160\}/);
+ assert.match(checkout,/imageWidth=\{160\}/);
+ assert.match(app,/readPublicBrowseCatalogProgressive/);
+ assert.match(app,/if\(generation!==catalogGeneration\.current\)return/);
+ assert.match(app,/setLoadingShops\(false\)/);
+});
+
+test("the old synthetic shop loader is not imported by the active Customer app",()=>{
+ const app=readFileSync("src/App.tsx","utf8");
+ const legacy=readFileSync("src/hooks/useShopsData.ts","utf8");
+ assert.doesNotMatch(app,/from [\"'].*hooks\/useShopsData/);
+ assert.match(legacy,/DEFAULT_FALLBACK_SHOPS/);
+});
+
+
+test("GPS-verified shops appear progressively without storing incomplete catalogs",async()=>{
+ const point={lat:-26.01,lng:28.19};
+ let releaseSlow=()=>{};
+ const slow=new Promise(resolve=>{releaseSlow=resolve;});
+ let firstShown=()=>{};
+ const first=new Promise(resolve=>{firstShown=resolve;});
+ let menuReads=0;
+ const firstShop={...shop("near"),distance_km:1.0};
+ const laterShop={...shop("later"),distance_km:4.5};
+ const reader=createNearbyCatalogReader({
+  shops:async()=>({shops:[firstShop,laterShop]}),
+  menu:async id=>{
+   menuReads++;
+   if(id==="later")await slow;
+   return {menu_items:[item]};
+  },
+ },mapPickupShop);
+ const task=reader(point,{onProgress:firstShown});
+ const partial=await first;
+ assert.equal(partial.incomplete,true);
+ assert.deepEqual(partial.shops.map(s=>s.id),["near"]);
+ assert.equal(isWithinPickupArea(partial.shops[0]),true);
+ releaseSlow();
+ const result=await task;
+ assert.deepEqual(result.shops.map(s=>s.id),["near","later"]);
+ assert.equal(isWithinPickupArea(result.shops[1]),false);
+ assert.equal(result.incomplete,false);
+ assert.strictEqual(await reader(point),result,"Only the final complete set is cached");
+ assert.equal(menuReads,2);
+});
+
+
+test("public browsing reuses only complete verified menus for fifteen seconds",async()=>{
+ const clock={now:1000};let reads=0;
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{reads++;return {shops:[shop("one")]};},
+  menu:async()=>({menu_items:[item]}),
+ },mapPickupShop,{},()=>clock.now);
+ const first=await reader();
+ const cached=await reader();
+ assert.strictEqual(cached,first);
+ assert.equal(reads,1);
+ assert.equal(PUBLIC_BROWSE_TTL_MS,15000);
+ clock.now+=PUBLIC_BROWSE_TTL_MS;
+ const fresh=await reader();
+ assert.notStrictEqual(fresh,first);
+ assert.equal(reads,2);
+ await reader({force:true});
+ assert.equal(reads,3,"Manual reload must bypass the fresh memory cache.");
+});
+
+test("concurrent public refreshes reuse network calls and notify both Home listeners",async()=>{
+ let release=()=>{},calls=0,a=0,b=0;
+ const menuGate=new Promise(resolve=>{release=resolve;});
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{calls++;return {shops:[shop("shared")]};},
+  menu:async()=>menuGate,
+ },mapPickupShop);
+ const p1=reader({onProgress:()=>a++});
+ const p2=reader({onProgress:()=>b++});
+ release({menu_items:[item]});
+ const [first,second]=await Promise.all([p1,p2]);
+ assert.strictEqual(first,second);
+ assert.equal(calls,1);
+ assert.equal(a,1);
+ assert.equal(b,1);
+});
+
+test("partial public catalog never becomes a fresh memory cache hit",async()=>{
+ let calls=0,broken=true;
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{calls++;return {shops:[shop("good"),shop("bad")]};},
+  menu:async id=>id==="bad" && broken?{menu_items:null}:{menu_items:[item]},
+ },mapPickupShop);
+ const partial=await reader();
+ assert.equal(partial.incomplete,true);
+ assert.equal(partial.shops.length,1);
+ broken=false;
+ const full=await reader();
+ assert.equal(full.incomplete,false);
+ assert.equal(full.shops.length,2);
+ assert.equal(calls,2);
+ assert.strictEqual(await reader(),full);
+ assert.equal(calls,2);
+});
+
+
+test("same-location Home refresh does not replace a full shop list with a partial one",()=>{
+ const app=readFileSync("src/App.tsx","utf8");
+ const entry=app.indexOf("const showVerifiedProgress=");
+ assert.ok(entry>0);
+ const handler=app.slice(entry,entry+1050);
+ assert.match(handler,/if\(generation!==catalogGeneration\.current\)return/);
+ assert.match(handler,/if\(sameLocation\)return/);
+ assert.match(handler,/setShops\(partial\.shops\)/);
+ const preceding=app.slice(entry-1100,entry);
+ assert.match(preceding,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
+ assert.match(preceding,/if\(!sameLocation\)\{/);
+});

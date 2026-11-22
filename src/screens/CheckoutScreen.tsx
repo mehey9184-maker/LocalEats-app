@@ -1962,6 +1962,7 @@ export function CheckoutScreen({
                             <div className="size-14 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-800 bg-white shrink-0 shadow-sm relative">
                               <BlurUpImage
                                 src={item.image || DEFAULT_MENU_IMAGE}
+                        imageWidth={160}
                                 alt={item.name}
                                 className="w-full h-full object-cover"
                                 blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
@@ -2673,6 +2674,7 @@ export function CheckoutScreen({
                     <div className="size-14 rounded-xl overflow-hidden shrink-0 shadow-sm border bg-white relative">
                       <BlurUpImage
                         src={item.image || DEFAULT_MENU_IMAGE}
+                        imageWidth={160}
                         alt={item.name}
                         className="w-full h-full object-cover"
                         blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}

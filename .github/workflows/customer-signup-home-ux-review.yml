@@ -14,6 +14,11 @@ on:
       - 'src/components/SignupFlowHeader.tsx'
       - 'src/components/LocalKotaIllustration.tsx'
       - 'src/App.tsx'
+      - 'src/components/ShopCard.tsx'
+      - 'src/components/BlurUpImage.tsx'
+      - 'src/services/publicBrowseCatalog.ts'
+      - 'src/services/nearbyCatalogCache.ts'
+      - 'tests/l3-p1-home-*'
       - 'tests/signup-home-ux-*'
       - 'tests/firebase-auth-compatibility.test.mjs'
       - 'src/lib/supabase.ts'
@@ -57,5 +62,17 @@ jobs:
         with:
           name: signup-home-ui-screens
           path: /tmp/localeats-signup-home-ux
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: L3-P1 isolated customer shop cards: first-card timing, 320/390/desktop, no writes
+        env:
+          L3_P1_ARTIFACT_DIR: /tmp/localeats-l3-p1-home
+        run: node tests/l3-p1-home-browser.mjs
+      - name: Upload L3-P1 verified-menu screenshots (synthetic, not Production)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: l3-p1-home-visual-evidence
+          path: /tmp/localeats-l3-p1-home
           if-no-files-found: ignore
           retention-days: 7

@@ -56,7 +56,7 @@ test('submission remains blocked regardless of quote consent and original entry 
  assert.match(checkout,/await handlePickupAction\(\); return;/);
  assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return;/);
  const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
- assert.match(app,/readPickupCatalog\(userLocation\)/);assert.doesNotMatch(app,/setShops\(DEFAULT_FALLBACK_SHOPS\)/);
+ assert.match(app,/readPickupCatalog\(userLocation,\{onProgress:showVerifiedProgress\}\)/);assert.doesNotMatch(app,/setShops\(DEFAULT_FALLBACK_SHOPS\)/);
 });
 
 test('missing-location retry requests device location instead of reloading a catalog with null coordinates',()=>{
