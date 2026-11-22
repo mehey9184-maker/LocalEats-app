@@ -45,9 +45,9 @@ export const ShopCard = memo(
     const outsidePickupArea = isOutsidePickupArea(shop);
     const locationUnknown = shop.distance === undefined;
     const browseOnly = outsidePickupArea || locationUnknown;
-    const away=isShopAway(shop);
+    const notAcceptingOrders = status.message === "Away / Not Accepting Orders";
     const trustState=shopCardTrustState({
-      outsidePickupArea,locationUnknown,away,
+      outsidePickupArea,locationUnknown,notAcceptingOrders,
       isOpen:status.isOpen,
       nextOpeningTime:status.nextOpeningTime,
     });
@@ -106,8 +106,8 @@ export const ShopCard = memo(
           ? `${shop.name}. ${distanceStr} away. Outside the 4 kilometer pickup area. Browse menu only.`
           : locationUnknown
             ? `${shop.name}. Location needed to order. Browse menu only.`
-            : away
-              ? `${shop.name}. Temporarily away. Browse menu only.`
+            : notAcceptingOrders
+              ? `${shop.name}. Not taking orders. Browse menu only.`
               : !status.isOpen
                 ? `${shop.name}. Closed. Browse menu only.`
                 : `${shop.name}. ${distanceStr} away. View menu.`}
@@ -173,12 +173,12 @@ export const ShopCard = memo(
               className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide px-2.5 py-1.5 rounded-full shadow-md backdrop-blur-md border ${
                 browseOnly
                   ? "bg-white text-slate-900 border-slate-400 dark:bg-slate-100 dark:text-slate-900"
-                  : status.isOpen && !away
+                  : status.isOpen && !notAcceptingOrders
                     ? "bg-emerald-500/90 text-white border-emerald-400/80"
                     : "bg-slate-900/85 text-slate-200 border-slate-700"
               }`}
             >
-              {(browseOnly||away) && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+              {(browseOnly||notAcceptingOrders) && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
               {trustState.badge}
             </span>
 
@@ -239,9 +239,9 @@ export const ShopCard = memo(
                 </span>
               </div>
             )}
-            {away && (
+            {notAcceptingOrders && (
               <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/40">
-                ⚠️ Temporarily Away
+                ⚠️ Not taking orders
               </span>
             )}
             {trustState.hoursHint && (
