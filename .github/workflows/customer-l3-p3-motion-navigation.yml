@@ -1,0 +1,56 @@
+name: L3-P3 Customer smooth motion and accessible navigation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'src/components/AppNotificationToast.tsx'
+      - 'src/components/BottomNavigation.tsx'
+      - 'src/components/BottomSheet.tsx'
+      - 'src/components/CartDrawer.tsx'
+      - 'src/components/FloatingCartButton.tsx'
+      - 'src/components/ShopCard.tsx'
+      - 'src/screens/SettingsScreen.tsx'
+      - 'tests/l3-p3-*'
+      - 'docs/L3_P3_MOTION_FEEDBACK_NAVIGATION_20261122.md'
+      - '.github/workflows/customer-l3-p3-motion-navigation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  motion-navigation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Focused P3, pickup and login regressions
+        run: node --experimental-strip-types --test tests/l3-p3-motion-navigation.test.mjs tests/original-pickup.test.mjs tests/login-apple-notification.test.mjs tests/checkout-render.test.mjs tests/default-image-fallback.test.mjs
+      - name: Check TypeScript
+        run: npm run lint
+      - name: Build with ordering disabled
+        run: npm run build
+      - name: Install Chromium
+        run: npx playwright install chromium
+      - name: Real React keyboard and reduced-motion browser evidence
+        env:
+          L3_P3_ARTIFACT_DIR: /tmp/localeats-l3-p3
+        run: node tests/l3-p3-navigation-browser.mjs
+      - name: Upload P3 isolated screenshots, no real accounts or orders
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-p3-navigation-feedback-visuals
+          path: /tmp/localeats-l3-p3
+          if-no-files-found: ignore
+          retention-days: 7
