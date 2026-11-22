@@ -1,0 +1,53 @@
+name: L3-P2 Customer Data Saver and safe offline directory
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/App.tsx'
+      - 'src/components/BlurUpImage.tsx'
+      - 'src/components/OfflineShopDirectory.tsx'
+      - 'src/screens/SettingsScreen.tsx'
+      - 'src/services/dataSaverPreference.ts'
+      - 'src/services/offlineShopDirectory.ts'
+      - 'tests/l3-p2-*'
+      - 'docs/L3_P2_DATA_SAVER_SAFE_OFFLINE_20261122.md'
+      - '.github/workflows/customer-l3-p2-data-saver-offline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  data-saver-and-offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Data Saver, offline directory, cache and pickup safety
+        run: node --experimental-strip-types --test tests/l3-p2-data-saver-offline.test.mjs tests/customer-cache-safety-main.test.mjs tests/original-pickup.test.mjs tests/default-image-fallback.test.mjs
+      - name: TypeScript
+        run: npm run lint
+      - name: Vite and API build with ordering disabled
+        run: npm run build
+      - name: Install Chromium for isolated Data Saver and offline UI checks
+        run: npx playwright install chromium
+      - name: Verify no photo request before opt-in at 320px and 390px
+        env:
+          L3_P2_ARTIFACT_DIR: /tmp/localeats-l3-p2-data
+        run: node tests/l3-p2-photo-browser.mjs
+      - name: Save isolated visual evidence (no real accounts or orders)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-p2-data-saver-offline-screenshots
+          path: /tmp/localeats-l3-p2-data
+          if-no-files-found: ignore
+          retention-days: 7

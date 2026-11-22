@@ -223,12 +223,15 @@ export function SettingsScreen({
                       Data Saver Mode
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Optimizes images and map loading
+                      Hides shared food photos until you choose to view them
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
+                  role="switch"
+                  aria-label="Data Saver Mode"
+                  aria-checked={!!dataSaverEnabled}
                   onClick={onToggleDataSaver}
                   className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
                     dataSaverEnabled ? "bg-orange-500" : "bg-slate-300 dark:bg-slate-600"
