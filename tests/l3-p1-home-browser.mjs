@@ -61,6 +61,11 @@ try{
   assert.equal(await page.getByText("No rating available").count()>=1,true);
   assert.equal(await page.getByText("Location needed").count()>=1,true);
   assert.equal(await page.getByText("Browse menu only").count()>=1,true);
+  const price=page.getByTestId("shop-fast-shop").locator("p.whitespace-nowrap");
+  assert.equal(await price.count(),1,"Menu price should stay on one line, even on 320px.");
+  assert.equal(await price.evaluate(el=>getComputedStyle(el).whiteSpace),"nowrap");
+  const action=page.getByTestId("shop-fast-shop").locator("button.whitespace-nowrap");
+  assert.ok(await action.count()>=1,"Compact menu action should not split mid-label.");
   const dims=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,viewport:innerWidth}));
   assert.ok(dims.scroll<=dims.viewport+1,`Horizontal overflow at ${width}: ${JSON.stringify(dims)}`);
   // Full-page captures should show the sticky header at document top rather
