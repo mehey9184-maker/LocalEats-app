@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-import {createPublicBrowseCatalogReader,PUBLIC_BROWSE_PARALLEL_MENUS} from "../src/services/publicBrowseCatalog.ts";
+import {createPublicBrowseCatalogReader,PUBLIC_BROWSE_PARALLEL_MENUS,PUBLIC_BROWSE_TTL_MS} from "../src/services/publicBrowseCatalog.ts";
 import {mapPickupShop,isWithinPickupArea} from "../src/services/pickupMapping.ts";
 import {createNearbyCatalogReader} from "../src/services/nearbyCatalogCache.ts";
 
@@ -130,4 +130,59 @@ test("GPS-verified shops appear progressively without storing incomplete catalog
  assert.equal(result.incomplete,false);
  assert.strictEqual(await reader(point),result,"Only the final complete set is cached");
  assert.equal(menuReads,2);
+});
+
+
+test("public browsing reuses only complete verified menus for fifteen seconds",async()=>{
+ const clock={now:1000};let reads=0;
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{reads++;return {shops:[shop("one")]};},
+  menu:async()=>({menu_items:[item]}),
+ },mapPickupShop,{},()=>clock.now);
+ const first=await reader();
+ const cached=await reader();
+ assert.strictEqual(cached,first);
+ assert.equal(reads,1);
+ assert.equal(PUBLIC_BROWSE_TTL_MS,15000);
+ clock.now+=PUBLIC_BROWSE_TTL_MS;
+ const fresh=await reader();
+ assert.notStrictEqual(fresh,first);
+ assert.equal(reads,2);
+ await reader({force:true});
+ assert.equal(reads,3,"Manual reload must bypass the fresh memory cache.");
+});
+
+test("concurrent public refreshes reuse network calls and notify both Home listeners",async()=>{
+ let release=()=>{},calls=0,a=0,b=0;
+ const menuGate=new Promise(resolve=>{release=resolve;});
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{calls++;return {shops:[shop("shared")]};},
+  menu:async()=>menuGate,
+ },mapPickupShop);
+ const p1=reader({onProgress:()=>a++});
+ const p2=reader({onProgress:()=>b++});
+ release({menu_items:[item]});
+ const [first,second]=await Promise.all([p1,p2]);
+ assert.strictEqual(first,second);
+ assert.equal(calls,1);
+ assert.equal(a,1);
+ assert.equal(b,1);
+});
+
+test("partial public catalog never becomes a fresh memory cache hit",async()=>{
+ let calls=0,broken=true;
+ const reader=createPublicBrowseCatalogReader({
+  shops:async()=>{calls++;return {shops:[shop("good"),shop("bad")]};},
+  menu:async id=>id==="bad" && broken?{menu_items:null}:{menu_items:[item]},
+ },mapPickupShop);
+ const partial=await reader();
+ assert.equal(partial.incomplete,true);
+ assert.equal(partial.shops.length,1);
+ broken=false;
+ const full=await reader();
+ assert.equal(full.incomplete,false);
+ assert.equal(full.shops.length,2);
+ assert.equal(calls,2);
+ assert.strictEqual(await reader(),full);
+ assert.equal(calls,2);
 });
