@@ -104,7 +104,7 @@ test("active app keeps same-location cards during refresh but fails closed on ne
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
   assert.match(app,/if\(!sameLocation\)\{\s*displayedCatalogKeyRef\.current=null;\s*setShops\(\[\]\)/);
   assert.match(app,/displayedCatalogKeyRef\.current=null;\s*setShops\(\[\]\);\s*setFetchError/);
-  assert.match(app,/await readPickupCatalog\(userLocation\)/);
+  assert.match(app,/await readPickupCatalog\(userLocation,\{onProgress:showVerifiedProgress\}\)/);
   assert.match(service,/createNearbyCatalogReader\([\s\S]*?\}, mapPickupShop\)/);
   assert.doesNotMatch(module,/localStorage|sessionStorage|indexedDB|fetch\(/);
   const storefront=app.slice(app.indexOf("function StoreInfoScreen("),app.indexOf("const filteredMenu",app.indexOf("function StoreInfoScreen(")));
