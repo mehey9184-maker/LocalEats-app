@@ -14,6 +14,8 @@ type PublicSource={
   menu:(id:string)=>Promise<{menu_items?:unknown[]}>;
 };
 export const NEARBY_CATALOG_TTL_MS=15_000;
+export const NEARBY_CATALOG_PARALLEL_MENUS=6;
+export const NEARBY_CATALOG_MENU_TIMEOUT_MS=6_000;
 const MAX_LOCATIONS=3;
 
 export function nearbyCatalogKey(point:Point|null):string|null {
@@ -28,9 +30,14 @@ export function createNearbyCatalogReader(
   source:PublicSource,
   mapShop:(shop:any,menu:any[])=>Shop,
   now:()=>number=()=>Date.now(),
+  settings:{parallelMenus?:number;menuTimeoutMs?:number}={},
 ) {
+  const parallelMenus=Math.max(1,Math.min(8,Math.floor(settings.parallelMenus ?? NEARBY_CATALOG_PARALLEL_MENUS)));
+  const menuTimeoutMs=Math.max(1,settings.menuTimeoutMs ?? NEARBY_CATALOG_MENU_TIMEOUT_MS);
   const verified=new Map<string,{time:number;catalog:NearbyCatalog}>();
   const pending=new Map<string,Promise<NearbyCatalog>>();
+  // Overlapping same-location reloads share network requests *and* verified progress.
+  const listeners=new Map<string,Set<(partial:NearbyCatalog)=>void>>();
 
   return async (location:Point|null, options:{force?:boolean;onProgress?:(partial:NearbyCatalog)=>void}={}):Promise<NearbyCatalog> => {
     const key=nearbyCatalogKey(location);
@@ -44,42 +51,73 @@ export function createNearbyCatalogReader(
     // React effects, focus and manual refreshes may overlap. Coalesce without
     // showing a cached response whose freshness has expired.
     const inFlight=pending.get(key);
-    if(inFlight)return inFlight;
+    if(inFlight){
+      if(options.onProgress)listeners.get(key)?.add(options.onProgress);
+      return inFlight;
+    }
     verified.delete(key);
+    const callbacks=new Set<(partial:NearbyCatalog)=>void>();
+    if(options.onProgress)callbacks.add(options.onProgress);
+    listeners.set(key,callbacks);
     const task=(async()=>{
       const catalog=await source.shops(point);
       if(!Array.isArray(catalog.shops))throw new Error("The shop service returned an invalid catalog.");
-      // Reveal only fully validated shop/menu pairs, never a shop without its
-      // real menu. Progress is transient and is never added to the verified cache.
+      // Keep original distance ordering, omit malformed menus and bound fan-out
+      // for customers on slow connections. Only complete results enter the cache.
       const ready:(Shop|null)[]=Array(catalog.shops.length).fill(null);
-      const menus = await Promise.all(catalog.shops.map(async (shop,index) => {
-        if (!shop || typeof shop.id !== "string" || !shop.id) {
-          throw new Error("The shop service returned an invalid shop.");
+      let next=0,validated=0;
+      const worker=async()=>{
+        while(true){
+          const index=next++;
+          if(index>=catalog.shops.length)return;
+          const shop=catalog.shops[index];
+          if(!shop || typeof shop.id!=="string" || !shop.id)continue;
+          let timeout:ReturnType<typeof setTimeout>|undefined;
+          try{
+            const menu=await Promise.race([
+              source.menu(shop.id),
+              new Promise<never>((_,reject)=>{
+                timeout=setTimeout(()=>reject(new Error("Pickup menu timed out.")),menuTimeoutMs);
+              }),
+            ]);
+            if(!Array.isArray(menu?.menu_items))continue;
+            const mapped=mapShop(shop,menu.menu_items);
+            ready[index]=mapped;
+            validated++;
+            // First card is immediate; batching later updates avoids a React
+            // re-render for every image/menu on a large catalog.
+            if(validated===1 || validated%4===0){
+              const partial={shops:ready.filter((item):item is Shop=>item!==null),incomplete:true};
+              for(const notify of callbacks){
+                try{notify(partial);}catch{/* UI progress must not invalidate verified catalog data. */}
+              }
+            }
+          }catch{
+            // A stalled, missing or invalid menu never becomes a fake shop.
+          }finally{
+            if(timeout!==undefined)clearTimeout(timeout);
+          }
         }
-        const menu = await source.menu(shop.id).catch(() => null);
-        if (!Array.isArray(menu?.menu_items)) return null;
-        const mapped=mapShop(shop, menu.menu_items);
-        ready[index]=mapped;
-        if(options.onProgress){
-          const visible=ready.filter((item):item is Shop=>item!==null);
-          if(visible.length)options.onProgress({shops:visible,incomplete:true});
-        }
-        return mapped;
-      }));
-      const shops = menus.filter((shop): shop is Shop => shop !== null);
-      const incomplete = shops.length !== menus.length;
-      if (incomplete && shops.length === 0) {
+      };
+      await Promise.all(Array.from(
+        {length:Math.min(parallelMenus,catalog.shops.length)},
+        ()=>worker(),
+      ));
+      const shops=ready.filter((shop):shop is Shop=>shop!==null);
+      const incomplete=shops.length!==catalog.shops.length;
+      if(incomplete && shops.length===0)
         throw new Error("Pickup menus could not be loaded. Please retry.");
-      }
-      const result = {shops, incomplete};
-      if (!incomplete) {
-        verified.set(key, {time: now(), catalog: result});
-        while (verified.size > MAX_LOCATIONS) verified.delete(verified.keys().next().value!);
+      const result={shops,incomplete};
+      if(!incomplete){
+        verified.set(key,{time:now(),catalog:result});
+        while(verified.size>MAX_LOCATIONS)verified.delete(verified.keys().next().value!);
       }
       return result;
     })();
     pending.set(key,task);
     try{return await task;}
-    finally{if(pending.get(key)===task)pending.delete(key);}
+    finally{
+      if(pending.get(key)===task){pending.delete(key);listeners.delete(key);}
+    }
   };
 }
