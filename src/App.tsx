@@ -1168,9 +1168,12 @@ export default function App() {
     setIsSyncing(true);
     setFetchError(null);
     const showVerifiedProgress=(partial:{shops:Shop[];incomplete:boolean})=>{
-      // Only reveal verified shop/menu pairs from the current GPS/browse key.
+      // Only reveal verified shop/menu pairs from the active GPS/browse key.
       // Old requests cannot repaint Home after location or refresh changes.
       if(generation!==catalogGeneration.current)return;
+      // Same-location revalidation must keep previously visible complete cards.
+      // Replacing them with a partial list makes shops vanish and reappear.
+      if(sameLocation)return;
       displayedCatalogKeyRef.current=key;
       setShops(partial.shops);
       setLoadingShops(false);
