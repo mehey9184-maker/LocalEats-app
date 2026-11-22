@@ -17,7 +17,7 @@ test("checkout and order tracking use real named exports through lazy route impo
 });
 
 test("existing page-level errors and loading UX remain in place",()=>{
-  const checkoutEntry=app.indexOf('currentScreen === "checkout"');
+  const checkoutEntry=app.indexOf('{currentScreen === "checkout" && (');
   const trackingEntry=app.indexOf('{currentScreen === "order-tracking" && (');
   assert.ok(checkoutEntry>0&&trackingEntry>0);
   const checkoutMarkup=app.slice(checkoutEntry,checkoutEntry+1600);
@@ -35,7 +35,9 @@ test("pickup remains review-only and map discovery plus QR and cropper lazy path
   assert.match(checkout,/if \(!pickupOrderingEnabled\(\) \|\| quoteLock\.current\) return;/);
   assert.match(pickup,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
   assert.match(app,/const sameLocation=!!key && key===displayedCatalogKeyRef\.current/);
-  assert.match(app,/const visibleShops=userLocation && nearbyCatalogKey\(userLocation\)===displayedCatalogKeyRef\.current/);
+  // Known GPS and GPS-denied public browsing are isolated catalogue states.
+  assert.match(app,/const currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
+  assert.match(app,/const visibleShops=currentCatalogKey===displayedCatalogKeyRef\.current/);
   assert.match(app,/<ShopCard\b/);
   assert.match(app,/<MenuItemCard\b/);
   assert.match(app,/const DeferredProfileCropper = lazy\(/);

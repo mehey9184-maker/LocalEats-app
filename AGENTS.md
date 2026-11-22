@@ -1,5 +1,17 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## Owner-approved signup-to-Home design (2026-11-22)
+New development branch `develop/signup-home-ux-pr128-20261122` builds on unmerged PR #128, preserves its QR guest-menu/cart and install logic, and implements the approved five-screen UX (Welcome → details → password → conditional email verification → browse Home). See `docs/LOCALEATS_SIGNUP_TO_HOME_UX_2026-11-22.md`. The screens use local Kota artwork, original logo, menu-first CTA, 2-step accessible form, password guidance, honest optional verification, truthful Home shop/location messaging and a neutral trust icon. React UI fixture and Chromium 390px/320px browser simulation make **no account, order, database or Production requests**. Only the isolated fixture mocks Firebase account registration; the real signup handler creates Firebase users, sends verification emails where possible and returns a Firebase token through the app's compatibility adapter. No Production deployment or merge is authorized. The original ShopCard, bottom nav, checkout 4km guards and PR #128 QR install behavior must remain intact.
+
+
+## Production release candidate (2026-11-21)
+See [full cross-project release checklist in Merchant/API repo](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/blob/review/l3-n8u-s-customer-apex-cors-fix/docs/LOCALEATS_PRODUCTION_RELEASE_READINESS_2026-11-21.md) and [Customer current-main distant-shop recovery](docs/L3_N8U_S_CURRENT_MAIN_DISTANT_BROWSE_RECOVERY.md). This PR is the source-only public browse candidate; its live PWA/GET-only production smoke, server Gemini-key-injection removal, and all CI must pass. The API's public WWW domain works but apex CORS is broken until separate PR #215 deploys. Source UI still requires manual visual acceptance and real shops review; My-Kota is effectively offline. Never switch on Production pickup writes, spoof GPS, push to devices or represent staged synthetic checks as an actual order. A successful browser read is not permission to take money or accept a real order.
+
+
+## L3-N8U-S (21 Nov 2026): Distant-shop browsing and real-location pickup safety
+Read [L3-N8U-S current-main distant browsing report](docs/L3_N8U_S_CURRENT_MAIN_DISTANT_BROWSE_RECOVERY.md) before changing shop discovery, CORS, GPS, menus or cart. The owner-approved outside-4-km pale/browse-only card Preview is [Customer PR #103](https://github.com/mehey9184-maker/LocalEats-app/pull/103); this new draft replays only its needed source changes onto current main, preserving newer checkout/notifications/navigation. Verified live Production API **allows WWW Customer but rejects apex Customer via CORS (403)**; separate API draft PR #215 fixes this exact origin only and must not be blindly merged. The owner's remote Customer cannot genuinely place a My-Kota order while over 4 km; test remote browsing with real location and only conduct real pickup from an authorized consenting nearby customer at an open shop. Production pickup stays OFF; no fake locations, public flag changes, API bypasses, merges or real FCM.
+
+
 ## Active pickup-only Codex policy (2026-11-05)
 
 **Current business scope supersedes historical rider/delivery descriptions above:** the near-term LocalEats release is customer pickup only, with pay-at-shop (cash or the shop's physical card machine). Rider/delivery expansion is deferred for at least six months after real customer use and requires a later explicit owner decision. Do not enable online payments, subscriptions, live orders, riders, or delivery while preparing Preview.
@@ -141,3 +153,7 @@ StartupExperience coordinates the existing privacy and cookie prompts before mou
 
 ## Customer first paint — 2026-11-07
 The initial HTML reserves the Home header, card grid and bottom navigation before the app bundle arrives. React replaces the static shell on its first commit and retains the existing session recovery behavior. If the bundle fails or startup exceeds 15 seconds, the HTML offers Retry before React mounts.
+
+
+## Customer QR guest/install continuity — 2026-11-22
+On the focused feature branch, QR shop links retain original menus through refresh and auth. Guest means unauthenticated browsing, not anonymous account creation. Checkout sign-in preserves cart/options and removes auth screens from the checkout Back path. Optional menu installation is click-driven, non-modal, and separate from push permission, with two-item engagement and seven-day dismissal. Preserve all original checkout/server eligibility gates. PR #125 remains a prerequisite; no Production merge/deploy or real ordering is authorized by this change.
