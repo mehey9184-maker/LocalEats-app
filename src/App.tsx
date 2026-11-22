@@ -3093,6 +3093,7 @@ export default function App() {
                     setCurrentScreen("setup-password");
                   }}
                   onLogin={() => setCurrentScreen("login")}
+                  onBack={() => setCurrentScreen("splash")}
                   setNotification={setNotification}
                 />
               )}
