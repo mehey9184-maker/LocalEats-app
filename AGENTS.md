@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L3-P4 (2026-11-22): truthful availability and scalable idea register — draft
+Source-only Customer branch `review/l3-p4-customer-trust-ideas-20261122`. `shopCardTrustState` aligns visible and screen-reader Open/Not-taking-orders/Closed/GPS/Outside-4km status; never show an available pickup pill while a shop is inactive or closed, and never invent opening time `Soon`. Pickup eligibility, data reads, server prices and authorization are unchanged. The **canonical** product-family strategy register is `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`; future merchant image CDN/cache reuse is **captured but not implemented**. Every feature idea requires evidence and an explicit owner decision. P1–P3 remain separate unmerged draft PRs. No production activation, data writes or merge. See `docs/L3_P4_CUSTOMER_TRUST_20261122.md` and its source tests.
+
+
 ## L3-P3 Customer animation, accessibility and navigation — draft (2026-11-22)
 Review branch `review/l3-p3-motion-feedback-navigation-20261122` is based on stable Customer main, not P1 #134 or P2 #135. It preserves the five bottom tabs, original ShopCard and customer flow. Reduced-motion disables unnecessary scaling/sliding for ShopCard, menu, cart items, floating cart and in-app notifications; tapping the active tab does not reroute or vibrate; cart prices are **estimated until authoritative checkout quote**; BottomSheet focuses/traps/returns keyboard focus; Settings profile actions and switches are keyboard-accessible. This is source-only Preview with browser acceptance in `tests/l3-p3-navigation-browser.mjs` and CI `customer-l3-p3-motion-navigation.yml`. Production pickup stays OFF. No real payment/orders, photo download strategy, CDN, server edits, database changes, or merges without separate owner approval. Full contract: `docs/L3_P3_MOTION_FEEDBACK_NAVIGATION_20261122.md`.
 
