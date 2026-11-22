@@ -640,7 +640,7 @@ export const FirestoreService = {
               name: m.name || m.title || "Menu Item",
               price: Number(m.price || 0),
               displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
-              image: m.image_url || m.image || m.photo || defaultImages[0],
+              image: m.image_url || m.image || m.photo || "",
               description: m.description || "",
               category: m.category || "Main Course",
               is_available: m.is_available !== false && m.available !== false,
@@ -653,7 +653,7 @@ export const FirestoreService = {
               name: m.name || m.title || "Menu Item",
               price: Number(m.price || 0),
               displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
-              image: m.image_url || m.image || m.photo || defaultImages[0],
+              image: m.image_url || m.image || m.photo || "",
               description: m.description || "",
               category: m.category || "Main Course",
               is_available: m.is_available !== false && m.available !== false,
@@ -671,7 +671,7 @@ export const FirestoreService = {
                 name: m.name || m.title || "Menu Item",
                 price: Number(m.price || 0),
                 displayPrice: `R${Number(m.price || 0).toFixed(2)}`,
-                image: m.image_url || m.image || m.photo || defaultImages[0],
+                image: m.image_url || m.image || m.photo || "",
                 description: m.description || "",
                 category: m.category || "Main Course",
                 is_available: m.is_available !== false && m.available !== false,
@@ -690,7 +690,7 @@ export const FirestoreService = {
                       name: data.name || data.title || "Menu Item",
                       price: Number(data.price || 0),
                       displayPrice: `R${Number(data.price || 0).toFixed(2)}`,
-                      image: data.image_url || data.image || data.photo || defaultImages[0],
+                      image: data.image_url || data.image || data.photo || "",
                       description: data.description || "",
                       category: data.category || "Main Course",
                       is_available: data.is_available !== false && data.available !== false,
@@ -721,7 +721,7 @@ export const FirestoreService = {
             ];
           }
 
-          const logo = d.logo_url || d.logo || d.image || d.image_url || d.banner || defaultImages[0];
+          const logo = d.logo_url || d.logo || d.image || d.image_url || d.banner || "";
 
           return {
             id: String(d.id),
@@ -754,7 +754,7 @@ export const FirestoreService = {
             auto_look_for_rider: d.auto_look_for_rider !== false,
             reviewCount: Number(d.reviewCount || d.reviews_count || 24),
             prepTime: d.prepTime || d.prep_time || "15-20 min",
-            images: Array.isArray(d.images) && d.images.length > 0 ? d.images : [logo],
+            images: Array.isArray(d.images) && d.images.length > 0 ? d.images : logo ? [logo] : [],
             menu: menu,
           };
         })
