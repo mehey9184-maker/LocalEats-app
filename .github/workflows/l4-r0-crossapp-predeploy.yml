@@ -58,12 +58,30 @@ jobs:
           npm run build
       - name: Measure browser static sizes and scan for exposed server credentials
         run: node scripts/l4-r0-browser-asset-budget.mjs
+      - name: Install Chromium for actual React mobile/desktop synthetic browser validation
+        run: npx playwright install chromium
+      - name: Customer P1 source-controlled image requests, first card timing and 320/390/desktop
+        env:
+          L3_P1_ARTIFACT_DIR: artifacts/l4-r0/p1
+        run: node tests/l3-p1-home-browser.mjs
+      - name: Customer P2 Data Saver avoids photo downloads until opt-in and offline orders
+        env:
+          L3_P2_ARTIFACT_DIR: artifacts/l4-r0/p2
+        run: node tests/l3-p2-photo-browser.mjs
+      - name: Customer P3 reduced motion, original tabs, cart and accessible feedback
+        env:
+          L3_P3_ARTIFACT_DIR: artifacts/l4-r0/p3
+        run: node tests/l3-p3-navigation-browser.mjs
+      - name: Customer signup through Home without real Firebase signup/account creation
+        env:
+          SIGNUP_UX_ARTIFACT_DIR: artifacts/l4-r0/signup
+        run: node tests/signup-home-ux-browser.mjs
       - name: Upload synthetic-only Customer size report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: l4-r0-customer-gzip-audit
-          path: artifacts/l4-r0/customer-browser-assets.json
+          path: artifacts/l4-r0
           retention-days: 7
           if-no-files-found: ignore
   merchant-source:
