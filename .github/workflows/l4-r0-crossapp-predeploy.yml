@@ -1,0 +1,145 @@
+name: L4-R0 — Customer + Merchant + API pinned source acceptance (NO DEPLOY)
+on:
+  push:
+    branches:
+      - review/l4-r0-crossapp-predeploy-source-gate-20261123
+  pull_request:
+    paths:
+      - 'docs/L4_R0_PUBLIC_RELEASE_SOURCE_FREEZE_20261123.md'
+      - 'scripts/l4-r0-browser-asset-budget.mjs'
+      - '.github/workflows/l4-r0-crossapp-predeploy.yml'
+permissions:
+  contents: read
+concurrency:
+  group: l4-r0-pinned-predeploy
+  cancel-in-progress: true
+jobs:
+  customer-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CUSTOMER_SOURCE_SHA: af9b2d6b077fe702259529baaea5dd2f5ed31a44
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      PICKUP_WRITES_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+      VITE_MERCHANT_AVAILABILITY_WRITES_ENABLED: 'false'
+      VITE_LOCALEATS_API_URL: ''
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Verify Customer candidate base SHA is still pinned
+        run: |
+          test "$(git merge-base HEAD "$CUSTOMER_SOURCE_SHA")" = "$CUSTOMER_SOURCE_SHA"
+          echo "Customer CF1 candidate $CUSTOMER_SOURCE_SHA included"
+      - name: Install locked dependencies (no production credentials)
+        run: npm ci --no-audit --no-fund
+      - name: Source-only Customer startup, safety, pickup and P1–P4 regressions
+        run: |
+          node --experimental-strip-types --test \
+            tests/l3-p1-p4-integration.test.mjs \
+            tests/l3-p1-catalog-speed-accuracy.test.mjs \
+            tests/l3-p2-data-saver-offline.test.mjs \
+            tests/l3-p3-motion-navigation.test.mjs \
+            tests/l3-p4-shop-trust.test.mjs \
+            tests/cloudflare-staging-gate.test.mjs \
+            tests/customer-pickup-only-pilot.test.mjs \
+            tests/customer-outside-pickup-area-current-main.test.mjs \
+            tests/customer-startup-auth-routing.test.mjs \
+            tests/firebase-auth-compatibility.test.mjs
+      - name: Compile real Customer TypeScript and original Vite + server build
+        run: |
+          npm run lint
+          npm run build
+      - name: Measure browser static sizes and scan for exposed server credentials
+        run: node scripts/l4-r0-browser-asset-budget.mjs
+      - name: Upload synthetic-only Customer size report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l4-r0-customer-gzip-audit
+          path: artifacts/l4-r0/customer-browser-assets.json
+          retention-days: 7
+          if-no-files-found: ignore
+  merchant-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      PICKUP_WRITES_ENABLED: 'false'
+      MERCHANT_AVAILABILITY_WRITES_ENABLED: 'false'
+      VITE_MERCHANT_FAKE_ORDERS_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 66901eafd064e499ba712a78b715c14ed5e47f30
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Original Merchant pickup, crash, push and order-inbox source checks
+        run: |
+          npm ci --no-audit --no-fund
+          node --experimental-strip-types --test \
+            tests/merchant-pickup.test.mjs \
+            tests/merchant-handover.test.mjs \
+            tests/merchant-shop-revalidation.test.mjs \
+            tests/merchant-order-inbox-p1.test.mjs \
+            tests/merchant-push-registration.test.mjs \
+            tests/merchant-unpaid-ready-aging.test.mjs \
+            tests/merchant-riders-coming-soon-main.test.mjs
+      - name: Build actual Merchant application (no deployment)
+        run: npm run build
+  api-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PICKUP_WRITES_ENABLED: 'false'
+      MERCHANT_AVAILABILITY_WRITES_ENABLED: 'false'
+      ADMIN_RIDER_VERIFICATION_WRITES_ENABLED: 'false'
+      PUBLIC_CATALOG_PILOT_SHOP_IDS: ''
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 52110da7eec98813aed3021c7bdac60c0ead9a4c
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: localeats-api/package-lock.json
+      - name: Run pinned API TypeScript build and complete existing unit/integration suite
+        run: |
+          npm ci --prefix localeats-api --no-audit --no-fund
+          npm test --prefix localeats-api
+      - name: Confirm fail-closed pilot allowlist and hard-off pickup flags (source only)
+        run: |
+          grep -R -q 'PUBLIC_CATALOG_PILOT_SHOP_IDS' localeats-api/src
+          grep -R -q 'PICKUP_WRITES_ENABLED' localeats-api/src
+          echo "Source contract present; no configured public shop IDs, no writes or hosted endpoints."
+  source-gate-complete:
+    needs: [customer-source,merchant-source,api-source]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless all three independent source suites succeeded
+        env:
+          CUSTOMER: ${{ needs.customer-source.result }}
+          MERCHANT: ${{ needs.merchant-source.result }}
+          API: ${{ needs.api-source.result }}
+        run: |
+          echo "Customer source: $CUSTOMER"
+          echo "Merchant source: $MERCHANT"
+          echo "API source: $API"
+          test "$CUSTOMER" = success
+          test "$MERCHANT" = success
+          test "$API" = success
+          echo "L4_R0_PINNED_SOURCE_GATE_PASS"
+          echo "NOTE: No real hosted Customer/API pairing, FCM, GPS, restore or first pickup tested here."
