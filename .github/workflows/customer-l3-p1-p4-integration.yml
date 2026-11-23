@@ -1,0 +1,75 @@
+name: L3 P1–P4 combined zero-write integration gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/l3-*'
+      - 'tests/customer-*'
+      - 'docs/L3_P1_P4_RELEASE_GATE_20261122.md'
+      - 'docs/L3_P1_P4_INTEGRATION_20261122.md'
+      - '.github/workflows/customer-l3-p1-p4-integration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  combined-source-and-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+      PICKUP_WRITES_ENABLED: 'false'
+      MERCHANT_AVAILABILITY_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Test P1+P2+P3+P4 together, keep pickup and GPS gates
+        run: |
+          node --experimental-strip-types --test \
+            tests/l3-p1-p4-integration.test.mjs \
+            tests/l3-p1-catalog-speed-accuracy.test.mjs \
+            tests/l3-p2-data-saver-offline.test.mjs \
+            tests/l3-p3-motion-navigation.test.mjs \
+            tests/l3-p4-shop-trust.test.mjs \
+            tests/customer-nearby-cache-main.test.mjs \
+            tests/customer-public-browse-without-gps.test.mjs \
+            tests/customer-outside-pickup-area-current-main.test.mjs \
+            tests/customer-closed-browse-main.test.mjs \
+            tests/catalog-trust.test.mjs \
+            tests/default-image-fallback.test.mjs \
+            tests/login-apple-notification.test.mjs \
+            tests/original-pickup.test.mjs
+      - name: TypeScript check
+        run: npm run lint
+      - name: Vite and server build with pickup ordering off
+        run: npm run build
+      - name: Install headless Chromium for isolated real React browser checks
+        run: npx playwright install chromium
+      - name: P1 actual shop cards across mobile and desktop (synthetic verified catalog)
+        env:
+          L3_P1_ARTIFACT_DIR: /tmp/localeats-p1-p4/p1
+        run: node tests/l3-p1-home-browser.mjs
+      - name: P2 network-free photos until opt-in and offline reference UI
+        env:
+          L3_P2_ARTIFACT_DIR: /tmp/localeats-p1-p4/p2
+        run: node tests/l3-p2-photo-browser.mjs
+      - name: P3 original navigation, keyboard focus and reduced motion
+        env:
+          L3_P3_ARTIFACT_DIR: /tmp/localeats-p1-p4/p3
+        run: node tests/l3-p3-navigation-browser.mjs
+      - name: Upload isolated evidence; no real accounts, GPS or orders
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-p1-p4-combined-visual-evidence
+          path: /tmp/localeats-p1-p4
+          if-no-files-found: ignore
+          retention-days: 7

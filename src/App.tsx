@@ -1,6 +1,9 @@
 import type { PickupOrder } from "./pickup/client";
 import {MAX_PICKUP_ITEM_QUANTITY, retryPickupDiscovery, isOutsidePickupArea, isWithinPickupArea} from "./services/pickupMapping";
-import {readPickupCatalog, readPublicBrowseCatalog, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {readPickupCatalog, readPublicBrowseCatalogProgressive, customerPickupApi, pickupOrderingEnabled, cancelCustomerPickup, hasPendingPickupCancellation} from "./services/customerPickup";
+import {DATA_SAVER_CHANGE_EVENT,readDataSaverEnabled} from "./services/dataSaverPreference";
+import {saveOfflineShopDirectory} from "./services/offlineShopDirectory";
+import {OfflineShopDirectory} from "./components/OfflineShopDirectory";
 import {usePickupReadyReminder} from "./hooks/usePickupReadyReminder";
 import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopAlerts";
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
@@ -576,15 +579,7 @@ export default function App() {
     }
   });
 
-  const [dataSaverEnabled, setDataSaverEnabled] = useState(() => {
-    try {
-      const saved = localStorage.getItem("data_saver_enabled");
-      if (saved === null) return false;
-      return saved === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [dataSaverEnabled, setDataSaverEnabled] = useState(readDataSaverEnabled);
 
   const [orderAgainEnabled, setOrderAgainEnabled] = useState(() => {
     try {
@@ -903,12 +898,12 @@ export default function App() {
     }
   }, [session?.user?.id, postOrderPushPrompt]);
 
-  // Auto-dismiss transient (non-persistent) custom notification toasts after 4 seconds
+  // Ordinary feedback is brief; pickup-ready and errors stay long enough
+  // to read. Persistent action prompts never auto-dismiss.
   useEffect(() => {
     if (notification && !notification.persistent) {
-      const timer = setTimeout(() => {
-        setNotification(null);
-      }, 4000);
+      const durationMs = notification.type === "error" || notification.type === "ready" ? 7000 : 4000;
+      const timer = setTimeout(() => setNotification(null), durationMs);
       return () => clearTimeout(timer);
     }
   }, [notification]);
@@ -1011,6 +1006,8 @@ export default function App() {
 
   useEffect(() => {
     safeLocalStorageSet("data_saver_enabled", String(dataSaverEnabled));
+    // Shared photo components react immediately without persisting image data.
+    window.dispatchEvent(new Event(DATA_SAVER_CHANGE_EVENT));
   }, [dataSaverEnabled]);
 
   useEffect(() => {
@@ -1152,6 +1149,16 @@ export default function App() {
     const generation=++catalogGeneration.current;
     const key=userLocation ? nearbyCatalogKey(userLocation) : "browse-only:no-gps";
     const sameLocation=!!key && key===displayedCatalogKeyRef.current;
+    if(typeof navigator!=="undefined" && navigator.onLine===false){
+      // Offline is not a verified live catalog. Never replay stale shop prices,
+      // open states, GPS distances or last-known menus as current.
+      displayedCatalogKeyRef.current=null;
+      setShops([]);
+      setLoadingShops(false);
+      setIsSyncing(false);
+      setFetchError("You're offline. Reconnect to view current shop menus and prices.");
+      return;
+    }
 
     // Keep the previous verified cards visible during same-location refreshes,
     // avoiding a blank/flash every minute. Location changes always fail closed.
@@ -1167,15 +1174,31 @@ export default function App() {
     }
     setIsSyncing(true);
     setFetchError(null);
+    const showVerifiedProgress=(partial:{shops:Shop[];incomplete:boolean})=>{
+      // Only reveal verified shop/menu pairs from the active GPS/browse key.
+      // Old requests cannot repaint Home after location or refresh changes.
+      if(generation!==catalogGeneration.current)return;
+      // Same-location revalidation must keep previously visible complete cards.
+      // Replacing them with a partial list makes shops vanish and reappear.
+      if(sameLocation)return;
+      displayedCatalogKeyRef.current=key;
+      setShops(partial.shops);
+      setLoadingShops(false);
+    };
     try {
       const result=!userLocation
-        ? await readPublicBrowseCatalog()
+        ? await readPublicBrowseCatalogProgressive(showVerifiedProgress,{force:_force})
         : _force
-          ? await readPickupCatalog(userLocation,{force:true})
-          : await readPickupCatalog(userLocation);
+          ? await readPickupCatalog(userLocation,{force:true,onProgress:showVerifiedProgress})
+          : await readPickupCatalog(userLocation,{onProgress:showVerifiedProgress});
       if(generation!==catalogGeneration.current)return;
       displayedCatalogKeyRef.current=key;
       setShops(result.shops);
+      if(!result.incomplete){
+        // Public directory only: never persist menu prices, availability,
+        // exact customer GPS or personal order/account information.
+        try{saveOfflineShopDirectory(result.shops,window.localStorage);}catch{/* optional storage */}
+      }
       if(userLocation && key && !result.incomplete && nearbyShopAlertsEnabled.current){
         const {baseline,newShop}=compareNearbyCatalog(nearbyAlertBaseline.current,key,result.shops);
         nearbyAlertBaseline.current=baseline;
@@ -1421,7 +1444,7 @@ export default function App() {
     const handleOnline = () => {
       setIsOnline(true);
       setNotification({
-        message: "Back online! Syncing saved offline requests... 🍟",
+        message: "Back online! Refreshing current shop information.",
         type: "success",
       });
       runHeartbeatPing();
@@ -1434,8 +1457,15 @@ export default function App() {
     };
     const handleOffline = () => {
       setIsOnline(false);
+      // Revoke any potentially outdated menu/pricing/location claims.
+      catalogGeneration.current++;
+      displayedCatalogKeyRef.current=null;
+      setShops([]);
+      setLoadingShops(false);
+      setIsSyncing(false);
+      setFetchError("You're offline. Reconnect to view current shop menus and prices.");
       setNotification({
-        message: "You're offline. Some features may be limited.",
+        message: "Offline. Your last-seen shop names are for reference only; no ordering.",
         type: "info",
       });
     };
@@ -2403,8 +2433,11 @@ export default function App() {
   const updatePickupReminder = usePickupReadyReminder(historyUserId, currentPickupHistory, notifications, openPickupTracking);
 
   const reloadPickupShops = () => {
-    // Public discovery must be retryable even when GPS permission is denied.
-    // Explicitly request genuine coordinates, but never block menu browsing.
+    if(!navigator.onLine){
+      toast.info("Reconnect before refreshing live shop menus.");
+      return;
+    }
+    // Location is optional for browsing but required for pickup eligibility.
     if(!userLocation)requestLocation(false);
     void fetchShopsData(0,true);
   };
@@ -2413,8 +2446,16 @@ export default function App() {
     // Public listing is GET-only. Location is needed for distances and orders,
     // not to read the genuine approved menus.
     void fetchShopsData();
-    const timer = setInterval(() => void fetchShopsData(), 60000);
-    return () => { catalogGeneration.current++; clearInterval(timer); };
+    const timer = setInterval(() => {
+      // Preserve one-minute live catalog revalidation while the user is active,
+      // but don't spend mobile data in hidden tabs or offline.
+      if(document.visibilityState==="visible" && navigator.onLine)void fetchShopsData();
+    },60000);
+    const refreshVisible=()=>{
+      if(document.visibilityState==="visible" && navigator.onLine)void fetchShopsData();
+    };
+    document.addEventListener("visibilitychange",refreshVisible);
+    return () => { catalogGeneration.current++;clearInterval(timer);document.removeEventListener("visibilitychange",refreshVisible); };
   }, [fetchShopsData, !!userLocation]);
 
   useEffect(() => {
@@ -4997,6 +5038,7 @@ function HomeScreen({
                       <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800 flex-shrink-0 relative">
                         <BlurUpImage
                           src={menuItem.image} fallbackKind="food"
+                          imageWidth={160}
                           alt={menuItem.name}
                           className="w-full h-full object-cover"
                         />
@@ -5116,7 +5158,7 @@ function HomeScreen({
             </div>
 
             <h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              {shops.length === 0 ? (fetchError ? (!userLocation ? "Location required" : "Shops unavailable") : "No Shops Found") : "No Kitchens Found"}
+              {shops.length === 0 ? (fetchError ? (!isOnline ? "You are offline" : "Shops unavailable") : "No Shops Found") : "No Kitchens Found"}
             </h3>
 
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 max-w-xs mx-auto font-medium leading-relaxed">
@@ -5172,6 +5214,8 @@ function HomeScreen({
                 </button>
               )}
             </div>
+
+            {shops.length===0 && fetchError && <OfflineShopDirectory />}
 
             {shops.length === 0 && (
               <div className="mt-8 bg-slate-50/90 dark:bg-slate-900/60 p-4 rounded-2xl max-w-sm w-full border border-slate-200/70 dark:border-slate-800 text-left shadow-sm">

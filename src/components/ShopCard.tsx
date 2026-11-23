@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import {
   Star,
   Plus,
@@ -16,6 +16,7 @@ import { Shop, MenuItem } from "../types";
 import { BlurUpImage } from "./BlurUpImage";
 import {shopRatingLabel,pickupDistanceLabel} from '../services/catalogFacts';
 import {isOutsidePickupArea} from '../services/pickupMapping';
+import {shopCardTrustState} from '../services/shopCardTrustState';
 import {
   getShopStatus,
   isShopAway,
@@ -40,10 +41,17 @@ export const ShopCard = memo(
     /** Prioritize the first visible Home image. */
     priorityImage?: boolean;
   }) => {
+    const reduceMotion=useReducedMotion();
     const status = getShopStatus(shop);
     const outsidePickupArea = isOutsidePickupArea(shop);
     const locationUnknown = shop.distance === undefined;
     const browseOnly = outsidePickupArea || locationUnknown;
+    const notAcceptingOrders = status.message === "Away / Not Accepting Orders";
+    const trustState=shopCardTrustState({
+      outsidePickupArea,locationUnknown,notAcceptingOrders,
+      isOpen:status.isOpen,
+      nextOpeningTime:status.nextOpeningTime,
+    });
 
     // Dynamic price tier based on menu items average
     const getPriceTier = (s: Shop) => {
@@ -69,13 +77,13 @@ export const ShopCard = memo(
     const heroImage = getShopHeroImage(shop);
     const priceTier = getPriceTier(shop);
     const distanceStr = pickupDistanceLabel(shop.distance);
-    const etaStr = "Pickup at shop";
+    const etaStr = trustState.actionHint;
 
     return (
       <motion.div
-        layoutId={`shop-card-${shop.id}`}
+        layoutId={reduceMotion ? undefined : `shop-card-${shop.id}`}
         variants={{
-          hidden: { opacity: 0, y: 15, scale: 0.98 },
+          hidden: reduceMotion ? {opacity:1,y:0,scale:1} : { opacity: 0, y: 15, scale: 0.98 },
           show: {
             opacity: 1,
             y: 0,
@@ -87,8 +95,8 @@ export const ShopCard = memo(
             },
           },
         }}
-        whileHover={{ y: -4, transition: { duration: 0.2 } }}
-        whileTap={{ scale: 0.98 }}
+        whileHover={reduceMotion ? undefined : { y: -3, transition: { duration: 0.18 } }}
+        whileTap={reduceMotion ? undefined : { scale: 0.98 }}
         onClick={() => {
           triggerHaptic();
           onStoreInfo(shop.id);
@@ -99,7 +107,11 @@ export const ShopCard = memo(
           ? `${shop.name}. ${distanceStr} away. Outside the 4 kilometer pickup area. Browse menu only.`
           : locationUnknown
             ? `${shop.name}. Location needed to order. Browse menu only.`
-            : `${shop.name}. ${distanceStr} away. View menu.`}
+            : notAcceptingOrders
+              ? `${shop.name}. Not taking orders. Browse menu only.`
+              : !status.isOpen
+                ? `${shop.name}. Closed. Browse menu only.`
+                : `${shop.name}. ${distanceStr} away. View menu.`}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key === "Enter" || event.key === " ") {
@@ -108,7 +120,7 @@ export const ShopCard = memo(
             onStoreInfo(shop.id);
           }
         }}
-        className={`flex flex-col rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border w-full h-full active:scale-[0.98] transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${
+        className={`flex flex-col rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border w-full h-full active:scale-[0.98] motion-reduce:active:scale-100 motion-reduce:transition-none transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${
           browseOnly
             ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400 dark:hover:border-slate-600"
             : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
@@ -118,7 +130,7 @@ export const ShopCard = memo(
         <div className="aspect-[16/10] sm:aspect-video w-full overflow-hidden relative bg-slate-100 dark:bg-slate-800 shrink-0">
           {dataSaverEnabled ? (
             <div className="w-full h-full flex items-center justify-center bg-slate-200 dark:bg-slate-800">
-              <span className="text-slate-400 dark:text-slate-500 font-bold text-xs uppercase tracking-widest px-4 text-center">
+              <span className="text-slate-600 dark:text-slate-300 font-bold text-xs uppercase tracking-widest px-4 text-center">
                 [ Image Hidden - Data Saver ]
               </span>
             </div>
@@ -162,13 +174,13 @@ export const ShopCard = memo(
               className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide px-2.5 py-1.5 rounded-full shadow-md backdrop-blur-md border ${
                 browseOnly
                   ? "bg-white text-slate-900 border-slate-400 dark:bg-slate-100 dark:text-slate-900"
-                  : status.isOpen
+                  : status.isOpen && !notAcceptingOrders
                     ? "bg-emerald-500/90 text-white border-emerald-400/80"
                     : "bg-slate-900/85 text-slate-200 border-slate-700"
               }`}
             >
-              {browseOnly && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
-              {outsidePickupArea ? "Outside 4 km" : locationUnknown ? "Location needed" : status.isOpen ? "Open Now" : "Closed"}
+              {(browseOnly||notAcceptingOrders) && <MapPinOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+              {trustState.badge}
             </span>
 
             {/* Heart indicator for Followed */}
@@ -185,7 +197,7 @@ export const ShopCard = memo(
               {browseOnly
                 ? <BookOpen className="w-3 h-3 text-white" aria-hidden="true" />
                 : <ShoppingBag className="w-3 h-3 text-orange-400" aria-hidden="true" />}
-              <span>{browseOnly ? "Browse menu only" : etaStr}</span>
+              <span>{etaStr}</span>
             </div>
             <div className="flex items-center gap-1 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-lg border border-white/10">
               <MapPin className="w-3 h-3 text-amber-400" />
@@ -228,14 +240,14 @@ export const ShopCard = memo(
                 </span>
               </div>
             )}
-            {isShopAway(shop) && (
-              <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md animate-pulse border border-rose-200 dark:border-rose-900/40">
-                ⚠️ Temporarily Away
+            {notAcceptingOrders && (
+              <span className="text-[10px] font-black bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 uppercase tracking-wider px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/40">
+                ⚠️ Not taking orders
               </span>
             )}
-            {!status.isOpen && !browseOnly && (
-              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                Opens {status.nextOpeningTime || "Soon"}
+            {trustState.hoursHint && (
+              <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+                {trustState.hoursHint}
               </span>
             )}
           </div>
@@ -293,6 +305,7 @@ export const MenuItemCard = memo(
     setCurrentScreen?: (screen: any) => void;
     onSelect?: (item: MenuItem) => void;
   }) => {
+    const reduceMotion=useReducedMotion();
     const status = getShopStatus(shop);
     const outsidePickupArea = isOutsidePickupArea(shop);
     const locationUnknown = shop.distance === undefined;
@@ -301,12 +314,12 @@ export const MenuItemCard = memo(
     return (
       <motion.div
         variants={{
-          hidden: { opacity: 0, y: 10, scale: 0.98 },
+          hidden: reduceMotion ? {opacity:1,y:0,scale:1} : { opacity: 0, y: 10, scale: 0.98 },
           show: { opacity: 1, y: 0, scale: 1 },
         }}
-        whileHover={{ scale: 1.01 }}
+        whileHover={reduceMotion ? undefined : { scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
-        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all cursor-pointer shadow-xs"
+        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-xs"
         onClick={() => {
           if (outsidePickupArea) {
             showAlert("Outside your pickup area", "This shop is more than 4 km away. You can browse its real menu, but ordering is unavailable from your current location.");
@@ -346,6 +359,7 @@ export const MenuItemCard = memo(
         <div className="size-20 rounded-xl overflow-hidden shrink-0 shadow-xs relative bg-slate-100 dark:bg-slate-800">
           <BlurUpImage
             src={item.image || DEFAULT_MENU_IMAGE}
+            imageWidth={160}
             alt={item.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
@@ -382,14 +396,14 @@ export const MenuItemCard = memo(
             )}
           </div>
 
-          <div className="flex items-center justify-between mt-2 pt-1">
-            <p className="font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-1">
+            <p className="shrink-0 whitespace-nowrap font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
               {item.displayPrice || formatRand(item.price || 0)}
             </p>
 
             <button
               type="button"
-              className={`h-9 px-3.5 rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
+              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
                 isUnavailable
                   ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
                   : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 cursor-pointer"

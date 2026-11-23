@@ -1,0 +1,34 @@
+name: L3-P4 Customer trust and business idea decisions
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/components/ShopCard.tsx'
+      - 'src/services/shopCardTrustState.ts'
+      - 'tests/l3-p4-shop-trust.test.mjs'
+      - 'docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md'
+      - 'docs/L3_P4_CUSTOMER_TRUST_20261122.md'
+      - '.github/workflows/customer-l3-p4-trust.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-trust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      VITE_PROFILE_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Truthful status, ratings, 4km and historical closed shop safety
+        run: node --experimental-strip-types --test tests/l3-p4-shop-trust.test.mjs tests/catalog-trust.test.mjs tests/customer-closed-browse-main.test.mjs tests/original-pickup.test.mjs
+      - run: npm run lint
+      - run: npm run build

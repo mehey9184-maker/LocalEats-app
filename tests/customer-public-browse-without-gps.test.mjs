@@ -22,10 +22,12 @@ test("public shop with unknown customer GPS is real browsable menu but cannot or
 test("no GPS discovery requests public approved shops and their true menus without pseudo coordinates",()=>{
  const service=source("src/services/customerPickup.ts");
  assert.match(service,/export async function readPublicBrowseCatalog\(\)/);
- assert.match(service,/customerPickupApi\.approvedShops\(\)/);
- assert.match(service,/customerPickupApi\.menu\(raw\.id\)/);
- assert.match(service,/distance_km:undefined/);
- assert.match(service,/mapPickupShop\(\{\.\.\.raw,distance_km:undefined\}/);
+ assert.match(service,/shops:\(\)=>customerPickupApi\.approvedShops\(\)/);
+ assert.match(service,/menu:\(id,signal\)=>customerPickupApi\.menu\(id,signal\)/);
+ assert.match(service,/createPublicBrowseCatalogReader/);
+ const progressive=source("src/services/publicBrowseCatalog.ts");
+ assert.match(progressive,/distance_km:undefined/);
+ assert.match(progressive,/mapShop\(\{\.\.\.raw,distance_km:undefined\}/);
  assert.match(service,/const intent=pickupCartIntent\(cart,requireRealLocation\(location\)/);
  assert.match(service,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
 });
@@ -34,7 +36,7 @@ test("real device catalog and GPS-less catalog cannot reuse each other's distanc
  const app=source("src/App.tsx");
  assert.match(app,/currentCatalogKey=userLocation \? nearbyCatalogKey\(userLocation\) : "browse-only:no-gps"/);
  assert.match(app,/currentCatalogKey===displayedCatalogKeyRef\.current/);
- assert.match(app,/const result=!userLocation\s*\? await readPublicBrowseCatalog\(\)/);
+ assert.match(app,/const result=!userLocation\s*\? await readPublicBrowseCatalogProgressive\(showVerifiedProgress,\{force:_force\}\)/);
  assert.match(app,/if\(userLocation && key && !result\.incomplete/);
  assert.match(app,/const noGps=sortedShops\.filter\(shop=>!isWithinPickupArea\(shop\) && !isOutsidePickupArea\(shop\)\)/);
  assert.match(app,/Browse shops — location needed to order/);
@@ -49,7 +51,8 @@ test("all browse-only cards honestly distinguish unknown GPS from proven outside
  const card=source("src/components/ShopCard.tsx"), app=source("src/App.tsx");
  assert.match(card,/const locationUnknown = shop\.distance === undefined/);
  assert.match(card,/const browseOnly = outsidePickupArea \|\| locationUnknown/);
- assert.match(card,/locationUnknown \? "Location needed" : status\.isOpen/);
+ assert.match(source("src/services/shopCardTrustState.ts"),/input\.locationUnknown\?"Location needed"/);
+ assert.match(card,/trustState\.badge/);
  assert.match(card,/locationUnknown \|\| !status\.isOpen/);
  assert.match(card,/if \(locationUnknown\) \{\s*showAlert\("Location needed"/);
  assert.match(card,/Location needed to order/);

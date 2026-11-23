@@ -38,9 +38,10 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   }
 
   const handleNavClick = (screen: Screen) => {
-    if (triggerHaptic) {
-      triggerHaptic(5);
-    }
+    // Re-selecting the active destination must not reset the screen or
+    // retrigger location, network effects and unnecessary haptics.
+    if (screen === currentScreen) return;
+    if (triggerHaptic) triggerHaptic(5);
     onNavigate(screen);
   };
 
@@ -61,14 +62,14 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           aria-label="Home"
           aria-current={currentScreen === "home" ? "page" : undefined}
           onClick={() => handleNavClick("home")}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
+          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 active:scale-95 motion-reduce:active:scale-100 cursor-pointer group ${
             currentScreen === "home"
               ? "text-orange-600 dark:text-orange-500 font-bold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
           <div
-            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
+            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform motion-reduce:transition-none group-hover:scale-110 motion-reduce:group-hover:scale-100 ${
               currentScreen === "home"
                 ? "bg-orange-50 dark:bg-orange-950/50"
                 : ""
@@ -92,14 +93,14 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           aria-label="Discover"
           aria-current={currentScreen === "discover" ? "page" : undefined}
           onClick={() => handleNavClick("discover")}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
+          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 active:scale-95 motion-reduce:active:scale-100 cursor-pointer group ${
             currentScreen === "discover"
               ? "text-orange-600 dark:text-orange-500 font-bold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
           <div
-            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
+            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform motion-reduce:transition-none group-hover:scale-110 motion-reduce:group-hover:scale-100 ${
               currentScreen === "discover"
                 ? "bg-orange-50 dark:bg-orange-950/50"
                 : ""
@@ -123,14 +124,14 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           aria-label="Map"
           aria-current={currentScreen === "explore" ? "page" : undefined}
           onClick={() => handleNavClick("explore")}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
+          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 active:scale-95 motion-reduce:active:scale-100 cursor-pointer group ${
             currentScreen === "explore"
               ? "text-orange-600 dark:text-orange-500 font-bold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
           <div
-            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 ${
+            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform motion-reduce:transition-none group-hover:scale-110 motion-reduce:group-hover:scale-100 ${
               currentScreen === "explore"
                 ? "bg-orange-50 dark:bg-orange-950/50"
                 : ""
@@ -151,7 +152,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
         <button
           id="nav-tab-orders"
           type="button"
-          aria-label="Orders"
+          aria-label={activeOrdersCount>0 ? `Orders, ${activeOrdersCount} active pickup${activeOrdersCount===1 ? "" : "s"}` : "Orders"}
           aria-current={isOrdersActive ? "page" : undefined}
           onClick={() => {
             if (activeOrdersCount > 0) {
@@ -160,14 +161,14 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
               handleNavClick("order-history");
             }
           }}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
+          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 active:scale-95 motion-reduce:active:scale-100 cursor-pointer group ${
             isOrdersActive
               ? "text-orange-600 dark:text-orange-500 font-bold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
           <div
-            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 relative ${
+            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform motion-reduce:transition-none group-hover:scale-110 motion-reduce:group-hover:scale-100 relative ${
               isOrdersActive
                 ? "bg-orange-50 dark:bg-orange-950/50"
                 : ""
@@ -188,7 +189,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
                   transition={reduceMotion ? {duration:0} : { type: "spring", stiffness: 500, damping: 18 }}
                   className="absolute -top-1 -right-1 flex h-4 w-4"
                 >
-                  <span className={`${reduceMotion ? "" : "animate-ping"} absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75` }></span>
+                  <span aria-hidden="true" className="absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-30"></span>
                   <span className="relative inline-flex rounded-full h-4 w-4 bg-orange-500 text-[9px] font-bold text-white items-center justify-center shadow-sm">
                     {activeOrdersCount}
                   </span>
@@ -208,14 +209,14 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           aria-label="Profile"
           aria-current={currentScreen === "profile" ? "page" : undefined}
           onClick={() => handleNavClick("profile")}
-          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all active:scale-95 cursor-pointer group ${
+          className={`flex flex-col items-center justify-center flex-1 min-h-[48px] py-1 transition-all motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 active:scale-95 motion-reduce:active:scale-100 cursor-pointer group ${
             currentScreen === "profile"
               ? "text-orange-600 dark:text-orange-500 font-bold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
           <div
-            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform group-hover:scale-110 relative ${
+            className={`w-8 h-8 flex items-center justify-center rounded-full transition-transform motion-reduce:transition-none group-hover:scale-110 motion-reduce:group-hover:scale-100 relative ${
               currentScreen === "profile"
                 ? "bg-orange-50 dark:bg-orange-950/50"
                 : ""

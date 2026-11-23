@@ -1,6 +1,6 @@
 import { MAX_PICKUP_ITEM_QUANTITY } from "../services/pickupMapping";
 import React from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { 
   ShoppingBag, 
   Trash2, 
@@ -53,6 +53,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onProceedToCheckout,
   triggerHaptic,
 }) => {
+  const reduceMotion=useReducedMotion();
   const activeShopId = cart.length > 0 ? cart[0].shopId : null;
   const activeShop = shops.find((s) => s.id === activeShopId);
 
@@ -105,7 +106,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div className="px-5 py-3 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-9 h-9 rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0 border border-slate-200/80 dark:border-slate-700">
-                    <BlurUpImage src={activeShop.logo} alt={activeShop.name} fallbackKind="shop" className="w-full h-full" />
+                    <BlurUpImage src={activeShop.logo} alt={activeShop.name} fallbackKind="shop" imageWidth={160} className="w-full h-full" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-black text-slate-900 dark:text-white truncate">
@@ -144,15 +145,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   return (
                     <motion.div
                       key={`${item.id}-${idx}`}
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, height: 0 }}
-                      transition={{ duration: 0.2 }}
+                      exit={reduceMotion ? {opacity:1,y:0} : { opacity: 0, y: -5, height: 0 }}
+                      transition={reduceMotion ? {duration:0} : { duration: 0.18 }}
                       className="bg-white dark:bg-slate-800/80 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-700/80 shadow-xs flex items-start gap-3 relative"
                     >
                       {/* Item Thumbnail */}
                       <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-700 shrink-0 relative">
-                        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} fallbackKind="food" className="w-full h-full" />
+                        <BlurUpImage src={item.image || DEFAULT_MENU_IMAGE} alt={item.name} fallbackKind="food" imageWidth={160} className="w-full h-full" />
                       </div>
 
                       {/* Item Details */}

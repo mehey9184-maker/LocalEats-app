@@ -142,7 +142,9 @@ export function SettingsScreen({
       <div className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
+            aria-label="Back to previous screen"
             className="p-2 -ml-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -155,9 +157,11 @@ export function SettingsScreen({
 
       <div className="max-w-2xl mx-auto p-4 space-y-6">
         {/* Profile Card Summary */}
-        <div
+        <button
+          type="button"
           onClick={() => handleAction(onProfile)}
-          className="p-4 rounded-3xl bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex items-center justify-between cursor-pointer hover:border-orange-300 dark:hover:border-orange-700 transition"
+          aria-label={`Edit profile for ${displayName}`}
+          className="w-full text-left p-4 rounded-3xl focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-2 bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-sm flex items-center justify-between cursor-pointer hover:border-orange-300 dark:hover:border-orange-700 transition"
         >
           <div className="flex items-center gap-3.5">
             <div className="w-12 h-12 rounded-2xl bg-orange-100 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400 flex items-center justify-center font-bold text-lg">
@@ -168,12 +172,12 @@ export function SettingsScreen({
                 {displayName}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                {userProfile?.phone || userProfile?.email || "Manage delivery profile"}
+                {userProfile?.phone || userProfile?.email || "Manage your profile"}
               </p>
             </div>
           </div>
           <ChevronRight className="w-5 h-5 text-slate-400" />
-        </div>
+        </button>
 
         {/* Preferences Section */}
         <div>
@@ -198,6 +202,9 @@ export function SettingsScreen({
               </div>
               <button
                 type="button"
+                role="switch"
+                aria-label="Dark Mode"
+                aria-checked={!!isDarkMode}
                 onClick={onToggleDarkMode}
                 className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
                   isDarkMode ? "bg-orange-500" : "bg-slate-300 dark:bg-slate-600"
@@ -223,12 +230,15 @@ export function SettingsScreen({
                       Data Saver Mode
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Optimizes images and map loading
+                      Hides shared food photos until you choose to view them
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
+                  role="switch"
+                  aria-label="Data Saver Mode"
+                  aria-checked={!!dataSaverEnabled}
                   onClick={onToggleDataSaver}
                   className={`w-12 h-6 rounded-full transition-colors relative p-0.5 ${
                     dataSaverEnabled ? "bg-orange-500" : "bg-slate-300 dark:bg-slate-600"

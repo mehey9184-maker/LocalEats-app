@@ -37,7 +37,8 @@ test("Transient in-app notifications are top anchored and dismissible",()=>{
  assert.match(toast,/sm:top-4/);
  assert.doesNotMatch(toast,/bottom-\[calc\(6\.5rem/);
  assert.match(toast,/aria-atomic="true"/);
- assert.match(toast,/role=\{notification\.type==="error"\?"alert":"status"\}/);
+ assert.match(toast,/role=\{notification\.persistent \? "alertdialog" : notification\.type==="error"\?"alert":"status"\}/);
+ assert.match(toast,/aria-modal=\{notification\.persistent/);
  assert.match(toast,/onDragEnd/);
  assert.match(toast,/onDismiss\(\)/);
  assert.match(app,/<AppNotificationToast/);

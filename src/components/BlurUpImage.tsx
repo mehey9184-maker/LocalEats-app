@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Store, UtensilsCrossed } from 'lucide-react';
+import {DATA_SAVER_CHANGE_EVENT,readDataSaverEnabled} from '../services/dataSaverPreference';
 
 interface BlurUpImageProps {
   src?: string | null;
@@ -12,6 +13,9 @@ interface BlurUpImageProps {
   aspectRatio?: string;
   /** Opt in only for the first visible Home shop image. */
   priority?: boolean;
+  /** Request pixels appropriate to this slot (e.g. 160px for an 80px thumbnail at 2x). */
+  imageWidth?: 160 | 320 | 600;
+  dataSaverEnabled?: boolean;
 }
 
 export const BlurUpImage = ({
@@ -21,19 +25,34 @@ export const BlurUpImage = ({
   fallbackSrc,
   fallbackKind = 'food',
   priority = false,
+  imageWidth = 600,
+  dataSaverEnabled,
 }: BlurUpImageProps) => {
   const targetSrc = (src?.trim() || fallbackSrc?.trim() || '');
   const proxySource = targetSrc.startsWith('http') && !targetSrc.includes('weserv.nl')
-    ? `https://images.weserv.nl/?url=${encodeURIComponent(targetSrc)}&output=webp&q=75&w=600`
+    ? `https://images.weserv.nl/?url=${encodeURIComponent(targetSrc)}&output=webp&q=75&w=${imageWidth}`
     : targetSrc;
+  const [settingsDataSaver,setSettingsDataSaver]=useState(readDataSaverEnabled);
+  const [revealThisPhoto,setRevealThisPhoto]=useState(false);
+  useEffect(()=>{
+    const refresh=()=>setSettingsDataSaver(readDataSaverEnabled());
+    window.addEventListener(DATA_SAVER_CHANGE_EVENT,refresh);
+    window.addEventListener("storage",refresh);
+    return ()=>{
+      window.removeEventListener(DATA_SAVER_CHANGE_EVENT,refresh);
+      window.removeEventListener("storage",refresh);
+    };
+  },[]);
+  const hideForData=(dataSaverEnabled ?? settingsDataSaver)&&!!targetSrc&&!revealThisPhoto;
   const [isLoaded, setIsLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [displaySrc, setDisplaySrc] = useState<string>(priority ? proxySource : '');
+  const [displaySrc, setDisplaySrc] = useState<string>(proxySource);
 
   useEffect(() => {
     setIsLoaded(false);
     setFailed(false);
     setDisplaySrc(proxySource);
+    setRevealThisPhoto(false);
   }, [proxySource]);
 
   const handleImageError = () => {
@@ -52,7 +71,20 @@ export const BlurUpImage = ({
 
   return (
     <div className={`relative overflow-hidden bg-slate-100 dark:bg-slate-800 ${className}`}>
-      {showPlaceholder ? (
+      {hideForData ? (
+        <button
+          type="button"
+          aria-label={`Load photo: ${alt}. Uses mobile data.`}
+          onClick={event=>{event.preventDefault();event.stopPropagation();setRevealThisPhoto(true);}}
+          className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-2 bg-emerald-50 px-2 text-center text-emerald-950 focus-visible:outline-2 focus-visible:outline-orange-600 dark:bg-slate-800 dark:text-emerald-100"
+        >
+          {fallbackKind==='shop'
+            ? <Store aria-hidden="true" className="h-7 w-7" />
+            : <UtensilsCrossed aria-hidden="true" className="h-7 w-7" />}
+          <span className="text-[11px] font-extrabold">Photo hidden to save data</span>
+          <span className="text-[10px] font-semibold underline">Tap to load photo</span>
+        </button>
+      ) : showPlaceholder ? (
         <div
           role="img"
           aria-label={`${isShop ? 'Shop' : 'Menu item'} photo not available: ${alt}`}
