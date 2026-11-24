@@ -2394,19 +2394,12 @@ export default function App() {
       }
 
       const isFollowing = favorites.includes(shopId);
-      const targetUserId = session?.user?.id || userProfile?.id;
       setFavorites((prev) =>
         isFollowing ? prev.filter((id) => id !== shopId) : [...prev, shopId],
       );
       triggerHaptic();
 
-      if (targetUserId) {
-        if (isFollowing) {
-          FirestoreService.unfollowShop(targetUserId, shopId).catch(console.warn);
-        } else {
-          FirestoreService.followShop(targetUserId, shopId).catch(console.warn);
-        }
-      }
+      // Favorites remain account-local until the protected profile API confirms sync.
     },
     [
       session,
@@ -8319,7 +8312,7 @@ function StoreInfoScreen({
       showAlert("Success", "Thank you for your review!");
     } catch (error) {
       console.error("Error submitting review:", error);
-      showAlert("Error", "Failed to submit review. Please try again.");
+      showAlert("Review unavailable", "Reviews are not enabled yet. Your review was not saved.");
     } finally {
       setIsSubmittingReview(false);
     }
