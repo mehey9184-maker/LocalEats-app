@@ -1,0 +1,41 @@
+name: L4-H1C read-only code-health inventory (NO DEPLOY)
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/l4-h1c-code-health.yml','scripts/audit-l4-h1c.mjs']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-app
+          ref: 7872fc844b442219be86ffafc19092124f8e8e42
+          path: inputs/customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 5259101e7b3ccd3b8cc900a812efa851538d86ed
+          path: inputs/merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install pinned parser dependencies without lifecycle scripts
+        run: npm ci --prefix inputs/customer --ignore-scripts --no-audit --no-fund
+      - name: Inspect tracked files and syntax trees without executing application code
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true node scripts/audit-l4-h1c.mjs inputs/customer inputs/merchant
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"

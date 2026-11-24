@@ -1,5 +1,9 @@
 # LocalEats App Functionality Documentation
 
+## L4-H1 engineering handover — 2026-11-24 (documentation review)
+Read [the AI handover](docs/LOCALEATS_AI_HANDOVER.md) for the dated cross-app orientation, decision log, source evidence and remaining launch gates. Use `.agents/skills/localeats-engineering-handover/SKILL.md` for engineering continuity and code health, in addition to existing pickup-specific instructions. Historical notes below are not authorization to revive legacy flows. Verify live source and environment; no Production deployment, merge, real orders, live writes, paid services or deletion of deferred features from this audit. Record important decisions and update relevant functionality documentation with exact test evidence.
+
+
 ## L3 P1–P4 combined Customer branch (2026-11-22, source-only)
 One isolated Customer integration branch `integration/l3-p1-p4-zero-write-20261122` combines P1 fast progressive genuine catalog + width-sized actual images, P2 browser Save-Data/explicit photo reveal + noninteractive names-only offline directory, P3 low-motion and accessible navigation/cart/notifications and P4 inactive shop availability text plus the canonical scalable-company idea register. Integration-specific tests compare formerly conflicting code **inside the same React build**. Shop prices and pickup eligibility remain server authoritative; no 4km bypass, rider/LocalPay/online payment, database write, real order, Production merge or hosted deployment was authorized. Current evidence/remaining manual gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`. Future CDN image caching is research only.
 

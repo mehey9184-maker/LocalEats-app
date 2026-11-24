@@ -1,0 +1,124 @@
+name: L4-H1D.1 housekeeping proof (NO DEPLOY)
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/l4-h1d1-housekeeping.yml','src/App_recovered.tsx']
+permissions:
+  contents: read
+jobs:
+  housekeeping:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: 7872fc844b442219be86ffafc19092124f8e8e42
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 5259101e7b3ccd3b8cc900a812efa851538d86ed
+    name: Housekeeping - ${{ matrix.component }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Prove zero-byte or duplicate files and no tracked references
+        working-directory: source
+        env:
+          COMPONENT: ${{ matrix.component }}
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          no_refs() {
+            local pattern="$1"; shift
+            local status=0
+            git grep -il -E "$pattern" -- . "$@" > /tmp/h1d1-references || status=$?
+            if [ "$status" -ne 1 ]; then
+              echo 'HOLD: tracked references found or grep failed (paths only)'
+              cat /tmp/h1d1-references
+              exit 1
+            fi
+          }
+          if [ "$COMPONENT" = Customer ]; then
+            test -f src/App_recovered.tsx
+            test ! -s src/App_recovered.tsx
+            no_refs 'App_recovered' ':!src/App_recovered.tsx'
+            git rm -- src/App_recovered.tsx
+          else
+            test -f app_tsx.txt
+            test ! -s app_tsx.txt
+            cmp localeats-api/test_api2.sh localeats-api/test_api4.sh
+            no_refs 'app_tsx\.txt|test_api4(\.sh)?' ':!app_tsx.txt' ':!localeats-api/test_api4.sh'
+            git rm -- app_tsx.txt localeats-api/test_api4.sh
+          fi
+          echo H1D1_REFERENCE_AND_IDENTITY_PASS
+          git diff --cached --name-status
+          npm ci --no-audit --no-fund
+      - name: Offline dependency, type, regression and build checks
+        working-directory: source
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h1d1-tests.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          npm ls --all --json > /tmp/h1d1-tree.json
+          npm run lint
+          if [ "$COMPONENT" = Customer ]; then
+            node --experimental-strip-types --test \
+              tests/l3-p1-p4-integration.test.mjs \
+              tests/l3-p1-catalog-speed-accuracy.test.mjs \
+              tests/l3-p2-data-saver-offline.test.mjs \
+              tests/l3-p3-motion-navigation.test.mjs \
+              tests/l3-p4-shop-trust.test.mjs \
+              tests/customer-nearby-cache-main.test.mjs \
+              tests/customer-public-browse-without-gps.test.mjs \
+              tests/customer-outside-pickup-area-current-main.test.mjs \
+              tests/customer-closed-browse-main.test.mjs \
+              tests/catalog-trust.test.mjs \
+              tests/default-image-fallback.test.mjs \
+              tests/login-apple-notification.test.mjs \
+              tests/original-pickup.test.mjs
+          else
+            ./node_modules/.bin/tsc --noEmit --pretty false
+            node --experimental-strip-types --test \
+              tests/l3-p4-merchant-confirmation.test.mjs \
+              tests/merchant-pickup.test.mjs \
+              tests/merchant-handover.test.mjs \
+              tests/merchant-shop-revalidation.test.mjs \
+              tests/merchant-order-inbox-p1.test.mjs \
+              tests/merchant-push-registration.test.mjs \
+              tests/default-image-fallback.test.mjs \
+              tests/merchant-marketing-counter.test.mjs \
+              tests/l4-r1-orders-layout-switch.test.mjs \
+              tests/l4-r1c-functional-contracts.test.mjs \
+              tests/l4-pickup-core-ui-freeze.test.mjs
+          fi
+          npm run build
+          python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H1D1_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+          echo H1D1_REGRESSION_PASS
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false COMPONENT="$5" bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
