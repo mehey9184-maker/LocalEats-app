@@ -75,14 +75,13 @@ jobs:
           echo "OFFLINE ISOLATION: network interfaces and routes"
           ip -brief link
           ip route
-          test "$(ls /sys/class/net | wc -l)" -eq 1 || exit 1
+          test "$(ip -o link show | wc -l)" -eq 1 || exit 1
           test -z "$(ip route show default)" || exit 1
           test "$PICKUP_WRITES_ENABLED" = false || exit 1
           node --version
           npm --version
-          run dependency_tree npm ls --all --json > /tmp/localeats-dependency-tree.json || true
+          run dependency_tree bash -c 'npm ls --all --json > /tmp/localeats-dependency-tree.json' || true
           # Do not publish raw dependency tree or any environment values.
-          tail -n 1 /tmp/localeats-dependency-tree.json
           case "$COMPONENT" in
             Customer)
               run typescript npm run lint || true
@@ -147,6 +146,5 @@ jobs:
               PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false \
               VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false \
               ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false \
-              LOCALEATS_PREVIEW_READ_ONLY=true \
               bash "$6"
           ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
