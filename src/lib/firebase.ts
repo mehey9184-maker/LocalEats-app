@@ -7,7 +7,7 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs, writeBatch,
+  getDocs,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -34,7 +34,6 @@ import {
 import { getMessaging, getToken, onMessage, isSupported, Messaging } from "firebase/messaging";
 import { getFunctions, httpsCallable, Functions, HttpsCallableResult } from "firebase/functions";
 import { Shop, MenuItem } from "../types";
-import { DEFAULT_FALLBACK_SHOPS } from "../App-constants";
 import firebaseConfigJson from "../../firebase-applet-config.json";
 
 export const firebaseConfig = {
