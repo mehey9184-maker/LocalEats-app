@@ -42,6 +42,10 @@ For new decisions append ID/date, owner approval or proposal status, problem/opt
 ## Current source inventory — L4-H1B
 Both main Git trees and matching Graphify index commits verified; [source inventory](LOCALEATS_L4_H1B_SOURCE_INVENTORY.md) includes API roots, source hotspots, direct SDK and revocation candidates, and pending isolated baseline. No fresh test run or dead-code removal yet.
 
+
+## Dependency stability — L4-H1B.3 (2026-11-24)
+**ADR-009 (candidate verified; merge approval pending):** Prefer npm's strict peer-compatible resolution, retain the existing framework and working UI, and remove unused development tooling only after source/reference and regression checks. Merchant [draft PR #242](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/pull/242) removes unused Vitest 5, supplies AJV 8.20.0 for the PWA peer while keeping ESLint's nested AJV 6, and sets legacy-peer-deps=false. Existing runtime manifest dependencies unchanged. Verified committed revision 5259101e7b3ccd3b8cc900a812efa851538d86ed: [CI](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45479997096) lock SHA-256 matched, npm ci/npm ls passed, 61/61 tests, zero TS/ESLint errors, 22 warnings, build passed, unchanged aggregate JS/CSS sizes. Separate Firebase environment CI also passed. Bun lock remains stale relative to candidate; npm lock is CI authority and hosting/package-manager consistency remains a release gate. No main merge, deploy or activation. Do not use this candidate as evidence of a full vulnerability audit or live acceptance.
+
 ## Release acceptance / open work
 - Recheck exact deployed Customer/API/Merchant SHA, CORS apex and www, write flags, environment isolation, commercial hosting eligibility. PR CI is insufficient.
 - Genuine Android GPS/4-km and mobile bytes, real foreground/background FCM, separate consenting accounts, shop availability, pickup/physical payment/handover, retry and pause/rollback.
