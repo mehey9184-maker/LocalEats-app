@@ -13,3 +13,6 @@ Status: first-pass source/documentation inventory, not full dependency audit. No
 - H1C classify candidates as live, deferred, test/demo, unknown or confirmed dead. Gather references, import/call paths, tests, runtime coverage and bundle contribution. Use duplication scan for application code (exclude generated/vendor/lockfiles); inspect high-cost hotspots. No secrets in reports.
 - H1D one small reviewable cleanup at a time; tests before/after, no UI regression or authorization change, preserve deferred features and rollback path. Source-only draft PRs; owner signoff for merge/release.
 - H1E rerun full Customer/Merchant/API checks, compare bundles and lint, record exact SHAs and findings. Do not call H1 complete until audit evidence and cleanup disposition are recorded. Continue only then to H2.
+
+## H1B update — 2026-11-24
+See [pinned source inventory](LOCALEATS_L4_H1B_SOURCE_INVENTORY.md). Graphify recovered and matched both main SHAs. Initial inventory and sampled route/SDK inspection complete; reachability, duplicate analysis, exact method/permission matrix and fresh isolated baseline remain pending. Future C++ policy is proposed, not launch work.
