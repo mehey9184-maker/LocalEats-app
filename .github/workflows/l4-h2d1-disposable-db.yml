@@ -23,13 +23,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: dd107d355b14deffacda2edc5f7b819948e2d789
+          ref: d69acfa7e4bf8a7ce31459001ffbadc6210396ba
           persist-credentials: false
       - name: Verify archived remote statements exactly match read-only recovery digests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = dd107d355b14deffacda2edc5f7b819948e2d789
+          test "$(git rev-parse HEAD)" = d69acfa7e4bf8a7ce31459001ffbadc6210396ba
           bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
           bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
           node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
