@@ -1,0 +1,167 @@
+name: L4-H3B API catalog least privilege (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h3b-catalog-acl.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    name: Combined - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: API
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 6e151f97241021071144bc33e0a37d5299690aba
+            workdir: source/localeats-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify source and install locked dependencies
+        working-directory: ${{ matrix.workdir }}
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "H3B_SOURCE $(git rev-parse HEAD)"
+          node --version
+          npm --version
+          sha256sum package-lock.json
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json .npmrc
+      - name: Install locked API dependencies for Merchant cross-package tests
+        if: matrix.component == 'Merchant'
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked Playwright Chromium for Customer synthetic fixture
+        if: matrix.component == 'Customer'
+        working-directory: source
+        run: ./node_modules/.bin/playwright install chromium
+      - name: Isolated full root test suites and package API suite
+        working-directory: ${{ matrix.workdir }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h3b.sh"
+          cat > "$script" <<'BASH'
+          set -uo pipefail
+          test "$(id -u)" -ne 0 || exit 1
+          test "$(ip -o link show | wc -l)" -eq 1 || exit 1
+          test -z "$(ip route show default)" || exit 1
+          test "$PICKUP_WRITES_ENABLED" = false || exit 1
+          failures=0
+          run(){
+            local label="$1"; shift
+            local start code
+            start=$(date +%s)
+            "$@"
+            code=$?
+            printf 'H3B_RESULT %s exit=%s seconds=%s\n' "$label" "$code" "$(($(date +%s)-start))"
+            if [ "$code" -ne 0 ]; then failures=$((failures+1)); fi
+            return "$code"
+          }
+          run dependencies bash -c 'npm ls --all --json > /tmp/h3b-dependency-tree.json' || true
+          if [ "$COMPONENT" = API ]; then
+            run api_package_suite npm test || true
+            run api_preview_mock node --test tests/l3-n8u-z-preview-readonly-smoke.test.mjs || true
+          else
+            run lint npm run lint || true
+            if [ "$COMPONENT" = Merchant ]; then
+              run typescript ./node_modules/.bin/tsc --noEmit --pretty false || true
+              run api_test_prerequisite npm --prefix localeats-api run build || true
+            fi
+            echo "H3B_ROOT_TEST_FILES $(printf '%s\n' tests/*.test.mjs | wc -l)"
+            run root_suite node --experimental-strip-types --test tests/*.test.mjs || true
+            if run build npm run build; then
+              python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H3B_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+              if [ "$COMPONENT" = Merchant ]; then
+                run tag_browser node tests/l4-h1d3-order-tags-browser.mjs || true
+              fi
+            else
+              echo 'H3B_BUILD_DEPENDENT_CHECKS_NOT_RUN'
+            fi
+            if [ "$COMPONENT" = Customer ]; then
+              run signup_browser node tests/signup-home-ux-browser.mjs || true
+              run home_browser node tests/l3-p1-home-browser.mjs || true
+            fi
+          fi
+          echo "H3B_FINAL component=$COMPONENT failed_commands=$failures"
+          test "$failures" -eq 0
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false COMPONENT="$5" bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
+
+  consumer-inventory:
+    name: Pinned consumer inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 3b8cde6975e80f028b940b7105def08ed82e4132
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 6e151f97241021071144bc33e0a37d5299690aba
+          path: merchant
+          persist-credentials: false
+      - name: List tracked source candidates without disclosing contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repo in customer merchant; do
+            cd "$GITHUB_WORKSPACE/$repo"
+            echo "H3B_CONSUMER_SOURCE $repo $(git rev-parse HEAD)"
+            echo "H3B_TRACKED_SOURCE_COUNT $(git ls-files '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.html' | wc -l)"
+            echo 'H3B_SDK_OR_DIRECT_REST_CANDIDATES'
+            git grep -IlE '@supabase/supabase-js|/rest/v1/|\.supabase\.co|SUPABASE_ANON_KEY|SUPABASE_PUBLISHABLE_KEY' -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.html' || test "$?" = 1
+            echo 'H3B_LITERAL_CATALOG_QUERY_CANDIDATES'
+            git grep -IlE "\.from\([[:space:]]*['\"](shops|menu_items|reviews|announcements)['\"]" -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.html' || test "$?" = 1
+            echo 'H3B_INVENTORY_COMPLETE_NOT_REACHABILITY_PROOF'
+          done
+  disposable-acl:
+    name: Disposable PostgreSQL ACL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 6e151f97241021071144bc33e0a37d5299690aba
+          persist-credentials: false
+      - name: Verify exact source and inert SQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 6e151f97241021071144bc33e0a37d5299690aba
+          test -f supabase/drafts/catalog_api_only_acl_h3b.sql
+          test -z "$(find supabase/migrations -name '*catalog_api_only_acl_h3b*' -print)"
+          bash -n localeats-api/tests/security/h3b/run-local-h3b.sh
+      - name: Actual role privileges and atomic drift rollback
+        run: bash localeats-api/tests/security/h3b/run-local-h3b.sh
