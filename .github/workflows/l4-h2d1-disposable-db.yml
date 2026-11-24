@@ -1,0 +1,50 @@
+name: L4-H2D.1 disposable transaction integrity (NO DEPLOY)
+
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h2d1-disposable-db.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  recovered-applied-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PICKUP_WRITES_ENABLED: 'false'
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      RIDER_ACTIVATION_ENABLED: 'false'
+      REWARDS_ENABLED: 'false'
+      R36_PICKUP_REPLAY_MODE: recorded_applied
+      H2D1_CONCURRENCY: 'true'
+    steps:
+      - name: Checkout historical archive without GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 2f23f64139fa8882f68a43dbd3f9254652b27d9b
+          persist-credentials: false
+      - name: Verify archived remote statements exactly match read-only recovery digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2f23f64139fa8882f68a43dbd3f9254652b27d9b
+          bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
+      - name: Ensure no hosted connection or new active migration is possible
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supabase/recovered_applied_readonly/20261030111305_pickup_launch_foundation.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073608_pickup_zero_fee.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073645_merchant_availability.sql.txt
+          test -f supabase/recovered_applied_readonly/20261101160331_pickup_payment_methods.sql.txt
+          test -f localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          ! find supabase/migrations -maxdepth 1 -name '202610*.sql' -o -name '202611*.sql' | grep .
+          ! grep -En 'supabase\.co|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|db push|apply_migration|--remote|--publish' \
+            localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+      - name: Replay archived SQL and run observed-lock races in disposable PostgreSQL 17
+        shell: bash
+        run: bash localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
