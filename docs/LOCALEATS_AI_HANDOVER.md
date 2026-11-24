@@ -83,6 +83,10 @@ Run [45485611056](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actio
 **H1D.3A PASS:** Run 45486157277 attempt 2, job 138774775087, head 7a5c1d1e4d27400dcca0ec5d7242d66d3efffeae: 65/65 tests, build, 12/12 exact decoded pixel comparisons with stable original controls and computed style/layout parity, native keyboard sequences 2/2 (six activations). Synthetic component fixture, not full Dashboard/real phone. No production changes. Stacked review remains; H1D.4 next.
 [Successful verification](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45486157277).
 
+
+## L4-H1D.4 — shared utility review (2026-11-24)
+[Source review](LOCALEATS_L4_H1D4_SHARED_UTILITIES.md) completed on Customer #145 and Merchant #244 candidate revisions. **ADR-011 proposed:** share verified contract vectors before cross-repo runtime packages; preserve independent deployments and role-specific auth/PWA flows. Matching API-origin validators are candidates; GPS implementations differ in bounds, clamp, rounding and default behaviour. Merchant legacy delivery helper rounds before comparison and may substitute default coordinates/return zero on invalid values. Do not reuse for authoritative pickup; API >4 km plus locked-row SQL recheck remain intended contract (hosted definitions require read-only verification). No runtime edits, new tests, packages, C++, or live changes in review. H1E combined regression next; preserve signup-home failure as a gate and carry H2/H3/H5 findings forward.
+
 ## Release acceptance / open work
 - Recheck exact deployed Customer/API/Merchant SHA, CORS apex and www, write flags, environment isolation, commercial hosting eligibility. PR CI is insufficient.
 - Genuine Android GPS/4-km and mobile bytes, real foreground/background FCM, separate consenting accounts, shop availability, pickup/physical payment/handover, retry and pause/rollback.
