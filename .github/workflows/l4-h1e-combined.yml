@@ -50,6 +50,12 @@ jobs:
           sha256sum package-lock.json
           npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
           git diff --exit-code -- package.json package-lock.json .npmrc
+      - name: Install locked API dependencies for Merchant cross-package tests
+        if: matrix.component == 'Merchant'
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json
       - name: Install locked Playwright Chromium for Customer synthetic fixture
         if: matrix.component == 'Customer'
         working-directory: source
@@ -86,6 +92,7 @@ jobs:
             run lint npm run lint || true
             if [ "$COMPONENT" = Merchant ]; then
               run typescript ./node_modules/.bin/tsc --noEmit --pretty false || true
+              run api_test_prerequisite npm --prefix localeats-api run build || true
             fi
             echo "H1E_ROOT_TEST_FILES $(printf '%s\n' tests/*.test.mjs | wc -l)"
             run root_suite node --experimental-strip-types --test tests/*.test.mjs || true
