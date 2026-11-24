@@ -1,0 +1,61 @@
+name: L4-H3C isolated Firestore rules (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h3c-firestore-isolation.yml']
+permissions:
+  contents: read
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 0e9f88b6832f511abc4b2d2864d1f0e238a74cdd
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 6bd4f61871751d32f6270b8b7285aac6a6804d4d
+          path: merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Confirm identical rules and preserve exact prior Merchant source
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = 0e9f88b6832f511abc4b2d2864d1f0e238a74cdd
+          test "$(git -C merchant rev-parse HEAD)" = 6bd4f61871751d32f6270b8b7285aac6a6804d4d
+          cmp customer/firestore.rules merchant/firestore.rules
+          cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
+          cmp merchant/firestore.rules merchant/security/review/firestore-h3c-pickup.rules
+          test "$(git hash-object customer/security/review/firestore-h3c-merchant-legacy.rules)" = d6b15ab961f4260c9d02814ed48023cd916c4eb4
+          test "$(git hash-object customer/security/review/firestore-pickup-phase1.rules)" = d168836960afec5afa705f320b6347495cc0e4cc
+          sha256sum customer/firestore.rules
+      - name: Install existing locked dependencies and previously used emulator CLI
+        working-directory: customer
+        run: |
+          npm ci --no-audit --no-fund
+          npm exec --yes --package=firebase-tools@15.35.0 -- firebase setup:emulators:firestore
+      - name: Run deployment guard and emulator only with loopback networking
+        working-directory: customer
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h3c.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          node --test tests/firestore-release-guard.test.cjs
+          npm exec --offline --yes --package=firebase-tools@15.35.0 -- firebase emulators:exec --only firestore --project demo-pickup-rules --config security/review/firebase.json "node --test --test-concurrency=1 tests/firestore-pickup-review.test.cjs tests/firestore-h3c-isolation.test.cjs"
+          BASH
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" JAVA_HOME="$5" CI=true FIREBASE_CLI_DISABLE_UPDATE_CHECK=true bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$JAVA_HOME" "$script"

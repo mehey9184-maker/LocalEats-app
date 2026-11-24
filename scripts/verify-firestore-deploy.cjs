@@ -45,7 +45,7 @@ function verifyFirestoreRelease(source, approvedSha256) {
      !orderRules.includes("allow update: if false;") ||
      !orderRules.includes("allow delete: if false;") ||
      /delivery_status\\s*==\\s*[\\\"']finding_rider[\\\"']/.test(orderRules) ||
-     !riderRules.includes("request.auth.uid == riderId")) {
+     !(riderRules.includes("request.auth.uid == riderId") || riderRules.includes("allow read: if ownsPath(riderId);"))) {
     throw new Error("FIRESTORE_RULES_PICKUP_API_AUTHORITY_REQUIRED");
   }
   const actual=createHash("sha256").update(source,"utf8").digest("hex");
