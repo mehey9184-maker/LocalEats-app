@@ -15,7 +15,6 @@ function rows(value: unknown, fields: string[]): Row[] {
 
 export function makeLegacyCatalogRouter(originValue: string | undefined, transport: typeof fetch = fetch) {
   const router = Router();
-  router.use((_req,res,next) => { res.set("Cache-Control","no-store"); next(); });
   const read = async (path: string) => {
     // Explicit server-only config; never infer from Host, request headers, query or browser input.
     const origin = pickupApiOrigin(originValue || "", true);
@@ -30,12 +29,14 @@ export function makeLegacyCatalogRouter(originValue: string | undefined, transpo
     return body;
   };
   router.get("/shops",async (_req,res) => {
+    res.set("Cache-Control","no-store");
     try {
       const result = await read("/shops");
       res.json({success:true,shops:rows(result?.shops,SHOP_FIELDS)});
     } catch { res.status(503).json({success:false,error:"Catalog unavailable"}); }
   });
   router.get("/shops/:shopId/menu",async (req,res) => {
+    res.set("Cache-Control","no-store");
     const id = req.params.shopId;
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
       res.status(404).json({success:false,error:"Shop not found"}); return;
