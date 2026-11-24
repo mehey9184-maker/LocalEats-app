@@ -19,11 +19,11 @@ jobs:
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: 4ba7613cd78e9b25b1bb66f7db0b09d1669d2a4e
+            sha: e9cb0db81c3e6f10e54fb1b793c24ba986720f4f
             workdir: source
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: 4ba7613cd78e9b25b1bb66f7db0b09d1669d2a4e
+            sha: e9cb0db81c3e6f10e54fb1b793c24ba986720f4f
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 4ba7613cd78e9b25b1bb66f7db0b09d1669d2a4e
+          ref: e9cb0db81c3e6f10e54fb1b793c24ba986720f4f
           path: merchant
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -151,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = 590652aad1fbc567aa4f9121020a2a5e5ce1589a
-          test "$(git -C merchant rev-parse HEAD)" = 4ba7613cd78e9b25b1bb66f7db0b09d1669d2a4e
+          test "$(git -C merchant rev-parse HEAD)" = e9cb0db81c3e6f10e54fb1b793c24ba986720f4f
           cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
           cmp customer/firestore.rules merchant/firestore.rules
           cd customer
