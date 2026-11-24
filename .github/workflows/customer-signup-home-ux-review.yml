@@ -64,7 +64,7 @@ jobs:
           path: /tmp/localeats-signup-home-ux
           if-no-files-found: ignore
           retention-days: 7
-      - name: L3-P1 isolated customer shop cards: first-card timing, 320/390/desktop, no writes
+      - name: 'L3-P1 isolated customer shop cards: first-card timing, 320/390/desktop, no writes'
         env:
           L3_P1_ARTIFACT_DIR: /tmp/localeats-l3-p1-home
         run: node tests/l3-p1-home-browser.mjs

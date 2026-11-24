@@ -234,7 +234,6 @@ import {
   NotificationState,
   SignUpData,
 } from "./types";
-import { useOfflineSync, processPendingCancellationsQueue } from "./hooks/useOfflineSync";
 import { useNetworkHeartbeat, NetworkHealthMetrics } from "./hooks/useNetworkHeartbeat";
 import { NetworkHeartbeatMonitor } from "./components/NetworkHeartbeatMonitor";
 import { processNetworkQueue } from "./lib/networkQueue";
@@ -1791,141 +1790,10 @@ export default function App() {
     localStorage.setItem("app_notifications", JSON.stringify(notifications));
   }, [notifications]);
 
+  // Legacy cancellation remains fail-closed; active pickup uses cancelCustomerPickup.
   const cancelOrder = useCallback(
     async (orderId: string, reason: string) => {
       showAlert("Pickup ordering unavailable", "Order changes require pickup database activation. No status has been changed."); return;
-
-      // 1. Network connectivity check
-      const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
-
-      if (isOffline) {
-        // Store cancellation request locally in pending_cancellation queue
-        try {
-          const raw = localStorage.getItem("pending_cancellation");
-          let list: any[] = [];
-          try {
-            list = raw ? JSON.parse(raw) : [];
-          } catch {
-            list = [];
-          }
-          const filtered = list.filter((item: any) => item?.orderId !== orderId);
-          filtered.push({
-            orderId,
-            cancelReason: reason || "Cancelled by customer",
-            timestamp: Date.now(),
-          });
-          localStorage.setItem("pending_cancellation", JSON.stringify(filtered));
-        } catch (e) {
-          console.warn("Failed to write to pending_cancellation queue:", e);
-        }
-
-        // Optimistically mark local orders state as cancelled
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId ? { ...o, status: "cancelled" } : o,
-          ),
-        );
-
-        setModal({
-          isOpen: true,
-          title: "Connection Lost - Cancellation Queued",
-          message: "You appear to be offline. Your cancellation request has been safely saved locally to the queue and will automatically sync once your connection is restored.",
-          type: "action-dialog",
-          errorCause: "Network offline (pending cancellation stored)",
-          iconType: "wifi-off",
-          actions: [
-            {
-              label: "Sync Now",
-              variant: "primary",
-              onClick: async () => {
-                // Trigger queue processor immediately
-                if (typeof navigator !== "undefined" && !navigator.onLine) {
-                  setNotification({
-                    message: "Device is still offline. Request remains queued and will sync once reconnected.",
-                    type: "info",
-                  });
-                  return;
-                }
-                const res = await processPendingCancellationsQueue();
-                if (res.successCount > 0) {
-                  setNotification({
-                    message: `Successfully synchronized ${res.successCount} cancellation request(s) with the cloud!`,
-                    type: "success",
-                  });
-                }
-              },
-            },
-            {
-              label: "Retry Cancellation",
-              variant: "outline",
-              onClick: () => {
-                // Attempt manual retry if reconnected
-                if (typeof navigator !== "undefined" && navigator.onLine) {
-                  cancelOrder(orderId, reason);
-                } else {
-                  setNotification({
-                    message: "Device is still offline. Request remains queued and will sync once reconnected.",
-                    type: "info",
-                  });
-                }
-              },
-            },
-            {
-              label: "Go Home",
-              variant: "ghost",
-              onClick: () => {
-                setCurrentScreen("home");
-              },
-            },
-          ],
-        });
-        return;
-      }
-
-      await runWithProcessing(async () => {
-        const updatePayload: any = {
-          status: "cancelled",
-          cancellation_reason: reason,
-          updated_at: new Date().toISOString(),
-        };
-
-        await FirestoreService.updateOrder(orderId, updatePayload);
-        let { error } = await supabase
-          .from("orders")
-          .update(updatePayload)
-          .eq("id", orderId);
-
-        if (error && error.message?.includes("cancellation_reason")) {
-          delete updatePayload.cancellation_reason;
-          const retryResult = await supabase
-            .from("orders")
-            .update(updatePayload)
-            .eq("id", orderId);
-          error = retryResult.error;
-        }
-
-        if (error) throw error;
-
-        // Clean up from pending_cancellation if it was queued
-        try {
-          const raw = localStorage.getItem("pending_cancellation");
-          if (raw) {
-            const list = JSON.parse(raw);
-            const remaining = list.filter((i: any) => i?.orderId !== orderId);
-            localStorage.setItem("pending_cancellation", JSON.stringify(remaining));
-          }
-        } catch (_) {}
-
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId ? { ...o, status: "cancelled" } : o,
-          ),
-        );
-        setNotification({
-          message: "Order cancelled successfully",
-          type: "info",
-        });
-      });
     },
     [runWithProcessing, setNotification, setCurrentScreen],
   );

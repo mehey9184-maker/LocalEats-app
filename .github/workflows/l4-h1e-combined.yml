@@ -1,0 +1,125 @@
+name: L4-H1E combined locked-source regression (NO DEPLOY)
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/l4-h1e-combined.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    name: Combined - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: 8457c5cdf739d8f20dd83105e5aad273cb6a2091
+            workdir: source
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: c481f3149f3fb5b8dd76c93f585a2b040a4483c4
+            workdir: source
+          - component: API
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: c481f3149f3fb5b8dd76c93f585a2b040a4483c4
+            workdir: source/localeats-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify source and install locked dependencies
+        working-directory: ${{ matrix.workdir }}
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "H1E_SOURCE $(git rev-parse HEAD)"
+          node --version
+          npm --version
+          sha256sum package-lock.json
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json .npmrc
+      - name: Install locked API dependencies for Merchant cross-package tests
+        if: matrix.component == 'Merchant'
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked Playwright Chromium for Customer synthetic fixture
+        if: matrix.component == 'Customer'
+        working-directory: source
+        run: ./node_modules/.bin/playwright install chromium
+      - name: Isolated full root test suites and package API suite
+        working-directory: ${{ matrix.workdir }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h1e.sh"
+          cat > "$script" <<'BASH'
+          set -uo pipefail
+          test "$(id -u)" -ne 0 || exit 1
+          test "$(ip -o link show | wc -l)" -eq 1 || exit 1
+          test -z "$(ip route show default)" || exit 1
+          test "$PICKUP_WRITES_ENABLED" = false || exit 1
+          failures=0
+          run(){
+            local label="$1"; shift
+            local start code
+            start=$(date +%s)
+            "$@"
+            code=$?
+            printf 'H1E_RESULT %s exit=%s seconds=%s\n' "$label" "$code" "$(($(date +%s)-start))"
+            if [ "$code" -ne 0 ]; then failures=$((failures+1)); fi
+            return "$code"
+          }
+          run dependencies bash -c 'npm ls --all --json > /tmp/h1e-dependency-tree.json' || true
+          if [ "$COMPONENT" = API ]; then
+            run api_package_suite npm test || true
+            run api_preview_mock node --test tests/l3-n8u-z-preview-readonly-smoke.test.mjs || true
+          else
+            run lint npm run lint || true
+            if [ "$COMPONENT" = Merchant ]; then
+              run typescript ./node_modules/.bin/tsc --noEmit --pretty false || true
+              run api_test_prerequisite npm --prefix localeats-api run build || true
+            fi
+            echo "H1E_ROOT_TEST_FILES $(printf '%s\n' tests/*.test.mjs | wc -l)"
+            run root_suite node --experimental-strip-types --test tests/*.test.mjs || true
+            if run build npm run build; then
+              python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H1E_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+              if [ "$COMPONENT" = Merchant ]; then
+                run tag_browser node tests/l4-h1d3-order-tags-browser.mjs || true
+              fi
+            else
+              echo 'H1E_BUILD_DEPENDENT_CHECKS_NOT_RUN'
+            fi
+            if [ "$COMPONENT" = Customer ]; then
+              run signup_browser node tests/signup-home-ux-browser.mjs || true
+              run home_browser node tests/l3-p1-home-browser.mjs || true
+            fi
+          fi
+          echo "H1E_FINAL component=$COMPONENT failed_commands=$failures"
+          test "$failures" -eq 0
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false COMPONENT="$5" bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
