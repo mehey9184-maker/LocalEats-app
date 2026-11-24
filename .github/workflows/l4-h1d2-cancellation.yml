@@ -1,0 +1,64 @@
+name: L4-H1D.2 legacy cancellation regression (NO DEPLOY)
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/App.tsx','tests/l4-h1d2-legacy-cancellation.test.mjs','.github/workflows/l4-h1d2-cancellation.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Network-isolated cancellation and existing regression checks
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h1d2.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          npm ls --all --json > /tmp/h1d2-tree.json
+          npm run lint
+          node --experimental-strip-types --test \
+            tests/l4-h1d2-legacy-cancellation.test.mjs \
+            tests/pickup-cancellation.test.mjs \
+            tests/pickup-tracking.test.mjs \
+            tests/customer-cache-safety-main.test.mjs \
+            tests/l3-p1-p4-integration.test.mjs \
+            tests/l3-p1-catalog-speed-accuracy.test.mjs \
+            tests/l3-p2-data-saver-offline.test.mjs \
+            tests/l3-p3-motion-navigation.test.mjs \
+            tests/l3-p4-shop-trust.test.mjs \
+            tests/customer-nearby-cache-main.test.mjs \
+            tests/customer-public-browse-without-gps.test.mjs \
+            tests/customer-outside-pickup-area-current-main.test.mjs \
+            tests/customer-closed-browse-main.test.mjs \
+            tests/catalog-trust.test.mjs \
+            tests/default-image-fallback.test.mjs \
+            tests/login-apple-notification.test.mjs \
+            tests/original-pickup.test.mjs
+          npm run build
+          python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H1D2_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+          echo H1D2_REGRESSION_PASS
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false bash "$5"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$script"
