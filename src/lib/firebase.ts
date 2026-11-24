@@ -222,20 +222,10 @@ export const FirestoreService = {
   },
 
   async addReview(shopId: string, reviewData: any): Promise<void> {
-    try {
-      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
-      await addDoc(collection(db, 'reviews'), {
-        shop_id: String(shopId),
-        ...reviewData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      });
-    } catch (e) {
-      console.warn("[FirestoreService] addReview notice:", e);
-      throw e;
-    }
+    void shopId; void reviewData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
-  
+
   async getReviewsForShop(shopId: string, limitCount = 50): Promise<any[]> {
     try {
       const { collection, getDocs, query, where, orderBy, limit } = await import('firebase/firestore');
@@ -264,29 +254,13 @@ export const FirestoreService = {
   },
 
   async followShop(userId: string, shopId: string): Promise<void> {
-    try {
-      const { doc, setDoc } = await import('firebase/firestore');
-      const followId = `${userId}_${shopId}`;
-      await setDoc(doc(db, 'follows', followId), {
-        user_id: String(userId),
-        shop_id: String(shopId),
-        created_at: new Date().toISOString()
-      });
-    } catch (e) {
-      console.warn("[FirestoreService] followShop notice:", e);
-      throw e;
-    }
+    void userId; void shopId;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   async unfollowShop(userId: string, shopId: string): Promise<void> {
-    try {
-      const { doc, deleteDoc } = await import('firebase/firestore');
-      const followId = `${userId}_${shopId}`;
-      await deleteDoc(doc(db, 'follows', followId));
-    } catch (e) {
-      console.warn("[FirestoreService] unfollowShop notice:", e);
-      throw e;
-    }
+    void userId; void shopId;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   async getFollowedShops(userId: string): Promise<any[]> {
@@ -302,16 +276,8 @@ export const FirestoreService = {
   },
 
   async submitContactMessage(messageData: any): Promise<void> {
-    try {
-      const { collection, addDoc } = await import('firebase/firestore');
-      await addDoc(collection(db, 'contact_messages'), {
-        ...messageData,
-        created_at: new Date().toISOString()
-      });
-    } catch (e) {
-      console.warn("[FirestoreService] submitContactMessage notice:", e);
-      throw e;
-    }
+    void messageData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   // Orders
@@ -400,12 +366,8 @@ export const FirestoreService = {
 
   // Rider tracking
   async updateRiderLocation(riderId: string, locationData: { latitude: number; longitude: number; heading?: number; speed?: number; order_id?: string }): Promise<void> {
-    const riderDoc = doc(db, "rider_locations", String(riderId));
-    await setDoc(riderDoc, {
-      rider_id: riderId,
-      ...locationData,
-      updated_at: new Date().toISOString()
-    }, { merge: true });
+    void riderId; void locationData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   listenToRiderLocation(riderId: string, onUpdate: (loc: any) => void): Unsubscribe {
@@ -421,39 +383,15 @@ export const FirestoreService = {
 
   // Chat messages
   async sendMessage(orderId: string, senderId: string, senderRole: string, messageText: string): Promise<void> {
-    const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const msgDoc = doc(db, "messages", msgId);
-    await setDoc(msgDoc, {
-      id: msgId,
-      order_id: String(orderId),
-      sender_id: senderId,
-      sender_role: senderRole,
-      message: messageText,
-      timestamp: new Date().toISOString(),
-      created_at: new Date().toISOString()
-    });
+    void orderId; void senderId; void senderRole; void messageText;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
-  
   async markMessagesAsRead(orderId: string, currentUserId: string): Promise<void> {
-    try {
-      const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)), where("is_read", "==", false));
-      const snap = await getDocs(q);
-      const batch = writeBatch(db);
-      let count = 0;
-      snap.forEach((docSnap) => {
-        if (docSnap.data().sender_id !== currentUserId) {
-          batch.update(docSnap.ref, { is_read: true, read_at: new Date().toISOString() });
-          count++;
-        }
-      });
-      if (count > 0) {
-        await batch.commit();
-      }
-    } catch (e) {
-      console.warn("[FirestoreService] markMessagesAsRead error:", e);
-    }
+    void orderId; void currentUserId;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
+
   listenToOrderMessages(orderId: string, onUpdate: (messages: any[]) => void): Unsubscribe {
     const q = query(collection(db, "messages"), where("order_id", "==", String(orderId)));
     return onSnapshot(q, (snapshot) => {
@@ -486,41 +424,8 @@ export const FirestoreService = {
   },
 
   async saveProfile(userId: string, profileData: any, retries = 1, backoffMs = 500): Promise<void> {
-    if (!userId) return;
-    for (let i = 0; i < retries; i++) {
-      try {
-        const profileDoc = doc(db, "profiles", String(userId));
-        
-        // Realistic 8s timeout for long-polling connection handshake without hanging
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Timeout saving to Firestore mirror")), 8000)
-        );
-        
-        await Promise.race([
-          setDoc(profileDoc, {
-            id: userId,
-            user_id: userId,
-            ...profileData,
-            updated_at: new Date().toISOString()
-          }, { merge: true }),
-          timeoutPromise
-        ]);
-        
-        return; // Success
-      } catch (e: any) {
-        // Fast exit for split-brain permission or timeout - Supabase/API is authoritative
-        if (e?.message?.includes("Missing or insufficient permissions") || e?.message?.includes("Timeout")) {
-          console.debug("[FirestoreService] Profile mirror notice (Supabase is authoritative):", e?.message || e);
-          return;
-        }
-        
-        if (i === retries - 1) {
-          console.debug("[FirestoreService] saveProfile mirror gracefully handled:", e?.message || e);
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
-      }
-    }
+    void userId; void profileData; void retries; void backoffMs;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   listenToProfile(userId: string, onUpdate: (profile: any) => void): Unsubscribe {
@@ -536,57 +441,33 @@ export const FirestoreService = {
 
   // Push token registration
   async savePushToken(userId: string, token: string): Promise<void> {
-    const tokenDoc = doc(db, "user_push_tokens", `${userId}_${token.slice(-10)}`);
-    await setDoc(tokenDoc, {
-      user_id: userId,
-      token: token,
-      last_updated: new Date().toISOString()
-    }, { merge: true });
+    void userId; void token;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
-  
   // Mutations
   async updateOrder(orderId: string, updateData: any): Promise<void> {
     return rejectLegacyOrderWrite();
   },
 
   async updateShop(shopId: string, updateData: any): Promise<void> {
-    try {
-      const shopDoc = doc(db, "shops", String(shopId));
-      await setDoc(shopDoc, updateData, { merge: true });
-    } catch (e) {
-      console.warn("[FirestoreService] updateShop notice:", e);
-    }
+    void shopId; void updateData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   async updateMenuItem(itemId: string, updateData: any): Promise<void> {
-    try {
-      const menuDoc = doc(db, "menu_items", String(itemId));
-      await setDoc(menuDoc, updateData, { merge: true });
-    } catch (e) {
-      console.warn("[FirestoreService] updateMenuItem notice:", e);
-    }
+    void itemId; void updateData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   async addMenuItem(itemData: any): Promise<void> {
-    try {
-      if (!itemData.id) {
-         itemData.id = "doc_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
-      }
-      const menuDoc = doc(db, "menu_items", String(itemData.id));
-      await setDoc(menuDoc, itemData);
-    } catch (e) {
-      console.warn("[FirestoreService] addMenuItem notice:", e);
-    }
+    void itemData;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   async deleteMenuItem(itemId: string): Promise<void> {
-    try {
-      const menuDoc = doc(db, "menu_items", String(itemId));
-      await setDoc(menuDoc, { is_available: false, active: false, status: 'deleted' }, { merge: true });
-    } catch (e) {
-      console.warn("[FirestoreService] deleteMenuItem notice:", e);
-    }
+    void itemId;
+    throw new Error("This action requires the verified LocalEats API. No changes were saved.");
   },
 
   // Shops & Menu retrieval from shared Firestore Database
@@ -803,40 +684,8 @@ export const FirestoreService = {
   },
 
   async seedDemoShopsIfEmpty(): Promise<boolean> {
-    try {
-      const existing = await FirestoreService.getShops();
-      if (existing.length > 0) return false;
-
-      for (const shop of DEFAULT_FALLBACK_SHOPS) {
-        const shopRef = doc(db, "shops", shop.id);
-        await setDoc(shopRef, {
-          id: shop.id,
-          name: shop.name,
-          logo_url: shop.logo,
-          rating: shop.rating,
-          description: shop.description,
-          location: shop.address,
-          category: shop.category,
-          cuisine_type: shop.cuisine_type || shop.category,
-          opening_time: shop.opening_time,
-          closing_time: shop.closing_time,
-          phone: shop.phone,
-          latitude: shop.latitude,
-          longitude: shop.longitude,
-          is_active: true,
-          isOpen: true,
-          prepTime: shop.prepTime,
-          reviewCount: shop.reviewCount,
-          menu: shop.menu,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, { merge: true });
-      }
-      return true;
-    } catch (e) {
-      console.warn("[FirestoreService] seedDemoShops error:", e);
-      return false;
-    }
+    // Demo fixtures never write to a shared database.
+    return false;
   }
 };
 
