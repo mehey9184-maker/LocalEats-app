@@ -1,3 +1,4 @@
+import {makeLegacyCatalogRouter} from "./legacyCatalogRouter";
 import {menuHelpResponse} from "./src/services/menuHelpResponse";
 import {ownsProfile, customerProfileFields} from "./src/services/profileOwnership";
 import {legacyOrderGuard} from "./legacyOrderGuards";
@@ -261,58 +262,8 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 }
 
-app.get("/api/v1/shops", async (req, res) => {
-  try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ success: false, error: "Backend Supabase connection not configured." });
-    }
-
-    const { data: shops, error } = await supabaseAdmin
-      .from("shops")
-      .select("id, name, description, location, category, rating, logo_url, opening_time, closing_time, phone, latitude, longitude, cash_trust_enabled, allow_external_riders, auto_look_for_rider, is_active, owner_id")
-      .eq("is_active", true);
-
-    if (error) {
-      console.error("[LocalEats API] Error fetching shops:", error);
-      return res.status(500).json({ success: false, error: "Failed to fetch shops" });
-    }
-
-    return res.status(200).json({ success: true, shops: shops || [] });
-  } catch (error) {
-    console.error("[LocalEats API] Exception fetching shops:", error);
-    return res.status(500).json({ success: false, error: "Internal server error" });
-  }
-});
-
-
-app.get("/api/v1/shops/:shopId/menu", async (req, res) => {
-  try {
-    if (!supabaseAdmin) {
-      return res.status(500).json({ success: false, error: "Backend Supabase connection not configured." });
-    }
-
-    const { shopId } = req.params;
-    if (!shopId) {
-      return res.status(400).json({ success: false, error: "Shop ID is required" });
-    }
-
-    const { data: items, error } = await supabaseAdmin
-      .from("menu_items")
-      .select("id, shop_id, name, price, description, image_url, category, is_available, customizations")
-      .eq("shop_id", shopId)
-      .eq("is_available", true);
-
-    if (error) {
-      console.error("[LocalEats API] Error fetching menu items:", error);
-      return res.status(500).json({ success: false, error: "Failed to fetch menu items" });
-    }
-
-    return res.status(200).json({ success: true, items: items || [] });
-  } catch (error) {
-    console.error("[LocalEats API] Exception fetching menu items:", error);
-    return res.status(500).json({ success: false, error: "Internal server error" });
-  }
-});
+// Legacy aliases delegate only to the central API; no direct catalog database fallback.
+app.use("/api/v1", makeLegacyCatalogRouter(process.env.LOCALEATS_CATALOG_API_ORIGIN));
 
 app.post("/api/orders", authenticateJWT, async (req, res) => {
   try {
