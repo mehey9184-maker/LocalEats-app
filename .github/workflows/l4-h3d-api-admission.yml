@@ -19,11 +19,11 @@ jobs:
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: 911540be8c2db6247c13386e165a4a51eb5f8c71
+            sha: 28fb0acce329d6864d4741429781d922fa93d980
             workdir: source
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: 911540be8c2db6247c13386e165a4a51eb5f8c71
+            sha: 28fb0acce329d6864d4741429781d922fa93d980
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 911540be8c2db6247c13386e165a4a51eb5f8c71
+          ref: 28fb0acce329d6864d4741429781d922fa93d980
           path: merchant
           persist-credentials: false
       - name: Inspect tracked source without printing credential values
