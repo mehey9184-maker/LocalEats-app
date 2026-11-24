@@ -53,12 +53,19 @@ if (typeof window !== 'undefined') {
 }
 
 const createChain = (): any => {
+  // This is an offline compatibility facade, not a database client.
+  // A fresh chain per call prevents write errors leaking into unrelated reads.
+  let unsupportedWrite = false;
+  const result = (single = false) => unsupportedWrite
+    ? { data: null, error: { code: "LEGACY_PERSISTENCE_UNAVAILABLE", message: "This operation requires the verified LocalEats API. No changes were saved." } }
+    : { data: single ? null : [], error: null };
+  const write = (..._args: any[]) => { unsupportedWrite = true; return chain; };
   const chain: any = {
     select: (..._args: any[]) => chain,
-    insert: (..._args: any[]) => chain,
-    upsert: (..._args: any[]) => chain,
-    update: (..._args: any[]) => chain,
-    delete: (..._args: any[]) => chain,
+    insert: write,
+    upsert: write,
+    update: write,
+    delete: write,
     eq: (..._args: any[]) => chain,
     neq: (..._args: any[]) => chain,
     gt: (..._args: any[]) => chain,
@@ -72,21 +79,20 @@ const createChain = (): any => {
     order: (..._args: any[]) => chain,
     limit: (..._args: any[]) => chain,
     range: (..._args: any[]) => chain,
-    single: async () => ({ data: null, error: null }),
-    maybeSingle: async () => ({ data: null, error: null }),
+    single: async () => result(true),
+    maybeSingle: async () => result(true),
     then: function(resolve: any, reject?: any) {
-      return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+      return Promise.resolve(result()).then(resolve, reject);
     },
     catch: function(reject: any) {
-      return Promise.resolve({ data: [], error: null }).catch(reject);
+      return Promise.resolve(result()).catch(reject);
     },
     finally: function(callback: any) {
-      return Promise.resolve({ data: [], error: null }).finally(callback);
+      return Promise.resolve(result()).finally(callback);
     }
   };
   return chain;
 };
-const mockDbChain: any = createChain();
 
 export const supabase: any = {
   auth: {
@@ -198,7 +204,7 @@ export const supabase: any = {
       } } } };
     }
   },
-  from: (table) => mockDbChain,
+  from: (_table) => createChain(),
   rpc: async () => ({ data: null, error: { message: "Failed to fetch (offline)" } }),
   channel: () => ({
     on: () => ({ subscribe: () => {} }),
