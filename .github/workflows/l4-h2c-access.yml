@@ -1,0 +1,45 @@
+name: L4-H2C frontend access inventory (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['scripts/audit-l4-h2c-access.mjs','.github/workflows/l4-h2c-access.yml']
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: 39cee8ebbcf4e946ee7b443c21861fc4b5066e14
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 911edec5bfe79ec65a144a519dda480a0adea0b2
+    name: Access inventory - ${{ matrix.component }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          path: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install locked tooling
+        working-directory: source
+        run: npm ci --ignore-scripts --no-audit --no-fund --fetch-retries=3
+      - name: Read-only source AST inventory in isolated network
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true node "$5" "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$GITHUB_WORKSPACE/audit/scripts/audit-l4-h2c-access.mjs" "$GITHUB_WORKSPACE/source"
