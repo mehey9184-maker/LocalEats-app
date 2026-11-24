@@ -6,7 +6,7 @@ const {resolve}=require("node:path");
 const {verifyFirestoreRelease,verifyFirestoreTarget}=require("../scripts/verify-firestore-deploy.cjs");
 const root=resolve(__dirname,"..");
 const current=readFileSync(resolve(root,"firestore.rules"),"utf8");
-const candidate=readFileSync(resolve(root,"security/review/firestore-pickup-phase1.rules"),"utf8");
+const candidate=readFileSync(resolve(root,"security/review/firestore-h3c-pickup.rules"),"utf8");
 const previous=readFileSync(resolve(root,"security/review/firestore-deployed-baseline.rules"),"utf8");
 const cfg=JSON.parse(readFileSync(resolve(root,"firebase.json"),"utf8"));
 const hash=x=>createHash("sha256").update(x).digest("hex");
