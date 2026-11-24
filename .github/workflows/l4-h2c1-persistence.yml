@@ -19,11 +19,11 @@ jobs:
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: ec76b5dcb02adb06423691dca4940ac6fb788246
+            sha: 6818999c80ae70910ffee239574943b3b1942cf4
             workdir: source
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: ec76b5dcb02adb06423691dca4940ac6fb788246
+            sha: 6818999c80ae70910ffee239574943b3b1942cf4
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
