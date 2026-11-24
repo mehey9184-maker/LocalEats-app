@@ -3101,89 +3101,11 @@ export default function App() {
                       setCurrentScreen("home");
                     }
                   }}
-                  onSubmit={async (
-                    rating,
-                    comment,
-                    riderRating,
-                    riderComment,
-                  ) => {
-                    try {
-                      // 1. Save Shop Review
-                      const dbShopId = typeof pendingReview.shopId === "number"
-                        ? pendingReview.shopId
-                        : (parseInt(String(pendingReview.shopId).replace(/\D/g, "")) || 1);
+                  onSubmit={async () => {
+                    // The legacy review path used a no-op compatibility store.
+                    // Preserve the pending review; only a verified API may confirm submission.
+                    showAlert("Review unavailable", "Review saving is not available yet. No feedback was submitted. You can skip for now.");
 
-                      const dbOrderId = typeof pendingReview.orderId === "number"
-                        ? pendingReview.orderId
-                        : /^[0-9a-fA-F-]{36}$/.test(pendingReview.orderId)
-                          ? pendingReview.orderId
-                          : (parseInt(String(pendingReview.orderId).replace(/\D/g, "")) || 1);
-
-                      const { error: shopErr } = await supabase
-                        .from("reviews")
-                        .insert({
-                          shop_id: dbShopId,
-                          user_id: userProfile?.id || session?.user?.id,
-                          username: userProfile.fullName || "Anonymous",
-                          rating,
-                          comment,
-                          createdAt: new Date().toISOString(),
-                        });
-
-                      if (shopErr) throw shopErr;
-
-                      // 2. Save Rider Review if exists
-                      const { data: order } = await supabase
-                        .from("orders")
-                        .select("rider_id")
-                        .eq("id", dbOrderId)
-                        .single();
-
-                      if (order?.rider_id && riderRating) {
-                        await supabase
-                          .from("orders")
-                          .update({
-                            rider_rating: riderRating,
-                            rider_rating_comment: riderComment,
-                          })
-                          .eq("id", dbOrderId);
-
-                        // Update rider profile average rating
-                        const { data: rider } = await supabase
-                          .from("rider_profiles")
-                          .select("rating, rating_count")
-                          .eq("id", order.rider_id)
-                          .single();
-
-                        if (rider) {
-                          const currentRating = rider.rating || 5;
-                          const currentCount = rider.rating_count || 0;
-                          const newCount = currentCount + 1;
-                          const newRating =
-                            (currentRating * currentCount + riderRating) /
-                            newCount;
-
-                          await supabase
-                            .from("rider_profiles")
-                            .update({
-                              rating: Number(newRating.toFixed(1)),
-                              rating_count: newCount,
-                            })
-                            .eq("id", order.rider_id);
-                        }
-                      }
-
-                      showAlert(
-                        "Feedback Submitted",
-                        "Thank you for helping us improve! 🔥",
-                      );
-                    } catch (err) {
-                      console.error("Error saving review:", err);
-                      showAlert("Error", "Failed to save your review.");
-                    }
-
-                    setPendingReview(null);
-                    setCurrentScreen("order-history");
                   }}
                 />
               )}

@@ -106,3 +106,27 @@ test('the customer ordering client and server both use Firebase identity, not Su
  assert.match(app,/if \(prev === "setup-password" \|\| prev === "success"\) return prev/);
  assert.match(app,/verificationEmailSent=\{signupVerificationEmailSent\}/);
 });
+
+test('legacy compatibility writes fail closed, even through terminal query methods; reads and auth remain isolated',async()=>{
+ const {supabase,actions}=await loadFirebaseCompatibilityMock();
+ for(const verb of ['insert','upsert','update','delete']){
+  const chain=()=>supabase.from('fixture')[verb]({id:'synthetic'}).eq('id','synthetic').select('id');
+  for(const r of [await chain(),await chain().single(),await chain().maybeSingle(),await chain().then(x=>x),await chain().catch(()=>{throw Error('unexpected rejection')}),await chain().finally(()=>{})]){
+   assert.equal(r.data,null);assert.equal(r.error.code,'LEGACY_PERSISTENCE_UNAVAILABLE');assert.match(r.error.message,/No changes were saved/);
+  }
+ }
+ const pending=supabase.from('fixture').update({name:'synthetic'});
+ assert.deepEqual(await supabase.from('fixture').select('id'),{data:[],error:null});
+ assert.equal((await pending).error.code,'LEGACY_PERSISTENCE_UNAVAILABLE');
+ assert.deepEqual(actions,{create:0,mail:0,login:0});
+ assert.equal((await supabase.auth.getSession()).data.session,null);
+});
+test('legacy pending review never reports success or discards the pending review on submit',()=>{
+ const app=readFileSync('src/App.tsx','utf8');
+ const a=app.indexOf('onSubmit={async () => {',app.indexOf('currentScreen === "review" && pendingReview'));
+ const b=app.indexOf('}}',a);
+ assert.ok(a>0&&b>a);
+ const handler=app.slice(a,b);
+ assert.match(handler,/No feedback was submitted/);
+ assert.doesNotMatch(handler,/Feedback Submitted|setPendingReview|\.from\(|FirestoreService|setCurrentScreen/);
+});
