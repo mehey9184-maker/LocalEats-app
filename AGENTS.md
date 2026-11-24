@@ -1,5 +1,9 @@
 # LocalEats Agent Instructions & Architecture Document
 
+## L4-H1 engineering handover — 2026-11-24 (documentation review)
+Read [the AI handover](docs/LOCALEATS_AI_HANDOVER.md) for the dated cross-app orientation, decision log, source evidence and remaining launch gates. Use `.agents/skills/localeats-engineering-handover/SKILL.md` for engineering continuity and code health, in addition to existing pickup-specific instructions. Historical notes below are not authorization to revive legacy flows. Verify live source and environment; no Production deployment, merge, real orders, live writes, paid services or deletion of deferred features from this audit. Record important decisions and update relevant functionality documentation with exact test evidence.
+
+
 ## L3 P1–P4 combined zero-write integration (2026-11-22)
 Branch `integration/l3-p1-p4-zero-write-20261122` preserves P1 verified progressive discovery/image widths, P2 opt-in Data Saver and names-only offline reference, P3 reduced-motion/focus/navigation and P4 truthful inactive shop labels and the canonical `docs/LOCALEATS_SCALABLE_IDEA_REGISTER.md`. Shared files were manually reconciled; do not overwrite them wholesale from any original draft branch. Run `tests/l3-p1-p4-integration.test.mjs` and `.github/workflows/customer-l3-p1-p4-integration.yml` on one combined SHA before any release claim. This is a standalone **Preview-only no-write** draft: no Production deployment, no user/shop records, no payment, no GPS emulation or real orders. Source details and blocking gates: `docs/L3_P1_P4_INTEGRATION_20261122.md`.
 
