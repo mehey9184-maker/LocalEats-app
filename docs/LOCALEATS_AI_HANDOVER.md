@@ -37,6 +37,11 @@ Target: React/Vite PWA Customer and Merchant -> authenticated LocalEats API -> S
 
 For new decisions append ID/date, owner approval or proposal status, problem/options, chosen rationale, affected repos/files, security/cost/data implications, test evidence (SHA/run), rollback, and follow-up. Mark superseded decisions explicitly; don't rewrite past events. Update current status and relevant functionality doc with each material change.
 
+| ADR-008 | 2026-11-24 proposed | Consider C++/WebAssembly only for proven stable CPU-bound pure computations, with measured advantage and maintainable fallback; keep changing business rules and security in the existing stack. | Founder future preference, not approval to implement; [H1B source inventory and native-code policy](LOCALEATS_L4_H1B_SOURCE_INVENTORY.md). |
+
+## Current source inventory — L4-H1B
+Both main Git trees and matching Graphify index commits verified; [source inventory](LOCALEATS_L4_H1B_SOURCE_INVENTORY.md) includes API roots, source hotspots, direct SDK and revocation candidates, and pending isolated baseline. No fresh test run or dead-code removal yet.
+
 ## Release acceptance / open work
 - Recheck exact deployed Customer/API/Merchant SHA, CORS apex and www, write flags, environment isolation, commercial hosting eligibility. PR CI is insufficient.
 - Genuine Android GPS/4-km and mobile bytes, real foreground/background FCM, separate consenting accounts, shop availability, pickup/physical payment/handover, retry and pause/rollback.
