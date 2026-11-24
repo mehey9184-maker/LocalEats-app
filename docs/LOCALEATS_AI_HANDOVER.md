@@ -78,6 +78,11 @@ Run 45484118373 passed 65 tests and build but exceeded Chrome startup timeout. R
 ### H1D.3A keyboard diagnostic correction
 Run [45485611056](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45485611056) passed 65/65 tests and build but failed original-first keyboard sequence (Space activated VIP, Enter did not activate Rush/Special); no pixel diagnostics reached. CDP helper omitted Enter character text, and review identified fresh fixture query URLs would return HTTP 404. Test-only commit 7a5c1d1e4d27400dcca0ec5d7242d66d3efffeae adds CR text/unmodifiedText, per-key native activation assertions and logs, and pathname-based fixture routing. No synthetic direct click replacement, no runtime source change, no loosened acceptance criteria. Browser gate remains HOLD pending fresh evidence.
 
+
+
+**H1D.3A PASS:** Run 45486157277 attempt 2, job 138774775087, head 7a5c1d1e4d27400dcca0ec5d7242d66d3efffeae: 65/65 tests, build, 12/12 exact decoded pixel comparisons with stable original controls and computed style/layout parity, native keyboard sequences 2/2 (six activations). Synthetic component fixture, not full Dashboard/real phone. No production changes. Stacked review remains; H1D.4 next.
+[Successful verification](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45486157277).
+
 ## Release acceptance / open work
 - Recheck exact deployed Customer/API/Merchant SHA, CORS apex and www, write flags, environment isolation, commercial hosting eligibility. PR CI is insufficient.
 - Genuine Android GPS/4-km and mobile bytes, real foreground/background FCM, separate consenting accounts, shop availability, pickup/physical payment/handover, retry and pause/rollback.
