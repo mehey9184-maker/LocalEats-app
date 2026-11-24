@@ -15,7 +15,7 @@ jobs:
         include:
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: 4975cc492418c3f73443e8e4de82282bb263c8d2
+            sha: 0b2f4832eae81b07b39638d8a629155c1a7d91dd
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
