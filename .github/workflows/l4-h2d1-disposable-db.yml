@@ -23,13 +23,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 2f23f64139fa8882f68a43dbd3f9254652b27d9b
+          ref: dd107d355b14deffacda2edc5f7b819948e2d789
           persist-credentials: false
       - name: Verify archived remote statements exactly match read-only recovery digests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 2f23f64139fa8882f68a43dbd3f9254652b27d9b
+          test "$(git rev-parse HEAD)" = dd107d355b14deffacda2edc5f7b819948e2d789
           bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
           bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
           node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
@@ -42,7 +42,9 @@ jobs:
           test -f supabase/recovered_applied_readonly/20261031073645_merchant_availability.sql.txt
           test -f supabase/recovered_applied_readonly/20261101160331_pickup_payment_methods.sql.txt
           test -f localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
-          ! find supabase/migrations -maxdepth 1 -name '202610*.sql' -o -name '202611*.sql' | grep .
+          for version in 20261030111305 20261031073608 20261031073645 20261101160331; do
+            test -z "$(find supabase/migrations -maxdepth 1 -type f -name "${version}*.sql" -print)"
+          done
           ! grep -En 'supabase\.co|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|db push|apply_migration|--remote|--publish' \
             localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
       - name: Replay archived SQL and run observed-lock races in disposable PostgreSQL 17
