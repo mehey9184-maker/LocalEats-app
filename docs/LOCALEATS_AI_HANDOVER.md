@@ -74,6 +74,10 @@ Run 45484118373 passed 65 tests and build but exceeded Chrome startup timeout. R
 ### H1D.3A diagnostic follow-up
 [Run 45484687139](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45484687139) passed 65/65 tests and build; all four DOM style/geometry hashes matched, first two original pixel hashes matched, candidate and later original matched one another but not first pair. This confirms original-control pixel drift; visual acceptance not certified. Test-only revision e04b9faa08b0c492c8a6c1c1c89017d15e8b9add replaces canvas readback with independent Node PNG decoding, reports pixel difference bounds/count/max channel delta/samples for every comparison, uses fresh page navigation for each sample and fixed pointer, and runs keyboard first. [Run 45485611056](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45485611056) pending. Exact equality still required. No runtime edits, dependencies or merge. If diagnostic still reports drift, assess pixel coordinates before any further retry. 
 
+
+### H1D.3A keyboard diagnostic correction
+Run [45485611056](https://github.com/mehey9184-maker/LocalEats-Dashboard.2/actions/runs/45485611056) passed 65/65 tests and build but failed original-first keyboard sequence (Space activated VIP, Enter did not activate Rush/Special); no pixel diagnostics reached. CDP helper omitted Enter character text, and review identified fresh fixture query URLs would return HTTP 404. Test-only commit 7a5c1d1e4d27400dcca0ec5d7242d66d3efffeae adds CR text/unmodifiedText, per-key native activation assertions and logs, and pathname-based fixture routing. No synthetic direct click replacement, no runtime source change, no loosened acceptance criteria. Browser gate remains HOLD pending fresh evidence.
+
 ## Release acceptance / open work
 - Recheck exact deployed Customer/API/Merchant SHA, CORS apex and www, write flags, environment isolation, commercial hosting eligibility. PR CI is insufficient.
 - Genuine Android GPS/4-km and mobile bytes, real foreground/background FCM, separate consenting accounts, shop availability, pickup/physical payment/handover, retry and pause/rollback.
