@@ -13,6 +13,8 @@ test("legacy catalog aliases use only central API, preserve compatibility and fa
    if(mode==="network")throw Error("offline");
    if(mode==="invalid")return new Response("<html>");
    if(mode==="redirect")return new Response("",{status:302,headers:{Location:"https://elsewhere.invalid"}});
+   if(mode==="rate")return new Response("untrusted response",{status:429,headers:{"Retry-After":"12"}});
+   if(mode==="bad-rate")return new Response("untrusted response",{status:429,headers:{"Retry-After":"999999"}});
    if(mode==="missing")return new Response("{}",{status:404});
    if(String(url).endsWith("/menu"))return Response.json({success:true,menu_items:mode==="empty"?[]:[{id:"meal",shop_id:mode==="mismatch"?"other":"approved",name:"Kota",price:25,is_available:true,private_field:"hidden"}]});
    return Response.json({success:true,shops:[{id:"approved",name:"Closed Shop",is_active:false,owner_id:"hidden",approval_reason:"hidden",cash_trust_enabled:true}]});
@@ -33,6 +35,9 @@ test("legacy catalog aliases use only central API, preserve compatibility and fa
    mode="empty";assert.deepEqual(await (await fetch(base+"/api/v1/shops/approved/menu")).json(),{success:true,items:[]});
    mode="missing";assert.equal((await fetch(base+"/api/v1/shops/pending/menu")).status,404);
    for(const failure of ["network","invalid","redirect","mismatch"]){mode=failure;assert.equal((await fetch(base+"/api/v1/shops/approved/menu")).status,503);}
+   for(const [path,modeName,seconds] of [["/api/v1/shops","rate","12"],["/api/v1/shops/approved/menu","bad-rate","60"]]){
+     mode=modeName;const rate=await fetch(base+path);assert.equal(rate.status,429);assert.equal(rate.headers.get("Retry-After"),seconds);assert.equal(rate.headers.get("cache-control"),"no-store");assert.equal((await rate.json()).code,"RATE_LIMITED");
+   }
    const before=calls.length;
    assert.equal((await fetch(base+"/unconfigured/shops")).status,503);
    assert.equal((await fetch(base+"/api/v1/shops/%2Fbad/menu")).status,404);
