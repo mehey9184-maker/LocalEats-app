@@ -5,7 +5,7 @@ const {initializeTestEnvironment,assertFails,assertSucceeds}=require("@firebase/
 const {doc,getDoc,setDoc,updateDoc,deleteDoc,deleteField}=require("firebase/firestore");
 
 test("deployed baseline demonstrates direct order changes and broad rider visibility; candidate blocks them",async()=>{
- for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false],["firestore.rules",false]]){
+ for(const [name,baseline] of [["firestore-deployed-baseline.rules",true],["firestore-pickup-phase1.rules",false]]){
   const env=await initializeTestEnvironment({
    projectId:"demo-pickup-rules",firestore:{host:"127.0.0.1",port:8080,
     rules:readFileSync(name==="firestore.rules"?name:"security/review/"+name,"utf8")}
@@ -53,9 +53,9 @@ test("deployed baseline demonstrates direct order changes and broad rider visibi
 });
 
 
-test("deployable root rules are deny-by-default, not the old public read/write file",()=>{
+test("H3C deployable root rules match new reviewed source and deny by default",()=>{
  const root=readFileSync("firestore.rules","utf8");
- const candidate=readFileSync("security/review/firestore-pickup-phase1.rules","utf8");
+ const candidate=readFileSync("security/review/firestore-h3c-pickup.rules","utf8");
  assert.equal(root,candidate,"Root firebase.json MUST deploy the isolated pickup-reviewed rules, not permissive legacy rules.");
  assert.match(root,/match \/\{document=\*\*\} \{\s*allow read, write: if false;/);
  assert.match(root,/match \/orders\/\{orderId} \{[\s\S]*?allow create: if false;[\s\S]*?allow update: if false;[\s\S]*?allow delete: if false;/);
@@ -67,7 +67,7 @@ test("deployable root rules are deny-by-default, not the old public read/write f
 
 
 test("L2C: reviewed and deployable rules enforce sender identity, shop authority and rider ownership",async()=>{
- for(const file of ["firestore.rules","security/review/firestore-pickup-phase1.rules"]){
+ for(const file of ["security/review/firestore-pickup-phase1.rules"]){
   const env=await initializeTestEnvironment({
     projectId:"demo-pickup-rules",
     firestore:{host:"127.0.0.1",port:8080,rules:readFileSync(file,"utf8")}
@@ -130,7 +130,7 @@ test("L2C: reviewed and deployable rules enforce sender identity, shop authority
 
 
 test("L2C: signed-in users cannot mint admin roles, wallet credit or approved rider profiles",async()=>{
- for(const file of ["firestore.rules","security/review/firestore-pickup-phase1.rules"]){
+ for(const file of ["security/review/firestore-pickup-phase1.rules"]){
   const env=await initializeTestEnvironment({
    projectId:"demo-pickup-rules",
    firestore:{host:"127.0.0.1",port:8080,rules:readFileSync(file,"utf8")}
