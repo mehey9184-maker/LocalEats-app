@@ -263,3 +263,11 @@ H4B.1 corrected run 45517225219 independently verified 9/9 PASS. Preserve all re
 
 ## L4-H4D — network efficiency (draft)
 H4C corrected run 45519489116 verified 10/10 successful; first verified card public/GPS 16ms with synthetic delays, 3 HTTP requests for four shops. ADR-027 final acceptance recorded. ADR-028 covers verified-idle Customer history, unchanged critical Merchant reconciliation, visible version checks and scoped Retry-After read-only cooldown. H4D acceptance pending. All release blockers retained. No Production or hosted migration. R0.
+
+
+## L4-H4E — combined performance acceptance
+H4D final corrected 45521196815 10/10 PASS, Customer 252/252, Merchant 182/182, API 260/260. Measured fixture transport 240→60 idle reads/hour, active/unknown 240; Retry-After 90s, 8 attempted/2 transmitted/6 suppressed. ADR-028 final evidence. ADR-029 compares exact H4A and accepted H4D pins in isolated same-run browser/API benchmark plus ten existing regression jobs. Explicit remaining H4A gaps: Customer FCP <=576ms, total gzip stretch targets, <=4 repository reads vs priority path 5 (3 HTTP), actual browser/device/push/PWA and hosted index rollout. No runtime changes or new services. R0. No release blocker closed.
+
+
+### H4E final evidence decision
+Run 45522466619 11/11 PASS, all four same-run API p95 targets met. Exact Customer 73b756e7a56e5f5823b1f77117776383a61622bb, Merchant 7ebebd11305650cf52d3fb91de451943cbc27dd9. Cold shell transfer 542530→340592 B Customer, 894920→445592 Merchant; median load 3335→2202 / 5331→2801ms; FCP 768→764 / 5512→3004ms. Full target acceptance held: Customer FCP >576ms, priority catalog 5 repository calls vs <=4, total gzip stretch 764076/1007643 vs <=570000/750000 B. ADR-029 final evidence and source audit recorded in both drafts. H4E evidence accepted, H5 not started; next focused H4E.1 diagnostic/rehearsal or explicit tradeoff approval. No runtime change or release blocker closed. R0 incremental services.
