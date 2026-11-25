@@ -38,24 +38,6 @@ import {
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Toaster, toast } from "sonner";
 import { MapLegend } from "./components/MapLegend";
-import QRCode from "qrcode";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  PieChart,
-  Pie,
-  Legend,
-} from "recharts";
 
 import type { Html5Qrcode } from "html5-qrcode";
 
@@ -217,7 +199,6 @@ import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
-import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
 export type { UserProfile } from "./types";
 import {
