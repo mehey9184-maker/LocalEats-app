@@ -15,7 +15,7 @@ jobs:
         include:
           - component: Customer
             repo: mehey9184-maker/LocalEats-app
-            sha: 72000289179ddc496d46deb2025a9a49f0d8608d
+            sha: be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
@@ -131,7 +131,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 72000289179ddc496d46deb2025a9a49f0d8608d
+          ref: be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -167,7 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 72000289179ddc496d46deb2025a9a49f0d8608d
+          ref: be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -186,7 +186,7 @@ jobs:
       - name: Confirm identical rules and preserve exact prior Merchant source
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 72000289179ddc496d46deb2025a9a49f0d8608d
+          test "$(git -C customer rev-parse HEAD)" = be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           test "$(git -C merchant rev-parse HEAD)" = 113ffb67ea651fb82bab38d80f4896ebd329e97e
           cmp customer/firestore.rules merchant/firestore.rules
           cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
@@ -223,7 +223,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 72000289179ddc496d46deb2025a9a49f0d8608d
+          ref: be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -242,7 +242,7 @@ jobs:
       - name: Confirm exact rules and no deployment configuration
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 72000289179ddc496d46deb2025a9a49f0d8608d
+          test "$(git -C customer rev-parse HEAD)" = be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           test "$(git -C merchant rev-parse HEAD)" = 113ffb67ea651fb82bab38d80f4896ebd329e97e
           cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
           cmp customer/firestore.rules merchant/firestore.rules
@@ -337,7 +337,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 72000289179ddc496d46deb2025a9a49f0d8608d
+          ref: be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           path: customer
           fetch-depth: 0
           persist-credentials: false
@@ -354,7 +354,7 @@ jobs:
       - name: Prepare locked dependencies and Chromium
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 72000289179ddc496d46deb2025a9a49f0d8608d
+          test "$(git -C customer rev-parse HEAD)" = be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
           test "$(git -C merchant rev-parse HEAD)" = 113ffb67ea651fb82bab38d80f4896ebd329e97e
           (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
           (cd merchant && npm ci --no-audit --no-fund)
@@ -374,7 +374,7 @@ jobs:
               git -C customer checkout --detach afdbbf27c2c03e029d1785ab55d10fc3aa087d14
               git -C merchant checkout --detach 7bb06c161f6654388149f3fe0f33c718f6e5aab4
             else
-              git -C customer checkout --detach 72000289179ddc496d46deb2025a9a49f0d8608d
+              git -C customer checkout --detach be8c31ed8a7c7a2f8c0bae51f7c458430309b23f
               git -C merchant checkout --detach 113ffb67ea651fb82bab38d80f4896ebd329e97e
             fi
             echo "H4B_VARIANT $variant"
