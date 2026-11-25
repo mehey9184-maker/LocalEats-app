@@ -19,11 +19,11 @@ jobs:
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+            sha: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
             workdir: source
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+            sha: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           path: merchant
           persist-credentials: false
       - name: Inspect tracked source without printing credential values
@@ -173,7 +173,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           path: merchant
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -187,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = d30c5ca02853d99fb643e780672aac61d3f947b4
-          test "$(git -C merchant rev-parse HEAD)" = b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          test "$(git -C merchant rev-parse HEAD)" = 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           cmp customer/firestore.rules merchant/firestore.rules
           cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
           cmp merchant/firestore.rules merchant/security/review/firestore-h3c-pickup.rules
@@ -229,7 +229,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           path: merchant
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -243,7 +243,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = d30c5ca02853d99fb643e780672aac61d3f947b4
-          test "$(git -C merchant rev-parse HEAD)" = b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          test "$(git -C merchant rev-parse HEAD)" = 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
           cmp customer/firestore.rules merchant/firestore.rules
           cd customer
@@ -277,11 +277,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           persist-credentials: false
       - run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          test "$(git rev-parse HEAD)" = 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           test -z "$(find supabase/migrations -name '*catalog_api_only_acl_h3b*' -print)"
           bash -n localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
           bash localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
@@ -302,13 +302,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           persist-credentials: false
       - name: Verify archived remote statements exactly match read-only recovery digests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          test "$(git rev-parse HEAD)" = 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
           bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
           node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
@@ -344,7 +344,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          ref: 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           path: merchant
           fetch-depth: 0
           persist-credentials: false
@@ -355,7 +355,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = d30c5ca02853d99fb643e780672aac61d3f947b4
-          test "$(git -C merchant rev-parse HEAD)" = b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+          test "$(git -C merchant rev-parse HEAD)" = 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
           (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
           (cd merchant && npm ci --no-audit --no-fund)
       - name: Build and benchmark in isolated network namespace
@@ -375,7 +375,7 @@ jobs:
               git -C merchant checkout --detach 627f5be2ec71664d6c93aa51370a1d49e9f2569f
             else
               git -C customer checkout --detach d30c5ca02853d99fb643e780672aac61d3f947b4
-              git -C merchant checkout --detach b90c9e722febb7a483eaa3aa0442bf16ddc20a40
+              git -C merchant checkout --detach 2766dba4a02b6cff4b6b5116cfa38189b936c4ca
             fi
             echo "H4B_VARIANT $variant"
             git -C merchant grep -IlE 'GEMINI_API_KEY|@google/genai|@google/generative-ai' -- src vite.config.ts || test "$?" = 1
