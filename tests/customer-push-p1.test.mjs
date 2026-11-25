@@ -91,8 +91,11 @@ test("no automatic permission dialogs; pickup inbox reconciles when push is lost
  assert.match(app,/addEventListener\("localeats-pickup-ready", refreshVisible\)/);
  assert.match(app,/addEventListener\("online", refreshVisible\)/);
  assert.match(app,/addEventListener\("visibilitychange", refreshVisible\)/);
- assert.match(app,/setInterval\(refreshVisible, 30000\)/);
- assert.match(app,/await customerPickupApi\.notifications\(\)/);
+ assert.match(app,/shouldPollCustomerHistory\(verifiedRows,historyScreenRef\.current,lastRefreshStarted,Date\.now\(\)\)/);
+ assert.match(app,/\}, ACTIVE_HISTORY_MS\)/);
+ assert.match(read("src/services/historyPollingPolicy.ts"),/ACTIVE_HISTORY_MS=30_000/);
+ assert.match(app,/if\(active && wakePending\)\{wakePending=false;void refresh\(\);\}/);
+ assert.match(app,/await readPickupWithDeadline\(signal=>customerPickupApi\.notifications\(signal\)/);
  assert.doesNotMatch(app,/inboxInFlight \|\| !pickupOrderingEnabled\(\)/);
  assert.match(app,/revokePickupPushSubscription\(session\.user\.id\)/);
  assert.match(app,/toast\.error\("Registration not confirmed\. Follow your pickup in Orders\."/);
@@ -110,7 +113,10 @@ test("transient notices stay top-visible without covering Settings header or int
  assert.match(app,/readyInboxErrorShown = false;\s*if \(active\) setNotifications/);
  assert.match(app,/if \(active && !readyInboxErrorShown\) \{\s*readyInboxErrorShown = true;/);
  assert.match(app,/Ready notifications could not refresh\. Retry; no state was inferred\./);
- assert.match(app,/setInterval\(refreshVisible, 30000\)/);
+ assert.match(app,/shouldPollCustomerHistory\(verifiedRows,historyScreenRef\.current,lastRefreshStarted,Date\.now\(\)\)/);
+ assert.match(app,/\}, ACTIVE_HISTORY_MS\)/);
+ assert.match(read("src/services/historyPollingPolicy.ts"),/ACTIVE_HISTORY_MS=30_000/);
+ assert.match(app,/if\(active && wakePending\)\{wakePending=false;void refresh\(\);\}/);
 });
 
 test("account dropdown paints above the filter bar so Settings remains visible",()=>{
