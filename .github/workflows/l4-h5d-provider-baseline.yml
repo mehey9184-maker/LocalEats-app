@@ -59,3 +59,33 @@ jobs:
             test -z "$(ip route show default)"
             exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true node --experimental-strip-types --test tests/resilience/h5d-client-baseline.test.mjs
           ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
+
+  merchant-cooldown:
+    name: Exact Merchant cooldown account-transition baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 8a46e0a7d740816f3b6c7a3dae5e1f6c5cbadc11
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify unchanged Merchant runtime and locked dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 8a46e0a7d740816f3b6c7a3dae5e1f6c5cbadc11
+          git diff --exit-code e542337507abfc4b668646f9c0b102603ac7d53a HEAD -- src localeats-api/src package.json package-lock.json
+          npm ci --no-audit --no-fund
+      - name: Run actual API and coordinator with isolated provider fixtures
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false node --experimental-strip-types --test tests/resilience/h5d-merchant-cooldown-baseline.test.mjs
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
