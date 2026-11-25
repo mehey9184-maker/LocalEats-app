@@ -1,6 +1,6 @@
 import { MAX_PICKUP_ITEM_QUANTITY } from "../services/pickupMapping";
 import {pickupQuoteAmounts} from "../services/pickupSummary";
-import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote} from "../services/customerPickup";
+import {quotePickupCart, blockPickupSubmission, pickupOrderingEnabled, submitPickupQuote, capturePickupSession} from "../services/customerPickup";
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, Dispatch, SetStateAction } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -941,19 +941,22 @@ export function CheckoutScreen({
   const submitReviewedPickup = async (retry: boolean) => {
     if (!pickupOrderingEnabled() || quoteLock.current) return;
     if (!retry && (!canSubmitPickup || !quoteConsent)) return;
+    const scope=capturePickupSession();
+    if(!scope.current() || scope.uid!==session?.user?.id)return;
 
     quoteLock.current = true;
     setLoading(retry ? "retry" : "submit");
     setPickupQuoteError("");
     try {
       const verifiedOrder = await submitPickupQuote(retry ? null : pickupQuote);
+      if(!scope.current())return;
       setCart([]);
       onConfirm();
       // Only a persisted, authenticated pickup response may show the optional
       // notification reminder. A failed quote, retry or simulation cannot.
       onVerifiedPickupPlaced?.(verifiedOrder.id);
     } catch (error) {
-      setPickupQuoteError(error instanceof Error ? error.message : "Submission remains unconfirmed.");
+      if(scope.current())setPickupQuoteError(error instanceof Error ? error.message : "Submission remains unconfirmed.");
     } finally {
       quoteLock.current = false;
       setLoading(false);
@@ -964,8 +967,8 @@ export function CheckoutScreen({
   const canSubmitPickup = orderingEnabled && pickupQuote?.quote.can_submit === true;
   // Show "Retry previous submission" only when an unresolved request exists for this account
   // (same UID-scoped key written by submitPickupQuote). Re-evaluated on every render.
-  const hasUnresolvedPickup = typeof sessionStorage !== "undefined" && !!session?.user?.id &&
-    !!sessionStorage.getItem(`pickup-create:${session.user.id}`);
+  const hasUnresolvedPickup = (()=>{try{return typeof sessionStorage !== "undefined" && !!session?.user?.id &&
+    !!sessionStorage.getItem(`pickup-create:${session.user.id}`);}catch{return false;}})();
   const checkoutAction = !pickupQuote ? "Review pickup quote" :
     canSubmitPickup ? "Place pickup order" : "Ordering not available";
   const checkoutActionDisabled = loading || cart.length === 0 ||
