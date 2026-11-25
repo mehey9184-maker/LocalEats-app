@@ -19,11 +19,11 @@ jobs:
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+            sha: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
             workdir: source
           - component: API
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+            sha: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
             workdir: source/localeats-api
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           path: merchant
           persist-credentials: false
       - name: Inspect tracked source without printing credential values
@@ -173,7 +173,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           path: merchant
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -187,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = b82c72e006afeb74bde60d496e9d49a17aaa1468
-          test "$(git -C merchant rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git -C merchant rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           cmp customer/firestore.rules merchant/firestore.rules
           cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
           cmp merchant/firestore.rules merchant/security/review/firestore-h3c-pickup.rules
@@ -229,7 +229,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           path: merchant
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -243,7 +243,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = b82c72e006afeb74bde60d496e9d49a17aaa1468
-          test "$(git -C merchant rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git -C merchant rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
           cmp customer/firestore.rules merchant/firestore.rules
           cd customer
@@ -277,11 +277,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           persist-credentials: false
       - run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           test -z "$(find supabase/migrations -name '*catalog_api_only_acl_h3b*' -print)"
           bash -n localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
           bash localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
@@ -302,13 +302,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           persist-credentials: false
       - name: Verify archived remote statements exactly match read-only recovery digests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
           bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
           node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
@@ -344,7 +344,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           path: merchant
           fetch-depth: 0
           persist-credentials: false
@@ -355,9 +355,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C customer rev-parse HEAD)" = b82c72e006afeb74bde60d496e9d49a17aaa1468
-          test "$(git -C merchant rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git -C merchant rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           git -C customer diff --exit-code 8e39f6ff8f01ac1ec573b87b16afd67395ad702e b82c72e006afeb74bde60d496e9d49a17aaa1468 -- package.json package-lock.json
-          git -C merchant diff --exit-code 130ae5146a749b3cea76e2e94c52b0212231db8a e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8 -- package.json package-lock.json
+          git -C merchant diff --exit-code 130ae5146a749b3cea76e2e94c52b0212231db8a 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5 -- package.json package-lock.json
           (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
           (cd merchant && npm ci --no-audit --no-fund)
       - name: Build and benchmark in isolated network namespace
@@ -377,7 +377,7 @@ jobs:
               git -C merchant checkout --detach 7ebebd11305650cf52d3fb91de451943cbc27dd9
             else
               git -C customer checkout --detach b82c72e006afeb74bde60d496e9d49a17aaa1468
-              git -C merchant checkout --detach e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+              git -C merchant checkout --detach 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
             fi
             echo "H4B_VARIANT $variant"
             echo H4B1_EXACT_SOURCE_FIREBASE_CONSUMERS
@@ -399,12 +399,12 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           persist-credentials: false
       - name: Run synthetic SQL with observed index subset
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           name="h4c-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
           docker run -d --name "$name" --network none --rm -e POSTGRES_PASSWORD=synthetic_only -e POSTGRES_DB=h4c_lab postgres:17-alpine >/dev/null
@@ -434,7 +434,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           path: candidate
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -444,7 +444,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C baseline rev-parse HEAD)" = 130ae5146a749b3cea76e2e94c52b0212231db8a
-          test "$(git -C candidate rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git -C candidate rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           cmp baseline/localeats-api/tests/performance/h4a-api-benchmark.mjs candidate/localeats-api/tests/performance/h4a-api-benchmark.mjs
           (cd baseline/localeats-api && npm ci --no-audit --no-fund)
           (cd candidate/localeats-api && npm ci --no-audit --no-fund)
@@ -525,7 +525,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          ref: 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -534,7 +534,7 @@ jobs:
       - name: Verify unchanged Merchant runtime and locked dependencies
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = e2fffcf12cd189c2f1cdbe8d7a1b81ac8b56d3c8
+          test "$(git rev-parse HEAD)" = 261addca90ee7fe4b5e8ade5b510d6b66b9b36e5
           git diff --exit-code 7ebebd11305650cf52d3fb91de451943cbc27dd9 HEAD -- localeats-api/src package.json package-lock.json
           npm ci --no-audit --no-fund
       - name: Run actual API and coordinator with isolated provider fixtures
