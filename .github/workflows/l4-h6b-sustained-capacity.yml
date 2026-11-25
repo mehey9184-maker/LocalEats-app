@@ -1,0 +1,99 @@
+name: L4-H6B fixed dataset capacity investigation (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h6b-sustained-capacity.yml']
+permissions:
+  contents: read
+jobs:
+  recovered-applied-history:
+    name: Fixed-snapshot PostgreSQL mixed load and integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PICKUP_WRITES_ENABLED: 'false'
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      RIDER_ACTIVATION_ENABLED: 'false'
+      REWARDS_ENABLED: 'false'
+      R36_PICKUP_REPLAY_MODE: recorded_applied
+      H2D1_CONCURRENCY: 'true'
+      H5E_RESTART_INTEGRITY: 'true'
+      H6A_LOAD_BASELINE: 'true'
+      H6B_FIXED_LOAD: 'true'
+    steps:
+      - name: Checkout historical archive without GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify archived remote statements exactly match read-only recovery digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
+          git diff --exit-code 389c526a2c2ba22e2dd27d1e3af2e0ab3b56d0dc HEAD -- src localeats-api/src supabase package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
+          bash -n localeats-api/tests/pickup/r35/h6b-fixed-load.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/h6a-load.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/h5e-restart.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
+      - name: Ensure no hosted connection or new active migration is possible
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supabase/recovered_applied_readonly/20261030111305_pickup_launch_foundation.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073608_pickup_zero_fee.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073645_merchant_availability.sql.txt
+          test -f supabase/recovered_applied_readonly/20261101160331_pickup_payment_methods.sql.txt
+          test -f localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          for version in 20261030111305 20261031073608 20261031073645 20261101160331; do
+            test -z "$(find supabase/migrations -maxdepth 1 -type f -name "${version}*.sql" -print)"
+          done
+          ! grep -En 'supabase\.co|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|db push|apply_migration|--remote|--publish' \
+            localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+      - name: Replay archived SQL and run observed-lock races in disposable PostgreSQL 17
+        shell: bash
+        run: bash localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+
+  api-load:
+    name: Repeated paced actual protected-route load and virtual admission
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify unchanged accepted runtime and dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
+          git diff --exit-code 389c526a2c2ba22e2dd27d1e3af2e0ab3b56d0dc HEAD -- src localeats-api/src supabase package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
+          cd localeats-api
+          npm ci --no-audit --no-fund
+      - name: Bounded loopback-only load with isolated fake providers
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false bash -euc "cd localeats-api; npm run build; node tests/performance/h6b-protected-load.mjs"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
+  source-pin:
+    name: Verify Customer accepted runtime unchanged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: cec31f401d860c10587c4999736b63a3eb5989ec
+          persist-credentials: false
+      - run: test "$(git rev-parse HEAD)" = cec31f401d860c10587c4999736b63a3eb5989ec
