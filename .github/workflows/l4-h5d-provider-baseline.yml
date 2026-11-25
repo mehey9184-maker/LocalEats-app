@@ -1,0 +1,61 @@
+name: L4-H5D baseline provider faults (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h5d-provider-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  provider:
+    name: Actual compiled API provider and outbox baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7b0eafac5e1aeade9398dab662bddc8c46c7a77e
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify unchanged runtime and install existing API dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 7b0eafac5e1aeade9398dab662bddc8c46c7a77e
+          git diff --exit-code e542337507abfc4b668646f9c0b102603ac7d53a HEAD -- src localeats-api/src package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
+          cd localeats-api
+          npm ci --no-audit --no-fund
+      - name: Compile and run synthetic provider tests with no external network
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false bash -euc "cd localeats-api; npm run build; cd ..; node --test tests/resilience/h5d-provider-baseline.test.mjs"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
+  client:
+    name: Actual Customer fallback and read cooldown baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 5a0a0de6d30f1f4594470e1e78b8d0c070f6bc29
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify exact unchanged Customer and run isolated policy and transport
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 5a0a0de6d30f1f4594470e1e78b8d0c070f6bc29
+          git diff --exit-code b82c72e006afeb74bde60d496e9d49a17aaa1468 HEAD -- src package.json package-lock.json
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true node --experimental-strip-types --test tests/resilience/h5d-client-baseline.test.mjs
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
