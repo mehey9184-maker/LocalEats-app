@@ -81,7 +81,20 @@ try{
  await page.evaluate(()=>switchUser('fixture-b'));assert.equal((await run(o=>merchant.retry(o),order)).ok,false);assert.equal(requests.length,n);
  await page.evaluate(()=>switchUser('fixture-a'));mode='conflict';assert.equal((await run(o=>merchant.retry(o),order)).ok,false);
  const retained=!!await saved(merchantKey);
+ assert.equal(retained,true);assert.equal(await saved(merchantKey),merchantOriginal);
  report('R03_MERCHANT_AMBIGUOUS',{pendingRetained:retained,requests:requests.length-n,accountBTransmissions:0});
+ mode='ok';assert.equal((await run(o=>merchant.retry(o),order)).ok,true);assert.equal(await saved(merchantKey),null);
+ assert.deepEqual(requests[n-1].body,requests[n].body);assert.deepEqual(requests[n].body,requests[n+1].body);
+ assert.equal(ledger.size,2);
+ report('R03_MERCHANT_RELOAD',{exactReplay:true,fixtureCommands:1,automaticMutations:0});
+ await page.evaluate(key=>sessionStorage.setItem(key,'{bad'),merchantKey);const mBefore=requests.length;
+ assert.equal((await run(o=>merchant.retry(o),order)).ok,false);assert.equal(await saved(merchantKey),'{bad');
+ await page.evaluate(key=>sessionStorage.removeItem(key),merchantKey);
+ await page.evaluate(()=>{const original=Storage.prototype.setItem;globalThis.restoreStorage=()=>Storage.prototype.setItem=original;Storage.prototype.setItem=function(){throw new DOMException('denied','SecurityError')}});
+ assert.equal((await run(({order,command})=>merchant.send(order,command),{order,command})).ok,false);await page.evaluate(()=>restoreStorage());assert.equal(requests.length,mBefore);
+ report('R03_MERCHANT_STORAGE',{corruptRetained:true,deniedBlocked:true,transmissions:0});
+ // Seed unresolved fixture to verify independent tab isolation, without transmitting.
+ await page.evaluate(({key,value})=>sessionStorage.setItem(key,value),{key:merchantKey,value:merchantOriginal});
  // Record scope limit: independent new tab without opener has no sessionStorage.
  const newTab=await context.newPage();await newTab.goto(base);assert.equal(await newTab.evaluate(key=>sessionStorage.getItem(key),merchantKey),null);await newTab.close();
  report('R03_NEW_TAB',{sessionStorageShared:false,note:'no guarantee of recovery after tab closure or new tab'});
