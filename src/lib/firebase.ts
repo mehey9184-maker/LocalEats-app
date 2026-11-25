@@ -138,7 +138,7 @@ export async function ensureAnonymousAuth(): Promise<FirebaseUser> {
   return credential.user;
 }
 
-// Re-export common Firestore and Functions utilities
+// Auth and Functions compatibility exports; optional Firestore reads are deferred.
 export {
   signInAnonymously,
   httpsCallable,
@@ -155,8 +155,6 @@ export const FirestoreService = {
     return LegacyFirestoreReads.healthCheck();
   },
 
-
-
   async addReview(shopId: string, reviewData: any): Promise<void> {
     void shopId; void reviewData;
     throw new Error("This action requires the verified LocalEats API. No changes were saved.");
@@ -166,8 +164,6 @@ export const FirestoreService = {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getReviewsForShop(shopId,limitCount);
   },
-
-
 
   async followShop(userId: string, shopId: string): Promise<void> {
     void userId; void shopId;
@@ -183,8 +179,6 @@ export const FirestoreService = {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getFollowedShops(userId);
   },
-
-
 
   async submitContactMessage(messageData: any): Promise<void> {
     void messageData;
@@ -205,41 +199,31 @@ export const FirestoreService = {
     return LegacyFirestoreReads.getOrder(orderId);
   },
 
-
-
   async getOrdersByUser(userId: string): Promise<any[]> {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getOrdersByUser(userId);
   },
-
-
 
   async getOrdersByShop(shopId: string | number): Promise<any[]> {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getOrdersByShop(shopId);
   },
 
-
-
   async getAllOrders(): Promise<any[]> {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getAllOrders();
   },
 
-
-
   listenToOrder(orderId: string, onUpdate: (order: any) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToOrder(orderId,value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToOrder(orderId,value=>{if(active())onUpdate(value);}),current);
   },
-
-
 
   listenToUserOrders(userId: string, onUpdate: (orders: any[]) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToUserOrders(userId,value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToUserOrders(userId,value=>{if(active())onUpdate(value);}),current);
   },
 
 
@@ -251,7 +235,7 @@ export const FirestoreService = {
   listenToRiderLocation(riderId: string, onUpdate: (loc: any) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToRiderLocation(riderId,value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToRiderLocation(riderId,value=>{if(active())onUpdate(value);}),current);
   },
 
 
@@ -268,7 +252,7 @@ export const FirestoreService = {
   listenToOrderMessages(orderId: string, onUpdate: (messages: any[]) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToOrderMessages(orderId,value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToOrderMessages(orderId,value=>{if(active())onUpdate(value);}),current);
   },
 
 
@@ -276,8 +260,6 @@ export const FirestoreService = {
     const {LegacyFirestoreReads}=await import("./legacyFirestoreReads");
     return LegacyFirestoreReads.getProfile(userId,retries,backoffMs);
   },
-
-
 
   async saveProfile(userId: string, profileData: any, retries = 1, backoffMs = 500): Promise<void> {
     void userId; void profileData; void retries; void backoffMs;
@@ -287,7 +269,7 @@ export const FirestoreService = {
   listenToProfile(userId: string, onUpdate: (profile: any) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToProfile(userId,value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToProfile(userId,value=>{if(active())onUpdate(value);}),current);
   },
 
 
@@ -327,15 +309,11 @@ export const FirestoreService = {
     return LegacyFirestoreReads.getShops();
   },
 
-
-
   listenToShops(onUpdate: (shops: Shop[]) => void): Unsubscribe {
     const uid=auth.currentUser?.uid ?? null;
     const current=()=> (auth.currentUser?.uid ?? null)===uid;
-    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), module=>module.LegacyFirestoreReads.listenToShops(value=>{if(current())onUpdate(value);}),current);
+    return startDeferredSubscription(()=>import("./legacyFirestoreReads"), (module,active)=>module.LegacyFirestoreReads.listenToShops(value=>{if(active())onUpdate(value);}),current);
   },
-
-
 
   async seedDemoShopsIfEmpty(): Promise<boolean> {
     // Demo fixtures never write to a shared database.
