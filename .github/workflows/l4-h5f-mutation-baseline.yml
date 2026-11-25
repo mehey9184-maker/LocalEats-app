@@ -1,0 +1,37 @@
+name: L4-H5F mutation baseline (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h5f-mutation-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  merchant-recovery-faults:
+    name: Actual Merchant mutation generation baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7a4baf87b064dbe2815d80d10a782ff073c7f639
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify unchanged Merchant runtime and locked dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 7a4baf87b064dbe2815d80d10a782ff073c7f639
+          git diff --exit-code a42c57b63d292594bebf33adfec20cc4583e5050 HEAD -- src localeats-api/src supabase package.json package-lock.json
+          npm ci --no-audit --no-fund
+      - name: Run actual API and coordinator with isolated provider fixtures
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false node --experimental-strip-types --test tests/resilience/h5f-mutation-baseline.test.mjs
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
+
