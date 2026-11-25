@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          ref: 4be9d49a3117757e994b78eec9358766cbf09b7a
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -27,7 +27,7 @@ jobs:
       - name: Prepare locked dependencies and Chromium
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          test "$(git -C customer rev-parse HEAD)" = 4be9d49a3117757e994b78eec9358766cbf09b7a
           test "$(git -C merchant rev-parse HEAD)" = 501e4c6795ad3735abd9e6f12cc55827ddac33c3
           (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
           (cd merchant && npm ci --no-audit --no-fund)
@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          ref: 4be9d49a3117757e994b78eec9358766cbf09b7a
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
