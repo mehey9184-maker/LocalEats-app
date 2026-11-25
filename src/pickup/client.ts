@@ -16,7 +16,7 @@ export type PickupQuote={can_submit?:boolean;lines:{menu_item_id:string;name:str
 type ApiResponse=PickupOrderDetail & {success?:boolean;code?:string;error?:string;replayed?:boolean;orders?:PickupOrder[];
  shops?:{id:string;name:string;location:string;distance_km?:number;lat?:number;lng?:number;latitude?:number;longitude?:number;is_active?:boolean}[];
  menu_items?:{id:string;name:string;price:number;is_available:boolean}[];quote?:PickupQuote;
- notifications?:{id:string;order_id:string}[]};
+ notifications?:{id:string;order_id:string}[];menus?:unknown[]};
 export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):string {
  const value=baseUrl.trim();
  if (!value && !requireExplicitHttps) return ""; // Local Vite proxy / explicit development fixtures only.
@@ -32,7 +32,7 @@ export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):strin
  }
 }
 export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transport:typeof fetch=fetch,
- options:{requireExplicitHttps?:boolean}={}) {
+ options:{requireExplicitHttps?:boolean;batchCatalogMenus?:boolean}={}) {
  const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal):Promise<ApiResponse>=>{
    const origin=pickupApiOrigin(baseUrl,options.requireExplicitHttps);
    const bearer=publicRead ? "" : await token();
@@ -48,12 +48,75 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
    if(!response.ok || result?.success!==true) throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.");
    return result;
  };
+ // Coalesce only concurrent public menu reads. Existing callers keep individual
+ // deadlines and the original legacy endpoint; no location or auth goes in a batch.
+ const singleMenu=(id:string,signal?:AbortSignal)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true,signal);
+ type WaitingMenu={id:string;signal?:AbortSignal;resolve:(value:ApiResponse)=>void;reject:(error:unknown)=>void};
+ let queued:WaitingMenu[]=[];
+ let scheduled=false;
+ const readGroup=async(group:WaitingMenu[])=>{
+   const controller=new AbortController();
+   const onAbort=()=>{if(group.every(job=>job.signal?.aborted))controller.abort();};
+   for(const job of group)job.signal?.addEventListener("abort",onAbort,{once:true});
+   const active=()=>group.filter(job=>!job.signal?.aborted);
+   const ids=[...new Set(active().map(job=>job.id))];
+   try {
+     if(!ids.length)return;
+     if(ids.length===1){
+       const result=await singleMenu(ids[0],controller.signal);
+       for(const job of active())job.resolve(result);
+       return;
+     }
+     const result=await request("/api/v1/catalog/menus?"+new URLSearchParams({ids:ids.join(",")}),"GET",undefined,true,controller.signal);
+     if(!Array.isArray(result.menus))throw new PickupApiError(503,"INVALID_MENU_BATCH","Shop menus could not be verified.");
+     const verified=new Map<string,ApiResponse>();
+     for(const value of result.menus){
+       const row=value as {shop_id?:unknown;menu_items?:unknown}|null;
+       if(!row || typeof row.shop_id!=="string" || !ids.includes(row.shop_id) || verified.has(row.shop_id) ||
+          !Array.isArray(row.menu_items) || row.menu_items.some(item=>!item || typeof item!=="object" || item.shop_id!==row.shop_id))
+         throw new PickupApiError(503,"INVALID_MENU_BATCH","Shop menus could not be verified.");
+       verified.set(row.shop_id,{success:true,menu_items:row.menu_items});
+     }
+     for(const job of active()){
+       const menu=verified.get(job.id);
+       if(menu)job.resolve(menu);
+       else job.reject(new PickupApiError(404,"SHOP_NOT_FOUND","Shop not found."));
+     }
+   }catch(error){
+     // Compatibility only: an older API or an explicitly oversized batch.
+     // Never multiply rate-limited, network-failed, malformed or 5xx requests.
+     if(error instanceof PickupApiError && ([404,405].includes(error.status) ||
+       (error.status===413 && error.code==="MENU_BATCH_TOO_LARGE")) && ids.length>1){
+       await Promise.all(active().map(async job=>{try{job.resolve(await singleMenu(job.id,job.signal));}catch(e){job.reject(e);}}));
+     }else for(const job of active())job.reject(error);
+   }finally{
+     for(const job of group)job.signal?.removeEventListener("abort",onAbort);
+   }
+ };
+ const batchedMenu=(id:string,signal?:AbortSignal):Promise<ApiResponse>=>{
+   if(!/^[A-Za-z0-9_-]{1,128}$/.test(id))return singleMenu(id,signal);
+   return new Promise((resolve,reject)=>{
+     if(signal?.aborted){reject(signal.reason);return;}
+     const abort=()=>reject(signal?.reason ?? new Error("Menu request aborted."));
+     const cleanup=()=>signal?.removeEventListener("abort",abort);
+     signal?.addEventListener("abort",abort,{once:true});
+     queued.push({id,signal,resolve:value=>{cleanup();resolve(value);},reject:error=>{cleanup();reject(error);}});
+     if(!scheduled){
+       scheduled=true;
+       queueMicrotask(()=>{
+         scheduled=false;
+         const jobs=queued;queued=[];
+         for(let i=0;i<jobs.length;i+=6)void readGroup(jobs.slice(i,i+6));
+       });
+     }
+   });
+ };
  return {
   shops:(location:Location)=>request("/api/v1/catalog/pickup-shops?lat="+location.lat+"&lng="+location.lng,"GET",undefined,true),
   // Read-only wider visibility: only approved, non-archived public shop fields.
   // Checkout quote/create still enforce the server's strict 4 km limit.
   approvedShops:()=>request("/api/v1/catalog/shops","GET",undefined,true),
-  menu:(id:string,signal?:AbortSignal)=>request("/api/v1/catalog/shops/"+encodeURIComponent(id)+"/menu","GET",undefined,true,signal),
+  menu:(id:string,signal?:AbortSignal)=>options.batchCatalogMenus?batchedMenu(id,signal):singleMenu(id,signal),
   quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
     const result=await request("/api/v1/orders","POST",intent);
