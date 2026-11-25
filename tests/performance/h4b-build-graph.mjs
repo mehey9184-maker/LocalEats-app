@@ -29,6 +29,14 @@ await build({plugins:[{
    const featureModules=Object.keys(c.modules).filter(id=>/\/src\/(screens|components)\/(Marketing|DashboardOverview|OrdersManagement|MenuManagement|ShopProfile|DiagnosticUtilityModal|LegalDocsModal|EditProfile|CreateShopOnboarding|Coupons|Insights|PaymentHistory|SettingsScreen|ContactScreen|OrderHistoryScreen|NotificationsScreen|OrderRating)\.tsx$/.test(id)).map(normalize);
    console.log("H4B_CHUNK "+JSON.stringify({component,variant,file:c.fileName,eager:eager.has(c.fileName),imports:c.imports,dynamicImports:c.dynamicImports,raw_bytes:Buffer.byteLength(c.code),gzip_bytes:gzipSync(c.code,{level:9}).length,featureModules}));
   }
+  if(component==="Customer" && variant==="candidate"){
+   const firestore=packages.get("@firebase/firestore");
+   assert.equal(firestore?.eager??0,0,"Firestore must not be in Customer static entry graph");
+   assert.ok((firestore?.lazy??0)>0,"Retained optional Firestore implementation must still be built");
+   assert.ok((packages.get("@firebase/auth")?.eager??0)>0,"Authentication remains available at startup");
+   assert.ok((packages.get("@firebase/messaging")?.eager??0)>0,"Push SDK remains available at startup");
+   console.log("H4B1_FIREBASE_GRAPH_PASS");
+  }
   console.log("H4B_PACKAGES "+JSON.stringify({component,variant,packages:[...packages].sort((a,b)=>b[1].eager-a[1].eager).slice(0,30).map(([name,v])=>({name,...v}))}));
  }
 }]});
