@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 8a46e0a7d740816f3b6c7a3dae5e1f6c5cbadc11
+          ref: 6a491bcc48edc1a69e07a4d92a617b86e22dd3f8
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -77,7 +77,7 @@ jobs:
       - name: Verify unchanged Merchant runtime and locked dependencies
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 8a46e0a7d740816f3b6c7a3dae5e1f6c5cbadc11
+          test "$(git rev-parse HEAD)" = 6a491bcc48edc1a69e07a4d92a617b86e22dd3f8
           git diff --exit-code e542337507abfc4b668646f9c0b102603ac7d53a HEAD -- src localeats-api/src package.json package-lock.json
           npm ci --no-audit --no-fund
       - name: Run actual API and coordinator with isolated provider fixtures
