@@ -1,0 +1,93 @@
+name: L4-H5E baseline restart integrity (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h5e-restart-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  recovered-applied-history:
+    name: Disposable transaction integrity and geography
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PICKUP_WRITES_ENABLED: 'false'
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      RIDER_ACTIVATION_ENABLED: 'false'
+      REWARDS_ENABLED: 'false'
+      R36_PICKUP_REPLAY_MODE: recorded_applied
+      H2D1_CONCURRENCY: 'true'
+      H5E_RESTART_INTEGRITY: 'true'
+    steps:
+      - name: Checkout historical archive without GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 1b450b4e7deb160d2f162545fb5113e96d1557aa
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify archived remote statements exactly match read-only recovery digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 1b450b4e7deb160d2f162545fb5113e96d1557aa
+          git diff --exit-code 95f56649a3f2a70bff99f66a450b58fb0044d50e HEAD -- src localeats-api/src supabase package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
+          bash -n localeats-api/tests/pickup/r35/h5e-restart.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
+      - name: Ensure no hosted connection or new active migration is possible
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supabase/recovered_applied_readonly/20261030111305_pickup_launch_foundation.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073608_pickup_zero_fee.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073645_merchant_availability.sql.txt
+          test -f supabase/recovered_applied_readonly/20261101160331_pickup_payment_methods.sql.txt
+          test -f localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          for version in 20261030111305 20261031073608 20261031073645 20261101160331; do
+            test -z "$(find supabase/migrations -maxdepth 1 -type f -name "${version}*.sql" -print)"
+          done
+          ! grep -En 'supabase\.co|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|db push|apply_migration|--remote|--publish' \
+            localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+      - name: Replay archived SQL and run observed-lock races in disposable PostgreSQL 17
+        shell: bash
+        run: bash localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+
+  restart-browser:
+    name: Chromium real session storage and reload baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ed21e98ca277e7c2573c37bcc9814595d495d75f
+          path: customer
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 1b450b4e7deb160d2f162545fb5113e96d1557aa
+          path: merchant
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify unchanged runtime and prepare Chromium
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = ed21e98ca277e7c2573c37bcc9814595d495d75f
+          test "$(git -C merchant rev-parse HEAD)" = 1b450b4e7deb160d2f162545fb5113e96d1557aa
+          git -C customer diff --exit-code aea95ce436bcf84c7cc2f5954ff5b8e956054e26 HEAD -- src package.json package-lock.json
+          git -C merchant diff --exit-code 95f56649a3f2a70bff99f66a450b58fb0044d50e HEAD -- src localeats-api/src supabase package.json package-lock.json
+          (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
+      - name: Run real browser storage and restart probes with network isolated
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false bash -euc "cd customer; node tests/resilience/h5e-browser-restart.mjs ../merchant"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
