@@ -12,6 +12,7 @@ export type NearbyCatalog = {shops: Shop[]; incomplete: boolean};
 type PublicSource={
   shops:(point:Point)=>Promise<{shops?:Array<{id:string}>}>;
   menu:(id:string)=>Promise<{menu_items?:unknown[]}>;
+  priorityMenu?:(id:string)=>Promise<{menu_items?:unknown[]}>;
 };
 export const NEARBY_CATALOG_TTL_MS=15_000;
 export const NEARBY_CATALOG_PARALLEL_MENUS=6;
@@ -75,7 +76,7 @@ export function createNearbyCatalogReader(
           let timeout:ReturnType<typeof setTimeout>|undefined;
           try{
             const menu=await Promise.race([
-              source.menu(shop.id),
+              (index===0 && source.priorityMenu ? source.priorityMenu : source.menu)(shop.id),
               new Promise<never>((_,reject)=>{
                 timeout=setTimeout(()=>reject(new Error("Pickup menu timed out.")),menuTimeoutMs);
               }),
