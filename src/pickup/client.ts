@@ -117,6 +117,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
   // Checkout quote/create still enforce the server's strict 4 km limit.
   approvedShops:()=>request("/api/v1/catalog/shops","GET",undefined,true),
   menu:(id:string,signal?:AbortSignal)=>options.batchCatalogMenus?batchedMenu(id,signal):singleMenu(id,signal),
+  priorityMenu:singleMenu,
   quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
   create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
     const result=await request("/api/v1/orders","POST",intent);
