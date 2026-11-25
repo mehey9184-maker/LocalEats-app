@@ -65,6 +65,12 @@ try{
     const install=await page.evaluate(async()=>{
      const reg=await navigator.serviceWorker.register("/sw.js",{scope:"/",type:"module"});
      await Promise.race([navigator.serviceWorker.ready,new Promise((_,reject)=>setTimeout(()=>reject(Error("worker ready timeout")),45000))]);
+     // ready may resolve while an active worker is still in "activating".
+     const deadline=performance.now()+45000;
+     while(reg.active?.state!=="activated"){
+      if(performance.now()>=deadline)throw Error("worker activation timeout");
+      await new Promise(resolve=>setTimeout(resolve,50));
+     }
      return {state:reg.active?.state??"unknown",cacheNames:await caches.keys(),entries:await Promise.all((await caches.keys()).map(async name=>(await (await caches.open(name)).keys()).length))};
     });
     const installRequests=requests.slice();requests.length=0;
