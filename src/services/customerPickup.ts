@@ -7,6 +7,20 @@ import {createPublicBrowseCatalogReader} from "./publicBrowseCatalog";
 import type {CartItem} from "../types";
 import {createPickupCancellation,pickupCancellationKey} from './pickupCancellation';
 import type {PickupOrder} from '../pickup/client';
+import {boundedPickupMutation,isDefinitivePickupRejection} from "./pickupMutationRecovery";
+
+// Invalidate an in-flight mutation across sign-out/sign-in, including A→B→A.
+// The before-state hook catches local transitions; the observer also sees external changes.
+let pickupSessionGeneration=0;
+let pickupObservedUid=auth.currentUser?.uid;
+auth.beforeAuthStateChanged?.(()=>{pickupSessionGeneration++;});
+auth.onAuthStateChanged?.(user=>{if(user?.uid!==pickupObservedUid){pickupObservedUid=user?.uid;pickupSessionGeneration++;}});
+export function capturePickupSession(){
+ const user=auth.currentUser, generation=pickupSessionGeneration;
+ const uid=user?.uid;
+ return {uid,current:()=>!!uid && auth.currentUser?.uid===uid && pickupSessionGeneration===generation};
+}
+const runningCreates=new Map<string,Promise<PickupOrder>>();
 
 export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_API_URL || "", async()=>{
   const user=auth.currentUser;
@@ -85,7 +99,7 @@ export {blockPickupSubmission};
 
 export const pickupOrderingEnabled=()=>import.meta.env?.VITE_PICKUP_ORDERING_ENABLED === "true";
 export const cancelCustomerPickup=createPickupCancellation({
- identity:()=>auth.currentUser?.uid,enabled:pickupOrderingEnabled,command:customerPickupApi.command,
+ identity:()=>auth.currentUser?.uid,captureSession:()=>capturePickupSession().current,enabled:pickupOrderingEnabled,command:customerPickupApi.command,
  storage:{getItem:key=>sessionStorage.getItem(key),setItem:(key,value)=>sessionStorage.setItem(key,value),removeItem:key=>sessionStorage.removeItem(key)},
 });
 export function hasPendingPickupCancellation(order:PickupOrder):boolean {
@@ -96,7 +110,7 @@ export function hasPendingPickupCancellation(order:PickupOrder):boolean {
 export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePickupCart>>|null) {
  if(!pickupOrderingEnabled())blockPickupSubmission();
  if(review && review.quote.can_submit !== true)throw new Error("Pickup ordering is not available for this quote.");
- const uid=auth.currentUser?.uid;
+ const {uid,current}=capturePickupSession();
  if(!uid)throw new Error("Sign in before submitting an order.");
  const key=`pickup-create:${uid}`;
  const stored=sessionStorage.getItem(key);
@@ -108,15 +122,28 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  // Keep the unresolved request if its consent or response cannot be verified.
  const consentTotalMinor=pending?.consent?.total_minor;
  const consentPaymentMethod=pending?.payment_method;
- if(!Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
+ if(!pending || typeof pending!=="object" || Array.isArray(pending) ||
+    typeof pending.idempotency_key!=="string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pending.idempotency_key) ||
+    typeof pending.shop_id!=="string" || !pending.shop_id || pending.consent?.currency!=="ZAR" ||
+    typeof pending.consent?.pricing_fingerprint!=="string" || !/^[0-9a-f]{64}$/.test(pending.consent.pricing_fingerprint) ||
+    !Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
     !["cash","card_machine"].includes(consentPaymentMethod))
   throw new Error("The pending pickup request has invalid consent or payment details.");
- sessionStorage.setItem(key,JSON.stringify(pending));
+ const serialized=JSON.stringify(pending);
+ const active=runningCreates.get(key);
+ if(active)return active;
+ if(!current())throw Error("Your session changed. Retry the original submission in its account.");
+ sessionStorage.setItem(key,serialized);
+ const unchanged=()=>current() && sessionStorage.getItem(key)===serialized;
+ const task=(async()=>{
  let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
- try{result=await customerPickupApi.create(pending);}catch(error){
-  if(error && typeof error==="object" && "status" in error && [400,403,404,409,422].includes(Number(error.status)))sessionStorage.removeItem(key);
+ try{result=await boundedPickupMutation(signal=>customerPickupApi.create(JSON.parse(serialized),signal,unchanged));}catch(error){
+  // A retry after an unknown outcome may race the earlier commit; an error
+  // from this attempt alone is not proof that the earlier attempt never committed.
+  if(!stored && unchanged() && isDefinitivePickupRejection(error,"create"))sessionStorage.removeItem(key);
   throw error;
  }
+ if(!unchanged())throw Error("Your session or pending submission changed. Retry the original submission in its account.");
  if(result.order.user_id!==uid || result.order.shop_id!==pending.shop_id || result.order.delivery_type!=="collection")throw new Error("Order persistence was not confirmed for your account and shop.");
  const persistedTotalMinor=result.order.total_price == null ? NaN : Math.round(Number(result.order.total_price)*100);
  if(!Number.isSafeInteger(persistedTotalMinor) || persistedTotalMinor!==consentTotalMinor ||
@@ -124,4 +151,7 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
   throw new Error("The API returned an order that does not match the confirmed total or payment choice.");
  sessionStorage.removeItem(key);
  return result.order;
+ })().finally(()=>runningCreates.delete(key));
+ runningCreates.set(key,task);
+ return task;
 }
