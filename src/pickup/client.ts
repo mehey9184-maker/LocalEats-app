@@ -1,4 +1,4 @@
-import {createReadBackoff} from "../services/readBackoff";
+import {createReadBackoff} from "../services/readBackoff.ts";
 export type PickupOrder = {id:string;shop_id:string;user_id:string;status:string;delivery_type:string;delivery_status:string;
  payment_status:string;payment_method:string;revision:number;customer_name:string;phone:string;total_price:number;
  items:{menu_item_id:string;name:string;quantity:number;unit_price:number;line_total:number}[];created_at:string};
