@@ -21,6 +21,11 @@ let sync;
 function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(tree)==='syncOfflineOrders')sync=n.initializer.arguments[0].getText(tree);ts.forEachChild(n,visit);}
 visit(tree);assert.ok(sync);
 const syncCode=transformSync('globalThis.legacySync='+sync,{loader:'tsx',target:'es2022'}).code;
+const merchantSource=readFileSync(resolve(merchant,'src/App.tsx'),'utf8');
+const merchantTree=ts.createSourceFile('MerchantApp.tsx',merchantSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+let reconcileEffect;function visitMerchant(n){if(ts.isCallExpression(n)&&n.expression.getText(merchantTree)==='useEffect'&&n.arguments[0]?.getText(merchantTree).includes('const reconcileFromServer ='))reconcileEffect=n.arguments[0].getText(merchantTree);ts.forEachChild(n,visitMerchant);}
+visitMerchant(merchantTree);assert.ok(reconcileEffect);
+const reconcileCode=transformSync('globalThis.merchantReconnectEffect='+reconcileEffect,{loader:'tsx',target:'es2022'}).code;
 const browserEntry=`
 import * as customer from './src/services/customerPickup.ts';
 import {createMerchantPickupRecovery} from ${JSON.stringify(resolve(merchant,'src/services/merchantPickupRecovery.ts'))};
@@ -32,6 +37,20 @@ globalThis.merchant=createMerchantPickupRecovery({identity:()=>globalThis.user,e
  return {status:r.status,data:await r.json()};
 }});
 ${syncCode}
+// Exercise the actual effect against synthetic event targets and read-only spies.
+globalThis.exerciseMerchantReconnect=()=>{
+ const events=new Map(),workerEvents=new Map(),reads=[];
+ const target=(map)=>({addEventListener:(name,fn)=>map.set(name,fn),removeEventListener:name=>map.delete(name)});
+ const window=target(events),navigator={serviceWorker:target(workerEvents)};
+ const merchantShopGate={status:'ready'},currentShop={id:'fixture-shop'};
+ const fetchOrders=(wake)=>reads.push('orders:'+wake),fetchShops=()=>reads.push('shops'),fetchAllMenuItems=()=>reads.push('menu');
+ const setIsOffline=()=>{},setIsHeartbeatFailed=()=>{},setDismissedOfflineOverlay=()=>{};
+ ${reconcileCode}
+ const cleanup=globalThis.merchantReconnectEffect();
+ events.get('offline')();events.get('online')();workerEvents.get('message')({data:{type:'TRIGGER_OFFLINE_SYNC'}});
+ merchantShopGate.status='unverified';events.get('online')();workerEvents.get('message')({data:{type:'TRIGGER_OFFLINE_SYNC'}});
+ cleanup();return {reads,remainingListeners:events.size+workerEvents.size};
+};
 `;
 const bundle=(await build({stdin:{contents:browserEntry,resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,platform:'browser',format:'iife',define:{'import.meta.env':JSON.stringify({VITE_PICKUP_ORDERING_ENABLED:'true',VITE_LOCALEATS_API_URL:'',PROD:false})},plugins:[{name:'fixture-auth',setup(b){b.onLoad({filter:/[\\/]lib[\\/]firebase\.ts$/},()=>({loader:'js',contents:'export const auth={get currentUser(){const uid=globalThis.user||"fixture-a";return {uid,getIdToken:async()=>uid}},beforeAuthStateChanged(fn){globalThis.before=fn;return ()=>{}},onAuthStateChanged(fn){globalThis.observer=fn;return ()=>{}}};'}));}}]})).outputFiles[0].text;
 const server=createServer((req,res)=>{const body=req.url==='/bundle.js'?bundle:'<!doctype html><meta charset="utf-8"><script src="/bundle.js"></script>';res.writeHead(200,{'Content-Type':req.url==='/bundle.js'?'application/javascript':'text/html','Cache-Control':'no-store'});res.end(body)});
@@ -74,6 +93,8 @@ try{
  await page.evaluate(()=>{window.dispatchEvent(new Event('online'));return legacySync()});
  assert.equal(requests.length,before);assert.ok(await page.evaluate(()=>localStorage.getItem('offline_orders_queue')));
  report('R11_LEGACY',{actualCallback:true,offlineReconnect:true,transmissions:0,legacyRecordRetained:true});
+ const reconnect=await page.evaluate(()=>exerciseMerchantReconnect());assert.deepEqual(reconnect.reads,['orders:true','shops','menu','orders:true','shops','menu']);assert.equal(reconnect.remainingListeners,0);assert.equal(requests.length,before);
+ report('R11_MERCHANT_LEGACY',{actualCallback:true,verifiedWakeReads:6,unverifiedWakeReads:0,mutations:0});
  // Merchant recovery service persists in actual browser storage across reload.
  mode='lose';assert.equal((await run(({order,command})=>merchant.send(order,command),{order,command})).ok,false);
  const merchantOriginal=await saved(merchantKey);assert.ok(merchantOriginal);const n=requests.length;
