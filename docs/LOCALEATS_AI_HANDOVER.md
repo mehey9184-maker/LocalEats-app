@@ -263,3 +263,7 @@ H4B.1 corrected run 45517225219 independently verified 9/9 PASS. Preserve all re
 
 ## L4-H4D — network efficiency (draft)
 H4C corrected run 45519489116 verified 10/10 successful; first verified card public/GPS 16ms with synthetic delays, 3 HTTP requests for four shops. ADR-027 final acceptance recorded. ADR-028 covers verified-idle Customer history, unchanged critical Merchant reconciliation, visible version checks and scoped Retry-After read-only cooldown. H4D acceptance pending. All release blockers retained. No Production or hosted migration. R0.
+
+
+## L4-H4E — combined performance acceptance
+H4D final corrected 45521196815 10/10 PASS, Customer 252/252, Merchant 182/182, API 260/260. Measured fixture transport 240→60 idle reads/hour, active/unknown 240; Retry-After 90s, 8 attempted/2 transmitted/6 suppressed. ADR-028 final evidence. ADR-029 compares exact H4A and accepted H4D pins in isolated same-run browser/API benchmark plus ten existing regression jobs. Explicit remaining H4A gaps: Customer FCP <=576ms, total gzip stretch targets, <=4 repository reads vs priority path 5 (3 HTTP), actual browser/device/push/PWA and hosted index rollout. No runtime changes or new services. R0. No release blocker closed.
