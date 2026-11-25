@@ -12,7 +12,7 @@ export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_AP
   const user=auth.currentUser;
   if(!user || user.isAnonymous) throw new Error("Please sign in with your existing account.");
   return user.getIdToken();
-},fetch,{requireExplicitHttps:import.meta.env.PROD});
+},fetch,{requireExplicitHttps:import.meta.env.PROD,batchCatalogMenus:true});
 
 const readVerifiedNearbyCatalog=createNearbyCatalogReader({
   // Discovery displays all approved, non-archived public shops. Server quote
@@ -28,6 +28,12 @@ const readVerifiedNearbyCatalog=createNearbyCatalogReader({
       catch {return [];} // Missing/unverified shop GPS: do not guess a distance.
     }).sort((a,b)=>a.distance_km-b.distance_km);
     return {shops};
+  },
+  priorityMenu: async id => {
+    const controller=new AbortController();
+    const deadline=setTimeout(()=>controller.abort(),5000);
+    try {return await customerPickupApi.priorityMenu(id,controller.signal);}
+    finally {clearTimeout(deadline);}
   },
   menu: async id => {
     const controller = new AbortController();
@@ -51,6 +57,7 @@ export async function readPickupCatalog(location:{lat:number;lng:number}|null,op
 const publicBrowseReader=createPublicBrowseCatalogReader({
  shops:()=>customerPickupApi.approvedShops(),
  menu:(id,signal)=>customerPickupApi.menu(id,signal),
+ priorityMenu:(id,signal)=>customerPickupApi.priorityMenu(id,signal),
 },mapPickupShop);
 
 // Preserve the existing no-progress API for source compatibility and tests.

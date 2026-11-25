@@ -18,6 +18,7 @@ export type PublicBrowseOptions={
 type Source={
   shops:()=>Promise<{shops?:unknown[]}>;
   menu:(id:string,signal:AbortSignal)=>Promise<{menu_items?:unknown[]}>;
+  priorityMenu?:(id:string,signal:AbortSignal)=>Promise<{menu_items?:unknown[]}>;
 };
 
 export function createPublicBrowseCatalogReader(
@@ -49,12 +50,12 @@ export function createPublicBrowseCatalogReader(
       const rawShops=listing.shops;
       const ready:Array<Shop|null>=Array(rawShops.length).fill(null);
       let next=0,validated=0;
-      const readMenu=async(id:string)=>{
+      const readMenu=async(id:string,priority:boolean)=>{
         const controller=new AbortController();
         let deadline:ReturnType<typeof setTimeout>|undefined;
         try {
           return await Promise.race([
-            source.menu(id,controller.signal),
+            (priority && source.priorityMenu ? source.priorityMenu : source.menu)(id,controller.signal),
             new Promise<never>((_,reject)=>{
               deadline=setTimeout(()=>{
                 controller.abort();
@@ -74,7 +75,7 @@ export function createPublicBrowseCatalogReader(
           if(!raw || typeof raw!=="object" || typeof raw.id!=="string" ||
              !raw.id || typeof raw.is_active!=="boolean")continue;
           try{
-            const menu=await readMenu(raw.id);
+            const menu=await readMenu(raw.id,index===0);
             if(!Array.isArray(menu.menu_items))continue;
             // GPS is unknown. Never claim distance or pickup eligibility.
             ready[index]=mapShop({...raw,distance_km:undefined},menu.menu_items);
