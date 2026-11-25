@@ -3,8 +3,8 @@ import React, { useEffect, useRef } from "react";
 import { Order } from "../types";
 import { toast } from "sonner";
 import { MessageCircle } from "lucide-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { auth } from "../lib/firebase";
+import {startDeferredSubscription} from "../lib/deferredSubscription";
 
 interface GlobalChatListenerProps {
   activeOrders: Order[];
@@ -16,9 +16,12 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
   const seenMessages = useRef(new Set<string>());
 
   useEffect(() => {
-    if (activeOrders.length === 0) return;
+    const uid=auth.currentUser?.uid;
+    if(!uid || auth.currentUser?.isAnonymous || activeOrders.length===0)return;
+    const current=()=>auth.currentUser?.uid===uid && !auth.currentUser?.isAnonymous;
 
-    const validOrders = activeOrders.filter(o => o.status !== "completed" && o.status !== "cancelled" && o.delivery_status !== "delivered");
+    // Courier chat is a retained delivery-only feature. Pickup uses the authorized API inbox.
+    const validOrders = activeOrders.filter(o => o.user_id===uid && o.delivery_type!=="collection" && o.order_type!=="collection" && (o.delivery_type==="delivery" || o.order_type==="delivery" || o.is_delivery===true) && o.status !== "completed" && o.status !== "cancelled" && o.delivery_status !== "delivered");
     if (validOrders.length === 0) return;
 
     const orderIds = validOrders.map(o => String(o.id));
@@ -29,9 +32,14 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
       batches.push(orderIds.slice(i, i + 10));
     }
 
+    return startDeferredSubscription(async()=>{
+      const [{db},sdk]=await Promise.all([import("../lib/legacyFirestoreReads"),import("firebase/firestore")]);
+      return {db,...sdk};
+    },({db,collection,query,where,onSnapshot},active)=>{
     const unsubs = batches.map(batch => {
       const q = query(collection(db, "messages"), where("order_id", "in", batch));
       return onSnapshot(q, (snapshot) => {
+        if(!active())return;
         snapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
             const docId = change.doc.id;
@@ -66,6 +74,7 @@ export function GlobalChatListener({ activeOrders, currentScreen, onNavigateToTr
     return () => {
       unsubs.forEach(unsub => unsub());
     };
+    },current);
   }, [activeOrders, currentScreen, onNavigateToTracking]);
 
   return null;
