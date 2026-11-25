@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 const read = (path) => readFileSync(path, 'utf8');
 const photo = read('src/components/BlurUpImage.tsx');
 const catalog = read('src/hooks/useShopsData.ts');
-const firebase = read('src/lib/firebase.ts');
+const firebase = read('src/lib/legacyFirestoreReads.ts');
 const card = read('src/components/ShopCard.tsx');
 const cart = read('src/components/CartDrawer.tsx');
 const avatar = read('src/utils/imageUtils.ts');

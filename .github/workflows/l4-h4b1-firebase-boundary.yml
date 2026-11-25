@@ -1,0 +1,391 @@
+name: L4-H4B.1 Firebase boundary and security regression (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h4b1-firebase-boundary.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    name: Combined - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: ba8674a2a799455fdb17f61ef4c6772e478b7115
+            workdir: source
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+            workdir: source
+          - component: API
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+            workdir: source/localeats-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify source and install locked dependencies
+        working-directory: ${{ matrix.workdir }}
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "H4B_SOURCE $(git rev-parse HEAD)"
+          node --version
+          npm --version
+          sha256sum package-lock.json
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json .npmrc
+      - name: Install locked API dependencies for Merchant cross-package tests
+        if: matrix.component == 'Merchant'
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked Playwright Chromium for Customer synthetic fixture
+        if: matrix.component == 'Customer'
+        working-directory: source
+        run: ./node_modules/.bin/playwright install chromium
+      - name: Isolated full root test suites and package API suite
+        working-directory: ${{ matrix.workdir }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h2e.sh"
+          cat > "$script" <<'BASH'
+          set -uo pipefail
+          test "$(id -u)" -ne 0 || exit 1
+          test "$(ip -o link show | wc -l)" -eq 1 || exit 1
+          test -z "$(ip route show default)" || exit 1
+          test "$PICKUP_WRITES_ENABLED" = false || exit 1
+          failures=0
+          run(){
+            local label="$1"; shift
+            local start code
+            start=$(date +%s)
+            "$@"
+            code=$?
+            printf 'H4B1_RESULT %s exit=%s seconds=%s\n' "$label" "$code" "$(($(date +%s)-start))"
+            if [ "$code" -ne 0 ]; then failures=$((failures+1)); fi
+            return "$code"
+          }
+          run dependencies bash -c 'npm ls --all --json > /tmp/h2e-dependency-tree.json' || true
+          if [ "$COMPONENT" = API ]; then
+            run api_package_suite npm test || true
+            run api_preview_mock node --test tests/l3-n8u-z-preview-readonly-smoke.test.mjs || true
+          else
+            run lint npm run lint || true
+            if [ "$COMPONENT" = Merchant ]; then
+              run typescript ./node_modules/.bin/tsc --noEmit --pretty false || true
+              run api_test_prerequisite npm --prefix localeats-api run build || true
+            fi
+            echo "H4B_ROOT_TEST_FILES $(printf '%s\n' tests/*.test.mjs | wc -l)"
+            run root_suite node --experimental-strip-types --test tests/*.test.mjs || true
+            if run build npm run build; then
+              python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H4B_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+              if [ "$COMPONENT" = Merchant ]; then
+                run tag_browser node tests/l4-h1d3-order-tags-browser.mjs || true
+              fi
+            else
+              echo 'H4B_BUILD_DEPENDENT_CHECKS_NOT_RUN'
+            fi
+            if [ "$COMPONENT" = Customer ]; then
+              run legacy_catalog_alias ./node_modules/.bin/tsx --test tests/l4-h3b1-legacy-catalog.test.ts || true
+              run signup_browser node tests/signup-home-ux-browser.mjs || true
+              run home_browser node tests/l3-p1-home-browser.mjs || true
+            fi
+          fi
+          echo "H4B1_FINAL component=$COMPONENT failed_commands=$failures"
+          test "$failures" -eq 0
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false COMPONENT="$5" bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
+
+  source-audit:
+    name: Credential and logging source inventory (paths only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          path: merchant
+          persist-credentials: false
+      - name: Inspect tracked source without printing credential values
+        run: |
+          set -euo pipefail
+          for repo in customer merchant; do
+            cd "$GITHUB_WORKSPACE/$repo"
+            echo "H4B_SOURCE $repo $(git rev-parse HEAD)"
+            echo "H4B_ENV_OR_SERVICE_ACCOUNT_FILENAMES"
+            git ls-files | grep -Ei '(^|/)(\.env($|\.)|service-account[^/]*\.json$|.*\.(pem|key)$)' || true
+            echo "H4B_PRIVATE_KEY_MARKER_PATHS"
+            git grep -IlE -e '-----BEGIN ([A-Z]+ )*PRIVATE KEY-----' -- ':!*.lock' ':!package-lock.json' || test "$?" = 1
+            echo "H4B_SERVER_SECRET_REFERENCE_PATHS"
+            git grep -IlE 'SUPABASE_SERVICE_ROLE_KEY|FIREBASE_PRIVATE_KEY|DELIVERY_PROOF_SECRET|INTERNAL_WORKER_SECRET' -- '*.ts' '*.tsx' '*.js' '*.cjs' '*.mjs' '*.json' || test "$?" = 1
+            echo "H4B_PUBLIC_ENV_SECRET_NAME_CANDIDATES"
+            git grep -IlE 'VITE_[A-Z0-9_]*(PRIVATE_KEY|SERVICE_ROLE|WORKER_SECRET|PROOF_SECRET)' -- '*.ts' '*.tsx' '*.js' '*.cjs' '*.mjs' '*.json' || test "$?" = 1
+          done
+          cd "$GITHUB_WORKSPACE/merchant"
+          echo 'H4B_API_LOGGING_PATHS'
+          git grep -IlE 'console\.(log|warn|error|info|debug)\(' -- 'localeats-api/src/*.ts' || test "$?" = 1
+          echo H4B_INVENTORY_COMPLETE_NOT_SECRET_CERTIFICATION
+
+  firestore-emulator:
+    name: Isolated Firestore rules and deployment guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          path: merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Confirm identical rules and preserve exact prior Merchant source
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
+          test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          cmp customer/firestore.rules merchant/firestore.rules
+          cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
+          cmp merchant/firestore.rules merchant/security/review/firestore-h3c-pickup.rules
+          test "$(git hash-object customer/security/review/firestore-h3c-merchant-legacy.rules)" = d6b15ab961f4260c9d02814ed48023cd916c4eb4
+          test "$(git hash-object customer/security/review/firestore-pickup-phase1.rules)" = d168836960afec5afa705f320b6347495cc0e4cc
+          sha256sum customer/firestore.rules
+      - name: Install existing locked dependencies and previously used emulator CLI
+        working-directory: customer
+        run: |
+          npm ci --no-audit --no-fund
+          npm exec --yes --package=firebase-tools@15.35.0 -- firebase setup:emulators:firestore
+      - name: Run deployment guard and emulator only with loopback networking
+        working-directory: customer
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h3c.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          node --test tests/firestore-release-guard.test.cjs
+          npm exec --offline --yes --package=firebase-tools@15.35.0 -- firebase emulators:exec --only firestore --project demo-pickup-rules --config security/review/firebase.json "node --test --test-concurrency=1 tests/firestore-pickup-review.test.cjs tests/firestore-h3c-isolation.test.cjs"
+          BASH
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" JAVA_HOME="$5" CI=true FIREBASE_CLI_DISABLE_UPDATE_CHECK=true bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$JAVA_HOME" "$script"
+
+  storage-emulator:
+    name: Isolated Storage security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          path: merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Confirm exact rules and no deployment configuration
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
+          test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
+          cmp customer/firestore.rules merchant/firestore.rules
+          cd customer
+          node -e "if(require('./firebase.json').storage)process.exit(1)"
+      - name: Prepare existing test dependencies and pinned emulator
+        working-directory: customer
+        run: |
+          npm ci --no-audit --no-fund
+          npm exec --yes --package=firebase-tools@15.35.0 -- firebase setup:emulators:storage
+      - name: Run demo storage test with loopback only
+        working-directory: customer
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h3c1-storage.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          npm exec --offline --yes --package=firebase-tools@15.35.0 -- firebase emulators:exec --only storage --project demo-pickup-rules --config security/review/firebase-h3c1-storage.json "node --test tests/storage-h3c1-isolation.test.cjs"
+          BASH
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" JAVA_HOME="$5" CI=true FIREBASE_CLI_DISABLE_UPDATE_CHECK=true bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$JAVA_HOME" "$script"
+
+  acl-roundtrip:
+    name: Disposable ACL rollback roundtrip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          test -z "$(find supabase/migrations -name '*catalog_api_only_acl_h3b*' -print)"
+          bash -n localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
+          bash localeats-api/tests/security/h3b/run-local-h3b1-rollback.sh
+
+  recovered-applied-history:
+    name: Disposable transaction integrity and geography
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PICKUP_WRITES_ENABLED: 'false'
+      VITE_PICKUP_ORDERING_ENABLED: 'false'
+      RIDER_ACTIVATION_ENABLED: 'false'
+      REWARDS_ENABLED: 'false'
+      R36_PICKUP_REPLAY_MODE: recorded_applied
+      H2D1_CONCURRENCY: 'true'
+    steps:
+      - name: Checkout historical archive without GitHub credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          persist-credentials: false
+      - name: Verify archived remote statements exactly match read-only recovery digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          bash -n localeats-api/tests/pickup/r35/h2d1-concurrency.SYNTHETIC_ONLY.sh
+          bash -n localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          node --test localeats-api/tests/pickup/r35/reproducibility.test.mjs
+      - name: Ensure no hosted connection or new active migration is possible
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f supabase/recovered_applied_readonly/20261030111305_pickup_launch_foundation.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073608_pickup_zero_fee.sql.txt
+          test -f supabase/recovered_applied_readonly/20261031073645_merchant_availability.sql.txt
+          test -f supabase/recovered_applied_readonly/20261101160331_pickup_payment_methods.sql.txt
+          test -f localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+          for version in 20261030111305 20261031073608 20261031073645 20261101160331; do
+            test -z "$(find supabase/migrations -maxdepth 1 -type f -name "${version}*.sql" -print)"
+          done
+          ! grep -En 'supabase\.co|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|db push|apply_migration|--remote|--publish' \
+            localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+      - name: Replay archived SQL and run observed-lock races in disposable PostgreSQL 17
+        shell: bash
+        run: bash localeats-api/tests/pickup/r35/run-local-pickup-r35.sh
+
+  browser:
+    name: Same-run before/after mobile startup and exact bundle graph
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
+          path: customer
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          path: merchant
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Prepare locked dependencies and Chromium
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
+          test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+          (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
+          (cd merchant && npm ci --no-audit --no-fund)
+      - name: Build and benchmark in isolated network namespace
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h4a-browser.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          export GEMINI_API_KEY=H4B_SYNTHETIC_GEMINI_NOT_A_CREDENTIAL_20261125
+          cp customer/tests/performance/h4b-build-graph.mjs customer/.h4b-build-graph.mjs
+          cp customer/tests/performance/h4b-build-graph.mjs merchant/.h4b-build-graph.mjs
+          for variant in baseline candidate; do
+            if [[ "$variant" = baseline ]]; then
+              git -C customer checkout --detach 8dde99fc8502580d2b24de6f7de4e157a6fe84fe
+              git -C merchant checkout --detach 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+            else
+              git -C customer checkout --detach ba8674a2a799455fdb17f61ef4c6772e478b7115
+              git -C merchant checkout --detach 7bb06c161f6654388149f3fe0f33c718f6e5aab4
+            fi
+            echo "H4B_VARIANT $variant"
+            echo H4B1_EXACT_SOURCE_FIREBASE_CONSUMERS
+            git -C customer grep -nE 'firebase/firestore|lib/firebase|legacyFirestoreReads|from .*[/]firebase' -- src || test "$?" = 1
+            git -C merchant grep -IlE 'GEMINI_API_KEY|@google/genai|@google/generative-ai' -- src vite.config.ts || test "$?" = 1
+            (cd merchant && node .h4b-build-graph.mjs Merchant "$variant")
+            (cd customer && node .h4b-build-graph.mjs Customer "$variant" && node tests/performance/h4a-browser.mjs ../merchant/dist)
+          done
+          BASH
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false bash "$5"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$script"

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { db } from '../lib/firebase';
+import { db } from '../lib/legacyFirestoreReads';
 import { collection, doc, getDoc, getDocs, query, limit } from 'firebase/firestore';
 import { Database, Play, Loader2, ServerCrash, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
