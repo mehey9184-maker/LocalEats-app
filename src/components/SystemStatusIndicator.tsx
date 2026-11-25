@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { WifiOff, CloudOff, RefreshCw, XCircle } from 'lucide-react';
-import { FirestoreService } from '../lib/firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
-export default function SystemStatusIndicator() {
+export default function SystemStatusIndicator({catalogStatus}:{catalogStatus:'ok'|'error'|'checking'}) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [supabaseStatus, setSupabaseStatus] = useState<'ok' | 'error' | 'checking'>('checking');
+  const supabaseStatus=catalogStatus;
   const [showIndicator, setShowIndicator] = useState(false);
 
   useEffect(() => {
@@ -20,33 +19,6 @@ export default function SystemStatusIndicator() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-    
-    const checkDatabase = async () => {
-      if (!isOnline) {
-        if (isMounted) setSupabaseStatus('error');
-        return;
-      }
-      
-      try {
-        if (isMounted) setSupabaseStatus('checking');
-        const ok = await FirestoreService.healthCheck();
-        if (isMounted) setSupabaseStatus(ok ? 'ok' : 'error');
-      } catch (err) {
-        if (isMounted) setSupabaseStatus('error');
-      }
-    };
-
-    checkDatabase();
-    const interval = setInterval(checkDatabase, 30000);
-    
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [isOnline]);
 
   useEffect(() => {
     if (!isOnline || supabaseStatus === 'error') {
@@ -101,9 +73,9 @@ export default function SystemStatusIndicator() {
               </div>
               <div className="flex flex-col">
                 <span className="text-xs font-semibold text-slate-200">
-                  {supabaseStatus === 'error' ? 'Database Unreachable' : supabaseStatus === 'checking' ? 'Checking Database...' : 'Database Connected'}
+                  {supabaseStatus === 'error' ? 'Catalog unavailable' : supabaseStatus === 'checking' ? 'Checking catalog...' : 'Catalog verified'}
                 </span>
-                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">Using offline cache</span>}
+                {supabaseStatus === 'error' && <span className="text-[9px] text-slate-400">Retry live catalog</span>}
               </div>
             </div>
           </div>
