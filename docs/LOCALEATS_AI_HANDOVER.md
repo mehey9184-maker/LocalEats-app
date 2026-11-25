@@ -259,3 +259,7 @@ Run 45517014315 job 138878945348 passed actual emitted graph gate H4B1_FIREBASE_
 
 ## L4-H4C — catalog and database efficiency (draft)
 H4B.1 corrected run 45517225219 independently verified 9/9 PASS. Preserve all release blockers, including FCP target, real auth/device and PWA acceptance. ADR-027: see docs/LOCALEATS_L4_H4C_CATALOG_QUERY.md for bounded batch endpoint, compatibility/cancellation, exact query audit and disposable index gate. Candidate only; no hosted migration or release. H4D follows only after regression and index evidence acceptance. R0.
+
+
+## L4-H4D — network efficiency (draft)
+H4C corrected run 45519489116 verified 10/10 successful; first verified card public/GPS 16ms with synthetic delays, 3 HTTP requests for four shops. ADR-027 final acceptance recorded. ADR-028 covers verified-idle Customer history, unchanged critical Merchant reconciliation, visible version checks and scoped Retry-After read-only cooldown. H4D acceptance pending. All release blockers retained. No Production or hosted migration. R0.
