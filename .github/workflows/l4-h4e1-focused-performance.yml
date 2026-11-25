@@ -1,0 +1,102 @@
+name: L4-H4E.1 focused diagnostics (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h4e1-focused-performance.yml']
+permissions:
+  contents: read
+jobs:
+  browser:
+    name: Cold startup, React shell replacement and exact built worker transfer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 501e4c6795ad3735abd9e6f12cc55827ddac33c3
+          path: merchant
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Prepare locked dependencies and Chromium
+        run: |
+          set -euo pipefail
+          test "$(git -C customer rev-parse HEAD)" = 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          test "$(git -C merchant rev-parse HEAD)" = 501e4c6795ad3735abd9e6f12cc55827ddac33c3
+          (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
+          (cd merchant && npm ci --no-audit --no-fund)
+      - name: Build and benchmark in isolated network namespace
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h4a-browser.sh"
+          cat > "$script" <<'BASH'
+          set -euo pipefail
+          test "$(ip -o link show | wc -l)" -eq 1
+          test -z "$(ip route show default)"
+          (cd merchant && npm run build)
+          (cd customer && npm run build && node tests/performance/h4e1-startup-pwa.mjs ../merchant/dist)
+          BASH
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false bash "$5"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$script"
+  consumers:
+    name: Exact tracked dependency and PWA consumer inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 1b1c91247c64c53dac84291a1b997a3d1c0488ba
+          path: customer
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 501e4c6795ad3735abd9e6f12cc55827ddac33c3
+          path: merchant
+          persist-credentials: false
+      - name: Inventory paths only, not config values
+        run: |
+          set -euo pipefail
+          for repo in customer merchant; do
+            echo "H4E1_SOURCE $repo $(git -C "$repo" rev-parse HEAD)"
+            for pattern in 'firebase/firestore|legacyFirestoreReads|lib/firebase' 'leaflet|MapComponents' 'motion/react|framer-motion' '@sentry/react' 'jspdf|html2canvas|@google/genai|recharts' 'serviceWorker.register|precacheAndRoute|registerSW'; do
+              echo "H4E1_CONSUMERS $repo $pattern"
+              git -C "$repo" grep -IlE "$pattern" -- src index.html vite.config.ts || test "$?" = 1
+            done
+          done
+          echo H4E1_CONSUMER_INVENTORY_COMPLETE
+  catalog:
+    name: Disposable bounded catalog consolidation and publication parity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 501e4c6795ad3735abd9e6f12cc55827ddac33c3
+          persist-credentials: false
+      - name: Run only synthetic temporary PostgreSQL objects
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 501e4c6795ad3735abd9e6f12cc55827ddac33c3
+          name="h4e1-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$name" --network none --rm -e POSTGRES_PASSWORD=synthetic_only -e POSTGRES_DB=h4e1_lab postgres:17-alpine >/dev/null
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$name")" = none
+          ready=0
+          for n in $(seq 1 45); do
+            if docker logs "$name" 2>&1 | grep -q 'PostgreSQL init process complete; ready for start up.' && docker exec "$name" psql -XAt -U postgres -d h4e1_lab -c 'select 1' | grep -qx 1; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          docker cp localeats-api/tests/performance/h4e1 "$name":/tmp/h4e1
+          docker exec "$name" psql -X -v ON_ERROR_STOP=1 -U postgres -d h4e1_lab -f /tmp/h4e1/catalog-consolidation.SYNTHETIC_ONLY.sql | tee "$RUNNER_TEMP/h4e1-catalog.log"
+          test "$(grep -c '^H4E1_CATALOG_REHEARSAL_PASS' "$RUNNER_TEMP/h4e1-catalog.log")" = 1
