@@ -1,4 +1,3 @@
-import imageCompression from 'browser-image-compression';
 import { supabase } from './supabase';
 import { toDBPhone } from '../utils';
 
@@ -23,6 +22,7 @@ export async function compressAvatarImage(file: File | Blob): Promise<Blob> {
 
   try {
     const imageFile = file instanceof File ? file : new File([file], `avatar_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    const {default:imageCompression} = await import('browser-image-compression');
     const compressed = await imageCompression(imageFile, options);
     console.log(`[Avatar Compression] Shrink from ${(imageFile.size / 1024).toFixed(1)}KB to ${(compressed.size / 1024).toFixed(1)}KB`);
     return compressed;

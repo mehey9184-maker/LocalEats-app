@@ -38,24 +38,6 @@ import {
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { Toaster, toast } from "sonner";
 import { MapLegend } from "./components/MapLegend";
-import QRCode from "qrcode";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  PieChart,
-  Pie,
-  Legend,
-} from "recharts";
 
 import type { Html5Qrcode } from "html5-qrcode";
 
@@ -217,7 +199,6 @@ import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
 import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
-import jsPDF from "jspdf";
 import { useTranslation } from "./contexts/LanguageContext";
 export type { UserProfile } from "./types";
 import {
@@ -271,11 +252,11 @@ import { LOCAL_PROMO_DB, urlBase64ToUint8Array } from "./constants/promos";
 
 // Address lookup is only needed within profile editing.
 const AddressSearch = lazy(() => import("./components/MapComponents").then(({AddressSearch}) => ({default:AddressSearch})));
-import { NotificationsScreen } from "./screens/NotificationsScreen";
-import { OrderRating } from "./screens/OrderRating";
-import { SettingsScreen } from "./screens/SettingsScreen";
-import { ContactScreen } from "./screens/ContactScreen";
-import { OrderHistoryScreen } from "./screens/OrderHistoryScreen";
+const NotificationsScreen = lazy(() => import("./screens/NotificationsScreen").then(module => ({default:module.NotificationsScreen})));
+const OrderRating = lazy(() => import("./screens/OrderRating").then(module => ({default:module.OrderRating})));
+const SettingsScreen = lazy(() => import("./screens/SettingsScreen").then(module => ({default:module.SettingsScreen})));
+const ContactScreen = lazy(() => import("./screens/ContactScreen").then(module => ({default:module.ContactScreen})));
+const OrderHistoryScreen = lazy(() => import("./screens/OrderHistoryScreen").then(module => ({default:module.OrderHistoryScreen})));
 import {
   TOWNSHIPS,
   TownshipConfig,
@@ -3034,6 +3015,8 @@ export default function App() {
                 />
               )}
               {currentScreen === "notifications" && (
+                <WidgetErrorBoundary fallbackName="Notifications">
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500">Loading…</div>}>
                 <NotificationsScreen
                   notifications={notifications}
                   onTrackPickup={openPickupTracking}
@@ -3049,6 +3032,8 @@ export default function App() {
                     setNotifications((prev) => prev.filter((n) => n.id !== id))
                   }
                 />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "order-tracking" && (
                 <WidgetErrorBoundary fallbackName="Order Tracking">
@@ -3075,6 +3060,8 @@ export default function App() {
                 </WidgetErrorBoundary>
               )}
               {currentScreen === "review" && pendingReview && (
+                <WidgetErrorBoundary fallbackName="Order Rating">
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500">Loading…</div>}>
                 <OrderRating
                   pendingReview={pendingReview}
                   onSnooze={() => {
@@ -3101,6 +3088,8 @@ export default function App() {
 
                   }}
                 />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "discover" && (
                 <DiscoverScreen
@@ -3217,6 +3206,8 @@ export default function App() {
                 </section>
               ))}
               {currentScreen === "settings" && (
+                <WidgetErrorBoundary fallbackName="Settings">
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500">Loading…</div>}>
                 <SettingsScreen
                   userProfile={userProfile}
                   setUserProfile={setUserProfile}
@@ -3323,6 +3314,8 @@ export default function App() {
                   isPingingHeartbeat={isPingingHeartbeat}
                   onRunHeartbeatPing={runHeartbeatPing}
                 />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "profile" && canManageCustomerProfile(auth.currentUser, session?.user?.id) && (
                 <ProfileScreen
@@ -3341,11 +3334,15 @@ export default function App() {
                 />
               )}
               {currentScreen === "contact" && (
+                <WidgetErrorBoundary fallbackName="Contact">
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500">Loading…</div>}>
                 <ContactScreen
                   onBack={() => setCurrentScreen(previousScreen || "profile")}
                   userProfile={userProfile}
                   showAlert={showAlert}
                 />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
               {currentScreen === "checkout" && (
                 <WidgetErrorBoundary fallbackName="Checkout">
@@ -3395,6 +3392,8 @@ export default function App() {
                 />
               )}
               {currentScreen === "order-history" && (
+                <WidgetErrorBoundary fallbackName="Order History">
+                  <Suspense fallback={<div role="status" className="p-8 text-center text-slate-500">Loading…</div>}>
                 <OrderHistoryScreen
                   key={historyUserId}
                   signedIn={!!historyUserId}
@@ -3414,6 +3413,8 @@ export default function App() {
                     setCurrentScreen("store-info");
                   }}
                 />
+                  </Suspense>
+                </WidgetErrorBoundary>
               )}
             </motion.div>
           </AnimatePresence>
