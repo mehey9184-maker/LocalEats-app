@@ -42,7 +42,7 @@ test('active pickup tracking still calls authenticated server-authoritative canc
  assert.match(app,/hasPendingCancellation=\{hasPendingPickupCancellation\}/);
  const service=read('src/services/customerPickup.ts');
  assert.match(service,/cancelCustomerPickup\s*=\s*createPickupCancellation\(/);
- assert.match(service,/identity:\(\)=>auth\.currentUser\?\.uid,enabled:pickupOrderingEnabled,command:customerPickupApi\.command/);
+ assert.match(service,/identity:\(\)=>auth\.currentUser\?\.uid,captureSession:\(\)=>capturePickupSession\(\)\.current,enabled:pickupOrderingEnabled,command:customerPickupApi\.command/);
  const tracking=read('src/screens/PickupTrackingScreen.tsx');
  assert.match(tracking,/await props\.onCancel\(order,reason\)/);
  assert.match(tracking,/Cancellation confirmed by the shop service/);
