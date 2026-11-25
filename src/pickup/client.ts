@@ -1,3 +1,4 @@
+import {createReadBackoff} from "../services/readBackoff";
 export type PickupOrder = {id:string;shop_id:string;user_id:string;status:string;delivery_type:string;delivery_status:string;
  payment_status:string;payment_method:string;revision:number;customer_name:string;phone:string;total_price:number;
  items:{menu_item_id:string;name:string;quantity:number;unit_price:number;line_total:number}[];created_at:string};
@@ -33,7 +34,10 @@ export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):strin
 }
 export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transport:typeof fetch=fetch,
  options:{requireExplicitHttps?:boolean;batchCatalogMenus?:boolean}={}) {
+ const readBackoff=createReadBackoff();
  const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal):Promise<ApiResponse>=>{
+   const readScope=path.startsWith("/api/v1/catalog/")?"catalog":path.startsWith("/api/v1/notifications")?"notifications":"orders";
+   if(method==="GET" && readBackoff.remaining(readScope)>0)throw new PickupApiError(429,"RATE_LIMITED","Too many requests. Please try again later.");
    const origin=pickupApiOrigin(baseUrl,options.requireExplicitHttps);
    const bearer=publicRead ? "" : await token();
    signal?.throwIfAborted();
@@ -43,6 +47,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
      headers:{"Content-Type":"application/json",...(bearer ? {Authorization:"Bearer fb-"+bearer} : {})},
      ...(body===undefined ? {} : {body:JSON.stringify(body)})});}
    catch {signal?.throwIfAborted();throw new PickupApiError(0,"CONNECTION_LOST","Connection lost. The outcome may be unknown. Retry the same request.");}
+   if(method==="GET")readBackoff.observe(readScope,response.status,response.headers?.get("Retry-After")??null);
    let result:ApiResponse;
    try {result=await response.json();} catch {signal?.throwIfAborted();throw new PickupApiError(response.status,"INVALID_RESPONSE","The service returned an invalid response.");}
    if(!response.ok || result?.success!==true) throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.");
