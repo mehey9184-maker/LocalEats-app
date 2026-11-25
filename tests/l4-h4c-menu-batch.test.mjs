@@ -51,3 +51,39 @@ test("H4C aborting one caller does not abort another consumer's verified menu",a
  assert.equal(result[0].status,"rejected");assert.equal(result[1].status,"fulfilled");
  assert.equal(result[1].value.menu_items[0].shop_id,"b");
 });
+
+import {createPublicBrowseCatalogReader} from "../src/services/publicBrowseCatalog.ts";
+import {createNearbyCatalogReader} from "../src/services/nearbyCatalogCache.ts";
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+test("H4C active readers retain first-card progress and satisfy three-request pilot target",async()=>{
+ for(const mode of ["public","gps"]){
+  for(const variant of ["baseline","all-batch","priority-batch"]){
+   const paths=[];let firstMs,completeMs;const start=performance.now();
+   const transport=async(url,options)=>{
+    const u=new URL(url);paths.push(u.pathname);
+    assert.equal(options.headers.Authorization,undefined);
+    if(u.pathname.endsWith("/shops"))return response({success:true,shops:ids.map(id=>({id,is_active:true,distance_km:0}))});
+    if(u.pathname.endsWith("/menus")){
+     await delay(250);
+     return response({success:true,menus:u.searchParams.get("ids").split(",").map(id=>({shop_id:id,menu_items:[{id:"m-"+id,shop_id:id,price:25}]}))});
+    }
+    const id=u.pathname.split("/").at(-2);
+    await delay(id==="a"?15:250);
+    return response({success:true,menu_items:[{id:"m-"+id,shop_id:id,price:25}]});
+   };
+   const api=createPickupApi("https://fixture.invalid",async()=>{throw Error("public token");},transport,{batchCatalogMenus:variant!=="baseline"});
+   const source={shops:()=>api.approvedShops(),menu:api.menu,...(variant==="priority-batch"?{priorityMenu:api.priorityMenu}:{})};
+   const map=(shop,menu)=>({...shop,menu});
+   const onProgress=partial=>{if(firstMs===undefined){firstMs=performance.now()-start;assert.equal(partial.shops[0].id,"a");}};
+   const read=mode==="public"?createPublicBrowseCatalogReader(source,map):createNearbyCatalogReader(source,map);
+   const result=mode==="public"?await read({onProgress}):await read({lat:-25.98,lng:28.2},{onProgress});
+   completeMs=performance.now()-start;
+   assert.equal(result.incomplete,false);assert.deepEqual(result.shops.map(s=>s.id),ids);
+   assert.equal(paths.length,variant==="baseline"?5:variant==="all-batch"?2:3);
+   assert.ok(Number.isFinite(firstMs));
+   if(variant==="priority-batch")assert.ok(completeMs-firstMs>=150,"first verified shop must not wait for deliberately slower batch");
+   if(variant==="all-batch")assert.ok(completeMs-firstMs<100,"all-batch first card waits for grouped response");
+   console.log("H4C_FIRST_CARD "+JSON.stringify({mode,variant,requests:paths.length,first_ms:Math.round(firstMs),complete_ms:Math.round(completeMs)}));
+  }
+ }
+});
