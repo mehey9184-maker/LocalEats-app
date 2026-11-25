@@ -198,7 +198,6 @@ import { SplashScreen } from "./screens/SplashScreen";
 import { AppSkeletonLoader } from "./components/AppSkeletonLoader";
 import { AuthSkeleton } from "./components/AuthSkeleton";
 import { AdminErrorLogsSection } from "./components/AdminErrorLogsSection";
-import { FirestoreDiagnosticComponent } from "./components/FirestoreDiagnosticComponent";
 import { useTranslation } from "./contexts/LanguageContext";
 export type { UserProfile } from "./types";
 import {
@@ -4145,7 +4144,7 @@ function HomeScreen({
 
   return (
     <div className="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-sans relative shadow-xl">
-      <SystemStatusIndicator />
+      <SystemStatusIndicator catalogStatus={loadingShops || isSyncing ? "checking" : fetchError ? "error" : "ok"} />
       {isUpdateAvailable && (
         <button
           onClick={() => window.location.reload()}
