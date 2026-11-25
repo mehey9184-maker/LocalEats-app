@@ -24,14 +24,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 82f5eb4fbc98875be79df1eb691665c7a81f2c79
+          ref: e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
           fetch-depth: 0
           persist-credentials: false
       - name: Verify archived remote statements exactly match read-only recovery digests
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 82f5eb4fbc98875be79df1eb691665c7a81f2c79
+          test "$(git rev-parse HEAD)" = e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
           git diff --exit-code 389c526a2c2ba22e2dd27d1e3af2e0ab3b56d0dc HEAD -- src localeats-api/src supabase package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
           bash -n localeats-api/tests/pickup/r35/h6b-fixed-load.SYNTHETIC_ONLY.sh
           bash -n localeats-api/tests/pickup/r35/h6a-load.SYNTHETIC_ONLY.sh
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: mehey9184-maker/LocalEats-Dashboard.2
-          ref: 82f5eb4fbc98875be79df1eb691665c7a81f2c79
+          ref: e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -74,7 +74,7 @@ jobs:
       - name: Verify unchanged accepted runtime and dependencies
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 82f5eb4fbc98875be79df1eb691665c7a81f2c79
+          test "$(git rev-parse HEAD)" = e9a1c447bd0ef4760f542d1f51ddcb350e36d20e
           git diff --exit-code 389c526a2c2ba22e2dd27d1e3af2e0ab3b56d0dc HEAD -- src localeats-api/src supabase package.json package-lock.json localeats-api/package.json localeats-api/package-lock.json
           cd localeats-api
           npm ci --no-audit --no-fund
