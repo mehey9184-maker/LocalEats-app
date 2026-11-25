@@ -122,7 +122,11 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  // Keep the unresolved request if its consent or response cannot be verified.
  const consentTotalMinor=pending?.consent?.total_minor;
  const consentPaymentMethod=pending?.payment_method;
- if(!Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
+ if(!pending || typeof pending!=="object" || Array.isArray(pending) ||
+    typeof pending.idempotency_key!=="string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pending.idempotency_key) ||
+    typeof pending.shop_id!=="string" || !pending.shop_id || pending.consent?.currency!=="ZAR" ||
+    typeof pending.consent?.pricing_fingerprint!=="string" || !/^[0-9a-f]{64}$/.test(pending.consent.pricing_fingerprint) ||
+    !Number.isSafeInteger(consentTotalMinor) || consentTotalMinor<0 ||
     !["cash","card_machine"].includes(consentPaymentMethod))
   throw new Error("The pending pickup request has invalid consent or payment details.");
  const serialized=JSON.stringify(pending);
