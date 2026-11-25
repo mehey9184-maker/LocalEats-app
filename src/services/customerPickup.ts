@@ -12,7 +12,7 @@ export const customerPickupApi=createPickupApi(import.meta.env.VITE_LOCALEATS_AP
   const user=auth.currentUser;
   if(!user || user.isAnonymous) throw new Error("Please sign in with your existing account.");
   return user.getIdToken();
-},fetch,{requireExplicitHttps:import.meta.env.PROD});
+},fetch,{requireExplicitHttps:import.meta.env.PROD,batchCatalogMenus:true});
 
 const readVerifiedNearbyCatalog=createNearbyCatalogReader({
   // Discovery displays all approved, non-archived public shops. Server quote
