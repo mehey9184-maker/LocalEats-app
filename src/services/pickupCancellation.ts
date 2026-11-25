@@ -25,7 +25,7 @@ export function createPickupCancellation(options:Options) {
   if(saved){
    body=JSON.parse(saved);
    if(!body || Object.keys(body).sort().join(',')!=='command_id,expected_revision,reason' ||
-     typeof body.command_id!=='string' || !body.command_id || !Number.isSafeInteger(body.expected_revision) || body.expected_revision<0 || body.expected_revision>=Number.MAX_SAFE_INTEGER ||
+     typeof body.command_id!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.command_id) || !Number.isSafeInteger(body.expected_revision) || body.expected_revision<0 || body.expected_revision>=Number.MAX_SAFE_INTEGER ||
      typeof body.reason!=='string' || !body.reason.trim() || body.reason.length>500)throw Error('The saved cancellation needs recovery. Refresh the order before trying again.');
   }else{
    if(order.status!=='pending' || !Number.isSafeInteger(order.revision) || order.revision<0 || order.revision>=Number.MAX_SAFE_INTEGER)throw Error('Refresh this order. Only pending pickups can be cancelled.');
