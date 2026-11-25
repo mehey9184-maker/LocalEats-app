@@ -31,8 +31,9 @@ import * as customer from './src/services/customerPickup.ts';
 import {createMerchantPickupRecovery} from ${JSON.stringify(resolve(merchant,'src/services/merchantPickupRecovery.ts'))};
 globalThis.customer=customer;
 globalThis.user='fixture-a';
-globalThis.switchUser=uid=>{const next={uid,getIdToken:async()=>uid};globalThis.before?.(next);globalThis.user=uid;globalThis.observer?.(next);};
-globalThis.merchant=createMerchantPickupRecovery({identity:()=>globalThis.user,enabled:()=>true,storage:sessionStorage,mapOrder:o=>o,transport:async(o,c,signal,uid)=>{
+let merchantGeneration=0;
+globalThis.switchUser=uid=>{merchantGeneration++;const next={uid,getIdToken:async()=>uid};globalThis.before?.(next);globalThis.user=uid;globalThis.observer?.(next);};
+globalThis.merchant=createMerchantPickupRecovery({identity:()=>globalThis.user,captureSession:()=>{const ticket=merchantGeneration;return ()=>ticket===merchantGeneration;},enabled:()=>true,storage:sessionStorage,mapOrder:o=>o,transport:async(o,c,signal,uid)=>{
  const r=await fetch('/merchant-command',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer fb-'+uid},body:JSON.stringify(c),signal});
  return {status:r.status,data:await r.json()};
 }});
