@@ -10,8 +10,8 @@ export type PickupHistoryBefore = Pick<PickupOrder, "id" | "created_at">;
 export type PickupHistoryPage = {orders:PickupOrder[];has_more:boolean};
 export type Location = {lat:number;lng:number};
 export class PickupApiError extends Error {
- status:number; code:string;
- constructor(status:number,code:string,message:string) {super(message);this.status=status;this.code=code;}
+ status:number; code:string; contractRejection:boolean;
+ constructor(status:number,code:string,message:string,contractRejection=false) {super(message);this.status=status;this.code=code;this.contractRejection=contractRejection;}
 }
 export type PickupQuote={can_submit?:boolean;lines:{menu_item_id:string;name:string;quantity:number;unit_minor:number;line_minor:number}[];total_minor:number;service_fee_minor:number;delivery_fee_minor?:number;discount_minor?:number;tip_minor?:number;subtotal_minor:number;pricing_fingerprint:string};
 type ApiResponse=PickupOrderDetail & {success?:boolean;code?:string;error?:string;replayed?:boolean;orders?:PickupOrder[];
@@ -35,12 +35,14 @@ export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):strin
 export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transport:typeof fetch=fetch,
  options:{requireExplicitHttps?:boolean;batchCatalogMenus?:boolean;now?:()=>number}={}) {
  const readBackoff=createReadBackoff(options.now);
- const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal):Promise<ApiResponse>=>{
+ const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal,current?:()=>boolean):Promise<ApiResponse>=>{
+   const checkSession=()=>{signal?.throwIfAborted();if(current && !current())throw new PickupApiError(0,"SESSION_CHANGED","Your session changed. Retry the original action in its account.");};
+   checkSession();
    const readScope=path.startsWith("/api/v1/catalog/")?"catalog":path.startsWith("/api/v1/notifications")?"notifications":"orders";
    if(method==="GET" && readBackoff.remaining(readScope)>0)throw new PickupApiError(429,"RATE_LIMITED","Too many requests. Please try again later.");
    const origin=pickupApiOrigin(baseUrl,options.requireExplicitHttps);
    const bearer=publicRead ? "" : await token();
-   signal?.throwIfAborted();
+   checkSession();
    if(!publicRead && !bearer) throw new PickupApiError(401,"UNAUTHORIZED","Sign in again to continue.");
    let response:Response;
    try {response=await transport(origin+path,{method,cache:"no-store",...(signal ? {signal} : {}),
@@ -50,7 +52,11 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
    if(method==="GET")readBackoff.observe(readScope,response.status,response.headers?.get("Retry-After")??null);
    let result:ApiResponse;
    try {result=await response.json();} catch {signal?.throwIfAborted();throw new PickupApiError(response.status,"INVALID_RESPONSE","The service returned an invalid response.");}
-   if(!response.ok || result?.success!==true) throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.");
+   checkSession();
+   if(!response.ok || result?.success!==true) {
+     const contractRejection=!response.ok && result?.success===false && typeof result.code==="string" && typeof result.error==="string" && /(?:^|\s|;)application\/json(?:;|$)/i.test(response.headers?.get("content-type")??"");
+     throw new PickupApiError(response.status,result?.code ?? "REQUEST_FAILED",result?.error ?? "Request failed.",contractRejection);
+   }
    return result;
  };
  // Coalesce only concurrent public menu reads. Existing callers keep individual
@@ -124,8 +130,8 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
   menu:(id:string,signal?:AbortSignal)=>options.batchCatalogMenus?batchedMenu(id,signal):singleMenu(id,signal),
   priorityMenu:singleMenu,
   quote:(intent:unknown,signal?:AbortSignal)=>request("/api/v1/orders/quote","POST",intent,false,signal),
-  create:async(intent:unknown):Promise<{order:PickupOrder;replayed:boolean}>=>{
-    const result=await request("/api/v1/orders","POST",intent);
+  create:async(intent:unknown,signal?:AbortSignal,current?:()=>boolean):Promise<{order:PickupOrder;replayed:boolean}>=>{
+    const result=await request("/api/v1/orders","POST",intent,false,signal,current);
     if(!result.order?.id || typeof result.replayed!=="boolean") throw new PickupApiError(503,"UNCONFIRMED","Order persistence is unconfirmed. Retry the same request.");
     return {order:result.order,replayed:result.replayed};
   },
@@ -139,7 +145,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
     return {orders:page.orders,has_more:page.has_more};
   },
   order:(id:string,signal?:AbortSignal)=>request("/api/v1/orders/"+encodeURIComponent(id),"GET",undefined,false,signal),
-  command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal),
+  command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal,current?:()=>boolean)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal,current),
   notifications:(signal?:AbortSignal)=>request("/api/v1/notifications","GET",undefined,false,signal),
   subscribe:(id:string,fcm_token:string)=>request("/api/v1/push-subscriptions/"+id,"PUT",{fcm_token,permission_granted:true}),
   revoke:(id:string)=>request("/api/v1/push-subscriptions/"+id,"DELETE"),
