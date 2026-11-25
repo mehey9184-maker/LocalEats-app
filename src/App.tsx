@@ -9,6 +9,7 @@ import {compareNearbyCatalog, type CatalogBaseline} from "./services/nearbyShopA
 import {nearbyCatalogKey} from "./services/nearbyCatalogCache";
 import {shopRatingLabel,shopRatingFacts,restaurantMetadata} from "./services/catalogFacts";
 import {readPickupWithDeadline} from './services/pickupRead';
+import {customerHistoryInterval,ACTIVE_HISTORY_MS} from "./services/historyPollingPolicy";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -2168,11 +2169,15 @@ export default function App() {
     historyCursor?: Pick<PickupOrder,"id"|"created_at"|"user_id">;
   } | null>(null);
   const refreshPickupHistory = useRef<() => void>(() => {});
+  const historyScreenRef=useRef(currentScreen);
+  historyScreenRef.current=currentScreen;
 
   useEffect(() => {
     let active = true;
     let inFlight = false;
     let inboxInFlight = false;
+    let verifiedRows:PickupOrder[]|null=null;
+    let lastRefreshStarted=0;
     // Never repeat the same transient inbox error every 30 seconds while
     // the API is unavailable; the Orders screen still preserves its error state.
     let readyInboxErrorShown = false;
@@ -2186,6 +2191,7 @@ export default function App() {
     const refresh = async () => {
       if (!active || inFlight) return;
       inFlight = true;
+      lastRefreshStarted=Date.now();
       const controller = new AbortController();
       feedRequest = controller;
       setPickupHistory(previous => ({
@@ -2199,6 +2205,7 @@ export default function App() {
         const { orders: rows } = await readPickupWithDeadline(signal => customerPickupApi.orders(false,signal),{signal:controller.signal});
         if (!Array.isArray(rows)) throw new Error("Invalid order history");
         const ownedOrders = rows.filter(order => order.user_id === historyUserId);
+        verifiedRows=ownedOrders.length===rows.length?ownedOrders:null;
         if (active) {
           setPickupHistory({
             userId: historyUserId,
@@ -2213,6 +2220,7 @@ export default function App() {
           })) as unknown as Order[]);
         }
       } catch {
+        verifiedRows=null;
         if (active) setPickupHistory(previous => ({
           userId: historyUserId,
           orders: previous?.userId === historyUserId ? previous.orders : null,
@@ -2235,6 +2243,7 @@ export default function App() {
           type: "order", read: false, timestamp: Date.parse(event.occurred_at), orderId: event.order_id,
         })) as unknown as AppNotification[]);
       } catch {
+        verifiedRows=null;
         if (active && !readyInboxErrorShown) {
           readyInboxErrorShown = true;
           setNotification({type:"error", message:"Ready notifications could not refresh. Retry; no state was inferred."});
@@ -2250,7 +2259,9 @@ export default function App() {
     const refreshVisible = () => {
       if (document.visibilityState === "visible" && navigator.onLine) void refresh();
     };
-    const timer = setInterval(refreshVisible, 30000);
+    const timer = setInterval(()=>{
+      if(Date.now()-lastRefreshStarted>=customerHistoryInterval(verifiedRows,historyScreenRef.current))refreshVisible();
+    }, ACTIVE_HISTORY_MS);
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("online", refreshVisible);
     window.addEventListener("localeats-pickup-ready", refreshVisible);
