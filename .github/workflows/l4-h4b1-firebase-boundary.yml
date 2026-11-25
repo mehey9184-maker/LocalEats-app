@@ -15,7 +15,7 @@ jobs:
         include:
           - component: Customer
             repo: mehey9184-maker/LocalEats-app
-            sha: 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+            sha: ba8674a2a799455fdb17f61ef4c6772e478b7115
             workdir: source
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
@@ -131,7 +131,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -167,7 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -186,7 +186,7 @@ jobs:
       - name: Confirm identical rules and preserve exact prior Merchant source
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
           test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
           cmp customer/firestore.rules merchant/firestore.rules
           cmp customer/firestore.rules customer/security/review/firestore-h3c-pickup.rules
@@ -223,7 +223,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
           path: customer
           persist-credentials: false
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -242,7 +242,7 @@ jobs:
       - name: Confirm exact rules and no deployment configuration
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
           test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
           cmp customer/security/review/storage-h3c1.rules merchant/security/review/storage-h3c1.rules
           cmp customer/firestore.rules merchant/firestore.rules
@@ -337,7 +337,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          ref: ba8674a2a799455fdb17f61ef4c6772e478b7115
           path: customer
           fetch-depth: 0
           persist-credentials: false
@@ -354,7 +354,7 @@ jobs:
       - name: Prepare locked dependencies and Chromium
         run: |
           set -euo pipefail
-          test "$(git -C customer rev-parse HEAD)" = 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+          test "$(git -C customer rev-parse HEAD)" = ba8674a2a799455fdb17f61ef4c6772e478b7115
           test "$(git -C merchant rev-parse HEAD)" = 7bb06c161f6654388149f3fe0f33c718f6e5aab4
           (cd customer && npm ci --no-audit --no-fund && ./node_modules/.bin/playwright install chromium)
           (cd merchant && npm ci --no-audit --no-fund)
@@ -374,12 +374,12 @@ jobs:
               git -C customer checkout --detach 8dde99fc8502580d2b24de6f7de4e157a6fe84fe
               git -C merchant checkout --detach 7bb06c161f6654388149f3fe0f33c718f6e5aab4
             else
-              git -C customer checkout --detach 3cebfaf1731f6d17ae10c8da4f34155da9e12cb8
+              git -C customer checkout --detach ba8674a2a799455fdb17f61ef4c6772e478b7115
               git -C merchant checkout --detach 7bb06c161f6654388149f3fe0f33c718f6e5aab4
             fi
             echo "H4B_VARIANT $variant"
             echo H4B1_EXACT_SOURCE_FIREBASE_CONSUMERS
-            git -C customer grep -nE 'from ["\x27][^"\x27]*(firebase|legacyFirestoreReads)["\x27]|import\(["\x27]firebase/firestore' -- src || test "$?" = 1
+            git -C customer grep -nE 'firebase/firestore|lib/firebase|legacyFirestoreReads|from .*[/]firebase' -- src || test "$?" = 1
             git -C merchant grep -IlE 'GEMINI_API_KEY|@google/genai|@google/generative-ai' -- src vite.config.ts || test "$?" = 1
             (cd merchant && node .h4b-build-graph.mjs Merchant "$variant")
             (cd customer && node .h4b-build-graph.mjs Customer "$variant" && node tests/performance/h4a-browser.mjs ../merchant/dist)
