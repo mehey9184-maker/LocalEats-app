@@ -138,7 +138,9 @@ export async function submitPickupQuote(review:Awaited<ReturnType<typeof quotePi
  const task=(async()=>{
  let result:Awaited<ReturnType<typeof customerPickupApi.create>>;
  try{result=await boundedPickupMutation(signal=>customerPickupApi.create(JSON.parse(serialized),signal,unchanged));}catch(error){
-  if(unchanged() && isDefinitivePickupRejection(error,"create"))sessionStorage.removeItem(key);
+  // A retry after an unknown outcome may race the earlier commit; an error
+  // from this attempt alone is not proof that the earlier attempt never committed.
+  if(!stored && unchanged() && isDefinitivePickupRejection(error,"create"))sessionStorage.removeItem(key);
   throw error;
  }
  if(!unchanged())throw Error("Your session or pending submission changed. Retry the original submission in its account.");
