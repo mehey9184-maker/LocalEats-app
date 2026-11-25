@@ -50,7 +50,8 @@ test("approved public catalog includes distant shops but cannot activate pickup 
  assert.match(service,/VITE_PICKUP_ORDERING_ENABLED === "true"/);
  assert.match(service,/if\(!pickupOrderingEnabled\(\)\)blockPickupSubmission\(\)/);
  assert.match(client,/quote:\(intent:unknown/);
- assert.match(client,/create:async\(intent:unknown\)/);
+ assert.match(client,/create:async\(intent:unknown,signal\?:AbortSignal,current\?:\(\)=>boolean\)/);
+ assert.match(client,/request\("\/api\/v1\/orders","POST",intent,false,signal,current\)/);
 });
 
 test("original ShopCard stays navigable while distant cards are visibly distinct and cannot add menu items",()=>{
