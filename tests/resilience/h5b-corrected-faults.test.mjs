@@ -100,3 +100,11 @@ test('R04 only matched structured action-specific terminal conflict clears pendi
  }
  observe('R04_TERMINAL',{cases:2,cleared:true});
 });
+
+test('R04 later price rejection cannot discard an earlier uncertain submission',async()=>{
+ let attempt=0;
+ const {store,requests}=setup(()=>{attempt++;if(attempt===1)throw Error('response lost');return Response.json({success:false,code:'PRICE_CHANGED',error:'Price changed'},{status:409});}),api=await service();
+ await assert.rejects(api.submitPickupQuote(review));const original=store.get(key);assert.ok(original);
+ await assert.rejects(api.submitPickupQuote(null));assert.equal(store.get(key),original);assert.deepEqual(requests[0].body,requests[1].body);assert.equal(requests.length,2);
+ observe('R04_PRIOR_UNKNOWN',{requests:2,exactPayload:true,pendingRetained:true});
+});
