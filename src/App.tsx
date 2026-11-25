@@ -2260,7 +2260,8 @@ export default function App() {
       if (document.visibilityState === "visible" && navigator.onLine) void refresh();
     };
     const timer = setInterval(()=>{
-      if(Date.now()-lastRefreshStarted>=customerHistoryInterval(verifiedRows,historyScreenRef.current))refreshVisible();
+      const interval=customerHistoryInterval(verifiedRows,historyScreenRef.current);
+      if(interval===ACTIVE_HISTORY_MS || Date.now()-lastRefreshStarted>=interval)refreshVisible();
     }, ACTIVE_HISTORY_MS);
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("online", refreshVisible);
