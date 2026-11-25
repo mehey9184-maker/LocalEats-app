@@ -33,8 +33,8 @@ export function pickupApiOrigin(baseUrl:string,requireExplicitHttps=false):strin
  }
 }
 export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transport:typeof fetch=fetch,
- options:{requireExplicitHttps?:boolean;batchCatalogMenus?:boolean}={}) {
- const readBackoff=createReadBackoff();
+ options:{requireExplicitHttps?:boolean;batchCatalogMenus?:boolean;now?:()=>number}={}) {
+ const readBackoff=createReadBackoff(options.now);
  const request=async(path:string,method="GET",body?:unknown,publicRead=false,signal?:AbortSignal):Promise<ApiResponse>=>{
    const readScope=path.startsWith("/api/v1/catalog/")?"catalog":path.startsWith("/api/v1/notifications")?"notifications":"orders";
    if(method==="GET" && readBackoff.remaining(readScope)>0)throw new PickupApiError(429,"RATE_LIMITED","Too many requests. Please try again later.");
@@ -140,7 +140,7 @@ export function createPickupApi(baseUrl:string,token:()=>Promise<string>,transpo
   },
   order:(id:string,signal?:AbortSignal)=>request("/api/v1/orders/"+encodeURIComponent(id),"GET",undefined,false,signal),
   command:(id:string,action:string,payload:unknown,merchant=true,signal?:AbortSignal)=>request((merchant ? "/api/v1/merchant/orders" : "/api/v1/orders")+"/"+encodeURIComponent(id)+"/"+action,"POST",payload,false,signal),
-  notifications:()=>request("/api/v1/notifications"),
+  notifications:(signal?:AbortSignal)=>request("/api/v1/notifications","GET",undefined,false,signal),
   subscribe:(id:string,fcm_token:string)=>request("/api/v1/push-subscriptions/"+id,"PUT",{fcm_token,permission_granted:true}),
   revoke:(id:string)=>request("/api/v1/push-subscriptions/"+id,"DELETE"),
  };
