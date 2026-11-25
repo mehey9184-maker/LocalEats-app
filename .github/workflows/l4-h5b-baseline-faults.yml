@@ -1,0 +1,35 @@
+name: L4-H5B baseline recovery faults (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-h5b-baseline-faults.yml']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    name: Exact baseline Customer recovery fault observations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: b2b9058e573b5485c51e47cba0f7ae882747df3e
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = b2b9058e573b5485c51e47cba0f7ae882747df3e
+          git diff --exit-code 73b756e7a56e5f5823b1f77117776383a61622bb HEAD -- src package.json package-lock.json
+          npm ci --no-audit --no-fund
+      - name: Run exact baseline fault probes with networking disabled
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            test "$(ip -o link show | wc -l)" -eq 1
+            test -z "$(ip route show default)"
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false node --experimental-strip-types --test tests/resilience/h5b-baseline-faults.test.mjs
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
