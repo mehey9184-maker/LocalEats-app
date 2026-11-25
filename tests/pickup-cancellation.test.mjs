@@ -40,7 +40,7 @@ test('an unconfirmed or foreign result does not claim success or discard recover
  }
 });
 test('a definitive server rejection clears the failed command',async()=>{
- const f=fixture({command:async()=>{throw Object.assign(Error('Order already accepted'),{status:409});}});
+ const f=fixture({command:async()=>{throw Object.assign(Error('Order already accepted'),{status:409,code:'ORDER_STATE_CHANGED',contractRejection:true});}});
  await assert.rejects(()=>f.cancel(order,'Changed plans'));assert.equal(f.values.size,0);
 });
 test('an account change cannot reuse another account cancellation',async()=>{
