@@ -58,7 +58,7 @@ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 test("H4C active readers retain first-card progress and satisfy three-request pilot target",async()=>{
  for(const mode of ["public","gps"]){
   for(const variant of ["baseline","all-batch","priority-batch"]){
-   const paths=[];let firstMs,completeMs;const start=performance.now();
+   const paths=[];let firstMs,completeMs,firstId;const start=performance.now();
    const transport=async(url,options)=>{
     const u=new URL(url);paths.push(u.pathname);
     assert.equal(options.headers.Authorization,undefined);
@@ -74,13 +74,13 @@ test("H4C active readers retain first-card progress and satisfy three-request pi
    const api=createPickupApi("https://fixture.invalid",async()=>{throw Error("public token");},transport,{batchCatalogMenus:variant!=="baseline"});
    const source={shops:()=>api.approvedShops(),menu:api.menu,...(variant==="priority-batch"?{priorityMenu:api.priorityMenu}:{})};
    const map=(shop,menu)=>({...shop,menu});
-   const onProgress=partial=>{if(firstMs===undefined){firstMs=performance.now()-start;assert.equal(partial.shops[0].id,"a");}};
+   const onProgress=partial=>{if(firstMs===undefined){firstMs=performance.now()-start;firstId=partial.shops[0].id;}};
    const read=mode==="public"?createPublicBrowseCatalogReader(source,map):createNearbyCatalogReader(source,map);
    const result=mode==="public"?await read({onProgress}):await read({lat:-25.98,lng:28.2},{onProgress});
    completeMs=performance.now()-start;
    assert.equal(result.incomplete,false);assert.deepEqual(result.shops.map(s=>s.id),ids);
    assert.equal(paths.length,variant==="baseline"?5:variant==="all-batch"?2:3);
-   assert.ok(Number.isFinite(firstMs));
+   assert.ok(Number.isFinite(firstMs));assert.equal(firstId,"a");
    if(variant==="priority-batch")assert.ok(completeMs-firstMs>=150,"first verified shop must not wait for deliberately slower batch");
    if(variant==="all-batch")assert.ok(completeMs-firstMs<100,"all-batch first card waits for grouped response");
    console.log("H4C_FIRST_CARD "+JSON.stringify({mode,variant,requests:paths.length,first_ms:Math.round(firstMs),complete_ms:Math.round(completeMs)}));
