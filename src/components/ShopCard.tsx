@@ -123,7 +123,7 @@ export const ShopCard = memo(
         className={`flex flex-col rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border w-full h-full active:scale-[0.98] motion-reduce:active:scale-100 motion-reduce:transition-none transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${
           browseOnly
             ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400 dark:hover:border-slate-600"
-            : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
+            : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-[0_2px_8px_rgba(15,23,42,0.08),0_6px_18px_rgba(15,23,42,0.04)] hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
         }`}
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
@@ -319,7 +319,7 @@ export const MenuItemCard = memo(
         }}
         whileHover={reduceMotion ? undefined : { scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
-        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-xs"
+        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-[0_1px_4px_rgba(15,23,42,0.08),0_3px_10px_rgba(15,23,42,0.04)]"
         onClick={() => {
           if (outsidePickupArea) {
             showAlert("Outside your pickup area", "This shop is more than 4 km away. You can browse its real menu, but ordering is unavailable from your current location.");
