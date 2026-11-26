@@ -91,8 +91,8 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
             tabIndex={-1}
             initial={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0.9 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0 }}
-            transition={reduceMotion ? {duration:0} : { type: "spring", stiffness: 350, damping: 32 }}
+            exit={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+            transition={reduceMotion ? {duration:0} : { type: "tween", duration: 0.26, ease: [0.2, 0.8, 0.2, 1] }}
             className={`relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-slate-800 ${maxHeight} flex flex-col z-10 overflow-hidden`}
           >
             {/* Top Drag Handle */}
