@@ -16,7 +16,7 @@ jobs:
         include:
           - component: Customer
             repo: mehey9184-maker/LocalEats-app
-            sha: 310af745ebb4fd7cb32b2649bace30bbbdf11ef6
+            sha: 98cadc5f551c81c95ecd5318299dfb715ff2de80
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
             sha: 3ed2b833bd0cf7ed0bf4a79a4ba4239235905f91
