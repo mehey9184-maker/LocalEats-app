@@ -37,7 +37,12 @@ const reader=createPublicBrowseCatalogReader({
    });
    return {menu_items:[{...fakeItem,id:id+"-item"}]};
  }
-},mapPickupShop);
+},(raw,items)=>{
+ // The real GPS-free reader deliberately strips distance_km. Keep that
+ // behavior intact; only this isolated visual fixture supplies synthetic props.
+ const shop=mapPickupShop(raw,items);
+ return {...shop,distance:shop.id==="slow-shop"?1.2:mutedState==="outside"?5:undefined};
+});
 function L3P1HomeFixture(){
  const [shops,setShops]=useState<Shop[]>([]);
  const [ready,setReady]=useState(false);
