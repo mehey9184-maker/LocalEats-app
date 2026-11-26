@@ -1,0 +1,184 @@
+name: L4-R2B.1 staging compatibility and isolated Preview acceptance (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/l4-r2b1-staging-isolation.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    name: Combined - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: c0690804d1b5591f0c237d9e2bb8ab74dd4a24ae
+            workdir: source
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 7b1879fe1703afe4732b486b5bec7f90d4042839
+            workdir: source
+          - component: API
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 7b1879fe1703afe4732b486b5bec7f90d4042839
+            workdir: source/localeats-api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify source and install locked dependencies
+        working-directory: ${{ matrix.workdir }}
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "H4B_SOURCE $(git rev-parse HEAD)"
+          node --version
+          npm --version
+          sha256sum package-lock.json
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json .npmrc
+      - name: Install locked API dependencies for Merchant cross-package tests
+        if: matrix.component == 'Merchant'
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=15000
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked Playwright Chromium for Customer synthetic fixture
+        if: matrix.component == 'Customer'
+        working-directory: source
+        run: ./node_modules/.bin/playwright install chromium
+      - name: Isolated full root test suites and package API suite
+        working-directory: ${{ matrix.workdir }}
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/h2e.sh"
+          cat > "$script" <<'BASH'
+          set -uo pipefail
+          test "$(id -u)" -ne 0 || exit 1
+          test "$(ip -o link show | wc -l)" -eq 1 || exit 1
+          test -z "$(ip route show default)" || exit 1
+          test "$PICKUP_WRITES_ENABLED" = false || exit 1
+          failures=0
+          run(){
+            local label="$1"; shift
+            local start code
+            start=$(date +%s)
+            "$@"
+            code=$?
+            printf 'H4B1_RESULT %s exit=%s seconds=%s\n' "$label" "$code" "$(($(date +%s)-start))"
+            if [ "$code" -ne 0 ]; then failures=$((failures+1)); fi
+            return "$code"
+          }
+          run dependencies bash -c 'npm ls --all --json > /tmp/h2e-dependency-tree.json' || true
+          if [ "$COMPONENT" = API ]; then
+            run api_package_suite npm test || true
+            run api_preview_mock node --test tests/l3-n8u-z-preview-readonly-smoke.test.mjs || true
+            run r2b1_shop_read node --test dist/routes/merchantShopRead.test.js dist/routes/merchantOnboarding.test.js || true
+          else
+            run lint npm run lint || true
+            if [ "$COMPONENT" = Merchant ]; then
+              run typescript ./node_modules/.bin/tsc --noEmit --pretty false || true
+              run api_test_prerequisite npm --prefix localeats-api run build || true
+            fi
+            echo "H4B_ROOT_TEST_FILES $(printf '%s\n' tests/*.test.mjs | wc -l)"
+            run root_suite node --experimental-strip-types --test tests/*.test.mjs || true
+            if run build npm run build; then
+              python3 - <<'PY'
+          from pathlib import Path
+          import gzip
+          for ext in ('.js','.css'):
+              files=[p for p in Path('dist/assets').rglob('*') if p.is_file() and p.suffix==ext]
+              print(f'H4B_BUNDLE {ext} files={len(files)} raw_bytes={sum(p.stat().st_size for p in files)} gzip9_bytes={sum(len(gzip.compress(p.read_bytes(),compresslevel=9,mtime=0)) for p in files)}')
+          PY
+              if [ "$COMPONENT" = Merchant ]; then
+                run tag_browser node tests/l4-h1d3-order-tags-browser.mjs || true
+              fi
+            else
+              echo 'H4B_BUILD_DEPENDENT_CHECKS_NOT_RUN'
+            fi
+            if [ "$COMPONENT" = Customer ]; then
+              run legacy_catalog_alias ./node_modules/.bin/tsx --test tests/l4-h3b1-legacy-catalog.test.ts || true
+              run signup_browser node tests/signup-home-ux-browser.mjs || true
+              run home_browser node tests/l3-p1-home-browser.mjs || true
+            fi
+          fi
+          echo "H4B1_FINAL component=$COMPONENT failed_commands=$failures"
+          test "$failures" -eq 0
+          BASH
+          chmod 700 "$script"
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false MERCHANT_AVAILABILITY_WRITES_ENABLED=false ADMIN_RIDER_VERIFICATION_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false COMPONENT="$5" bash "$6"
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT" "$script"
+
+  offline-static-and-mounted:
+    name: R2B.1 offline static and provider guards - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: c0690804d1b5591f0c237d9e2bb8ab74dd4a24ae
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 7b1879fe1703afe4732b486b5bec7f90d4042839
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: c0690804d1b5591f0c237d9e2bb8ab74dd4a24ae
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        working-directory: source
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
+      - name: Build offline and mount original components
+        working-directory: source
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true COMPONENT="$5" bash -euc "
+              test \"\$(ip -o link show | wc -l)\" -eq 1
+              test -z \"\$(ip route show default)\"
+              node ../harness/scripts/l4-r2b1-preview-client-fixture.mjs .
+              node ../harness/scripts/l4-r2a1-offline-preview-build.mjs .
+              if [ \"\$COMPONENT\" = Merchant ]; then
+                node tests/l4-r2a1-mounted-onboarding-browser.mjs
+              fi
+            "
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT"
