@@ -19,7 +19,7 @@ jobs:
             sha: 11f49faf912fc7e9e4d6b979b3c7186923344717
           - component: Merchant
             repo: mehey9184-maker/LocalEats-Dashboard.2
-            sha: e01820167f236c9d07c93396b78e90c3c6203d08
+            sha: 1d3f7135ff1f464ab014b8d932ea6d4919f30db9
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
