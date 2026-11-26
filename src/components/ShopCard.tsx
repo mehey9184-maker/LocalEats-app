@@ -258,7 +258,7 @@ export const ShopCard = memo(
 );
 
 export const MenuItemSkeleton = memo(() => (
-  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-4 animate-pulse shadow-sm">
+  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-3 sm:gap-4 animate-pulse shadow-sm">
     <div className="size-20 rounded-xl bg-slate-200 dark:bg-slate-800 shrink-0 relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
     </div>
@@ -319,7 +319,7 @@ export const MenuItemCard = memo(
         }}
         whileHover={reduceMotion ? undefined : { scale: 1.01 }}
         whileTap={{ scale: 0.98 }}
-        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-[0_1px_4px_rgba(15,23,42,0.08),0_3px_10px_rgba(15,23,42,0.04)]"
+        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-3 sm:gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-[0_1px_4px_rgba(15,23,42,0.08),0_3px_10px_rgba(15,23,42,0.04)]"
         onClick={() => {
           if (outsidePickupArea) {
             showAlert("Outside your pickup area", "This shop is more than 4 km away. You can browse its real menu, but ordering is unavailable from your current location.");
