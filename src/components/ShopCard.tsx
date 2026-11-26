@@ -317,8 +317,8 @@ export const MenuItemCard = memo(
           hidden: reduceMotion ? {opacity:1,y:0,scale:1} : { opacity: 0, y: 10, scale: 0.98 },
           show: { opacity: 1, y: 0, scale: 1 },
         }}
-        whileHover={reduceMotion ? undefined : { scale: 1.01 }}
-        whileTap={{ scale: 0.98 }}
+        whileHover={reduceMotion ? undefined : { scale: 1.01, transition: { duration: 0.18 } }}
+        whileTap={reduceMotion ? undefined : { scale: 0.98, transition: { duration: 0.1 } }}
         className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 min-[381px]:gap-3 sm:gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-[0_1px_4px_rgba(15,23,42,0.08),0_3px_10px_rgba(15,23,42,0.04)]"
         onClick={() => {
           if (outsidePickupArea) {
@@ -361,7 +361,7 @@ export const MenuItemCard = memo(
             src={item.image || DEFAULT_MENU_IMAGE}
             imageWidth={160}
             alt={item.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[220ms] motion-reduce:group-hover:scale-100 motion-reduce:transition-none"
             blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
           />
           {item.customizations && item.customizations.length > 0 && (
@@ -403,10 +403,10 @@ export const MenuItemCard = memo(
 
             <button
               type="button"
-              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
+              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-[color,background-color,border-color,box-shadow,filter,scale,transform] duration-100 motion-reduce:transition-none text-[11px] font-black uppercase tracking-wider ${
                 isUnavailable
                   ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
-                  : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 cursor-pointer"
+                  : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 active:brightness-90 motion-reduce:active:scale-100 cursor-pointer"
               }`}
             >
               <span>
