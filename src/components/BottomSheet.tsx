@@ -91,8 +91,8 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
             tabIndex={-1}
             initial={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0.9 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0 }}
-            transition={reduceMotion ? {duration:0} : { type: "spring", stiffness: 350, damping: 32 }}
+            exit={reduceMotion ? {opacity:1,y:0} : { y: "100%", opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+            transition={reduceMotion ? {duration:0} : { type: "tween", duration: 0.26, ease: [0.2, 0.8, 0.2, 1] }}
             className={`relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] shadow-2xl border border-slate-200/80 dark:border-slate-800 ${maxHeight} flex flex-col z-10 overflow-hidden`}
           >
             {/* Top Drag Handle */}
@@ -100,7 +100,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
               <button
                 type="button"
                 aria-label="Close sheet"
-                className="w-full pt-3 pb-1 flex justify-center cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-[-2px]"
+                className="w-full min-h-[44px] flex items-center justify-center cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-orange-500 focus-visible:outline-offset-[-2px]"
                 onClick={onClose}
               >
                 <span aria-hidden="true" className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full" />
@@ -129,7 +129,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
                     if (triggerHaptic) triggerHaptic(4);
                     onClose();
                   }}
-                  className="p-2 -mr-1.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                  className="min-h-[44px] min-w-[44px] inline-flex shrink-0 items-center justify-center -mr-1.5 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>

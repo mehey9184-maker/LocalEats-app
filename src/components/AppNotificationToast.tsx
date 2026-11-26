@@ -77,7 +77,7 @@ export function AppNotificationToast({notification,onDismiss,belowHeader=false}:
       {!notification.persistent && (
        <button type="button" onClick={onDismiss}
         aria-label="Dismiss notification"
-        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white">
+        className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white">
         <X className="h-5 w-5" aria-hidden="true"/>
        </button>
       )}

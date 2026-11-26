@@ -1,0 +1,61 @@
+name: UX-02B constrained order-card ergonomics (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/ux02b-card-ergonomics.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  merchant-card:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: mehey9184-maker/LocalEats-Dashboard.2
+          ref: 838bd3f8b96a80b8110bde6fe9f0e9a43cb50ec6
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "838bd3f8b96a80b8110bde6fe9f0e9a43cb50ec6"
+          npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked API dependencies for Merchant cross-package tests
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
+      - name: Merchant root checks and isolated card comparison
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false bash -euc "
+              test \"\$(ip -o link show | wc -l)\" -eq 1
+              test -z \"\$(ip route show default)\"
+              npm run build
+              npm run lint
+              ./node_modules/.bin/tsc --noEmit --pretty false
+              npm --prefix localeats-api run build
+              node --experimental-strip-types --test tests/*.test.mjs
+              node tests/ux02b-constrained-order-cards.mjs ../evidence
+              git diff --exit-code
+            "
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME"
+      - name: Retain comparison evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UX02B-card-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14

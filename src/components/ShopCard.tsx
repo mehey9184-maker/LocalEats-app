@@ -123,7 +123,7 @@ export const ShopCard = memo(
         className={`flex flex-col rounded-[28px] overflow-hidden transition-all duration-200 cursor-pointer relative group border w-full h-full active:scale-[0.98] motion-reduce:active:scale-100 motion-reduce:transition-none transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${
           browseOnly
             ? "bg-slate-50 dark:bg-slate-900/80 border-slate-300 dark:border-slate-700 shadow-none hover:shadow-sm hover:border-slate-400 dark:hover:border-slate-600"
-            : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
+            : `bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 shadow-[0_2px_8px_rgba(15,23,42,0.08),0_6px_18px_rgba(15,23,42,0.04)] hover:shadow-xl hover:border-orange-400 dark:hover:border-orange-500/40 ${!status.isOpen ? "opacity-80" : ""}`
         }`}
       >
         {/* Top Half: Appetite-Appealing Hero Image */}
@@ -258,7 +258,7 @@ export const ShopCard = memo(
 );
 
 export const MenuItemSkeleton = memo(() => (
-  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-4 animate-pulse shadow-sm">
+  <div className="bg-white dark:bg-slate-900/50 p-3.5 rounded-2xl border border-slate-100 dark:border-slate-800 flex gap-4 min-[381px]:gap-3 sm:gap-4 animate-pulse shadow-sm">
     <div className="size-20 rounded-xl bg-slate-200 dark:bg-slate-800 shrink-0 relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 dark:via-white/10 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
     </div>
@@ -317,9 +317,9 @@ export const MenuItemCard = memo(
           hidden: reduceMotion ? {opacity:1,y:0,scale:1} : { opacity: 0, y: 10, scale: 0.98 },
           show: { opacity: 1, y: 0, scale: 1 },
         }}
-        whileHover={reduceMotion ? undefined : { scale: 1.01 }}
-        whileTap={{ scale: 0.98 }}
-        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-xs"
+        whileHover={reduceMotion ? undefined : { scale: 1.01, transition: { duration: 0.18 } }}
+        whileTap={reduceMotion ? undefined : { scale: 0.98, transition: { duration: 0.1 } }}
+        className="bg-white dark:bg-slate-900/70 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 flex gap-4 min-[381px]:gap-3 sm:gap-4 group hover:border-orange-500/40 hover:shadow-md transition-all motion-reduce:transition-none cursor-pointer shadow-[0_1px_4px_rgba(15,23,42,0.08),0_3px_10px_rgba(15,23,42,0.04)]"
         onClick={() => {
           if (outsidePickupArea) {
             showAlert("Outside your pickup area", "This shop is more than 4 km away. You can browse its real menu, but ordering is unavailable from your current location.");
@@ -361,7 +361,7 @@ export const MenuItemCard = memo(
             src={item.image || DEFAULT_MENU_IMAGE}
             imageWidth={160}
             alt={item.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[220ms] motion-reduce:group-hover:scale-100 motion-reduce:transition-none"
             blurHash={`https://picsum.photos/seed/${item.id}/10/10?blur=10`}
           />
           {item.customizations && item.customizations.length > 0 && (
@@ -375,7 +375,7 @@ export const MenuItemCard = memo(
         <div className="flex-1 flex flex-col justify-between py-0.5 min-w-0">
           <div>
             <div className="flex items-start justify-between gap-2">
-              <h4 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-600 transition-colors truncate">
+              <h4 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-700 dark:group-hover:text-orange-400 transition-colors truncate">
                 {item.name}
               </h4>
             </div>
@@ -397,16 +397,16 @@ export const MenuItemCard = memo(
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-1">
-            <p className="shrink-0 whitespace-nowrap font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
+            <p className="shrink-0 whitespace-nowrap font-black text-orange-700 dark:text-orange-400 text-sm tracking-tight">
               {item.displayPrice || formatRand(item.price || 0)}
             </p>
 
             <button
               type="button"
-              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-all text-[11px] font-black uppercase tracking-wider ${
+              className={`h-9 min-w-0 max-w-full px-3.5 rounded-xl flex items-center justify-center gap-1.5 whitespace-nowrap shadow-sm transition-[color,background-color,border-color,box-shadow,filter,scale,transform] duration-100 motion-reduce:transition-none text-[11px] font-black uppercase tracking-wider ${
                 isUnavailable
                   ? "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed"
-                  : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 cursor-pointer"
+                  : "bg-orange-600 text-white shadow-orange-600/20 group-hover:bg-orange-700 active:scale-95 active:brightness-90 motion-reduce:active:scale-100 cursor-pointer"
               }`}
             >
               <span>

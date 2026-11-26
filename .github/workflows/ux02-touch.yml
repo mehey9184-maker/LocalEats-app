@@ -1,0 +1,77 @@
+name: UX-02 targeted touch acceptance (NO DEPLOY)
+on:
+  pull_request:
+    paths: ['.github/workflows/ux02-touch.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline:
+    name: UX-02 - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: Customer
+            repo: mehey9184-maker/LocalEats-app
+            sha: a3b5fedfbbe695e855e4285c907cb055745983e4
+          - component: Merchant
+            repo: mehey9184-maker/LocalEats-Dashboard.2
+            sha: 644f08536784ecfaede86bccb19f8d9bff7c3047
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: c1af9cd2d2b44d033d65b3fce305b38e24e2534b
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '22'
+      - name: Verify exact source and locked dependencies
+        working-directory: source
+        env:
+          EXPECTED_SHA: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "UX01_SOURCE $(git rev-parse HEAD)"
+          npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
+      - name: Install locked Customer Chromium
+        if: matrix.component == 'Customer'
+        working-directory: source
+        run: ./node_modules/.bin/playwright install chromium
+      - name: Measure actual component fixtures without external networking
+        working-directory: source
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true COMPONENT="$5" VITE_PICKUP_ORDERING_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false bash -euc "
+              test \"\$(ip -o link show | wc -l)\" -eq 1
+              test -z \"\$(ip route show default)\"
+              if [ \"\$COMPONENT\" = Merchant ]; then npm run build; node --test tests/l4-pickup-core-ui-freeze.test.mjs tests/l4-h1d3-order-tags.test.mjs; fi
+              node ../harness/tests/ux01-baseline.mjs \"\$COMPONENT\" ../evidence
+              git diff --exit-code
+            "
+          ' _ "$(id -u)" "$(id -g)" "$PATH" "$HOME" "$COMPONENT"
+      - name: Retain synthetic screenshots and raw measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UX02-${{ matrix.component }}-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
