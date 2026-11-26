@@ -27,6 +27,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "838bd3f8b96a80b8110bde6fe9f0e9a43cb50ec6"
           npm ci --no-audit --no-fund
           git diff --exit-code -- package.json package-lock.json
+      - name: Install locked API dependencies for Merchant cross-package tests
+        working-directory: source/localeats-api
+        run: |
+          npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
       - name: Merchant root checks and isolated card comparison
         working-directory: source
         run: |
@@ -34,12 +39,13 @@ jobs:
           mkdir -p ../evidence
           sudo unshare --net -- bash -euc '
             ip link set lo up
-            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true VITE_PICKUP_ORDERING_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false bash -euc "
+            exec setpriv --reuid="$1" --regid="$2" --init-groups env -i PATH="$3" HOME="$4" CI=true PICKUP_WRITES_ENABLED=false DELIVERY_WRITES_ENABLED=false VITE_PICKUP_ORDERING_ENABLED=false VITE_MERCHANT_FAKE_ORDERS_ENABLED=false VITE_PROFILE_WRITES_ENABLED=false bash -euc "
               test \"\$(ip -o link show | wc -l)\" -eq 1
               test -z \"\$(ip route show default)\"
               npm run build
               npm run lint
               ./node_modules/.bin/tsc --noEmit --pretty false
+              npm --prefix localeats-api run build
               node --experimental-strip-types --test tests/*.test.mjs
               node tests/ux02b-constrained-order-cards.mjs ../evidence
               git diff --exit-code
