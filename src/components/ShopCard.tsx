@@ -375,7 +375,7 @@ export const MenuItemCard = memo(
         <div className="flex-1 flex flex-col justify-between py-0.5 min-w-0">
           <div>
             <div className="flex items-start justify-between gap-2">
-              <h4 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-600 transition-colors truncate">
+              <h4 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight group-hover:text-orange-700 dark:group-hover:text-orange-400 transition-colors truncate">
                 {item.name}
               </h4>
             </div>
@@ -397,7 +397,7 @@ export const MenuItemCard = memo(
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-1">
-            <p className="shrink-0 whitespace-nowrap font-black text-orange-600 dark:text-orange-400 text-sm tracking-tight">
+            <p className="shrink-0 whitespace-nowrap font-black text-orange-700 dark:text-orange-400 text-sm tracking-tight">
               {item.displayPrice || formatRand(item.price || 0)}
             </p>
 
